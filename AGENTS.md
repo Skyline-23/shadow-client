@@ -9,6 +9,7 @@ Tuist lives at the repo root (`Project.swift`, `Tuist.swift`, `Tuist/Package.swi
 - `Projects/App/Tests`: app-level Swift Testing suites.
 - `Modules/ShadowClientCore`, `Modules/ShadowClientStreaming`, `Modules/ShadowClientInput`, `Modules/ShadowClientUI`, `Modules/ShadowClientFeatureHome`: modular runtime and feature layers (each with `Sources/` and `Tests/`).
 - `moonlight-qt-master/`: reference code only; treat as upstream context unless explicitly asked to edit.
+`Modules/ShadowClientFeatureHome` owns home diagnostics runtime orchestration from Qt telemetry samples.
 
 ## Build, Test, and Development Commands
 Run from repository root:
