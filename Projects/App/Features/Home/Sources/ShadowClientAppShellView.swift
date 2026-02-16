@@ -41,13 +41,24 @@ public struct ShadowClientAppShellView: View {
         NavigationStack {
             ZStack {
                 backgroundGradient
-                ShadowClientFeatureHomeView(
-                    platformName: platformName,
-                    dependencies: baseDependencies.applying(settings: currentSettings),
-                    showsDiagnosticsHUD: currentSettings.showDiagnosticsHUD
-                )
-                .id(currentSettings.identityKey)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                ScrollView {
+                    VStack(spacing: 28) {
+                        ShadowClientFeatureHomeView(
+                            platformName: platformName,
+                            dependencies: baseDependencies.applying(settings: currentSettings),
+                            showsDiagnosticsHUD: currentSettings.showDiagnosticsHUD
+                        )
+                        .id(currentSettings.identityKey)
+                        .frame(maxWidth: .infinity, alignment: .top)
+
+                        ControllerFeedbackStatusPanel()
+                            .frame(maxWidth: .infinity)
+                    }
+                    .padding(.top, 28)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 40)
+                }
+                .scrollContentBackground(.hidden)
             }
             .navigationTitle("Home")
         }

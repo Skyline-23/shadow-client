@@ -14,6 +14,7 @@ let project = Project(
                 "Projects/App/Features/Home/Sources",
             ],
             dependencies: [
+                .external(name: "ShadowClientInput"),
                 .external(name: "ShadowClientStreaming"),
                 .external(name: "ShadowClientUI"),
             ]
