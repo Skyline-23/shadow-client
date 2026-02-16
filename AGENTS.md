@@ -2,8 +2,8 @@
 
 ## Project Structure & Module Organization
 Tuist manifests live at repo root: `Project.swift`, `Tuist.swift`, and `Tuist/Package.swift`.
-- `Projects/App/iOS`, `Projects/App/macOS`, `Projects/App/tvOS`: platform app entrypoints and composition.
-- `Projects/App/Features/Home`: shared Home feature UI/runtime wiring.
+- `Projects/App/iOS`, `Projects/App/macOS`, `Projects/App/tvOS`: app entrypoints and composition.
+- `Projects/App/Features/Home`: Home UI/runtime wiring.
 - `Projects/App/Tests`: app-level Swift Testing suites.
 - `Modules/ShadowClientCore`, `Modules/ShadowClientStreaming`, `Modules/ShadowClientInput`, `Modules/ShadowClientUI`, `Modules/ShadowClientFeatureHome`: modular runtime layers with `Sources/` and `Tests/`.
 - `moonlight-qt-master/`: upstream reference only (gitignored), never a runtime dependency.
@@ -31,7 +31,7 @@ Propagate recovery diagnostics and session launch plan (HDR/audio/reconfigure fl
 TDD is mandatory: start with a failing test, implement minimally, then refactor.
 Use Swift Testing (`import Testing`, `@Test`, `#expect`) for authored tests, and do not add new `XCTestCase`-based tests.
 Keep coverage for low-latency gates, telemetry normalization, HDR/audio/settings behavior, native controller mapping profiles, and controller feedback contracts.
-Use `StreamingSessionSettingsMapper` + `AdaptiveSessionLaunchRuntime` + `ControllerInputRuntime` for telemetry-driven launch/input runtime plans.
+Use `StreamingSessionSettingsMapper` + `AdaptiveSessionLaunchRuntime` + `GameControllerInputAdapter`/`ControllerInputRuntime` for telemetry-driven launch and USB-first input plans.
 
 ## Commit & PR Guidelines
 History already follows Conventional Commits (`feat(streaming): ...`, `docs(agents): ...`, `chore(...)`); keep using that format. Make small, single-purpose commits on `main` and keep the tree buildable.
