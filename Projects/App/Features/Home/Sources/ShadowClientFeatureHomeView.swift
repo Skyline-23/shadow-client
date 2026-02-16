@@ -4,12 +4,11 @@ import SwiftUI
 
 public struct ShadowClientFeatureHomeView: View {
     private let platformName: String
-    private let controller = LowLatencyStreamingController()
+    private let pipeline = LowLatencyTelemetryPipeline(initialBufferMs: 40.0)
     private let diagnosticsPresenter = StreamingDiagnosticsPresenter()
     private let ticker = Timer.publish(every: 0.8, on: .main, in: .common).autoconnect()
 
     @State private var telemetryIndex: Int = 0
-    @State private var currentBufferMs: Double = 40.0
     @State private var diagnostics = StreamingDiagnosticsModel(
         bufferMs: 40,
         jitterMs: 0,
@@ -72,40 +71,51 @@ public struct ShadowClientFeatureHomeView: View {
     }
 
     private func applyNextTelemetrySample() {
-        let samples = Self.telemetrySamples
+        let samples = Self.qtTelemetrySamples
         let sample = samples[telemetryIndex % samples.count]
         telemetryIndex += 1
 
-        let decision = controller.decide(
-            currentBufferMs: currentBufferMs,
-            stats: sample.stats,
-            signal: sample.signal
-        )
-        currentBufferMs = decision.targetBufferMs
-        diagnostics = diagnosticsPresenter.makeModel(
-            decision: decision,
-            signal: sample.signal,
-            stats: sample.stats
-        )
+        Task {
+            let snapshot = StreamingTelemetrySnapshot(qtSample: sample)
+            let decision = await pipeline.ingest(snapshot)
+            let model = diagnosticsPresenter.makeModel(
+                decision: decision,
+                signal: snapshot.signal,
+                stats: snapshot.stats
+            )
+            await MainActor.run {
+                diagnostics = model
+            }
+        }
     }
 
-    private static let telemetrySamples: [TelemetrySample] = [
+    private static let qtTelemetrySamples: [MoonlightQTTelemetrySample] = [
         .init(
-            stats: .init(renderedFrames: 995, droppedFrames: 5, avSyncOffsetMilliseconds: 14.0),
-            signal: .init(jitterMs: 3.0, packetLossPercent: 0.2)
+            renderedFrames: 995,
+            networkDroppedFrames: 2,
+            pacerDroppedFrames: 3,
+            jitterMs: 3.0,
+            packetLossPercent: 0.2,
+            avSyncOffsetMs: 14.0,
+            timestampMs: 1_000
         ),
         .init(
-            stats: .init(renderedFrames: 990, droppedFrames: 10, avSyncOffsetMilliseconds: 19.0),
-            signal: .init(jitterMs: 12.0, packetLossPercent: 0.4)
+            renderedFrames: 990,
+            networkDroppedFrames: 4,
+            pacerDroppedFrames: 6,
+            jitterMs: 12.0,
+            packetLossPercent: 0.4,
+            avSyncOffsetMs: 19.0,
+            timestampMs: 1_016
         ),
         .init(
-            stats: .init(renderedFrames: 965, droppedFrames: 35, avSyncOffsetMilliseconds: 53.0),
-            signal: .init(jitterMs: 78.0, packetLossPercent: 3.2)
+            renderedFrames: 965,
+            networkDroppedFrames: 18,
+            pacerDroppedFrames: 17,
+            jitterMs: 78.0,
+            packetLossPercent: 3.2,
+            avSyncOffsetMs: 53.0,
+            timestampMs: 1_032
         ),
     ]
-}
-
-private struct TelemetrySample {
-    let stats: StreamingStats
-    let signal: StreamingNetworkSignal
 }
