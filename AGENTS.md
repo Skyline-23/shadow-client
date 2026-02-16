@@ -26,7 +26,7 @@ Use Swift 6 conventions: 4-space indentation, `UpperCamelCase` for types, `lower
 Use Swift Testing only (`import Testing`, `@Test`, `#expect`); do not add XCTest. TDD is mandatory: write a failing test, implement minimal code, then refactor. For streaming/input changes, keep coverage for latency gates, drop-rate/AV-sync guards, controller feedback contracts, and telemetry pipeline state transitions.
 
 When mapping upstream metrics, normalize through `StreamingTelemetrySnapshot(qtSample:)` before runtime decisions; keep conversion tests under `Modules/ShadowClientStreaming/Tests`.
-Session callbacks should enter through `MoonlightSessionTelemetryCallbackAdapter` and publish via `MoonlightSessionTelemetryBridge`; do not reintroduce timer/sample-array simulation paths.
+Use only thin boundary adapters (`MoonlightSessionTelemetryCallbackAdapter` -> `MoonlightSessionTelemetryBridge`); avoid thick compatibility layers and keep Apple-side runtime fully native.
 
 ## Agent Execution Rules
 For non-trivial work, use subagents in parallel for discovery and implementation. Assign each subagent a disjoint file/module ownership and merge only after target-level tests pass. Keep `main` in a working state with incremental commits at meaningful checkpoints.
