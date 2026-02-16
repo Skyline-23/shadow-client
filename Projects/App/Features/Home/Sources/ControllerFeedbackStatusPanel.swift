@@ -2,13 +2,77 @@ import ShadowClientInput
 import ShadowClientUI
 import SwiftUI
 
+struct ControllerFeedbackPanelSnapshot: Equatable, Sendable {
+    let statusModel: ControllerFeedbackStatusModel
+    let mappedButtonCount: Int
+    let mappedAxisCount: Int
+}
+
+actor ControllerFeedbackPanelRuntime {
+    private let runtime: GameControllerFeedbackRuntime
+    private let presenter: ControllerFeedbackStatusPresenter
+
+    init(
+        runtime: GameControllerFeedbackRuntime = .init(),
+        presenter: ControllerFeedbackStatusPresenter = .init()
+    ) {
+        self.runtime = runtime
+        self.presenter = presenter
+    }
+
+    func makeSnapshot(state: ControllerFeedbackSimulationState) async -> ControllerFeedbackPanelSnapshot {
+        let evaluation = await runtime.ingest(
+            gameControllerState: ControllerFeedbackSimulationInputState(),
+            device: ControllerFeedbackSimulationDevice(
+                transport: state.transport,
+                capabilities: state.capabilities
+            )
+        )
+
+        return ControllerFeedbackPanelSnapshot(
+            statusModel: presenter.makeModel(evaluation: evaluation),
+            mappedButtonCount: evaluation.state.pressedButtons.count,
+            mappedAxisCount: evaluation.state.axisValues.count
+        )
+    }
+}
+
+private struct ControllerFeedbackSimulationDevice: DualSenseFeedbackDevice {
+    let transport: DualSenseTransport
+    let capabilities: DualSenseFeedbackCapabilities
+}
+
+private struct ControllerFeedbackSimulationInputState: GameControllerStateProviding {
+    var faceSouthPressed: Bool { true }
+    var faceEastPressed: Bool { false }
+    var faceWestPressed: Bool { false }
+    var faceNorthPressed: Bool { false }
+    var leftShoulderPressed: Bool { false }
+    var rightShoulderPressed: Bool { false }
+    var leftStickPressed: Bool { false }
+    var rightStickPressed: Bool { false }
+    var dpadUpPressed: Bool { false }
+    var dpadDownPressed: Bool { false }
+    var dpadLeftPressed: Bool { false }
+    var dpadRightPressed: Bool { false }
+    var menuPressed: Bool { true }
+    var leftStickX: Double { 0.0 }
+    var leftStickY: Double { 0.0 }
+    var rightStickX: Double { 0.0 }
+    var rightStickY: Double { 0.0 }
+    var leftTriggerValue: Double { 0.75 }
+    var rightTriggerValue: Double { 0.0 }
+}
+
 struct ControllerFeedbackStatusPanel: View {
     @State private var transport: DualSenseTransport = .usb
     @State private var supportsRumble = true
     @State private var supportsAdaptiveTriggers = true
     @State private var supportsLED = true
+    @State private var runtimeSnapshot: ControllerFeedbackPanelSnapshot?
 
     private let presenter = ControllerFeedbackStatusPresenter()
+    private let runtime = ControllerFeedbackPanelRuntime()
 
     private var simulationState: ControllerFeedbackSimulationState {
         .init(
@@ -20,7 +84,15 @@ struct ControllerFeedbackStatusPanel: View {
     }
 
     private var statusModel: ControllerFeedbackStatusModel {
-        presenter.makeModel(state: simulationState)
+        runtimeSnapshot?.statusModel ?? presenter.makeModel(state: simulationState)
+    }
+
+    private var mappingSummary: String {
+        guard let runtimeSnapshot else {
+            return "Input Mapping: pending"
+        }
+
+        return "Input Mapping: \(runtimeSnapshot.mappedButtonCount) button(s), \(runtimeSnapshot.mappedAxisCount) axis value(s)"
     }
 
     var body: some View {
@@ -32,6 +104,9 @@ struct ControllerFeedbackStatusPanel: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Simulated Controller State")
                     .font(.headline)
+                Text(mappingSummary)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
                 Picker("Transport", selection: $transport) {
                     Text("USB").tag(DualSenseTransport.usb)
                     Text("Bluetooth").tag(DualSenseTransport.bluetooth)
@@ -46,6 +121,9 @@ struct ControllerFeedbackStatusPanel: View {
         }
         .padding(16)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .task(id: simulationState) {
+            await refreshRuntimeSnapshot(for: simulationState)
+        }
     }
 
     private var header: some View {
@@ -79,5 +157,10 @@ struct ControllerFeedbackStatusPanel: View {
                 .foregroundStyle(passes ? .green : .red)
             Text(title)
         }
+    }
+
+    @MainActor
+    private func refreshRuntimeSnapshot(for state: ControllerFeedbackSimulationState) async {
+        runtimeSnapshot = await runtime.makeSnapshot(state: state)
     }
 }
