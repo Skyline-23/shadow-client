@@ -25,6 +25,7 @@ Use Swift 6 style: 4-space indentation, `UpperCamelCase` for types, `lowerCamelC
 Use native Swift concurrency first: prefer `actor` for shared mutable streaming state, and use `async/await` for telemetry ingest and decision flow. Keep Combine for UI-facing event surfaces (`AnyPublisher`).
 
 Use Pure DI: inject dependencies via initializers (for example feature dependencies and telemetry bridge), and avoid hidden service locators. Compatibility boundaries must stay thin (`MoonlightSessionTelemetryCallbackAdapter` -> `MoonlightSessionTelemetryBridge` -> normalized snapshot).
+For streaming recovery, keep hysteresis in `LowLatencyTelemetryPipeline`: require sustained stable samples before releasing quality reduction.
 
 ## Testing Guidelines
 TDD is mandatory: start with a failing test, implement minimally, then refactor.

@@ -14,15 +14,15 @@ func homeDiagnosticsRuntimeFirstUnstableSampleReturnsCriticalToneAndBuffer48() a
     #expect(tick.timestampMs == 1_000)
 }
 
-@Test("Home diagnostics runtime returns healthy tone and 46ms buffer after unstable then stable low-jitter samples")
-func homeDiagnosticsRuntimeUnstableThenStableLowJitterReturnsHealthyToneAndBuffer46() async {
+@Test("Home diagnostics runtime keeps critical tone and 48ms buffer on first stable sample after instability")
+func homeDiagnosticsRuntimeFirstStableSampleAfterInstabilityKeepsReducedQualityState() async {
     let runtime = HomeDiagnosticsRuntime()
 
     _ = await runtime.ingest(qtSample: unstableSample())
-    let tick = await runtime.ingest(qtSample: stableLowJitterSample())
+    let tick = await runtime.ingest(qtSample: stableLowJitterSample(timestampMs: 1_016))
 
-    #expect(tick.model.tone == .healthy)
-    #expect(tick.model.bufferMs == 46)
+    #expect(tick.model.tone == .critical)
+    #expect(tick.model.bufferMs == 48)
     #expect(tick.timestampMs == 1_016)
 }
 
@@ -45,6 +45,19 @@ func homeDiagnosticsRuntimeNegativeDropSampleClampsFrameDropPercentToZero() asyn
     #expect(tick.timestampMs == 2_000)
 }
 
+@Test("Home diagnostics runtime returns healthy tone and 46ms buffer after two stable low-jitter samples post-instability")
+func homeDiagnosticsRuntimeSecondStableSampleAfterInstabilityReturnsHealthyToneAndBuffer46() async {
+    let runtime = HomeDiagnosticsRuntime()
+
+    _ = await runtime.ingest(qtSample: unstableSample())
+    _ = await runtime.ingest(qtSample: stableLowJitterSample(timestampMs: 1_016))
+    let tick = await runtime.ingest(qtSample: stableLowJitterSample(timestampMs: 1_032))
+
+    #expect(tick.model.tone == .healthy)
+    #expect(tick.model.bufferMs == 46)
+    #expect(tick.timestampMs == 1_032)
+}
+
 private func unstableSample() -> MoonlightQTTelemetrySample {
     MoonlightQTTelemetrySample(
         renderedFrames: 960,
@@ -57,7 +70,7 @@ private func unstableSample() -> MoonlightQTTelemetrySample {
     )
 }
 
-private func stableLowJitterSample() -> MoonlightQTTelemetrySample {
+private func stableLowJitterSample(timestampMs: Int) -> MoonlightQTTelemetrySample {
     MoonlightQTTelemetrySample(
         renderedFrames: 995,
         networkDroppedFrames: 2,
@@ -65,6 +78,6 @@ private func stableLowJitterSample() -> MoonlightQTTelemetrySample {
         jitterMs: 3.0,
         packetLossPercent: 0.2,
         avSyncOffsetMs: 12.0,
-        timestampMs: 1_016
+        timestampMs: timestampMs
     )
 }

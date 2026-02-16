@@ -21,8 +21,8 @@ func telemetryPipelineFirstUnstableSnapshotRequestsQualityReductionAndIncreasesB
     #expect(decision.stabilityPasses == false)
 }
 
-@Test("Telemetry pipeline decreases buffer on stable low-jitter snapshot after prior unstable increase")
-func telemetryPipelineSubsequentStableLowJitterSnapshotDecreasesBufferFromPreviousTarget() async {
+@Test("Telemetry pipeline keeps reduced quality for first stable sample after instability before lowering buffer")
+func telemetryPipelineRecoveryGateKeepsReducedQualityBeforeBufferDecrease() async {
     let pipeline = LowLatencyTelemetryPipeline(initialBufferMs: 40.0)
     let unstableSnapshot = StreamingTelemetrySnapshot(
         stats: StreamingStats(
@@ -45,16 +45,20 @@ func telemetryPipelineSubsequentStableLowJitterSnapshotDecreasesBufferFromPrevio
 
     let firstDecision = await pipeline.ingest(unstableSnapshot)
     let secondDecision = await pipeline.ingest(stableLowJitterSnapshot)
+    let thirdDecision = await pipeline.ingest(stableLowJitterSnapshot)
 
     #expect(firstDecision.targetBufferMs == 48.0)
-    #expect(secondDecision.targetBufferMs == 46.0)
-    #expect(secondDecision.targetBufferMs == firstDecision.targetBufferMs - 2.0)
-    #expect(secondDecision.action == .holdQuality)
+    #expect(secondDecision.targetBufferMs == 48.0)
+    #expect(secondDecision.action == .requestQualityReduction)
     #expect(secondDecision.stabilityPasses == true)
+    #expect(thirdDecision.targetBufferMs == 46.0)
+    #expect(thirdDecision.targetBufferMs == secondDecision.targetBufferMs - 2.0)
+    #expect(thirdDecision.action == .holdQuality)
+    #expect(thirdDecision.stabilityPasses == true)
 }
 
-@Test("Telemetry pipeline keeps buffer unchanged for stable mid-jitter snapshot")
-func telemetryPipelineStableMidJitterSnapshotKeepsBufferUnchanged() async {
+@Test("Telemetry pipeline exits recovery gate after sustained stable mid-jitter samples")
+func telemetryPipelineStableMidJitterExitsRecoveryGateAfterSecondSample() async {
     let pipeline = LowLatencyTelemetryPipeline(initialBufferMs: 40.0)
     let unstableSnapshot = StreamingTelemetrySnapshot(
         stats: StreamingStats(
@@ -77,10 +81,52 @@ func telemetryPipelineStableMidJitterSnapshotKeepsBufferUnchanged() async {
 
     let firstDecision = await pipeline.ingest(unstableSnapshot)
     let secondDecision = await pipeline.ingest(stableMidJitterSnapshot)
+    let thirdDecision = await pipeline.ingest(stableMidJitterSnapshot)
 
     #expect(firstDecision.targetBufferMs == 48.0)
     #expect(secondDecision.targetBufferMs == 48.0)
     #expect(secondDecision.targetBufferMs == firstDecision.targetBufferMs)
-    #expect(secondDecision.action == .holdQuality)
+    #expect(secondDecision.action == .requestQualityReduction)
     #expect(secondDecision.stabilityPasses == true)
+    #expect(thirdDecision.targetBufferMs == 48.0)
+    #expect(thirdDecision.action == .holdQuality)
+    #expect(thirdDecision.stabilityPasses == true)
+}
+
+@Test("Telemetry pipeline honors configurable stable sample threshold before recovery release")
+func telemetryPipelineHonorsCustomRecoveryStableSampleThreshold() async {
+    let pipeline = LowLatencyTelemetryPipeline(
+        initialBufferMs: 40.0,
+        qualityRecoveryStableSampleThreshold: 3
+    )
+    let unstableSnapshot = StreamingTelemetrySnapshot(
+        stats: StreamingStats(
+            renderedFrames: 960,
+            droppedFrames: 40,
+            avSyncOffsetMilliseconds: 55.0
+        ),
+        signal: StreamingNetworkSignal(jitterMs: 80.0, packetLossPercent: 3.0),
+        timestampMs: 1_000
+    )
+    let stableLowJitterSnapshot = StreamingTelemetrySnapshot(
+        stats: StreamingStats(
+            renderedFrames: 995,
+            droppedFrames: 5,
+            avSyncOffsetMilliseconds: 12.0
+        ),
+        signal: StreamingNetworkSignal(jitterMs: 3.0, packetLossPercent: 0.2),
+        timestampMs: 1_016
+    )
+
+    _ = await pipeline.ingest(unstableSnapshot)
+    let firstStableDecision = await pipeline.ingest(stableLowJitterSnapshot)
+    let secondStableDecision = await pipeline.ingest(stableLowJitterSnapshot)
+    let thirdStableDecision = await pipeline.ingest(stableLowJitterSnapshot)
+
+    #expect(firstStableDecision.targetBufferMs == 48.0)
+    #expect(firstStableDecision.action == .requestQualityReduction)
+    #expect(secondStableDecision.targetBufferMs == 48.0)
+    #expect(secondStableDecision.action == .requestQualityReduction)
+    #expect(thirdStableDecision.targetBufferMs == 46.0)
+    #expect(thirdStableDecision.action == .holdQuality)
 }
