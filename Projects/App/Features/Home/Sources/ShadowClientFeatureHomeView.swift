@@ -59,6 +59,7 @@ public extension ShadowClientFeatureHomeDependencies {
 public struct ShadowClientFeatureHomeView: View {
     private let platformName: String
     private let dependencies: ShadowClientFeatureHomeDependencies
+    private let showsDiagnosticsHUD: Bool
 
     @State private var telemetryCancellable: AnyCancellable?
     @State private var previousLaunchSettings: MoonlightSessionLaunchSettings?
@@ -75,9 +76,14 @@ public struct ShadowClientFeatureHomeView: View {
         tone: .healthy
     )
 
-    public init(platformName: String, dependencies: ShadowClientFeatureHomeDependencies) {
+    public init(
+        platformName: String,
+        dependencies: ShadowClientFeatureHomeDependencies,
+        showsDiagnosticsHUD: Bool = true
+    ) {
         self.platformName = platformName
         self.dependencies = dependencies
+        self.showsDiagnosticsHUD = showsDiagnosticsHUD
     }
 
     public var body: some View {
@@ -87,7 +93,11 @@ public struct ShadowClientFeatureHomeView: View {
             Text("Home running on \(platformName)")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            diagnosticsCard
+            if showsDiagnosticsHUD {
+                diagnosticsCard
+            } else {
+                hudHiddenCard
+            }
         }
         .padding(24)
         .onAppear {
@@ -105,10 +115,10 @@ public struct ShadowClientFeatureHomeView: View {
             Text("Tone: \(diagnostics.tone.rawValue.uppercased())")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(toneColor)
-                Text("Target Buffer: \(diagnostics.bufferMs) ms")
-                    .font(.caption.monospacedDigit())
-                Text("Jitter: \(diagnostics.jitterMs) ms | Packet Loss: \(String(format: "%.1f", diagnostics.packetLossPercent))%")
-                    .font(.caption.monospacedDigit())
+            Text("Target Buffer: \(diagnostics.bufferMs) ms")
+                .font(.caption.monospacedDigit())
+            Text("Jitter: \(diagnostics.jitterMs) ms | Packet Loss: \(String(format: "%.1f", diagnostics.packetLossPercent))%")
+                .font(.caption.monospacedDigit())
             Text("Frame Drop: \(String(format: "%.1f", diagnostics.frameDropPercent))% | AV Sync: \(diagnostics.avSyncOffsetMs) ms")
                 .font(.caption.monospacedDigit())
             Text("Drop Origin: NET \(diagnostics.networkDroppedFrames) | PACER \(diagnostics.pacerDroppedFrames)")
@@ -124,6 +134,23 @@ public struct ShadowClientFeatureHomeView: View {
                 Text("Reconfig V:\(sessionPlan.shouldRenegotiateVideoPipeline ? "Y" : "N") A:\(sessionPlan.shouldRenegotiateAudioPipeline ? "Y" : "N") | QDrop: \(sessionPlan.shouldApplyQualityDropImmediately ? "Y" : "N")")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var hudHiddenCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Low-Latency HUD Disabled")
+                .font(.headline)
+            Text("Enable diagnostics from Settings to inspect jitter, drop origin, and reconfiguration plans.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let sessionPlan {
+                Text("Current Session: \(sessionPlan.settings.hdrVideoMode.rawValue.uppercased()) / \(sessionPlan.settings.audioMode.rawValue.uppercased())")
+                    .font(.caption.monospacedDigit())
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
