@@ -41,7 +41,12 @@ public actor LowLatencyTelemetryPipeline {
         guard decision.stabilityPasses else {
             stableSampleStreak = 0
             isRecoveryRequired = true
-            return decision
+            return LowLatencyStreamingDecision(
+                targetBufferMs: decision.targetBufferMs,
+                action: decision.action,
+                stabilityPasses: false,
+                recoveryStableSamplesRemaining: qualityRecoveryStableSampleThreshold
+            )
         }
 
         stableSampleStreak += 1
@@ -52,15 +57,22 @@ public actor LowLatencyTelemetryPipeline {
 
         if shouldHoldReducedQuality {
             currentBufferMs = max(currentBufferMs, previousBufferMs)
+            let remaining = qualityRecoveryStableSampleThreshold - stableSampleStreak
             return LowLatencyStreamingDecision(
                 targetBufferMs: currentBufferMs,
                 action: .requestQualityReduction,
-                stabilityPasses: true
+                stabilityPasses: true,
+                recoveryStableSamplesRemaining: remaining
             )
         }
 
         isRecoveryRequired = false
-        return decision
+        return LowLatencyStreamingDecision(
+            targetBufferMs: decision.targetBufferMs,
+            action: decision.action,
+            stabilityPasses: true,
+            recoveryStableSamplesRemaining: 0
+        )
     }
 
     public func currentTargetBufferMs() -> Double {

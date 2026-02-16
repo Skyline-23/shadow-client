@@ -6,6 +6,7 @@ public struct StreamingDiagnosticsModel: Equatable, Sendable {
     public let packetLossPercent: Double
     public let frameDropPercent: Double
     public let avSyncOffsetMs: Int
+    public let recoveryStableSamplesRemaining: Int
     public let tone: HealthTone
 
     public init(
@@ -14,6 +15,7 @@ public struct StreamingDiagnosticsModel: Equatable, Sendable {
         packetLossPercent: Double,
         frameDropPercent: Double,
         avSyncOffsetMs: Int,
+        recoveryStableSamplesRemaining: Int,
         tone: HealthTone
     ) {
         self.bufferMs = bufferMs
@@ -21,6 +23,7 @@ public struct StreamingDiagnosticsModel: Equatable, Sendable {
         self.packetLossPercent = packetLossPercent
         self.frameDropPercent = frameDropPercent
         self.avSyncOffsetMs = avSyncOffsetMs
+        self.recoveryStableSamplesRemaining = max(0, recoveryStableSamplesRemaining)
         self.tone = tone
     }
 }
@@ -55,6 +58,7 @@ public struct StreamingDiagnosticsPresenter: Sendable {
             packetLossPercent: signal.packetLossPercent,
             frameDropPercent: frameDropPercent,
             avSyncOffsetMs: Int(stats.avSyncOffsetMilliseconds.rounded()),
+            recoveryStableSamplesRemaining: decision.recoveryStableSamplesRemaining,
             tone: tone
         )
     }

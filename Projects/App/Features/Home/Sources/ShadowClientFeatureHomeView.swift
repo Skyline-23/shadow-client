@@ -44,6 +44,7 @@ public struct ShadowClientFeatureHomeView: View {
         packetLossPercent: 0.0,
         frameDropPercent: 0.0,
         avSyncOffsetMs: 0,
+        recoveryStableSamplesRemaining: 0,
         tone: .healthy
     )
 
@@ -83,6 +84,11 @@ public struct ShadowClientFeatureHomeView: View {
                 .font(.caption.monospacedDigit())
             Text("Frame Drop: \(String(format: "%.1f", diagnostics.frameDropPercent))% | AV Sync: \(diagnostics.avSyncOffsetMs) ms")
                 .font(.caption.monospacedDigit())
+            if diagnostics.recoveryStableSamplesRemaining > 0 {
+                Text("Recovery Hold: \(diagnostics.recoveryStableSamplesRemaining) stable sample(s) remaining")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.orange)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)

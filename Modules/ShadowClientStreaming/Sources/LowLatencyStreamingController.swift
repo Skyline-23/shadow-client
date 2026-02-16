@@ -7,11 +7,18 @@ public struct LowLatencyStreamingDecision: Equatable, Sendable {
     public let targetBufferMs: Double
     public let action: StreamingRecoveryAction
     public let stabilityPasses: Bool
+    public let recoveryStableSamplesRemaining: Int
 
-    public init(targetBufferMs: Double, action: StreamingRecoveryAction, stabilityPasses: Bool) {
+    public init(
+        targetBufferMs: Double,
+        action: StreamingRecoveryAction,
+        stabilityPasses: Bool,
+        recoveryStableSamplesRemaining: Int = 0
+    ) {
         self.targetBufferMs = targetBufferMs
         self.action = action
         self.stabilityPasses = stabilityPasses
+        self.recoveryStableSamplesRemaining = max(0, recoveryStableSamplesRemaining)
     }
 }
 

@@ -19,6 +19,7 @@ func telemetryPipelineFirstUnstableSnapshotRequestsQualityReductionAndIncreasesB
     #expect(decision.targetBufferMs == 48.0)
     #expect(decision.action == .requestQualityReduction)
     #expect(decision.stabilityPasses == false)
+    #expect(decision.recoveryStableSamplesRemaining == 2)
 }
 
 @Test("Telemetry pipeline keeps reduced quality for first stable sample after instability before lowering buffer")
@@ -51,10 +52,12 @@ func telemetryPipelineRecoveryGateKeepsReducedQualityBeforeBufferDecrease() asyn
     #expect(secondDecision.targetBufferMs == 48.0)
     #expect(secondDecision.action == .requestQualityReduction)
     #expect(secondDecision.stabilityPasses == true)
+    #expect(secondDecision.recoveryStableSamplesRemaining == 1)
     #expect(thirdDecision.targetBufferMs == 46.0)
     #expect(thirdDecision.targetBufferMs == secondDecision.targetBufferMs - 2.0)
     #expect(thirdDecision.action == .holdQuality)
     #expect(thirdDecision.stabilityPasses == true)
+    #expect(thirdDecision.recoveryStableSamplesRemaining == 0)
 }
 
 @Test("Telemetry pipeline exits recovery gate after sustained stable mid-jitter samples")
@@ -88,9 +91,11 @@ func telemetryPipelineStableMidJitterExitsRecoveryGateAfterSecondSample() async 
     #expect(secondDecision.targetBufferMs == firstDecision.targetBufferMs)
     #expect(secondDecision.action == .requestQualityReduction)
     #expect(secondDecision.stabilityPasses == true)
+    #expect(secondDecision.recoveryStableSamplesRemaining == 1)
     #expect(thirdDecision.targetBufferMs == 48.0)
     #expect(thirdDecision.action == .holdQuality)
     #expect(thirdDecision.stabilityPasses == true)
+    #expect(thirdDecision.recoveryStableSamplesRemaining == 0)
 }
 
 @Test("Telemetry pipeline honors configurable stable sample threshold before recovery release")
@@ -125,8 +130,11 @@ func telemetryPipelineHonorsCustomRecoveryStableSampleThreshold() async {
 
     #expect(firstStableDecision.targetBufferMs == 48.0)
     #expect(firstStableDecision.action == .requestQualityReduction)
+    #expect(firstStableDecision.recoveryStableSamplesRemaining == 2)
     #expect(secondStableDecision.targetBufferMs == 48.0)
     #expect(secondStableDecision.action == .requestQualityReduction)
+    #expect(secondStableDecision.recoveryStableSamplesRemaining == 1)
     #expect(thirdStableDecision.targetBufferMs == 46.0)
     #expect(thirdStableDecision.action == .holdQuality)
+    #expect(thirdStableDecision.recoveryStableSamplesRemaining == 0)
 }

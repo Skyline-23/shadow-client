@@ -11,6 +11,7 @@ func homeDiagnosticsRuntimeFirstUnstableSampleReturnsCriticalToneAndBuffer48() a
 
     #expect(tick.model.tone == .critical)
     #expect(tick.model.bufferMs == 48)
+    #expect(tick.model.recoveryStableSamplesRemaining == 2)
     #expect(tick.timestampMs == 1_000)
 }
 
@@ -23,6 +24,7 @@ func homeDiagnosticsRuntimeFirstStableSampleAfterInstabilityKeepsReducedQualityS
 
     #expect(tick.model.tone == .critical)
     #expect(tick.model.bufferMs == 48)
+    #expect(tick.model.recoveryStableSamplesRemaining == 1)
     #expect(tick.timestampMs == 1_016)
 }
 
@@ -55,6 +57,7 @@ func homeDiagnosticsRuntimeSecondStableSampleAfterInstabilityReturnsHealthyToneA
 
     #expect(tick.model.tone == .healthy)
     #expect(tick.model.bufferMs == 46)
+    #expect(tick.model.recoveryStableSamplesRemaining == 0)
     #expect(tick.timestampMs == 1_032)
 }
 
