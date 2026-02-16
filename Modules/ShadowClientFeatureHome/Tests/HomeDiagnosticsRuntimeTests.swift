@@ -15,6 +15,11 @@ func homeDiagnosticsRuntimeFirstUnstableSampleReturnsCriticalToneAndBuffer48() a
     #expect(tick.timestampMs == 1_000)
     #expect(tick.model.networkDroppedFrames == 20)
     #expect(tick.model.pacerDroppedFrames == 20)
+    #expect(tick.sessionPlan.settings.hdrVideoMode == .off)
+    #expect(tick.sessionPlan.settings.audioMode == .stereo)
+    #expect(tick.sessionPlan.shouldApplyQualityDropImmediately)
+    #expect(!tick.sessionPlan.shouldRenegotiateVideoPipeline)
+    #expect(!tick.sessionPlan.shouldRenegotiateAudioPipeline)
 }
 
 @Test("Home diagnostics runtime keeps critical tone and 48ms buffer on first stable sample after instability")
@@ -28,6 +33,11 @@ func homeDiagnosticsRuntimeFirstStableSampleAfterInstabilityKeepsReducedQualityS
     #expect(tick.model.bufferMs == 48)
     #expect(tick.model.recoveryStableSamplesRemaining == 1)
     #expect(tick.timestampMs == 1_016)
+    #expect(tick.sessionPlan.settings.hdrVideoMode == .hdr10)
+    #expect(tick.sessionPlan.settings.audioMode == .stereo)
+    #expect(tick.sessionPlan.shouldApplyQualityDropImmediately)
+    #expect(tick.sessionPlan.shouldRenegotiateVideoPipeline)
+    #expect(!tick.sessionPlan.shouldRenegotiateAudioPipeline)
 }
 
 @Test("Home diagnostics runtime clamps negative dropped frame telemetry to 0.0 frame drop percent")
@@ -47,6 +57,8 @@ func homeDiagnosticsRuntimeNegativeDropSampleClampsFrameDropPercentToZero() asyn
 
     #expect(tick.model.frameDropPercent == 0.0)
     #expect(tick.timestampMs == 2_000)
+    #expect(tick.sessionPlan.settings.hdrVideoMode == .hdr10)
+    #expect(tick.sessionPlan.settings.audioMode == .stereo)
 }
 
 @Test("Home diagnostics runtime returns healthy tone and 46ms buffer after two stable low-jitter samples post-instability")
@@ -61,6 +73,11 @@ func homeDiagnosticsRuntimeSecondStableSampleAfterInstabilityReturnsHealthyToneA
     #expect(tick.model.bufferMs == 46)
     #expect(tick.model.recoveryStableSamplesRemaining == 0)
     #expect(tick.timestampMs == 1_032)
+    #expect(tick.sessionPlan.settings.hdrVideoMode == .hdr10)
+    #expect(tick.sessionPlan.settings.audioMode == .stereo)
+    #expect(!tick.sessionPlan.shouldApplyQualityDropImmediately)
+    #expect(!tick.sessionPlan.shouldRenegotiateVideoPipeline)
+    #expect(!tick.sessionPlan.shouldRenegotiateAudioPipeline)
 }
 
 private func unstableSample() -> MoonlightQTTelemetrySample {

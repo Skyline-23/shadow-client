@@ -3,36 +3,46 @@ import ShadowClientUI
 
 public struct HomeDiagnosticsTick: Equatable, Sendable {
     public let model: StreamingDiagnosticsModel
+    public let sessionPlan: MoonlightSessionReconfigurationPlan
     public let timestampMs: Int
 
-    public init(model: StreamingDiagnosticsModel, timestampMs: Int) {
+    public init(
+        model: StreamingDiagnosticsModel,
+        sessionPlan: MoonlightSessionReconfigurationPlan,
+        timestampMs: Int
+    ) {
         self.model = model
+        self.sessionPlan = sessionPlan
         self.timestampMs = timestampMs
     }
 }
 
 public actor HomeDiagnosticsRuntime {
-    private let pipeline: LowLatencyTelemetryPipeline
+    private let launchRuntime: AdaptiveSessionLaunchRuntime
     private let presenter: StreamingDiagnosticsPresenter
 
     public init(
-        pipeline: LowLatencyTelemetryPipeline = .init(),
+        launchRuntime: AdaptiveSessionLaunchRuntime = .init(),
         presenter: StreamingDiagnosticsPresenter = .init()
     ) {
-        self.pipeline = pipeline
+        self.launchRuntime = launchRuntime
         self.presenter = presenter
     }
 
     public func ingest(qtSample: MoonlightQTTelemetrySample) async -> HomeDiagnosticsTick {
         let snapshot = StreamingTelemetrySnapshot(qtSample: qtSample)
-        let decision = await pipeline.ingest(snapshot)
+        let result = await launchRuntime.ingest(snapshot)
         let model = presenter.makeModel(
-            decision: decision,
+            decision: result.decision,
             signal: snapshot.signal,
             stats: snapshot.stats,
             dropBreakdown: snapshot.dropBreakdown
         )
 
-        return HomeDiagnosticsTick(model: model, timestampMs: snapshot.timestampMs)
+        return HomeDiagnosticsTick(
+            model: model,
+            sessionPlan: result.plan,
+            timestampMs: snapshot.timestampMs
+        )
     }
 }
