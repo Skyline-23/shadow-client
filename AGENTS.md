@@ -9,6 +9,7 @@ Tuist manifests live at repo root: `Project.swift`, `Tuist.swift`, and `Tuist/Pa
 - `Projects/App/Tests`: app-level Swift Testing suites.
 - `Modules/ShadowClientCore`, `Modules/ShadowClientStreaming`, `Modules/ShadowClientInput`, `Modules/ShadowClientUI`, `Modules/ShadowClientFeatureHome`: modular runtime layers with `Sources/` and `Tests/`.
 - `moonlight-qt-master/`: upstream reference only (gitignored), never a runtime dependency.
+`HomeFeatureBuilder` snapshots must include session configuration derived from the streaming settings mapper.
 
 ## Build, Test, and Development Commands
 Run from repository root:
