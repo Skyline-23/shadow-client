@@ -22,7 +22,9 @@ Run from repository root:
 Use Swift 6 conventions: 4-space indentation, `UpperCamelCase` for types, `lowerCamelCase` for functions/properties, and explicit access control on public APIs. Keep cross-platform logic in `Modules/*` and platform glue in `Projects/App/*`. Prefer protocol-driven boundaries over concrete cross-module imports.
 
 ## Testing Guidelines
-Use Swift Testing only (`import Testing`, `@Test`, `#expect`); do not add XCTest. TDD is mandatory: write a failing test, implement minimal code, then refactor. For streaming/input changes, keep coverage for latency gates, drop-rate/AV-sync guards, and controller feedback contracts.
+Use Swift Testing only (`import Testing`, `@Test`, `#expect`); do not add XCTest. TDD is mandatory: write a failing test, implement minimal code, then refactor. For streaming/input changes, keep coverage for latency gates, drop-rate/AV-sync guards, controller feedback contracts, and telemetry pipeline state transitions.
+
+When mapping upstream metrics, normalize through `StreamingTelemetrySnapshot(qtSample:)` before runtime decisions; keep conversion tests under `Modules/ShadowClientStreaming/Tests`.
 
 ## Agent Execution Rules
 For non-trivial work, use subagents in parallel for discovery and implementation. Assign each subagent a disjoint file/module ownership and merge only after target-level tests pass. Keep `main` in a working state with incremental commits at meaningful checkpoints.
