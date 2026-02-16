@@ -6,9 +6,9 @@ public struct ShadowClientFeatureHomeView: View {
     private let platformName: String
     private let pipeline = LowLatencyTelemetryPipeline(initialBufferMs: 40.0)
     private let diagnosticsPresenter = StreamingDiagnosticsPresenter()
-    private let ticker = Timer.publish(every: 0.8, on: .main, in: .common).autoconnect()
+    private let sessionBridge: MoonlightSessionTelemetryBridge
 
-    @State private var telemetryIndex: Int = 0
+    @State private var telemetryTask: Task<Void, Never>?
     @State private var diagnostics = StreamingDiagnosticsModel(
         bufferMs: 40,
         jitterMs: 0,
@@ -18,8 +18,12 @@ public struct ShadowClientFeatureHomeView: View {
         tone: .healthy
     )
 
-    public init(platformName: String) {
+    public init(
+        platformName: String,
+        sessionBridge: MoonlightSessionTelemetryBridge = .shared
+    ) {
         self.platformName = platformName
+        self.sessionBridge = sessionBridge
     }
 
     public var body: some View {
@@ -33,10 +37,10 @@ public struct ShadowClientFeatureHomeView: View {
         }
         .padding(24)
         .onAppear {
-            applyNextTelemetrySample()
+            startTelemetryLoop()
         }
-        .onReceive(ticker) { _ in
-            applyNextTelemetrySample()
+        .onDisappear {
+            stopTelemetryLoop()
         }
     }
 
@@ -70,52 +74,31 @@ public struct ShadowClientFeatureHomeView: View {
         }
     }
 
-    private func applyNextTelemetrySample() {
-        let samples = Self.qtTelemetrySamples
-        let sample = samples[telemetryIndex % samples.count]
-        telemetryIndex += 1
+    private func startTelemetryLoop() {
+        telemetryTask?.cancel()
+        telemetryTask = Task {
+            let stream = await sessionBridge.snapshotStream()
+            for await snapshot in stream {
+                if Task.isCancelled {
+                    break
+                }
 
-        Task {
-            let snapshot = StreamingTelemetrySnapshot(qtSample: sample)
-            let decision = await pipeline.ingest(snapshot)
-            let model = diagnosticsPresenter.makeModel(
-                decision: decision,
-                signal: snapshot.signal,
-                stats: snapshot.stats
-            )
-            await MainActor.run {
-                diagnostics = model
+                let decision = await pipeline.ingest(snapshot)
+                let model = diagnosticsPresenter.makeModel(
+                    decision: decision,
+                    signal: snapshot.signal,
+                    stats: snapshot.stats
+                )
+
+                await MainActor.run {
+                    diagnostics = model
+                }
             }
         }
     }
 
-    private static let qtTelemetrySamples: [MoonlightQTTelemetrySample] = [
-        .init(
-            renderedFrames: 995,
-            networkDroppedFrames: 2,
-            pacerDroppedFrames: 3,
-            jitterMs: 3.0,
-            packetLossPercent: 0.2,
-            avSyncOffsetMs: 14.0,
-            timestampMs: 1_000
-        ),
-        .init(
-            renderedFrames: 990,
-            networkDroppedFrames: 4,
-            pacerDroppedFrames: 6,
-            jitterMs: 12.0,
-            packetLossPercent: 0.4,
-            avSyncOffsetMs: 19.0,
-            timestampMs: 1_016
-        ),
-        .init(
-            renderedFrames: 965,
-            networkDroppedFrames: 18,
-            pacerDroppedFrames: 17,
-            jitterMs: 78.0,
-            packetLossPercent: 3.2,
-            avSyncOffsetMs: 53.0,
-            timestampMs: 1_032
-        ),
-    ]
+    private func stopTelemetryLoop() {
+        telemetryTask?.cancel()
+        telemetryTask = nil
+    }
 }
