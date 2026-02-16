@@ -64,6 +64,7 @@ public struct ShadowClientFeatureHomeView: View {
     private let platformName: String
     private let dependencies: ShadowClientFeatureHomeDependencies
     private let showsDiagnosticsHUD: Bool
+    private let onDiagnosticsTick: (@MainActor @Sendable (HomeDiagnosticsTick) -> Void)?
 
     @State private var telemetryCancellable: AnyCancellable?
     @State private var sessionPlan: MoonlightSessionReconfigurationPlan?
@@ -82,11 +83,13 @@ public struct ShadowClientFeatureHomeView: View {
     public init(
         platformName: String,
         dependencies: ShadowClientFeatureHomeDependencies,
-        showsDiagnosticsHUD: Bool = true
+        showsDiagnosticsHUD: Bool = true,
+        onDiagnosticsTick: (@MainActor @Sendable (HomeDiagnosticsTick) -> Void)? = nil
     ) {
         self.platformName = platformName
         self.dependencies = dependencies
         self.showsDiagnosticsHUD = showsDiagnosticsHUD
+        self.onDiagnosticsTick = onDiagnosticsTick
     }
 
     public var body: some View {
@@ -181,6 +184,7 @@ public struct ShadowClientFeatureHomeView: View {
                 await MainActor.run {
                     sessionPlan = tick.sessionPlan
                     diagnostics = tick.model
+                    onDiagnosticsTick?(tick)
                 }
             }
         }

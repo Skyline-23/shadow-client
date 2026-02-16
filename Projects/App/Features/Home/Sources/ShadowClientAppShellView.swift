@@ -14,6 +14,7 @@ public struct ShadowClientAppShellView: View {
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferHDR) private var preferHDR = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferSurroundAudio) private var preferSurroundAudio = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.showDiagnosticsHUD) private var showDiagnosticsHUD = true
+    @State private var latestDiagnosticsTick: HomeDiagnosticsTick?
 
     public init(platformName: String, dependencies: ShadowClientFeatureHomeDependencies) {
         self.platformName = platformName
@@ -37,6 +38,10 @@ public struct ShadowClientAppShellView: View {
         )
     }
 
+    private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel? {
+        latestDiagnosticsTick.map(SettingsDiagnosticsHUDModel.init(tick:))
+    }
+
     private var homeTab: some View {
         NavigationStack {
             ZStack {
@@ -46,7 +51,10 @@ public struct ShadowClientAppShellView: View {
                         ShadowClientFeatureHomeView(
                             platformName: platformName,
                             dependencies: baseDependencies.applying(settings: currentSettings),
-                            showsDiagnosticsHUD: currentSettings.showDiagnosticsHUD
+                            showsDiagnosticsHUD: currentSettings.showDiagnosticsHUD,
+                            onDiagnosticsTick: { tick in
+                                latestDiagnosticsTick = tick
+                            }
                         )
                         .id(currentSettings.identityKey)
                         .frame(maxWidth: .infinity, alignment: .top)
@@ -84,6 +92,27 @@ public struct ShadowClientAppShellView: View {
                 Section("Diagnostics") {
                     Toggle(isOn: $showDiagnosticsHUD) {
                         Label("Show Debug HUD", systemImage: "waveform.path.ecg.rectangle")
+                    }
+                }
+
+                Section("Session Launch Plan") {
+                    if let settingsDiagnosticsModel {
+                        Text("Tone: \(settingsDiagnosticsModel.tone.rawValue.uppercased())")
+                            .font(.footnote.monospacedDigit())
+                        Text("Session Video: \(settingsDiagnosticsModel.hdrVideoMode.rawValue.uppercased()) | Audio: \(settingsDiagnosticsModel.audioMode.rawValue.uppercased())")
+                            .font(.footnote.monospacedDigit())
+                        Text("Reconfig V:\(settingsDiagnosticsModel.shouldRenegotiateVideoPipeline ? "Y" : "N") A:\(settingsDiagnosticsModel.shouldRenegotiateAudioPipeline ? "Y" : "N") | QDrop: \(settingsDiagnosticsModel.shouldApplyQualityDropImmediately ? "Y" : "N")")
+                            .font(.footnote.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        if settingsDiagnosticsModel.recoveryStableSamplesRemaining > 0 {
+                            Text("Recovery Hold: \(settingsDiagnosticsModel.recoveryStableSamplesRemaining) stable sample(s) remaining")
+                                .font(.footnote.monospacedDigit())
+                                .foregroundStyle(.orange)
+                        }
+                    } else {
+                        Label("Awaiting telemetry samples from Home tab.", systemImage: "antenna.radiowaves.left.and.right")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
