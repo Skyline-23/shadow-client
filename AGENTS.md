@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 Tuist manifests live at repo root: `Project.swift`, `Tuist.swift`, and `Tuist/Package.swift`.
 - `Projects/App/iOS`, `Projects/App/macOS`, `Projects/App/tvOS`: app entrypoints.
-- `Projects/App/Features/Home`: Home runtime and diagnostics HUD wiring.
+- `Projects/App/Features/Home`: Home runtime, shell, and settings HUD wiring.
 - `Projects/App/Tests`: test suites.
 - `Modules/ShadowClientCore`, `Modules/ShadowClientStreaming`, `Modules/ShadowClientInput`, `Modules/ShadowClientUI`, `Modules/ShadowClientFeatureHome`: layers with `Sources/` and `Tests/`.
 - `moonlight-qt-master/`: upstream reference only (gitignored), never a runtime dependency.
@@ -15,7 +15,7 @@ Run from repository root:
 - `tuist generate --no-open`: generate `shadow-client.xcworkspace`.
 - `xcodebuild build -workspace shadow-client.xcworkspace -scheme ShadowClientiOSApp -destination 'generic/platform=iOS Simulator'`: build iOS app.
 - `xcodebuild test -workspace shadow-client.xcworkspace -scheme ShadowClientTests -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2'`: run app test bundle.
-- `cd Modules && swift test`: fast module verification during TDD loops.
+- `cd Modules && swift test`: fast module verification in TDD.
 
 ## Coding Style & Naming Conventions
 Use Swift 6 style: 4-space indentation, `UpperCamelCase` for types, `lowerCamelCase` for functions/properties, and explicit access control for exported APIs. Keep platform-specific glue in `Projects/App/*` and logic in `Modules/*`.
