@@ -101,8 +101,11 @@ func adaptiveSessionLaunchRuntimeEmitsRenegotiationPlanAcrossTransition() async 
         timestampMs: 1_016
     )
 
-    let firstPlan = await runtime.ingest(healthySnapshot)
-    let secondPlan = await runtime.ingest(degradedSnapshot)
+    let firstResult = await runtime.ingest(healthySnapshot)
+    let secondResult = await runtime.ingest(degradedSnapshot)
+
+    let firstPlan = firstResult.plan
+    let secondPlan = secondResult.plan
 
     #expect(firstPlan.settings.hdrVideoMode == .hdr10)
     #expect(firstPlan.settings.audioMode == .surround51)
@@ -119,4 +122,12 @@ func adaptiveSessionLaunchRuntimeEmitsRenegotiationPlanAcrossTransition() async 
     #expect(secondPlan.shouldRenegotiateVideoPipeline)
     #expect(secondPlan.shouldRenegotiateAudioPipeline)
     #expect(secondPlan.shouldApplyQualityDropImmediately)
+
+    #expect(firstResult.decision.action == .holdQuality)
+    #expect(firstResult.decision.stabilityPasses)
+    #expect(firstResult.decision.recoveryStableSamplesRemaining == 0)
+
+    #expect(secondResult.decision.action == .requestQualityReduction)
+    #expect(!secondResult.decision.stabilityPasses)
+    #expect(secondResult.decision.recoveryStableSamplesRemaining == 2)
 }

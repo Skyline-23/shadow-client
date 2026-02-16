@@ -98,6 +98,19 @@ public struct MoonlightSessionLaunchPlanBuilder: Sendable {
 }
 
 public actor AdaptiveSessionLaunchRuntime {
+    public struct IngestResult: Equatable, Sendable {
+        public let decision: LowLatencyStreamingDecision
+        public let plan: MoonlightSessionReconfigurationPlan
+
+        public init(
+            decision: LowLatencyStreamingDecision,
+            plan: MoonlightSessionReconfigurationPlan
+        ) {
+            self.decision = decision
+            self.plan = plan
+        }
+    }
+
     private let telemetryPipeline: LowLatencyTelemetryPipeline
     private let settingsMapper: StreamingSessionSettingsMapper
     private let launchPlanBuilder: MoonlightSessionLaunchPlanBuilder
@@ -127,7 +140,7 @@ public actor AdaptiveSessionLaunchRuntime {
         self.previousSettings = nil
     }
 
-    public func ingest(_ snapshot: StreamingTelemetrySnapshot) async -> MoonlightSessionReconfigurationPlan {
+    public func ingest(_ snapshot: StreamingTelemetrySnapshot) async -> IngestResult {
         let decision = await telemetryPipeline.ingest(snapshot)
         let sessionConfiguration = settingsMapper.map(
             preferences: sessionPreferences,
@@ -140,7 +153,7 @@ public actor AdaptiveSessionLaunchRuntime {
             decision: decision
         )
         previousSettings = plan.settings
-        return plan
+        return IngestResult(decision: decision, plan: plan)
     }
 
     public func currentSettings() -> MoonlightSessionLaunchSettings? {
