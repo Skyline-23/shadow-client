@@ -31,7 +31,7 @@ Propagate recovery diagnostics and session launch plan (HDR/audio/reconfigure fl
 TDD is mandatory: start with a failing test, implement minimally, then refactor.
 Use Swift Testing (`import Testing`, `@Test`, `#expect`) for authored tests, and do not add new `XCTestCase`-based tests.
 Keep coverage for low-latency gates, telemetry normalization, HDR/audio/settings behavior, native controller mapping profiles, and controller feedback contracts.
-Use `StreamingSessionSettingsMapper` + `AdaptiveSessionLaunchRuntime` for telemetry-driven HDR/audio launch and renegotiation plans.
+Use `StreamingSessionSettingsMapper` + `AdaptiveSessionLaunchRuntime` + `ControllerInputRuntime` for telemetry-driven launch/input runtime plans.
 
 ## Commit & PR Guidelines
 History already follows Conventional Commits (`feat(streaming): ...`, `docs(agents): ...`, `chore(...)`); keep using that format. Make small, single-purpose commits on `main` and keep the tree buildable.
