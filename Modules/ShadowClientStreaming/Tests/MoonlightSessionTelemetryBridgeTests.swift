@@ -1,3 +1,4 @@
+import Combine
 import Testing
 @testable import ShadowClientStreaming
 
@@ -79,4 +80,36 @@ func sessionBridgeRemovesSubscriberAfterCancellation() async {
     }
 
     #expect(await bridge.activeSubscriberCount() == 0)
+}
+
+@Test("Session bridge publishes snapshots through Combine publisher")
+func sessionBridgePublishesSnapshotThroughCombine() async {
+    let bridge = MoonlightSessionTelemetryBridge()
+    let sample = MoonlightQTTelemetrySample(
+        renderedFrames: 777,
+        networkDroppedFrames: 6,
+        pacerDroppedFrames: 2,
+        jitterMs: 9.5,
+        packetLossPercent: 0.6,
+        avSyncOffsetMs: 7.0,
+        timestampMs: 8_888
+    )
+
+    let snapshot: StreamingTelemetrySnapshot = await withCheckedContinuation { continuation in
+        var cancellable: AnyCancellable?
+        cancellable = bridge.snapshotPublisher.sink { value in
+            cancellable?.cancel()
+            continuation.resume(returning: value)
+        }
+
+        Task {
+            await bridge.ingest(qtSample: sample)
+        }
+    }
+
+    #expect(snapshot.stats.renderedFrames == 777)
+    #expect(snapshot.stats.droppedFrames == 8)
+    #expect(snapshot.signal.jitterMs == 9.5)
+    #expect(snapshot.signal.packetLossPercent == 0.6)
+    #expect(snapshot.timestampMs == 8_888)
 }

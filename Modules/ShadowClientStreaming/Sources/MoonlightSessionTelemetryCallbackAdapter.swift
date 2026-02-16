@@ -29,7 +29,7 @@ public struct MoonlightSessionRawTelemetry: Equatable, Sendable {
 public enum MoonlightSessionTelemetryCallbackAdapter {
     public static func ingest(
         _ raw: MoonlightSessionRawTelemetry,
-        bridge: MoonlightSessionTelemetryBridge = .shared
+        bridge: MoonlightSessionTelemetryBridge
     ) async {
         let sample = MoonlightQTTelemetrySample(
             renderedFrames: raw.renderedFrames,

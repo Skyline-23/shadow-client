@@ -1,14 +1,43 @@
+import Combine
 import ShadowClientStreaming
 import ShadowClientUI
 import SwiftUI
 
+public struct ShadowClientFeatureHomeDependencies {
+    public let telemetryPublisher: AnyPublisher<StreamingTelemetrySnapshot, Never>
+    public let pipeline: LowLatencyTelemetryPipeline
+    public let diagnosticsPresenter: StreamingDiagnosticsPresenter
+
+    public init(
+        telemetryPublisher: AnyPublisher<StreamingTelemetrySnapshot, Never>,
+        pipeline: LowLatencyTelemetryPipeline,
+        diagnosticsPresenter: StreamingDiagnosticsPresenter
+    ) {
+        self.telemetryPublisher = telemetryPublisher
+        self.pipeline = pipeline
+        self.diagnosticsPresenter = diagnosticsPresenter
+    }
+}
+
+public extension ShadowClientFeatureHomeDependencies {
+    static func live(bridge: MoonlightSessionTelemetryBridge) -> Self {
+        .init(
+            telemetryPublisher: bridge.snapshotPublisher,
+            pipeline: LowLatencyTelemetryPipeline(initialBufferMs: 40.0),
+            diagnosticsPresenter: StreamingDiagnosticsPresenter()
+        )
+    }
+
+    static func preview() -> Self {
+        live(bridge: MoonlightSessionTelemetryBridge())
+    }
+}
+
 public struct ShadowClientFeatureHomeView: View {
     private let platformName: String
-    private let pipeline = LowLatencyTelemetryPipeline(initialBufferMs: 40.0)
-    private let diagnosticsPresenter = StreamingDiagnosticsPresenter()
-    private let sessionBridge: MoonlightSessionTelemetryBridge
+    private let dependencies: ShadowClientFeatureHomeDependencies
 
-    @State private var telemetryTask: Task<Void, Never>?
+    @State private var telemetryCancellable: AnyCancellable?
     @State private var diagnostics = StreamingDiagnosticsModel(
         bufferMs: 40,
         jitterMs: 0,
@@ -18,12 +47,9 @@ public struct ShadowClientFeatureHomeView: View {
         tone: .healthy
     )
 
-    public init(
-        platformName: String,
-        sessionBridge: MoonlightSessionTelemetryBridge = .shared
-    ) {
+    public init(platformName: String, dependencies: ShadowClientFeatureHomeDependencies) {
         self.platformName = platformName
-        self.sessionBridge = sessionBridge
+        self.dependencies = dependencies
     }
 
     public var body: some View {
@@ -37,10 +63,10 @@ public struct ShadowClientFeatureHomeView: View {
         }
         .padding(24)
         .onAppear {
-            startTelemetryLoop()
+            startTelemetrySubscription()
         }
         .onDisappear {
-            stopTelemetryLoop()
+            stopTelemetrySubscription()
         }
     }
 
@@ -74,17 +100,12 @@ public struct ShadowClientFeatureHomeView: View {
         }
     }
 
-    private func startTelemetryLoop() {
-        telemetryTask?.cancel()
-        telemetryTask = Task {
-            let stream = await sessionBridge.snapshotStream()
-            for await snapshot in stream {
-                if Task.isCancelled {
-                    break
-                }
-
-                let decision = await pipeline.ingest(snapshot)
-                let model = diagnosticsPresenter.makeModel(
+    private func startTelemetrySubscription() {
+        telemetryCancellable?.cancel()
+        telemetryCancellable = dependencies.telemetryPublisher.sink { snapshot in
+            Task {
+                let decision = await dependencies.pipeline.ingest(snapshot)
+                let model = dependencies.diagnosticsPresenter.makeModel(
                     decision: decision,
                     signal: snapshot.signal,
                     stats: snapshot.stats
@@ -97,8 +118,8 @@ public struct ShadowClientFeatureHomeView: View {
         }
     }
 
-    private func stopTelemetryLoop() {
-        telemetryTask?.cancel()
-        telemetryTask = nil
+    private func stopTelemetrySubscription() {
+        telemetryCancellable?.cancel()
+        telemetryCancellable = nil
     }
 }

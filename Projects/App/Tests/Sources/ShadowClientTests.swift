@@ -3,6 +3,9 @@ import Testing
 
 struct ShadowClientTests {
     static func makeHomeView() -> ShadowClientFeatureHomeView {
-        ShadowClientFeatureHomeView(platformName: "Tests")
+        ShadowClientFeatureHomeView(
+            platformName: "Tests",
+            dependencies: .preview()
+        )
     }
 }

@@ -37,6 +37,8 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
+                .external(name: "ShadowClientStreaming"),
+                .external(name: "ShadowClientUI"),
             ]
         ),
         .target(
@@ -51,6 +53,8 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
+                .external(name: "ShadowClientStreaming"),
+                .external(name: "ShadowClientUI"),
             ]
         ),
         .target(
@@ -72,6 +76,8 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
+                .external(name: "ShadowClientStreaming"),
+                .external(name: "ShadowClientUI"),
             ]
         ),
         .target(
