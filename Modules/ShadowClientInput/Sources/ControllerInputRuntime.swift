@@ -45,6 +45,15 @@ public actor ControllerInputRuntime {
         return mappedState
     }
 
+    @discardableResult
+    public func ingest(
+        gameControllerState: any GameControllerStateProviding,
+        adapter: GameControllerInputAdapter = .init()
+    ) -> MappedControllerState {
+        let snapshot = adapter.makeSnapshot(from: gameControllerState)
+        return ingest(snapshot)
+    }
+
     public func currentState() -> MappedControllerState? {
         latestState
     }

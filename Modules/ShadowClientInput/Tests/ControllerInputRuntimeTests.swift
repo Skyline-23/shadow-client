@@ -90,3 +90,25 @@ func controllerInputRuntimeRemovesSubscribersAfterCancellation() async {
 
     #expect(await runtime.activeSubscriberCount() == 0)
 }
+
+@Test("Controller input runtime ingests GameController state through adapter path")
+func controllerInputRuntimeIngestsGameControllerState() async {
+    let runtime = ControllerInputRuntime()
+    let state = GameControllerStateStub(
+        faceSouthPressed: true,
+        menuPressed: true,
+        leftStickX: 0.5,
+        rightStickX: -0.2,
+        leftTriggerValue: 1.0
+    )
+
+    let mappedState = await runtime.ingest(gameControllerState: state)
+    let latestState = await runtime.currentState()
+
+    #expect(mappedState.pressedButtons.contains(.actionSouth))
+    #expect(mappedState.pressedButtons.contains(.menu))
+    #expect(mappedState.axisValues[.moveX] == 0.5)
+    #expect(mappedState.axisValues[.cameraX] == -0.2)
+    #expect(mappedState.axisValues[.leftTrigger] == 1.0)
+    #expect(latestState?.pressedButtons.contains(.actionSouth) == true)
+}
