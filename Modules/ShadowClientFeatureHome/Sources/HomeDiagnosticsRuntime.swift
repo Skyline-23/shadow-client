@@ -29,7 +29,8 @@ public actor HomeDiagnosticsRuntime {
         let model = presenter.makeModel(
             decision: decision,
             signal: snapshot.signal,
-            stats: snapshot.stats
+            stats: snapshot.stats,
+            dropBreakdown: snapshot.dropBreakdown
         )
 
         return HomeDiagnosticsTick(model: model, timestampMs: snapshot.timestampMs)

@@ -43,7 +43,11 @@ public extension StreamingTelemetrySnapshot {
                 jitterMs: qtSample.jitterMs,
                 packetLossPercent: qtSample.packetLossPercent
             ),
-            timestampMs: qtSample.timestampMs
+            timestampMs: qtSample.timestampMs,
+            dropBreakdown: .init(
+                networkDroppedFrames: clampedNetworkDrop,
+                pacerDroppedFrames: clampedPacerDrop
+            )
         )
     }
 }

@@ -69,6 +69,8 @@ public struct ShadowClientFeatureHomeView: View {
         packetLossPercent: 0.0,
         frameDropPercent: 0.0,
         avSyncOffsetMs: 0,
+        networkDroppedFrames: 0,
+        pacerDroppedFrames: 0,
         recoveryStableSamplesRemaining: 0,
         tone: .healthy
     )
@@ -103,11 +105,13 @@ public struct ShadowClientFeatureHomeView: View {
             Text("Tone: \(diagnostics.tone.rawValue.uppercased())")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(toneColor)
-            Text("Target Buffer: \(diagnostics.bufferMs) ms")
-                .font(.caption.monospacedDigit())
-            Text("Jitter: \(diagnostics.jitterMs) ms | Packet Loss: \(String(format: "%.1f", diagnostics.packetLossPercent))%")
-                .font(.caption.monospacedDigit())
+                Text("Target Buffer: \(diagnostics.bufferMs) ms")
+                    .font(.caption.monospacedDigit())
+                Text("Jitter: \(diagnostics.jitterMs) ms | Packet Loss: \(String(format: "%.1f", diagnostics.packetLossPercent))%")
+                    .font(.caption.monospacedDigit())
             Text("Frame Drop: \(String(format: "%.1f", diagnostics.frameDropPercent))% | AV Sync: \(diagnostics.avSyncOffsetMs) ms")
+                .font(.caption.monospacedDigit())
+            Text("Drop Origin: NET \(diagnostics.networkDroppedFrames) | PACER \(diagnostics.pacerDroppedFrames)")
                 .font(.caption.monospacedDigit())
             if diagnostics.recoveryStableSamplesRemaining > 0 {
                 Text("Recovery Hold: \(diagnostics.recoveryStableSamplesRemaining) stable sample(s) remaining")
@@ -146,7 +150,8 @@ public struct ShadowClientFeatureHomeView: View {
                 let model = dependencies.diagnosticsPresenter.makeModel(
                     decision: decision,
                     signal: snapshot.signal,
-                    stats: snapshot.stats
+                    stats: snapshot.stats,
+                    dropBreakdown: snapshot.dropBreakdown
                 )
                 let sessionConfiguration = dependencies.settingsMapper.map(
                     preferences: dependencies.sessionPreferences,

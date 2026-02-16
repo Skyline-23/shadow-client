@@ -13,6 +13,8 @@ func homeDiagnosticsRuntimeFirstUnstableSampleReturnsCriticalToneAndBuffer48() a
     #expect(tick.model.bufferMs == 48)
     #expect(tick.model.recoveryStableSamplesRemaining == 2)
     #expect(tick.timestampMs == 1_000)
+    #expect(tick.model.networkDroppedFrames == 20)
+    #expect(tick.model.pacerDroppedFrames == 20)
 }
 
 @Test("Home diagnostics runtime keeps critical tone and 48ms buffer on first stable sample after instability")

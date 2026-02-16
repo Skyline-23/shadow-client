@@ -6,6 +6,8 @@ public struct StreamingDiagnosticsModel: Equatable, Sendable {
     public let packetLossPercent: Double
     public let frameDropPercent: Double
     public let avSyncOffsetMs: Int
+    public let networkDroppedFrames: Int
+    public let pacerDroppedFrames: Int
     public let recoveryStableSamplesRemaining: Int
     public let tone: HealthTone
 
@@ -15,6 +17,8 @@ public struct StreamingDiagnosticsModel: Equatable, Sendable {
         packetLossPercent: Double,
         frameDropPercent: Double,
         avSyncOffsetMs: Int,
+        networkDroppedFrames: Int,
+        pacerDroppedFrames: Int,
         recoveryStableSamplesRemaining: Int,
         tone: HealthTone
     ) {
@@ -23,6 +27,8 @@ public struct StreamingDiagnosticsModel: Equatable, Sendable {
         self.packetLossPercent = packetLossPercent
         self.frameDropPercent = frameDropPercent
         self.avSyncOffsetMs = avSyncOffsetMs
+        self.networkDroppedFrames = networkDroppedFrames
+        self.pacerDroppedFrames = pacerDroppedFrames
         self.recoveryStableSamplesRemaining = max(0, recoveryStableSamplesRemaining)
         self.tone = tone
     }
@@ -34,7 +40,8 @@ public struct StreamingDiagnosticsPresenter: Sendable {
     public func makeModel(
         decision: LowLatencyStreamingDecision,
         signal: StreamingNetworkSignal,
-        stats: StreamingStats
+        stats: StreamingStats,
+        dropBreakdown: StreamingDropBreakdown
     ) -> StreamingDiagnosticsModel {
         let frameDropPercent: Double
         if stats.totalFrames > 0 {
@@ -58,6 +65,8 @@ public struct StreamingDiagnosticsPresenter: Sendable {
             packetLossPercent: signal.packetLossPercent,
             frameDropPercent: frameDropPercent,
             avSyncOffsetMs: Int(stats.avSyncOffsetMilliseconds.rounded()),
+            networkDroppedFrames: dropBreakdown.networkDroppedFrames,
+            pacerDroppedFrames: dropBreakdown.pacerDroppedFrames,
             recoveryStableSamplesRemaining: decision.recoveryStableSamplesRemaining,
             tone: tone
         )

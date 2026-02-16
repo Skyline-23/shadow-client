@@ -18,13 +18,16 @@ func diagnosticsPresenterCriticalToneWhenQualityReductionRequested() {
     )
     let expectedFrameDropPercent = (Double(stats.droppedFrames) / Double(stats.totalFrames)) * 100.0
 
-    let model = presenter.makeModel(decision: decision, signal: signal, stats: stats)
+    let dropBreakdown = StreamingDropBreakdown(networkDroppedFrames: 30, pacerDroppedFrames: 10)
+    let model = presenter.makeModel(decision: decision, signal: signal, stats: stats, dropBreakdown: dropBreakdown)
 
     #expect(model.bufferMs == 48)
     #expect(model.jitterMs == 80)
     #expect(model.packetLossPercent == 3.0)
     #expect(model.frameDropPercent == expectedFrameDropPercent)
     #expect(model.avSyncOffsetMs == 55)
+    #expect(model.networkDroppedFrames == 30)
+    #expect(model.pacerDroppedFrames == 10)
     #expect(model.recoveryStableSamplesRemaining == 0)
     #expect(model.tone == .critical)
 }
@@ -45,13 +48,16 @@ func diagnosticsPresenterHealthyToneWhenStableAndHoldingQuality() {
     )
     let expectedFrameDropPercent = (Double(stats.droppedFrames) / Double(stats.totalFrames)) * 100.0
 
-    let model = presenter.makeModel(decision: decision, signal: signal, stats: stats)
+    let dropBreakdown = StreamingDropBreakdown(networkDroppedFrames: 2, pacerDroppedFrames: 3)
+    let model = presenter.makeModel(decision: decision, signal: signal, stats: stats, dropBreakdown: dropBreakdown)
 
     #expect(model.bufferMs == 38)
     #expect(model.jitterMs == 3)
     #expect(model.packetLossPercent == 0.2)
     #expect(model.frameDropPercent == expectedFrameDropPercent)
     #expect(model.avSyncOffsetMs == 12)
+    #expect(model.networkDroppedFrames == 2)
+    #expect(model.pacerDroppedFrames == 3)
     #expect(model.recoveryStableSamplesRemaining == 0)
     #expect(model.tone == .healthy)
 }
@@ -72,8 +78,11 @@ func diagnosticsPresenterPreservesRecoveryStableSampleRemainingCount() {
         avSyncOffsetMilliseconds: 10.0
     )
 
-    let model = presenter.makeModel(decision: decision, signal: signal, stats: stats)
+    let dropBreakdown = StreamingDropBreakdown(networkDroppedFrames: 1, pacerDroppedFrames: 0)
+    let model = presenter.makeModel(decision: decision, signal: signal, stats: stats, dropBreakdown: dropBreakdown)
 
+    #expect(model.networkDroppedFrames == 1)
+    #expect(model.pacerDroppedFrames == 0)
     #expect(model.recoveryStableSamplesRemaining == 1)
     #expect(model.tone == .critical)
 }
