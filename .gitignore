@@ -9,3 +9,6 @@
 # SwiftPM build artifacts
 /Modules/.build/
 /Tuist/.build/
+
+# Upstream Qt reference snapshot (do not track in this repo)
+/moonlight-qt-master/
