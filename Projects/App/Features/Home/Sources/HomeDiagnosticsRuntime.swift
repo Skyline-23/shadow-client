@@ -44,8 +44,4 @@ public actor HomeDiagnosticsRuntime {
             timestampMs: snapshot.timestampMs
         )
     }
-
-    public func ingest(qtSample: MoonlightQTTelemetrySample) async -> HomeDiagnosticsTick {
-        await ingest(snapshot: StreamingTelemetrySnapshot(qtSample: qtSample))
-    }
 }

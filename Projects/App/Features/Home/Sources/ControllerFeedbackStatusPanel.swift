@@ -6,6 +6,24 @@ struct ControllerFeedbackPanelSnapshot: Equatable, Sendable {
     let statusModel: ControllerFeedbackStatusModel
     let mappedButtonCount: Int
     let mappedAxisCount: Int
+    let mappedButtonNames: [String]
+    let leftTriggerValue: Double?
+}
+
+struct ControllerFeedbackSimulationInputPlan: Equatable, Sendable {
+    let crossPressed: Bool
+    let menuPressed: Bool
+    let leftTriggerValue: Double
+
+    init(
+        crossPressed: Bool = true,
+        menuPressed: Bool = true,
+        leftTriggerValue: Double = 0.75
+    ) {
+        self.crossPressed = crossPressed
+        self.menuPressed = menuPressed
+        self.leftTriggerValue = leftTriggerValue
+    }
 }
 
 actor ControllerFeedbackPanelRuntime {
@@ -20,19 +38,28 @@ actor ControllerFeedbackPanelRuntime {
         self.presenter = presenter
     }
 
-    func makeSnapshot(state: ControllerFeedbackSimulationState) async -> ControllerFeedbackPanelSnapshot {
+    func makeSnapshot(
+        state: ControllerFeedbackSimulationState,
+        inputPlan: ControllerFeedbackSimulationInputPlan
+    ) async -> ControllerFeedbackPanelSnapshot {
         let evaluation = await runtime.ingest(
-            gameControllerState: ControllerFeedbackSimulationInputState(),
+            gameControllerState: ControllerFeedbackSimulationInputState(inputPlan: inputPlan),
             device: ControllerFeedbackSimulationDevice(
                 transport: state.transport,
                 capabilities: state.capabilities
             )
         )
 
+        let mappedButtonNames = evaluation.state.pressedButtons
+            .map(\.rawValue)
+            .sorted()
+
         return ControllerFeedbackPanelSnapshot(
             statusModel: presenter.makeModel(evaluation: evaluation),
             mappedButtonCount: evaluation.state.pressedButtons.count,
-            mappedAxisCount: evaluation.state.axisValues.count
+            mappedAxisCount: evaluation.state.axisValues.count,
+            mappedButtonNames: mappedButtonNames,
+            leftTriggerValue: evaluation.state.axisValues[.leftTrigger]
         )
     }
 }
@@ -43,7 +70,9 @@ private struct ControllerFeedbackSimulationDevice: DualSenseFeedbackDevice {
 }
 
 private struct ControllerFeedbackSimulationInputState: GameControllerStateProviding {
-    var faceSouthPressed: Bool { true }
+    let inputPlan: ControllerFeedbackSimulationInputPlan
+
+    var faceSouthPressed: Bool { inputPlan.crossPressed }
     var faceEastPressed: Bool { false }
     var faceWestPressed: Bool { false }
     var faceNorthPressed: Bool { false }
@@ -55,12 +84,12 @@ private struct ControllerFeedbackSimulationInputState: GameControllerStateProvid
     var dpadDownPressed: Bool { false }
     var dpadLeftPressed: Bool { false }
     var dpadRightPressed: Bool { false }
-    var menuPressed: Bool { true }
+    var menuPressed: Bool { inputPlan.menuPressed }
     var leftStickX: Double { 0.0 }
     var leftStickY: Double { 0.0 }
     var rightStickX: Double { 0.0 }
     var rightStickY: Double { 0.0 }
-    var leftTriggerValue: Double { 0.75 }
+    var leftTriggerValue: Double { inputPlan.leftTriggerValue }
     var rightTriggerValue: Double { 0.0 }
 }
 
@@ -69,6 +98,9 @@ struct ControllerFeedbackStatusPanel: View {
     @State private var supportsRumble = true
     @State private var supportsAdaptiveTriggers = true
     @State private var supportsLED = true
+    @State private var simulateCrossPressed = true
+    @State private var simulateMenuPressed = true
+    @State private var simulateLeftTriggerValue = 0.75
     @State private var runtimeSnapshot: ControllerFeedbackPanelSnapshot?
 
     private let presenter = ControllerFeedbackStatusPresenter()
@@ -87,12 +119,28 @@ struct ControllerFeedbackStatusPanel: View {
         runtimeSnapshot?.statusModel ?? presenter.makeModel(state: simulationState)
     }
 
+    private var inputPlan: ControllerFeedbackSimulationInputPlan {
+        .init(
+            crossPressed: simulateCrossPressed,
+            menuPressed: simulateMenuPressed,
+            leftTriggerValue: simulateLeftTriggerValue
+        )
+    }
+
+    private var runtimeTaskKey: RuntimeTaskKey {
+        .init(simulationState: simulationState, inputPlan: inputPlan)
+    }
+
     private var mappingSummary: String {
         guard let runtimeSnapshot else {
             return "Input Mapping: pending"
         }
 
-        return "Input Mapping: \(runtimeSnapshot.mappedButtonCount) button(s), \(runtimeSnapshot.mappedAxisCount) axis value(s)"
+        let buttonList = runtimeSnapshot.mappedButtonNames.joined(separator: ", ")
+        let mappedButtons = buttonList.isEmpty ? "none" : buttonList
+        let leftTriggerValue = String(format: "%.2f", runtimeSnapshot.leftTriggerValue ?? 0.0)
+
+        return "Input Mapping: \(runtimeSnapshot.mappedButtonCount) button(s), \(runtimeSnapshot.mappedAxisCount) axis value(s), LT \(leftTriggerValue) [\(mappedButtons)]"
     }
 
     var body: some View {
@@ -116,13 +164,22 @@ struct ControllerFeedbackStatusPanel: View {
                 Toggle("Rumble Support", isOn: $supportsRumble)
                 Toggle("Adaptive Triggers", isOn: $supportsAdaptiveTriggers)
                 Toggle("LED Indicator", isOn: $supportsLED)
+                Divider()
+                Toggle("Simulate CROSS Press", isOn: $simulateCrossPressed)
+                Toggle("Simulate MENU Press", isOn: $simulateMenuPressed)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Simulate Left Trigger")
+                    Slider(value: $simulateLeftTriggerValue, in: -1.0 ... 2.0, step: 0.05)
+                    Text(String(format: "%.2f", simulateLeftTriggerValue))
+                        .foregroundStyle(.secondary)
+                }
             }
             .font(.caption)
         }
         .padding(16)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .task(id: simulationState) {
-            await refreshRuntimeSnapshot(for: simulationState)
+        .task(id: runtimeTaskKey) {
+            await refreshRuntimeSnapshot(state: simulationState, inputPlan: inputPlan)
         }
     }
 
@@ -160,7 +217,15 @@ struct ControllerFeedbackStatusPanel: View {
     }
 
     @MainActor
-    private func refreshRuntimeSnapshot(for state: ControllerFeedbackSimulationState) async {
-        runtimeSnapshot = await runtime.makeSnapshot(state: state)
+    private func refreshRuntimeSnapshot(
+        state: ControllerFeedbackSimulationState,
+        inputPlan: ControllerFeedbackSimulationInputPlan
+    ) async {
+        runtimeSnapshot = await runtime.makeSnapshot(state: state, inputPlan: inputPlan)
     }
+}
+
+private struct RuntimeTaskKey: Equatable, Sendable {
+    let simulationState: ControllerFeedbackSimulationState
+    let inputPlan: ControllerFeedbackSimulationInputPlan
 }

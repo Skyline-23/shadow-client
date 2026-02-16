@@ -1,30 +1,28 @@
 import Combine
+import ShadowClientFeatureHome
 import ShadowClientStreaming
 import ShadowClientUI
 import SwiftUI
 
 public struct ShadowClientFeatureHomeDependencies {
     public let telemetryPublisher: AnyPublisher<StreamingTelemetrySnapshot, Never>
-    public let diagnosticsPresenter: StreamingDiagnosticsPresenter
+    public let diagnosticsRuntime: HomeDiagnosticsRuntime
     public let settingsMapper: StreamingSessionSettingsMapper
     public let sessionPreferences: StreamingUserPreferences
     public let hostCapabilities: HostStreamingCapabilities
-    public let launchRuntime: AdaptiveSessionLaunchRuntime
 
     public init(
         telemetryPublisher: AnyPublisher<StreamingTelemetrySnapshot, Never>,
-        diagnosticsPresenter: StreamingDiagnosticsPresenter,
+        diagnosticsRuntime: HomeDiagnosticsRuntime,
         settingsMapper: StreamingSessionSettingsMapper,
         sessionPreferences: StreamingUserPreferences,
-        hostCapabilities: HostStreamingCapabilities,
-        launchRuntime: AdaptiveSessionLaunchRuntime
+        hostCapabilities: HostStreamingCapabilities
     ) {
         self.telemetryPublisher = telemetryPublisher
-        self.diagnosticsPresenter = diagnosticsPresenter
+        self.diagnosticsRuntime = diagnosticsRuntime
         self.settingsMapper = settingsMapper
         self.sessionPreferences = sessionPreferences
         self.hostCapabilities = hostCapabilities
-        self.launchRuntime = launchRuntime
     }
 }
 
@@ -40,19 +38,20 @@ public extension ShadowClientFeatureHomeDependencies {
             supportsHDR10: true,
             supportsSurround51: true
         )
+        let launchRuntime = AdaptiveSessionLaunchRuntime(
+            telemetryPipeline: .init(initialBufferMs: 40.0),
+            settingsMapper: settingsMapper,
+            sessionPreferences: sessionPreferences,
+            hostCapabilities: hostCapabilities
+        )
+        let diagnosticsRuntime = HomeDiagnosticsRuntime(launchRuntime: launchRuntime)
 
         return .init(
             telemetryPublisher: bridge.snapshotPublisher,
-            diagnosticsPresenter: StreamingDiagnosticsPresenter(),
+            diagnosticsRuntime: diagnosticsRuntime,
             settingsMapper: settingsMapper,
             sessionPreferences: sessionPreferences,
-            hostCapabilities: hostCapabilities,
-            launchRuntime: AdaptiveSessionLaunchRuntime(
-                telemetryPipeline: .init(initialBufferMs: 40.0),
-                settingsMapper: settingsMapper,
-                sessionPreferences: sessionPreferences,
-                hostCapabilities: hostCapabilities
-            )
+            hostCapabilities: hostCapabilities
         )
     }
 
@@ -177,17 +176,11 @@ public struct ShadowClientFeatureHomeView: View {
         telemetryCancellable?.cancel()
         telemetryCancellable = dependencies.telemetryPublisher.sink { snapshot in
             Task {
-                let result = await dependencies.launchRuntime.ingest(snapshot)
-                let model = dependencies.diagnosticsPresenter.makeModel(
-                    decision: result.decision,
-                    signal: snapshot.signal,
-                    stats: snapshot.stats,
-                    dropBreakdown: snapshot.dropBreakdown
-                )
+                let tick = await dependencies.diagnosticsRuntime.ingest(snapshot: snapshot)
 
                 await MainActor.run {
-                    sessionPlan = result.plan
-                    diagnostics = model
+                    sessionPlan = tick.sessionPlan
+                    diagnostics = tick.model
                 }
             }
         }

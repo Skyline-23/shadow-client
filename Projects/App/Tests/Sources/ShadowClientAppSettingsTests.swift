@@ -33,7 +33,7 @@ func dependenciesApplyingSettingsOverridesSessionPreferences() {
 
     #expect(configured.sessionPreferences == settings.streamingPreferences)
     #expect(configured.hostCapabilities == base.hostCapabilities)
-    #expect(ObjectIdentifier(configured.launchRuntime) != ObjectIdentifier(base.launchRuntime))
+    #expect(ObjectIdentifier(configured.diagnosticsRuntime) != ObjectIdentifier(base.diagnosticsRuntime))
 }
 
 @Test("Settings identity key changes when any toggle value changes")

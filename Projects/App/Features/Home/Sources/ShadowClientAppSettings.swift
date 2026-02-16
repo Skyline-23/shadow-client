@@ -44,16 +44,17 @@ public extension ShadowClientFeatureHomeDependencies {
 
         return .init(
             telemetryPublisher: telemetryPublisher,
-            diagnosticsPresenter: diagnosticsPresenter,
+            diagnosticsRuntime: HomeDiagnosticsRuntime(
+                launchRuntime: AdaptiveSessionLaunchRuntime(
+                    telemetryPipeline: .init(initialBufferMs: 40.0),
+                    settingsMapper: settingsMapper,
+                    sessionPreferences: updatedPreferences,
+                    hostCapabilities: hostCapabilities
+                )
+            ),
             settingsMapper: settingsMapper,
             sessionPreferences: updatedPreferences,
-            hostCapabilities: hostCapabilities,
-            launchRuntime: AdaptiveSessionLaunchRuntime(
-                telemetryPipeline: .init(initialBufferMs: 40.0),
-                settingsMapper: settingsMapper,
-                sessionPreferences: updatedPreferences,
-                hostCapabilities: hostCapabilities
-            )
+            hostCapabilities: hostCapabilities
         )
     }
 }
