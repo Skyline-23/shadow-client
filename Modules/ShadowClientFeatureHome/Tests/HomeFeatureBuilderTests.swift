@@ -47,6 +47,28 @@ func homeFeatureFeedbackFailureSnapshot() {
     #expect(snapshot.badge.tone == .warning)
 }
 
+@Test("Home feature snapshot keeps feedback warning when DualSense transport is bluetooth")
+func homeFeatureBluetoothTransportFeedbackWarning() {
+    let builder = HomeFeatureBuilder()
+    let snapshot = builder.makeSnapshot(
+        streamingStats: .init(renderedFrames: 996, droppedFrames: 4, avSyncOffsetMilliseconds: 18.0),
+        networkSignal: .init(jitterMs: 8.0, packetLossPercent: 0.1),
+        inputSamples: (10...30).map { .init(milliseconds: Double($0)) },
+        feedbackCapabilities: .init(
+            supportsRumble: true,
+            supportsAdaptiveTriggers: true,
+            supportsLED: true
+        ),
+        transport: .bluetooth
+    )
+
+    #expect(snapshot.streamHealthy)
+    #expect(snapshot.inputHealthy)
+    #expect(!snapshot.feedbackReady)
+    #expect(snapshot.badge.tone == .warning)
+    #expect(snapshot.badge.title == "Controller Feedback Limited")
+}
+
 @Test("Home feature snapshot falls back to SDR stereo when session mapper gates fail")
 func homeFeatureSessionSettingsFallbackSnapshot() {
     let builder = HomeFeatureBuilder(
