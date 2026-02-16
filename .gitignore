@@ -1,0 +1,11 @@
+# macOS
+.DS_Store
+
+# Tuist generated artifacts
+/shadow-client.xcodeproj/
+/shadow-client.xcworkspace/
+/Derived/
+
+# SwiftPM build artifacts
+/Modules/.build/
+/Tuist/.build/
