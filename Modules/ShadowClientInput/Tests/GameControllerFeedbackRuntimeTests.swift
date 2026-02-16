@@ -1,3 +1,4 @@
+import Combine
 import Testing
 @testable import ShadowClientInput
 
@@ -122,4 +123,59 @@ func gameControllerFeedbackRuntimeStreamsAndRemovesSubscribers() async {
     }
 
     #expect(await runtime.activeSubscriberCount() == 0)
+}
+
+@Test("GameController feedback runtime honors injected feedback contract policy")
+func gameControllerFeedbackRuntimeHonorsInjectedContractPolicy() async {
+    let runtime = GameControllerFeedbackRuntime(
+        contract: .init(requiresUSBTransport: false)
+    )
+    let device = DualSenseFeedbackDeviceStub(
+        transport: .bluetooth,
+        capabilities: .init(
+            supportsRumble: true,
+            supportsAdaptiveTriggers: true,
+            supportsLED: true
+        )
+    )
+
+    let evaluation = await runtime.ingest(
+        gameControllerState: GameControllerStateStub(faceSouthPressed: true),
+        device: device
+    )
+
+    #expect(evaluation.feedback.passes)
+    #expect(!evaluation.feedback.missingCapabilities.contains("usbTransport"))
+}
+
+@Test("GameController feedback runtime publishes evaluation through Combine publisher")
+func gameControllerFeedbackRuntimePublishesThroughCombine() async {
+    let runtime = GameControllerFeedbackRuntime()
+    let device = DualSenseFeedbackDeviceStub(
+        transport: .usb,
+        capabilities: .init(
+            supportsRumble: true,
+            supportsAdaptiveTriggers: true,
+            supportsLED: true
+        )
+    )
+
+    let evaluation: GameControllerFeedbackRuntime.Evaluation = await withCheckedContinuation { continuation in
+        var cancellable: AnyCancellable?
+        cancellable = runtime.evaluationPublisher.sink { value in
+            cancellable?.cancel()
+            continuation.resume(returning: value)
+        }
+
+        Task {
+            await runtime.ingest(
+                gameControllerState: GameControllerStateStub(faceNorthPressed: true, rightTriggerValue: 0.9),
+                device: device
+            )
+        }
+    }
+
+    #expect(evaluation.state.pressedButtons.contains(.actionNorth))
+    #expect(evaluation.state.axisValues[.rightTrigger] == 0.9)
+    #expect(evaluation.feedback.passes)
 }
