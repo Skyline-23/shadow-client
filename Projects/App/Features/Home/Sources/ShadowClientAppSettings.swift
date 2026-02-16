@@ -40,14 +40,20 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
 
 public extension ShadowClientFeatureHomeDependencies {
     func applying(settings: ShadowClientAppSettings) -> Self {
-        .init(
+        let updatedPreferences = settings.streamingPreferences
+
+        return .init(
             telemetryPublisher: telemetryPublisher,
-            pipeline: pipeline,
             diagnosticsPresenter: diagnosticsPresenter,
             settingsMapper: settingsMapper,
-            launchPlanBuilder: launchPlanBuilder,
-            sessionPreferences: settings.streamingPreferences,
-            hostCapabilities: hostCapabilities
+            sessionPreferences: updatedPreferences,
+            hostCapabilities: hostCapabilities,
+            launchRuntime: AdaptiveSessionLaunchRuntime(
+                telemetryPipeline: .init(initialBufferMs: 40.0),
+                settingsMapper: settingsMapper,
+                sessionPreferences: updatedPreferences,
+                hostCapabilities: hostCapabilities
+            )
         )
     }
 }

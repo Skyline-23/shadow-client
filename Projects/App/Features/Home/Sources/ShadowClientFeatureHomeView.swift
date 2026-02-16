@@ -5,48 +5,53 @@ import SwiftUI
 
 public struct ShadowClientFeatureHomeDependencies {
     public let telemetryPublisher: AnyPublisher<StreamingTelemetrySnapshot, Never>
-    public let pipeline: LowLatencyTelemetryPipeline
     public let diagnosticsPresenter: StreamingDiagnosticsPresenter
     public let settingsMapper: StreamingSessionSettingsMapper
-    public let launchPlanBuilder: MoonlightSessionLaunchPlanBuilder
     public let sessionPreferences: StreamingUserPreferences
     public let hostCapabilities: HostStreamingCapabilities
+    public let launchRuntime: AdaptiveSessionLaunchRuntime
 
     public init(
         telemetryPublisher: AnyPublisher<StreamingTelemetrySnapshot, Never>,
-        pipeline: LowLatencyTelemetryPipeline,
         diagnosticsPresenter: StreamingDiagnosticsPresenter,
         settingsMapper: StreamingSessionSettingsMapper,
-        launchPlanBuilder: MoonlightSessionLaunchPlanBuilder,
         sessionPreferences: StreamingUserPreferences,
-        hostCapabilities: HostStreamingCapabilities
+        hostCapabilities: HostStreamingCapabilities,
+        launchRuntime: AdaptiveSessionLaunchRuntime
     ) {
         self.telemetryPublisher = telemetryPublisher
-        self.pipeline = pipeline
         self.diagnosticsPresenter = diagnosticsPresenter
         self.settingsMapper = settingsMapper
-        self.launchPlanBuilder = launchPlanBuilder
         self.sessionPreferences = sessionPreferences
         self.hostCapabilities = hostCapabilities
+        self.launchRuntime = launchRuntime
     }
 }
 
 public extension ShadowClientFeatureHomeDependencies {
     static func live(bridge: MoonlightSessionTelemetryBridge) -> Self {
-        .init(
+        let settingsMapper = StreamingSessionSettingsMapper()
+        let sessionPreferences = StreamingUserPreferences(
+            preferHDR: true,
+            preferSurroundAudio: true,
+            lowLatencyMode: true
+        )
+        let hostCapabilities = HostStreamingCapabilities(
+            supportsHDR10: true,
+            supportsSurround51: true
+        )
+
+        return .init(
             telemetryPublisher: bridge.snapshotPublisher,
-            pipeline: LowLatencyTelemetryPipeline(initialBufferMs: 40.0),
             diagnosticsPresenter: StreamingDiagnosticsPresenter(),
-            settingsMapper: StreamingSessionSettingsMapper(),
-            launchPlanBuilder: MoonlightSessionLaunchPlanBuilder(),
-            sessionPreferences: StreamingUserPreferences(
-                preferHDR: true,
-                preferSurroundAudio: true,
-                lowLatencyMode: true
-            ),
-            hostCapabilities: HostStreamingCapabilities(
-                supportsHDR10: true,
-                supportsSurround51: true
+            settingsMapper: settingsMapper,
+            sessionPreferences: sessionPreferences,
+            hostCapabilities: hostCapabilities,
+            launchRuntime: AdaptiveSessionLaunchRuntime(
+                telemetryPipeline: .init(initialBufferMs: 40.0),
+                settingsMapper: settingsMapper,
+                sessionPreferences: sessionPreferences,
+                hostCapabilities: hostCapabilities
             )
         )
     }
@@ -62,7 +67,6 @@ public struct ShadowClientFeatureHomeView: View {
     private let showsDiagnosticsHUD: Bool
 
     @State private var telemetryCancellable: AnyCancellable?
-    @State private var previousLaunchSettings: MoonlightSessionLaunchSettings?
     @State private var sessionPlan: MoonlightSessionReconfigurationPlan?
     @State private var diagnostics = StreamingDiagnosticsModel(
         bufferMs: 40,
@@ -173,27 +177,16 @@ public struct ShadowClientFeatureHomeView: View {
         telemetryCancellable?.cancel()
         telemetryCancellable = dependencies.telemetryPublisher.sink { snapshot in
             Task {
-                let decision = await dependencies.pipeline.ingest(snapshot)
+                let result = await dependencies.launchRuntime.ingest(snapshot)
                 let model = dependencies.diagnosticsPresenter.makeModel(
-                    decision: decision,
+                    decision: result.decision,
                     signal: snapshot.signal,
                     stats: snapshot.stats,
                     dropBreakdown: snapshot.dropBreakdown
                 )
-                let sessionConfiguration = dependencies.settingsMapper.map(
-                    preferences: dependencies.sessionPreferences,
-                    capabilities: dependencies.hostCapabilities,
-                    signal: snapshot.signal
-                )
 
                 await MainActor.run {
-                    let plan = dependencies.launchPlanBuilder.makePlan(
-                        previousSettings: previousLaunchSettings,
-                        sessionConfiguration: sessionConfiguration,
-                        decision: decision
-                    )
-                    previousLaunchSettings = plan.settings
-                    sessionPlan = plan
+                    sessionPlan = result.plan
                     diagnostics = model
                 }
             }
