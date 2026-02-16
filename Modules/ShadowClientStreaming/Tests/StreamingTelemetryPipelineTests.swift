@@ -138,3 +138,51 @@ func telemetryPipelineHonorsCustomRecoveryStableSampleThreshold() async {
     #expect(thirdStableDecision.action == .holdQuality)
     #expect(thirdStableDecision.recoveryStableSamplesRemaining == 0)
 }
+
+@Test("Telemetry pipeline ignores out-of-order telemetry snapshots and preserves recovery progression")
+func telemetryPipelineIgnoresOutOfOrderSnapshotAndPreservesRecoveryState() async {
+    let pipeline = LowLatencyTelemetryPipeline(initialBufferMs: 40.0)
+    let unstableSnapshot = StreamingTelemetrySnapshot(
+        stats: StreamingStats(
+            renderedFrames: 960,
+            droppedFrames: 40,
+            avSyncOffsetMilliseconds: 55.0
+        ),
+        signal: StreamingNetworkSignal(jitterMs: 80.0, packetLossPercent: 3.0),
+        timestampMs: 1_000
+    )
+    let staleStableSnapshot = StreamingTelemetrySnapshot(
+        stats: StreamingStats(
+            renderedFrames: 996,
+            droppedFrames: 4,
+            avSyncOffsetMilliseconds: 8.0
+        ),
+        signal: StreamingNetworkSignal(jitterMs: 2.0, packetLossPercent: 0.1),
+        timestampMs: 900
+    )
+    let inOrderStableSnapshot = StreamingTelemetrySnapshot(
+        stats: StreamingStats(
+            renderedFrames: 995,
+            droppedFrames: 5,
+            avSyncOffsetMilliseconds: 12.0
+        ),
+        signal: StreamingNetworkSignal(jitterMs: 3.0, packetLossPercent: 0.2),
+        timestampMs: 1_016
+    )
+
+    let unstableDecision = await pipeline.ingest(unstableSnapshot)
+    let staleDecision = await pipeline.ingest(staleStableSnapshot)
+    let recoveredDecision = await pipeline.ingest(inOrderStableSnapshot)
+
+    #expect(unstableDecision.targetBufferMs == 48.0)
+    #expect(unstableDecision.action == .requestQualityReduction)
+    #expect(unstableDecision.stabilityPasses == false)
+    #expect(unstableDecision.recoveryStableSamplesRemaining == 2)
+
+    #expect(staleDecision == unstableDecision)
+
+    #expect(recoveredDecision.targetBufferMs == 48.0)
+    #expect(recoveredDecision.action == .requestQualityReduction)
+    #expect(recoveredDecision.stabilityPasses == true)
+    #expect(recoveredDecision.recoveryStableSamplesRemaining == 1)
+}

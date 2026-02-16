@@ -107,3 +107,20 @@ func adaptiveJitterBufferRemainsStableForHealthySignal() {
 
     #expect(nextBufferMs == 40)
 }
+
+@Test("Adaptive jitter buffer increases for packet-loss spike even when jitter is low")
+func adaptiveJitterBufferIncreasesOnPacketLossSpikeWithLowJitter() {
+    let policy = AdaptiveJitterBufferPolicy(
+        minimumBufferMs: 20,
+        maximumBufferMs: 80,
+        increaseStepMs: 8,
+        decreaseStepMs: 2,
+        packetLossGuardPercent: 2.0
+    )
+    let controller = AdaptiveJitterBufferController(policy: policy)
+    let lowJitterLossySignal = StreamingNetworkSignal(jitterMs: 4.0, packetLossPercent: 2.3)
+
+    let nextBufferMs = controller.nextBufferMs(currentBufferMs: 40, signal: lowJitterLossySignal)
+
+    #expect(nextBufferMs == 48)
+}

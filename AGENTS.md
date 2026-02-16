@@ -4,8 +4,8 @@
 Tuist manifests live at repo root: `Project.swift`, `Tuist.swift`, and `Tuist/Package.swift`.
 - `Projects/App/iOS`, `Projects/App/macOS`, `Projects/App/tvOS`: app entrypoints and composition.
 - `Projects/App/Features/Home`: Home UI/runtime wiring.
-- `Projects/App/Tests`: app-level Swift Testing suites.
-- `Modules/ShadowClientCore`, `Modules/ShadowClientStreaming`, `Modules/ShadowClientInput`, `Modules/ShadowClientUI`, `Modules/ShadowClientFeatureHome`: modular runtime layers with `Sources/` and `Tests/`.
+- `Projects/App/Tests`: Swift Testing suites.
+- `Modules/ShadowClientCore`, `Modules/ShadowClientStreaming`, `Modules/ShadowClientInput`, `Modules/ShadowClientUI`, `Modules/ShadowClientFeatureHome`: layers with `Sources/` and `Tests/`.
 - `moonlight-qt-master/`: upstream reference only (gitignored), never a runtime dependency.
 `HomeFeatureBuilder` snapshots must include session configuration derived from the streaming settings mapper.
 
@@ -24,8 +24,8 @@ Use Swift 6 style: 4-space indentation, `UpperCamelCase` for types, `lowerCamelC
 Use native Swift concurrency first: prefer `actor` for shared mutable streaming state, and use `async/await` for telemetry ingest and decision flow. Keep Combine for UI-facing event surfaces (`AnyPublisher`).
 
 Use Pure DI: inject dependencies via initializers (for example feature dependencies and telemetry bridge), and avoid hidden service locators. Compatibility boundaries must stay thin (`MoonlightSessionTelemetryCallbackAdapter` -> `MoonlightSessionTelemetryBridge` -> normalized snapshot).
-For streaming recovery, keep hysteresis in `LowLatencyTelemetryPipeline`: require sustained stable samples before releasing quality reduction.
-Propagate recovery diagnostics and session launch plan (HDR/audio/reconfigure flags) from decision layer to UI HUD for observability.
+For streaming recovery, keep hysteresis in `LowLatencyTelemetryPipeline`: require sustained stable samples before releasing quality reduction, and ignore out-of-order telemetry timestamps.
+Propagate recovery diagnostics and session launch plan (HDR/audio/reconfigure flags) from decision layer to UI HUD.
 
 ## Testing Guidelines
 TDD is mandatory: start with a failing test, implement minimally, then refactor.
