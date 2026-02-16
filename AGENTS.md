@@ -24,6 +24,9 @@ Use Swift 6 conventions: 4-space indentation, `UpperCamelCase` for types, `lower
 ## Testing Guidelines
 Use Swift Testing only (`import Testing`, `@Test`, `#expect`); do not add XCTest. TDD is mandatory: write a failing test, implement minimal code, then refactor. For streaming/input changes, keep coverage for latency gates, drop-rate/AV-sync guards, and controller feedback contracts.
 
+## Agent Execution Rules
+For non-trivial work, use subagents in parallel for discovery and implementation. Assign each subagent a disjoint file/module ownership and merge only after target-level tests pass. Keep `main` in a working state with incremental commits at meaningful checkpoints.
+
 ## Priority Roadmap
 Implement in this order:
 1. Low-latency streaming stability and recovery behavior.
