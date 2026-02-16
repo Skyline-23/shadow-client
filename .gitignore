@@ -9,6 +9,8 @@
 # SwiftPM build artifacts
 /Modules/.build/
 /Tuist/.build/
+/Modules/Derived/
+/Modules/ShadowClientModules.xcodeproj/
 
 # Upstream Qt reference snapshot (do not track in this repo)
 /moonlight-qt-master/

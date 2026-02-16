@@ -12,6 +12,7 @@ import PackageDescription
 let package = Package(
     name: "shadow-client",
     dependencies: [
+        .package(path: "../Modules"),
         .package(url: "https://github.com/swiftlang/swift-testing.git", exact: "6.0.3"),
     ]
 )

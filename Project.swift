@@ -13,7 +13,10 @@ let project = Project(
             buildableFolders: [
                 "Projects/App/Features/Home/Sources",
             ],
-            dependencies: []
+            dependencies: [
+                .external(name: "ShadowClientStreaming"),
+                .external(name: "ShadowClientUI"),
+            ]
         ),
         .target(
             name: "ShadowClientiOSApp",
