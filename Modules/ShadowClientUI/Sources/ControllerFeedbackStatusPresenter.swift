@@ -69,26 +69,24 @@ public struct ControllerFeedbackStatusPresenter: Sendable {
             transport: state.transport
         )
 
-        let detail: String
-        if evaluation.passes {
-            detail = "DualSense feedback contract satisfies USB-first requirements."
-        } else {
-            let missing = evaluation.missingCapabilities
-                .map(readableCapabilityName(_:))
-                .joined(separator: ", ")
-            detail = "Missing: \(missing)"
-        }
+        return makeModel(
+            feedback: evaluation,
+            usbTransportPasses: state.transport == .usb,
+            rumblePasses: state.supportsRumble,
+            adaptiveTriggerPasses: state.supportsAdaptiveTriggers,
+            ledPasses: state.supportsLED
+        )
+    }
 
-        return ControllerFeedbackStatusModel(
-            title: evaluation.passes ? "Controller Feedback Ready" : "Feedback Contract Warning",
-            detail: detail,
-            tone: evaluation.passes ? .healthy : .warning,
-            rows: [
-                .init(title: "USB transport enforced", passes: state.transport == .usb),
-                .init(title: "Rumble requires support", passes: state.supportsRumble),
-                .init(title: "Adaptive triggers", passes: state.supportsAdaptiveTriggers),
-                .init(title: "LED indicator", passes: state.supportsLED),
-            ]
+    public func makeModel(
+        evaluation: GameControllerFeedbackRuntime.Evaluation
+    ) -> ControllerFeedbackStatusModel {
+        makeModel(
+            feedback: evaluation.feedback,
+            usbTransportPasses: !evaluation.feedback.missingCapabilities.contains("usbTransport"),
+            rumblePasses: !evaluation.feedback.missingCapabilities.contains("rumble"),
+            adaptiveTriggerPasses: !evaluation.feedback.missingCapabilities.contains("adaptiveTriggers"),
+            ledPasses: !evaluation.feedback.missingCapabilities.contains("led")
         )
     }
 
@@ -105,5 +103,35 @@ public struct ControllerFeedbackStatusPresenter: Sendable {
         default:
             return missingCapability
         }
+    }
+
+    private func makeModel(
+        feedback: DualSenseFeedbackResult,
+        usbTransportPasses: Bool,
+        rumblePasses: Bool,
+        adaptiveTriggerPasses: Bool,
+        ledPasses: Bool
+    ) -> ControllerFeedbackStatusModel {
+        let detail: String
+        if feedback.passes {
+            detail = "DualSense feedback contract satisfies USB-first requirements."
+        } else {
+            let missing = feedback.missingCapabilities
+                .map(readableCapabilityName(_:))
+                .joined(separator: ", ")
+            detail = "Missing: \(missing)"
+        }
+
+        return ControllerFeedbackStatusModel(
+            title: feedback.passes ? "Controller Feedback Ready" : "Feedback Contract Warning",
+            detail: detail,
+            tone: feedback.passes ? .healthy : .warning,
+            rows: [
+                .init(title: "USB transport enforced", passes: usbTransportPasses),
+                .init(title: "Rumble requires support", passes: rumblePasses),
+                .init(title: "Adaptive triggers", passes: adaptiveTriggerPasses),
+                .init(title: "LED indicator", passes: ledPasses),
+            ]
+        )
     }
 }

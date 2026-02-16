@@ -56,3 +56,49 @@ func controllerFeedbackPresenterRowsMirrorSimulationState() {
     #expect(model.rows.first(where: { $0.title == "Rumble requires support" })?.passes == false)
     #expect(model.rows.first(where: { $0.title == "Adaptive triggers" })?.passes == true)
 }
+
+@Test("Controller feedback presenter maps runtime evaluation into ready status model")
+func controllerFeedbackPresenterMapsRuntimeEvaluationReadyState() {
+    let presenter = ControllerFeedbackStatusPresenter()
+    let evaluation = GameControllerFeedbackRuntime.Evaluation(
+        state: .init(pressedButtons: [], axisValues: [:]),
+        feedback: .init(
+            passes: true,
+            missingCapabilities: [],
+            transport: .usb
+        )
+    )
+
+    let model = presenter.makeModel(evaluation: evaluation)
+
+    #expect(model.tone == .healthy)
+    #expect(model.title == "Controller Feedback Ready")
+    #expect(model.detail == "DualSense feedback contract satisfies USB-first requirements.")
+    #expect(model.rows.first(where: { $0.title == "USB transport enforced" })?.passes == true)
+    #expect(model.rows.first(where: { $0.title == "Rumble requires support" })?.passes == true)
+    #expect(model.rows.first(where: { $0.title == "Adaptive triggers" })?.passes == true)
+    #expect(model.rows.first(where: { $0.title == "LED indicator" })?.passes == true)
+}
+
+@Test("Controller feedback presenter maps runtime evaluation missing requirements")
+func controllerFeedbackPresenterMapsRuntimeEvaluationMissingRequirements() {
+    let presenter = ControllerFeedbackStatusPresenter()
+    let evaluation = GameControllerFeedbackRuntime.Evaluation(
+        state: .init(pressedButtons: [], axisValues: [:]),
+        feedback: .init(
+            passes: false,
+            missingCapabilities: ["usbTransport", "led"],
+            transport: .bluetooth
+        )
+    )
+
+    let model = presenter.makeModel(evaluation: evaluation)
+
+    #expect(model.tone == .warning)
+    #expect(model.title == "Feedback Contract Warning")
+    #expect(model.detail == "Missing: USB transport, LED indicator")
+    #expect(model.rows.first(where: { $0.title == "USB transport enforced" })?.passes == false)
+    #expect(model.rows.first(where: { $0.title == "Rumble requires support" })?.passes == true)
+    #expect(model.rows.first(where: { $0.title == "Adaptive triggers" })?.passes == true)
+    #expect(model.rows.first(where: { $0.title == "LED indicator" })?.passes == false)
+}
