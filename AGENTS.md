@@ -1,8 +1,6 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Project name is `shadow-client` and base bundle id is `com.skyline23.shadow-client`.
-
 Tuist manifests live at repo root: `Project.swift`, `Tuist.swift`, and `Tuist/Package.swift`.
 - `Projects/App/iOS`, `Projects/App/macOS`, `Projects/App/tvOS`: platform app entrypoints and composition.
 - `Projects/App/Features/Home`: shared Home feature UI/runtime wiring.
