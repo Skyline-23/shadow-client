@@ -7,15 +7,27 @@ public struct ShadowClientFeatureHomeDependencies {
     public let telemetryPublisher: AnyPublisher<StreamingTelemetrySnapshot, Never>
     public let pipeline: LowLatencyTelemetryPipeline
     public let diagnosticsPresenter: StreamingDiagnosticsPresenter
+    public let settingsMapper: StreamingSessionSettingsMapper
+    public let launchPlanBuilder: MoonlightSessionLaunchPlanBuilder
+    public let sessionPreferences: StreamingUserPreferences
+    public let hostCapabilities: HostStreamingCapabilities
 
     public init(
         telemetryPublisher: AnyPublisher<StreamingTelemetrySnapshot, Never>,
         pipeline: LowLatencyTelemetryPipeline,
-        diagnosticsPresenter: StreamingDiagnosticsPresenter
+        diagnosticsPresenter: StreamingDiagnosticsPresenter,
+        settingsMapper: StreamingSessionSettingsMapper,
+        launchPlanBuilder: MoonlightSessionLaunchPlanBuilder,
+        sessionPreferences: StreamingUserPreferences,
+        hostCapabilities: HostStreamingCapabilities
     ) {
         self.telemetryPublisher = telemetryPublisher
         self.pipeline = pipeline
         self.diagnosticsPresenter = diagnosticsPresenter
+        self.settingsMapper = settingsMapper
+        self.launchPlanBuilder = launchPlanBuilder
+        self.sessionPreferences = sessionPreferences
+        self.hostCapabilities = hostCapabilities
     }
 }
 
@@ -24,7 +36,18 @@ public extension ShadowClientFeatureHomeDependencies {
         .init(
             telemetryPublisher: bridge.snapshotPublisher,
             pipeline: LowLatencyTelemetryPipeline(initialBufferMs: 40.0),
-            diagnosticsPresenter: StreamingDiagnosticsPresenter()
+            diagnosticsPresenter: StreamingDiagnosticsPresenter(),
+            settingsMapper: StreamingSessionSettingsMapper(),
+            launchPlanBuilder: MoonlightSessionLaunchPlanBuilder(),
+            sessionPreferences: StreamingUserPreferences(
+                preferHDR: true,
+                preferSurroundAudio: true,
+                lowLatencyMode: true
+            ),
+            hostCapabilities: HostStreamingCapabilities(
+                supportsHDR10: true,
+                supportsSurround51: true
+            )
         )
     }
 
@@ -38,6 +61,8 @@ public struct ShadowClientFeatureHomeView: View {
     private let dependencies: ShadowClientFeatureHomeDependencies
 
     @State private var telemetryCancellable: AnyCancellable?
+    @State private var previousLaunchSettings: MoonlightSessionLaunchSettings?
+    @State private var sessionPlan: MoonlightSessionReconfigurationPlan?
     @State private var diagnostics = StreamingDiagnosticsModel(
         bufferMs: 40,
         jitterMs: 0,
@@ -89,6 +114,13 @@ public struct ShadowClientFeatureHomeView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.orange)
             }
+            if let sessionPlan {
+                Text("Session Video: \(sessionPlan.settings.hdrVideoMode.rawValue.uppercased()) | Audio: \(sessionPlan.settings.audioMode.rawValue.uppercased())")
+                    .font(.caption.monospacedDigit())
+                Text("Reconfig V:\(sessionPlan.shouldRenegotiateVideoPipeline ? "Y" : "N") A:\(sessionPlan.shouldRenegotiateAudioPipeline ? "Y" : "N") | QDrop: \(sessionPlan.shouldApplyQualityDropImmediately ? "Y" : "N")")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
@@ -116,8 +148,20 @@ public struct ShadowClientFeatureHomeView: View {
                     signal: snapshot.signal,
                     stats: snapshot.stats
                 )
+                let sessionConfiguration = dependencies.settingsMapper.map(
+                    preferences: dependencies.sessionPreferences,
+                    capabilities: dependencies.hostCapabilities,
+                    signal: snapshot.signal
+                )
 
                 await MainActor.run {
+                    let plan = dependencies.launchPlanBuilder.makePlan(
+                        previousSettings: previousLaunchSettings,
+                        sessionConfiguration: sessionConfiguration,
+                        decision: decision
+                    )
+                    previousLaunchSettings = plan.settings
+                    sessionPlan = plan
                     diagnostics = model
                 }
             }

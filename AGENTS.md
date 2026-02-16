@@ -25,7 +25,7 @@ Use native Swift concurrency first: prefer `actor` for shared mutable streaming 
 
 Use Pure DI: inject dependencies via initializers (for example feature dependencies and telemetry bridge), and avoid hidden service locators. Compatibility boundaries must stay thin (`MoonlightSessionTelemetryCallbackAdapter` -> `MoonlightSessionTelemetryBridge` -> normalized snapshot).
 For streaming recovery, keep hysteresis in `LowLatencyTelemetryPipeline`: require sustained stable samples before releasing quality reduction.
-Propagate recovery diagnostics (`recoveryStableSamplesRemaining`) from decision layer to UI HUD for live observability.
+Propagate recovery diagnostics and session launch plan (HDR/audio/reconfigure flags) from decision layer to UI HUD for observability.
 
 ## Testing Guidelines
 TDD is mandatory: start with a failing test, implement minimally, then refactor.
