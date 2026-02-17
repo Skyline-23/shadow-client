@@ -522,6 +522,8 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
 
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
         let uniqueID = await identityStore.uniqueID()
+        // Build TLS credential first so any material recovery happens before stage1 uploads client cert.
+        let tlsClientCredential = try await identityStore.tlsClientCertificateCredential()
         let certPEMData = try await identityStore.clientCertificatePEMData()
         let clientCertSignature = try await identityStore.clientCertificateSignature()
 
@@ -714,49 +716,26 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             "updateState": "1",
             "phrase": "pairchallenge",
         ]
-        var stage5Attempts: [(scheme: String, port: Int, pinned: Data?, credential: URLCredential?)] = []
-        if let tlsClientCredential = try? await identityStore.tlsClientCertificateCredential() {
-            stage5Attempts.append(
-                (scheme: "https", port: resolvedHTTPSPort, pinned: serverCertDER, credential: tlsClientCredential)
+        do {
+            let stage5XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
+                host: endpoint.host,
+                port: resolvedHTTPSPort,
+                scheme: "https",
+                command: "pair",
+                parameters: stage5Parameters,
+                uniqueID: uniqueID,
+                pinnedServerCertificateDER: serverCertDER,
+                clientCertificateCredential: tlsClientCredential,
+                timeout: pairingStageTimeout
             )
-        }
-        stage5Attempts.append((scheme: "http", port: endpoint.port, pinned: nil, credential: nil))
-
-        var stage5Error: Error?
-        var stage5Succeeded = false
-        for attempt in stage5Attempts {
-            do {
-                let stage5XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
-                    host: endpoint.host,
-                    port: attempt.port,
-                    scheme: attempt.scheme,
-                    command: "pair",
-                    parameters: stage5Parameters,
-                    uniqueID: uniqueID,
-                    pinnedServerCertificateDER: attempt.pinned,
-                    clientCertificateCredential: attempt.credential,
-                    timeout: pairingStageTimeout
-                )
-                let stage5Doc = try parsePairResponseXML(stage5XML)
-                guard stage5Doc.values["paired"]?.first == "1" else {
-                    stage5Error = ShadowClientGameStreamControlError.challengeRejected
-                    continue
-                }
-
-                stage5Succeeded = true
-                break
-            } catch {
-                stage5Error = error
-                continue
+            let stage5Doc = try parsePairResponseXML(stage5XML)
+            guard stage5Doc.values["paired"]?.first == "1" else {
+                try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
+                throw ShadowClientGameStreamControlError.challengeRejected
             }
-        }
-
-        guard stage5Succeeded else {
+        } catch {
             try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
-            if let stage5Error {
-                throw stage5Error
-            }
-            throw ShadowClientGameStreamControlError.challengeRejected
+            throw error
         }
 
         await pinnedCertificateStore.setCertificateDER(serverCertDER, forHost: endpoint.host)
@@ -1027,6 +1006,9 @@ private enum PairHashAlgorithm {
 }
 
 enum ShadowClientGameStreamHTTPTransport {
+    // Keep protocol identifiers aligned with Moonlight compatibility behavior.
+    private static let moonlightCompatibleUniqueID = "0123456789ABCDEF"
+
     static func requestXML(
         host: String,
         port: Int,
@@ -1047,8 +1029,11 @@ enum ShadowClientGameStreamHTTPTransport {
         var queryItems: [URLQueryItem] = parameters
             .sorted(by: { $0.key < $1.key })
             .map { URLQueryItem(name: $0.key, value: $0.value) }
-        queryItems.append(.init(name: "uniqueid", value: uniqueID))
-        queryItems.append(.init(name: "uuid", value: UUID().uuidString))
+        let requestUUID = UUID().uuidString
+            .replacingOccurrences(of: "-", with: "")
+            .lowercased()
+        queryItems.append(.init(name: "uniqueid", value: moonlightCompatibleUniqueID))
+        queryItems.append(.init(name: "uuid", value: requestUUID))
         components.queryItems = queryItems
 
         guard let url = components.url else {
