@@ -203,20 +203,62 @@ public protocol ShadowClientGameStreamMetadataClient: Sendable {
     func fetchAppList(host: String, httpsPort: Int?) async throws -> [ShadowClientRemoteAppDescriptor]
 }
 
+public protocol ShadowClientGameStreamRequestTransporting: Sendable {
+    func requestXML(
+        host: String,
+        port: Int,
+        scheme: String,
+        command: String,
+        parameters: [String: String],
+        uniqueID: String,
+        pinnedServerCertificateDER: Data?,
+        clientCertificateCredential: URLCredential?
+    ) async throws -> String
+}
+
+public struct NativeShadowClientGameStreamRequestTransport: ShadowClientGameStreamRequestTransporting {
+    public init() {}
+
+    public func requestXML(
+        host: String,
+        port: Int,
+        scheme: String,
+        command: String,
+        parameters: [String: String],
+        uniqueID: String,
+        pinnedServerCertificateDER: Data?,
+        clientCertificateCredential: URLCredential?
+    ) async throws -> String {
+        try await ShadowClientGameStreamHTTPTransport.requestXML(
+            host: host,
+            port: port,
+            scheme: scheme,
+            command: command,
+            parameters: parameters,
+            uniqueID: uniqueID,
+            pinnedServerCertificateDER: pinnedServerCertificateDER,
+            clientCertificateCredential: clientCertificateCredential
+        )
+    }
+}
+
 public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient {
     private let identityStore: ShadowClientPairingIdentityStore
     private let pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
+    private let transport: any ShadowClientGameStreamRequestTransporting
     private let defaultHTTPPort: Int
     private let defaultHTTPSPort: Int
 
     public init(
         identityStore: ShadowClientPairingIdentityStore = .shared,
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore = .shared,
+        transport: any ShadowClientGameStreamRequestTransporting = NativeShadowClientGameStreamRequestTransport(),
         defaultHTTPPort: Int = 47989,
         defaultHTTPSPort: Int = 47984
     ) {
         self.identityStore = identityStore
         self.pinnedCertificateStore = pinnedCertificateStore
+        self.transport = transport
         self.defaultHTTPPort = defaultHTTPPort
         self.defaultHTTPSPort = defaultHTTPSPort
     }
@@ -229,34 +271,29 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             (scheme: "http", port: endpoint.port),
         ]
 
-        var xml: String?
         for attempt in attempts {
             do {
-                xml = try await requestXML(
+                let xml = try await requestXML(
                     host: endpoint.host,
                     port: attempt.port,
                     scheme: attempt.scheme,
                     command: "serverinfo"
                 )
-                break
+                return try ShadowClientGameStreamXMLParsers.parseServerInfo(
+                    xml: xml,
+                    host: endpoint.host,
+                    fallbackHTTPSPort: defaultHTTPSPort
+                )
             } catch {
                 capturedError = error
             }
         }
 
-        guard let xml else {
-            if let capturedError = capturedError as? ShadowClientGameStreamError {
-                throw capturedError
-            }
-            throw ShadowClientGameStreamError.requestFailed(
-                capturedError?.localizedDescription ?? "Server info request failed."
-            )
+        if let capturedError = capturedError as? ShadowClientGameStreamError {
+            throw capturedError
         }
-
-        return try ShadowClientGameStreamXMLParsers.parseServerInfo(
-            xml: xml,
-            host: endpoint.host,
-            fallbackHTTPSPort: defaultHTTPSPort
+        throw ShadowClientGameStreamError.requestFailed(
+            capturedError?.localizedDescription ?? "Server info request failed."
         )
     }
 
@@ -308,7 +345,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         } else {
             clientCertificateCredential = nil
         }
-        return try await ShadowClientGameStreamHTTPTransport.requestXML(
+        return try await transport.requestXML(
             host: host,
             port: port,
             scheme: scheme,

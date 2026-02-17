@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import ShadowClientFeatureHome
 
@@ -79,6 +80,115 @@ func gameStreamParserMapsAppListXML() throws {
     #expect(apps[1] == .init(id: 2, title: "Steam Big Picture", hdrSupported: false, isAppCollectorGame: true))
 }
 
+@Test("Metadata client falls back to HTTP when HTTPS serverinfo returns non-200 XML")
+func metadataClientFallsBackToHTTPAfterRejectedHTTPSServerInfo() async throws {
+    let defaultsSuite = "shadow-client.metadata.serverinfo.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let transport = ScriptedRequestTransport(
+        script: [
+            .init(
+                scheme: "https",
+                command: "serverinfo",
+                result: .success(#"<root status_code="401" status_message="Not paired"></root>"#)
+            ),
+            .init(
+                scheme: "http",
+                command: "serverinfo",
+                result: .success(
+                    """
+                    <root status_code="200">
+                        <hostname>Skyline23-PC</hostname>
+                        <PairStatus>0</PairStatus>
+                        <currentgame>0</currentgame>
+                        <state>SUNSHINE_SERVER_FREE</state>
+                        <HttpsPort>47984</HttpsPort>
+                    </root>
+                    """
+                )
+            ),
+        ]
+    )
+
+    let client = NativeGameStreamMetadataClient(
+        identityStore: .init(provider: FailingIdentityProvider(), defaults: defaults),
+        pinnedCertificateStore: .init(defaults: defaults),
+        transport: transport
+    )
+
+    let info = try await client.fetchServerInfo(host: "wifi.skyline23.com")
+    #expect(info.displayName == "Skyline23-PC")
+    #expect(info.pairStatus == .notPaired)
+
+    #expect(
+        await transport.calls() == [
+            .init(scheme: "https", command: "serverinfo"),
+            .init(scheme: "http", command: "serverinfo"),
+        ]
+    )
+}
+
+@Test("Metadata client falls back to HTTP app list when HTTPS request fails")
+func metadataClientFallsBackToHTTPForAppListAfterHTTPSError() async throws {
+    let defaultsSuite = "shadow-client.metadata.applist.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let transport = ScriptedRequestTransport(
+        script: [
+            .init(
+                scheme: "https",
+                command: "applist",
+                result: .failure(.requestFailed("TLS handshake failed"))
+            ),
+            .init(
+                scheme: "http",
+                command: "applist",
+                result: .success(
+                    """
+                    <root status_code="200" status_message="OK">
+                      <App>
+                        <AppTitle>Desktop</AppTitle>
+                        <ID>1</ID>
+                        <IsHdrSupported>1</IsHdrSupported>
+                        <IsAppCollectorGame>0</IsAppCollectorGame>
+                      </App>
+                    </root>
+                    """
+                )
+            ),
+        ]
+    )
+
+    let client = NativeGameStreamMetadataClient(
+        identityStore: .init(provider: FailingIdentityProvider(), defaults: defaults),
+        pinnedCertificateStore: .init(defaults: defaults),
+        transport: transport
+    )
+
+    let apps = try await client.fetchAppList(host: "wifi.skyline23.com", httpsPort: 47984)
+    #expect(apps.count == 1)
+    #expect(apps.first?.title == "Desktop")
+
+    #expect(
+        await transport.calls() == [
+            .init(scheme: "https", command: "applist"),
+            .init(scheme: "http", command: "applist"),
+        ]
+    )
+}
+
 @Test("Remote desktop runtime refreshes hosts and loads selected host apps")
 @MainActor
 func remoteDesktopRuntimeRefreshesHostsAndLoadsApps() async {
@@ -138,6 +248,61 @@ func remoteDesktopRuntimeRefreshesHostsAndLoadsApps() async {
         #expect(message == "Host requires pairing before app list queries.")
     } else {
         Issue.record("Expected failed app state for unpaired host, got \(runtime.appState)")
+    }
+}
+
+private struct FailingIdentityProvider: ShadowClientPairingIdentityProviding {
+    func loadIdentityMaterial() throws -> ShadowClientPairingIdentityMaterial {
+        throw ShadowClientGameStreamControlError.invalidKeyMaterial
+    }
+}
+
+private actor ScriptedRequestTransport: ShadowClientGameStreamRequestTransporting {
+    struct Call: Equatable, Sendable {
+        let scheme: String
+        let command: String
+    }
+
+    struct ScriptStep: Sendable {
+        let scheme: String
+        let command: String
+        let result: Result<String, ShadowClientGameStreamError>
+    }
+
+    private var script: [ScriptStep]
+    private var recordedCalls: [Call] = []
+
+    init(script: [ScriptStep]) {
+        self.script = script
+    }
+
+    func requestXML(
+        host: String,
+        port: Int,
+        scheme: String,
+        command: String,
+        parameters: [String: String],
+        uniqueID: String,
+        pinnedServerCertificateDER: Data?,
+        clientCertificateCredential: URLCredential?
+    ) async throws -> String {
+        recordedCalls.append(.init(scheme: scheme, command: command))
+        guard !script.isEmpty else {
+            throw ShadowClientGameStreamError.requestFailed("Unexpected request \(scheme)://\(host):\(port)/\(command)")
+        }
+
+        let step = script.removeFirst()
+        guard step.scheme == scheme, step.command == command else {
+            throw ShadowClientGameStreamError.requestFailed(
+                "Unexpected request \(scheme)://\(host):\(port)/\(command), expected \(step.scheme)/\(step.command)"
+            )
+        }
+
+        return try step.result.get()
+    }
+
+    func calls() -> [Call] {
+        recordedCalls
     }
 }
 
