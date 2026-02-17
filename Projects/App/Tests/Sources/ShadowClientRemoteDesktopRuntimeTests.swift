@@ -134,8 +134,8 @@ func metadataClientFallsBackToHTTPAfterRejectedHTTPSServerInfo() async throws {
     )
 }
 
-@Test("Metadata client falls back to HTTP app list when HTTPS request fails")
-func metadataClientFallsBackToHTTPForAppListAfterHTTPSError() async throws {
+@Test("Metadata client synthesizes unpaired host when HTTPS is unauthorized and HTTP fallback is ATS blocked")
+func metadataClientReturnsUnpairedHostWhenHTTPFallbackIsBlockedByATS() async throws {
     let defaultsSuite = "shadow-client.metadata.applist.\(UUID().uuidString)"
     guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
         Issue.record("Expected isolated defaults suite")
@@ -149,24 +149,13 @@ func metadataClientFallsBackToHTTPForAppListAfterHTTPSError() async throws {
         script: [
             .init(
                 scheme: "https",
-                command: "applist",
-                result: .failure(.requestFailed("TLS handshake failed"))
+                command: "serverinfo",
+                result: .success(#"<root status_code="401" status_message="The client is not authorized. Certificate verification failed."/>"#)
             ),
             .init(
                 scheme: "http",
-                command: "applist",
-                result: .success(
-                    """
-                    <root status_code="200" status_message="OK">
-                      <App>
-                        <AppTitle>Desktop</AppTitle>
-                        <ID>1</ID>
-                        <IsHdrSupported>1</IsHdrSupported>
-                        <IsAppCollectorGame>0</IsAppCollectorGame>
-                      </App>
-                    </root>
-                    """
-                )
+                command: "serverinfo",
+                result: .failure(.requestFailed("Insecure HTTP is blocked by App Transport Security for this request."))
             ),
         ]
     )
@@ -177,14 +166,63 @@ func metadataClientFallsBackToHTTPForAppListAfterHTTPSError() async throws {
         transport: transport
     )
 
-    let apps = try await client.fetchAppList(host: "wifi.skyline23.com", httpsPort: 47984)
-    #expect(apps.count == 1)
-    #expect(apps.first?.title == "Desktop")
+    let info = try await client.fetchServerInfo(host: "wifi.skyline23.com")
+    #expect(info.host == "wifi.skyline23.com")
+    #expect(info.displayName == "wifi.skyline23.com")
+    #expect(info.pairStatus == .notPaired)
+    #expect(info.httpsPort == 47984)
+    #expect(
+        await transport.calls() == [
+            .init(scheme: "https", command: "serverinfo"),
+            .init(scheme: "http", command: "serverinfo"),
+        ]
+    )
+}
+
+@Test("Metadata client does not downgrade app list query to HTTP when HTTPS fails")
+func metadataClientKeepsAppListOnHTTPSOnly() async {
+    let defaultsSuite = "shadow-client.metadata.applist.https-only.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let transport = ScriptedRequestTransport(
+        script: [
+            .init(
+                scheme: "https",
+                command: "applist",
+                result: .failure(.responseRejected(code: 401, message: "The client is not authorized. Certificate verification failed."))
+            ),
+        ]
+    )
+
+    let client = NativeGameStreamMetadataClient(
+        identityStore: .init(provider: FailingIdentityProvider(), defaults: defaults),
+        pinnedCertificateStore: .init(defaults: defaults),
+        transport: transport
+    )
+
+    do {
+        _ = try await client.fetchAppList(host: "wifi.skyline23.com", httpsPort: 47984)
+        Issue.record("Expected app list HTTPS error")
+    } catch let error as ShadowClientGameStreamError {
+        #expect(
+            error == .responseRejected(
+                code: 401,
+                message: "The client is not authorized. Certificate verification failed."
+            )
+        )
+    } catch {
+        Issue.record("Unexpected error: \(error)")
+    }
 
     #expect(
         await transport.calls() == [
             .init(scheme: "https", command: "applist"),
-            .init(scheme: "http", command: "applist"),
         ]
     )
 }

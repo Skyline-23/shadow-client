@@ -557,7 +557,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         defaultHTTPPort: Int = 47989,
         defaultHTTPSPort: Int = 47984,
         defaultRequestTimeout: TimeInterval = 8,
-        pairingPINEntryTimeout: TimeInterval = 90,
+        pairingPINEntryTimeout: TimeInterval = 45,
         pairingStageTimeout: TimeInterval = 15
     ) {
         self.identityStore = identityStore
@@ -614,12 +614,16 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             throw ShadowClientGameStreamControlError.challengeRejected
         }
 
-        guard
-            let plainCertHex = stage1Doc.values["plaincert"]?.first,
-            let serverCertDER = Data(hexString: plainCertHex)
-        else {
+        guard let plainCertHex = stage1Doc.values["plaincert"]?.first else {
             try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
             throw ShadowClientGameStreamControlError.pairingAlreadyInProgress
+        }
+        let serverCertDER: Data
+        do {
+            serverCertDER = try ShadowClientCertificateDERDecoder.decode(fromPlainCertHex: plainCertHex)
+        } catch {
+            try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
+            throw error
         }
 
         let randomChallenge = Self.randomBytes(length: 16)
@@ -1135,6 +1139,28 @@ private enum PairHashAlgorithm {
     }
 }
 
+enum ShadowClientCertificateDERDecoder {
+    static func decode(fromPlainCertHex plainCertHex: String) throws -> Data {
+        guard let plainCertificateBytes = Data(hexString: plainCertHex), !plainCertificateBytes.isEmpty else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        if SecCertificateCreateWithData(nil, plainCertificateBytes as CFData) != nil {
+            return plainCertificateBytes
+        }
+
+        guard
+            let plainCertificateText = String(data: plainCertificateBytes, encoding: .utf8),
+            let pemBodyDER = Data(pemEncodedCertificate: plainCertificateText),
+            SecCertificateCreateWithData(nil, pemBodyDER as CFData) != nil
+        else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        return pemBodyDER
+    }
+}
+
 enum ShadowClientGameStreamHTTPTransport {
     // Keep protocol identifiers aligned with Moonlight compatibility behavior.
     private static let moonlightCompatibleUniqueID = "0123456789ABCDEF"
@@ -1580,6 +1606,24 @@ private struct ShadowClientDERReader {
 }
 
 private extension Data {
+    init?(pemEncodedCertificate pem: String) {
+        let joinedBase64Body = pem
+            .components(separatedBy: .newlines)
+            .filter { line in
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                return !trimmed.hasPrefix("-----BEGIN") &&
+                    !trimmed.hasPrefix("-----END") &&
+                    !trimmed.isEmpty
+            }
+            .joined()
+
+        guard let der = Data(base64Encoded: joinedBase64Body) else {
+            return nil
+        }
+
+        self = der
+    }
+
     init?(hexString: String) {
         let cleaned = hexString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard cleaned.count % 2 == 0 else {

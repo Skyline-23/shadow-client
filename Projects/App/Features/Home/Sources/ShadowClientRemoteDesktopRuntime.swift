@@ -265,69 +265,117 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
 
     public func fetchServerInfo(host: String) async throws -> ShadowClientGameStreamServerInfo {
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
-        var capturedError: Error?
-        let attempts: [(scheme: String, port: Int)] = [
-            (scheme: "https", port: defaultHTTPSPort),
-            (scheme: "http", port: endpoint.port),
-        ]
+        do {
+            let httpsXML = try await requestXML(
+                host: endpoint.host,
+                port: defaultHTTPSPort,
+                scheme: "https",
+                command: "serverinfo"
+            )
 
-        for attempt in attempts {
-            do {
-                let xml = try await requestXML(
-                    host: endpoint.host,
-                    port: attempt.port,
-                    scheme: attempt.scheme,
-                    command: "serverinfo"
-                )
-                return try ShadowClientGameStreamXMLParsers.parseServerInfo(
-                    xml: xml,
+            return try ShadowClientGameStreamXMLParsers.parseServerInfo(
+                xml: httpsXML,
+                host: endpoint.host,
+                fallbackHTTPSPort: defaultHTTPSPort
+            )
+        } catch let httpsError as ShadowClientGameStreamError {
+            if Self.isUnauthorizedCertificateError(httpsError) {
+                do {
+                    let httpXML = try await requestXML(
+                        host: endpoint.host,
+                        port: endpoint.port,
+                        scheme: "http",
+                        command: "serverinfo"
+                    )
+
+                    return try ShadowClientGameStreamXMLParsers.parseServerInfo(
+                        xml: httpXML,
+                        host: endpoint.host,
+                        fallbackHTTPSPort: defaultHTTPSPort
+                    )
+                } catch let httpError as ShadowClientGameStreamError {
+                    if Self.isAppTransportSecurityBlockedError(httpError) {
+                        return Self.makeUnauthorizedServerInfo(
+                            host: endpoint.host,
+                            fallbackHTTPSPort: defaultHTTPSPort
+                        )
+                    }
+                } catch {}
+
+                // HTTPS 401 already proves host reachability; keep host selectable for pairing.
+                return Self.makeUnauthorizedServerInfo(
                     host: endpoint.host,
                     fallbackHTTPSPort: defaultHTTPSPort
                 )
-            } catch {
-                capturedError = error
+            }
+            do {
+                let httpXML = try await requestXML(
+                    host: endpoint.host,
+                    port: endpoint.port,
+                    scheme: "http",
+                    command: "serverinfo"
+                )
+                return try ShadowClientGameStreamXMLParsers.parseServerInfo(
+                    xml: httpXML,
+                    host: endpoint.host,
+                    fallbackHTTPSPort: defaultHTTPSPort
+                )
+            } catch let httpError as ShadowClientGameStreamError {
+                if Self.isAppTransportSecurityBlockedError(httpError) {
+                    throw httpsError
+                }
+                throw httpError
             }
         }
-
-        if let capturedError = capturedError as? ShadowClientGameStreamError {
-            throw capturedError
-        }
-        throw ShadowClientGameStreamError.requestFailed(
-            capturedError?.localizedDescription ?? "Server info request failed."
-        )
     }
 
     public func fetchAppList(host: String, httpsPort: Int?) async throws -> [ShadowClientRemoteAppDescriptor] {
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
         let resolvedHTTPSPort = httpsPort ?? defaultHTTPSPort
 
-        var capturedError: Error?
-        let attempts: [(scheme: String, port: Int)] = [
-            (scheme: "https", port: resolvedHTTPSPort),
-            (scheme: "http", port: endpoint.port),
-        ]
+        let xml = try await requestXML(
+            host: endpoint.host,
+            port: resolvedHTTPSPort,
+            scheme: "https",
+            command: "applist"
+        )
 
-        for attempt in attempts {
-            do {
-                let xml = try await requestXML(
-                    host: endpoint.host,
-                    port: attempt.port,
-                    scheme: attempt.scheme,
-                    command: "applist"
-                )
+        return try ShadowClientGameStreamXMLParsers.parseAppList(xml: xml)
+    }
 
-                return try ShadowClientGameStreamXMLParsers.parseAppList(xml: xml)
-            } catch {
-                capturedError = error
-            }
+    private static func isUnauthorizedCertificateError(_ error: ShadowClientGameStreamError) -> Bool {
+        guard case let .responseRejected(code, message) = error, code == 401 else {
+            return false
         }
 
-        if let capturedError = capturedError as? ShadowClientGameStreamError {
-            throw capturedError
-        }
+        let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.contains("not authorized") ||
+            normalized.contains("certificate verification failed")
+    }
 
-        throw ShadowClientGameStreamError.requestFailed(
-            capturedError?.localizedDescription ?? "App list request failed."
+    private static func isAppTransportSecurityBlockedError(_ error: ShadowClientGameStreamError) -> Bool {
+        guard case let .requestFailed(message) = error else {
+            return false
+        }
+        let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.contains("app transport security") ||
+            normalized.contains("insecure http is blocked")
+    }
+
+    private static func makeUnauthorizedServerInfo(
+        host: String,
+        fallbackHTTPSPort: Int
+    ) -> ShadowClientGameStreamServerInfo {
+        ShadowClientGameStreamServerInfo(
+            host: host,
+            displayName: host,
+            pairStatus: .notPaired,
+            currentGameID: 0,
+            serverState: "SUNSHINE_SERVER_FREE",
+            httpsPort: fallbackHTTPSPort,
+            appVersion: nil,
+            gfeVersion: nil,
+            uniqueID: nil
         )
     }
 
@@ -516,8 +564,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let controlClient = controlClient
         pairTask = Task {
             do {
-                let pairingDeadline = Date().addingTimeInterval(120)
+                let pairingDeadline = Date().addingTimeInterval(70)
+                let maximumPairAttempts = 4
+                var pairAttemptCount = 0
                 while true {
+                    pairAttemptCount += 1
                     do {
                         _ = try await controlClient.pair(
                             host: selectedHost.host,
@@ -530,7 +581,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         let shouldRetry = Self.shouldRetryPairing(
                             error: error,
                             deadline: pairingDeadline
-                        )
+                        ) && pairAttemptCount < maximumPairAttempts
                         guard shouldRetry else {
                             throw error
                         }
@@ -776,6 +827,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             normalized.contains("certificate verification failed") ||
             normalized.contains("not authorized")
         {
+            return false
+        }
+
+        if normalized.contains("sunshine pin confirmation") {
             return false
         }
 
