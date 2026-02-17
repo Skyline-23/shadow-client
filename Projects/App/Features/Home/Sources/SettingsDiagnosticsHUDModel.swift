@@ -17,8 +17,9 @@ public struct SettingsDiagnosticsHUDModel: Equatable, Sendable {
     public let networkDroppedFrames: Int
     public let pacerDroppedFrames: Int
     public let timestampMs: Int
+    public let sampleIntervalMs: Int?
 
-    public init(tick: HomeDiagnosticsTick) {
+    public init(tick: HomeDiagnosticsTick, sampleIntervalMs: Int? = nil) {
         tone = tick.model.tone
         hdrVideoMode = tick.sessionPlan.settings.hdrVideoMode
         audioMode = tick.sessionPlan.settings.audioMode
@@ -34,5 +35,6 @@ public struct SettingsDiagnosticsHUDModel: Equatable, Sendable {
         networkDroppedFrames = tick.model.networkDroppedFrames
         pacerDroppedFrames = tick.model.pacerDroppedFrames
         timestampMs = tick.timestampMs
+        self.sampleIntervalMs = sampleIntervalMs
     }
 }

@@ -115,6 +115,15 @@ public struct ShadowClientAppShellView: View {
                         Text("Telemetry Timestamp: \(settingsDiagnosticsModel.timestampMs) ms")
                             .font(.footnote.monospacedDigit())
                             .foregroundStyle(.secondary)
+                        if let sampleIntervalMs = settingsDiagnosticsModel.sampleIntervalMs {
+                            Text("Sample Interval: \(sampleIntervalMs) ms")
+                                .font(.footnote.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Sample Interval: --")
+                                .font(.footnote.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
                         Text("Session Video: \(settingsDiagnosticsModel.hdrVideoMode.rawValue.uppercased()) | Audio: \(settingsDiagnosticsModel.audioMode.rawValue.uppercased())")
                             .font(.footnote.monospacedDigit())
                         Text("Reconfig V:\(settingsDiagnosticsModel.shouldRenegotiateVideoPipeline ? "Y" : "N") A:\(settingsDiagnosticsModel.shouldRenegotiateAudioPipeline ? "Y" : "N") | QDrop: \(settingsDiagnosticsModel.shouldApplyQualityDropImmediately ? "Y" : "N")")

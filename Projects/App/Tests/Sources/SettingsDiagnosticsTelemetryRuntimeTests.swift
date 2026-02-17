@@ -82,6 +82,54 @@ func settingsTelemetryRuntimeKeepsRecoveryOnHUDToggle() async {
     #expect(stableAfterToggle.targetBufferMs == 48)
 }
 
+@Test("Settings telemetry runtime reports sample interval for sequential samples")
+func settingsTelemetryRuntimeReportsSampleInterval() async {
+    let bridge = MoonlightSessionTelemetryBridge()
+    let runtime = SettingsDiagnosticsTelemetryRuntime(
+        baseDependencies: .live(bridge: bridge)
+    )
+    let settings = ShadowClientAppSettings()
+
+    let first = await runtime.ingest(
+        snapshot: stableSnapshot(timestampMs: 5_000),
+        settings: settings
+    )
+    let second = await runtime.ingest(
+        snapshot: stableSnapshot(timestampMs: 5_016),
+        settings: settings
+    )
+
+    #expect(first.sampleIntervalMs == nil)
+    #expect(second.sampleIntervalMs == 16)
+}
+
+@Test("Settings telemetry runtime clears sample interval when streaming identity changes")
+func settingsTelemetryRuntimeClearsSampleIntervalOnStreamingSettingsChange() async {
+    let bridge = MoonlightSessionTelemetryBridge()
+    let runtime = SettingsDiagnosticsTelemetryRuntime(
+        baseDependencies: .live(bridge: bridge)
+    )
+
+    let defaultSettings = ShadowClientAppSettings()
+    let lowLatencyDisabled = ShadowClientAppSettings(lowLatencyMode: false)
+
+    _ = await runtime.ingest(
+        snapshot: stableSnapshot(timestampMs: 8_000),
+        settings: defaultSettings
+    )
+    let second = await runtime.ingest(
+        snapshot: stableSnapshot(timestampMs: 8_016),
+        settings: defaultSettings
+    )
+    let afterStreamingChange = await runtime.ingest(
+        snapshot: stableSnapshot(timestampMs: 8_032),
+        settings: lowLatencyDisabled
+    )
+
+    #expect(second.sampleIntervalMs == 16)
+    #expect(afterStreamingChange.sampleIntervalMs == nil)
+}
+
 private func unstableSnapshot() -> StreamingTelemetrySnapshot {
     StreamingTelemetrySnapshot(
         stats: .init(renderedFrames: 960, droppedFrames: 40, avSyncOffsetMilliseconds: 55.0),
