@@ -12,6 +12,7 @@ public struct ShadowClientAppShellView: View {
     private let baseDependencies: ShadowClientFeatureHomeDependencies
     private let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var selectedTab: AppTab = .home
     @AppStorage(ShadowClientAppSettings.StorageKeys.lowLatencyMode) private var lowLatencyMode = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferHDR) private var preferHDR = true
@@ -42,7 +43,7 @@ public struct ShadowClientAppShellView: View {
                 settingsTab
             }
         }
-        .tint(.mint)
+        .tint(accentColor)
         .preferredColorScheme(.dark)
         .task {
             await syncConnectionStateFromRuntime()
@@ -93,10 +94,10 @@ public struct ShadowClientAppShellView: View {
                     ControllerFeedbackStatusPanel()
                         .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: 920)
+                .frame(maxWidth: contentMaxWidth)
                 .frame(maxWidth: .infinity)
-                .padding(.top, 28)
-                .padding(.horizontal, 20)
+                .padding(.top, topContentPadding)
+                .padding(.horizontal, horizontalContentPadding)
                 .padding(.bottom, 40)
             }
             .scrollContentBackground(.hidden)
@@ -118,14 +119,7 @@ public struct ShadowClientAppShellView: View {
                             .autocorrectionDisabled()
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(Color.black.opacity(0.32))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                            )
+                            .background(rowSurface(cornerRadius: 10))
                             .onSubmit {
                                 if canConnect {
                                     connectToHost()
@@ -311,10 +305,10 @@ public struct ShadowClientAppShellView: View {
                         }
                     }
                 }
-                .frame(maxWidth: 920)
+                .frame(maxWidth: contentMaxWidth)
                 .frame(maxWidth: .infinity)
-                .padding(.top, 24)
-                .padding(.horizontal, 20)
+                .padding(.top, topContentPadding)
+                .padding(.horizontal, horizontalContentPadding)
                 .padding(.bottom, 40)
             }
         }
@@ -327,7 +321,7 @@ public struct ShadowClientAppShellView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Label("Remote Desktop Hosts", systemImage: "desktopcomputer")
-                    .font(.title3.weight(.bold))
+                    .font(.system(.title3, design: .rounded).weight(.bold))
                     .foregroundStyle(.white)
                 Spacer(minLength: 8)
                 Label(remoteDesktopRuntime.hostState.label, systemImage: "dot.radiowaves.left.and.right")
@@ -398,52 +392,92 @@ public struct ShadowClientAppShellView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.black.opacity(0.62))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.10), lineWidth: 1)
-        )
+        .background(panelSurface(cornerRadius: 14))
     }
 
     private func remoteDesktopHostRow(_ host: ShadowClientRemoteHostDescriptor) -> some View {
         let isSelected = remoteDesktopRuntime.selectedHostID == host.id
 
         return settingsRow {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(host.displayName)
-                    .font(.callout.weight(.bold))
-                    .foregroundStyle(.white)
-                Text("\(host.host) · \(host.statusLabel)")
-                    .font(.footnote.monospacedDigit())
-                    .foregroundStyle(remoteHostStatusColor(host))
-                Text(host.detailLabel)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Color.white.opacity(0.74))
-            }
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(host.displayName)
+                            .font(.callout.weight(.bold))
+                            .foregroundStyle(.white)
+                            .lineLimit(2)
 
-            Spacer(minLength: 8)
+                        Text(host.host)
+                            .font(.footnote.monospaced())
+                            .foregroundStyle(Color.white.opacity(0.86))
+                            .lineLimit(2)
 
-            Button("Use") {
-                connectionHost = host.host
-                remoteDesktopRuntime.selectHost(host.id)
-            }
-            .buttonStyle(.bordered)
+                        Text(host.statusLabel)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(remoteHostStatusColor(host))
 
-            Button("Connect") {
-                connectionHost = host.host
-                connectToHost()
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!canStartConnection || !host.isReachable)
+                        Text(host.detailLabel)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(Color.white.opacity(0.82))
+                            .lineLimit(3)
+                    }
 
-            Button(isSelected ? "Selected" : "Select") {
-                remoteDesktopRuntime.selectHost(host.id)
+                    Spacer(minLength: 8)
+
+                    if isSelected {
+                        Label("Selected", systemImage: "checkmark.circle.fill")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(accentColor)
+                    }
+                }
+
+                if isCompactLayout {
+                    HStack(spacing: 8) {
+                        Button("Use") {
+                            connectionHost = host.host
+                            remoteDesktopRuntime.selectHost(host.id)
+                        }
+                        .buttonStyle(.bordered)
+                        .frame(maxWidth: .infinity)
+
+                        Button("Connect") {
+                            connectionHost = host.host
+                            connectToHost()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!canStartConnection || !host.isReachable)
+                        .frame(maxWidth: .infinity)
+                    }
+
+                    if !isSelected {
+                        Button("Select") {
+                            remoteDesktopRuntime.selectHost(host.id)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        Button("Use") {
+                            connectionHost = host.host
+                            remoteDesktopRuntime.selectHost(host.id)
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button("Connect") {
+                            connectionHost = host.host
+                            connectToHost()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!canStartConnection || !host.isReachable)
+
+                        Button(isSelected ? "Selected" : "Select") {
+                            remoteDesktopRuntime.selectHost(host.id)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isSelected)
+                    }
+                }
             }
-            .buttonStyle(.bordered)
-            .disabled(isSelected)
         }
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -453,20 +487,41 @@ public struct ShadowClientAppShellView: View {
 
     private var remoteDesktopAppListSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Host App Library")
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                Spacer(minLength: 8)
-                Label(remoteDesktopRuntime.appState.label, systemImage: "gamecontroller.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.white.opacity(0.84))
-                Button {
-                    remoteDesktopRuntime.refreshSelectedHostApps()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
+            if isCompactLayout {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Host App Library")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                        Spacer(minLength: 8)
+                        Button {
+                            remoteDesktopRuntime.refreshSelectedHostApps()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    Label(remoteDesktopRuntime.appState.label, systemImage: "gamecontroller.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.84))
                 }
-                .buttonStyle(.bordered)
+            } else {
+                HStack {
+                    Text("Host App Library")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Spacer(minLength: 8)
+                    Label(remoteDesktopRuntime.appState.label, systemImage: "gamecontroller.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.84))
+                    Button {
+                        remoteDesktopRuntime.refreshSelectedHostApps()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
 
             if let selectedHost = remoteDesktopRuntime.selectedHost {
@@ -534,14 +589,7 @@ public struct ShadowClientAppShellView: View {
             Spacer()
         }
         .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.black.opacity(0.56))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
+        .background(panelSurface(cornerRadius: 12))
     }
 
     private func remoteHostStatusColor(_ host: ShadowClientRemoteHostDescriptor) -> Color {
@@ -590,16 +638,95 @@ public struct ShadowClientAppShellView: View {
     }
 
     private var backgroundGradient: some View {
-        LinearGradient(
-            colors: [
-                Color(red: 0.04, green: 0.11, blue: 0.16),
-                Color(red: 0.08, green: 0.20, blue: 0.20),
-                Color(red: 0.20, green: 0.14, blue: 0.08),
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.03, green: 0.08, blue: 0.15),
+                    Color(red: 0.06, green: 0.16, blue: 0.20),
+                    Color(red: 0.13, green: 0.14, blue: 0.10),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            RadialGradient(
+                colors: [
+                    accentColor.opacity(0.26),
+                    .clear,
+                ],
+                center: .topTrailing,
+                startRadius: 20,
+                endRadius: 420
+            )
+
+            RadialGradient(
+                colors: [
+                    Color(red: 0.35, green: 0.45, blue: 0.95).opacity(0.18),
+                    .clear,
+                ],
+                center: .bottomLeading,
+                startRadius: 10,
+                endRadius: 360
+            )
+        }
         .ignoresSafeArea()
+    }
+
+    private var accentColor: Color {
+        Color(red: 0.34, green: 0.88, blue: 0.82)
+    }
+
+    private var contentMaxWidth: CGFloat {
+        horizontalSizeClass == .compact ? 380 : 920
+    }
+
+    private var isCompactLayout: Bool {
+        horizontalSizeClass == .compact
+    }
+
+    private var horizontalContentPadding: CGFloat {
+        horizontalSizeClass == .compact ? 14 : 20
+    }
+
+    private var topContentPadding: CGFloat {
+        horizontalSizeClass == .compact ? 20 : 28
+    }
+
+    private func panelSurface(cornerRadius: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.12),
+                        Color.white.opacity(0.06),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.28), radius: 18, x: 0, y: 10)
+    }
+
+    private func rowSurface(cornerRadius: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.30),
+                        Color.black.opacity(0.22),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(Color.white.opacity(0.14), lineWidth: 0.8)
+            )
     }
 
     private func settingsSection<Content: View>(
@@ -608,7 +735,7 @@ public struct ShadowClientAppShellView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.title3.weight(.semibold))
+                .font(.system(.title3, design: .rounded).weight(.bold))
                 .foregroundStyle(.white)
 
             VStack(alignment: .leading, spacing: 10) {
@@ -617,14 +744,7 @@ public struct ShadowClientAppShellView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.black.opacity(0.58))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.10), lineWidth: 1)
-        )
+        .background(panelSurface(cornerRadius: 14))
     }
 
     private func settingsRow<Content: View>(
@@ -636,10 +756,7 @@ public struct ShadowClientAppShellView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.black.opacity(0.46))
-        )
+        .background(rowSurface(cornerRadius: 10))
     }
 
     private func diagnosticsRow(
