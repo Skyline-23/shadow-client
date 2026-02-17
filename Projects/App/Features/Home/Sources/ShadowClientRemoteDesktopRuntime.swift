@@ -304,7 +304,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: host)
         let clientCertificateCredential: URLCredential?
         if scheme == "https" {
-            clientCertificateCredential = try await identityStore.tlsClientCertificateCredential()
+            clientCertificateCredential = try? await identityStore.tlsClientCertificateCredential()
         } else {
             clientCertificateCredential = nil
         }

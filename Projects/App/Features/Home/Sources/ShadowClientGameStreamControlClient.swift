@@ -609,7 +609,6 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let uniqueID = await identityStore.uniqueID()
         let certPEMData = try await identityStore.clientCertificatePEMData()
         let clientCertSignature = try await identityStore.clientCertificateSignature()
-        let tlsClientCredential = try await identityStore.tlsClientCertificateCredential()
 
         let hashAlgorithm = PairHashAlgorithm.from(appVersion: appVersion)
         let salt = Self.randomBytes(length: 16)
@@ -800,10 +799,13 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             "updateState": "1",
             "phrase": "pairchallenge",
         ]
-        let stage5Attempts: [(scheme: String, port: Int, pinned: Data?, credential: URLCredential?)] = [
-            (scheme: "https", port: resolvedHTTPSPort, pinned: serverCertDER, credential: tlsClientCredential),
-            (scheme: "http", port: endpoint.port, pinned: nil, credential: nil),
-        ]
+        var stage5Attempts: [(scheme: String, port: Int, pinned: Data?, credential: URLCredential?)] = []
+        if let tlsClientCredential = try? await identityStore.tlsClientCertificateCredential() {
+            stage5Attempts.append(
+                (scheme: "https", port: resolvedHTTPSPort, pinned: serverCertDER, credential: tlsClientCredential)
+            )
+        }
+        stage5Attempts.append((scheme: "http", port: endpoint.port, pinned: nil, credential: nil))
 
         var stage5Error: Error?
         var stage5Succeeded = false
@@ -856,7 +858,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
         let uniqueID = await identityStore.uniqueID()
         let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
-        let tlsClientCredential = try await identityStore.tlsClientCertificateCredential()
+        let tlsClientCredential = try? await identityStore.tlsClientCertificateCredential()
 
         let remoteInputKey = Self.randomBytes(length: 16)
         let remoteInputIV = Self.randomBytes(length: 16)
