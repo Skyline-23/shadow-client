@@ -70,3 +70,43 @@ func telemetryIngressNonBlockingCallbackIngestEventuallyEmitsToSubscriber() asyn
     #expect(snapshot?.signal.packetLossPercent == packetLossPercent)
     #expect(snapshot?.timestampMs == Int(timestampMs))
 }
+
+@Test("Telemetry ingress exposes callback activity counters for stream observability")
+func telemetryIngressExposesCallbackActivityCounters() async {
+    let bridge = MoonlightSessionTelemetryBridge()
+    await MoonlightSessionTelemetryIngress.resetActivityForTests()
+
+    let initial = await MoonlightSessionTelemetryIngress.callbackActivity()
+    #expect(initial.callbackCount == 0)
+    #expect(initial.lastCallbackTimestampMs == nil)
+
+    await MoonlightSessionTelemetryIngress.ingestFromCallback(
+        renderedFrames: 100,
+        networkDroppedFrames: 1,
+        pacerDroppedFrames: 2,
+        jitterMs: 6.0,
+        packetLossPercent: 0.4,
+        avSyncOffsetMs: 3.0,
+        timestampMs: 1_111,
+        bridge: bridge
+    )
+
+    let firstActivity = await MoonlightSessionTelemetryIngress.callbackActivity()
+    #expect(firstActivity.callbackCount == 1)
+    #expect(firstActivity.lastCallbackTimestampMs == 1_111)
+
+    await MoonlightSessionTelemetryIngress.ingestFromCallback(
+        renderedFrames: 110,
+        networkDroppedFrames: 1,
+        pacerDroppedFrames: 2,
+        jitterMs: 7.0,
+        packetLossPercent: 0.5,
+        avSyncOffsetMs: 2.0,
+        timestampMs: 2_222,
+        bridge: bridge
+    )
+
+    let secondActivity = await MoonlightSessionTelemetryIngress.callbackActivity()
+    #expect(secondActivity.callbackCount == 2)
+    #expect(secondActivity.lastCallbackTimestampMs == 2_222)
+}

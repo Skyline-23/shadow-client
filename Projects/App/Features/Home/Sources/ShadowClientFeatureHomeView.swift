@@ -97,6 +97,10 @@ public struct ShadowClientFeatureHomeView: View {
     @State private var streamOutputHeartbeatTask: Task<Void, Never>?
     @State private var sessionPlan: MoonlightSessionReconfigurationPlan?
     @State private var streamOutputModel: StreamOutputMonitorModel = .disconnected
+    @State private var telemetryIngressActivity = MoonlightTelemetryIngressActivity(
+        callbackCount: 0,
+        lastCallbackTimestampMs: nil
+    )
     @State private var diagnostics = StreamingDiagnosticsModel(
         bufferMs: 40,
         jitterMs: 0,
@@ -199,7 +203,13 @@ public struct ShadowClientFeatureHomeView: View {
                     streamMetric(title: "Frame Drop", value: streamFrameDropText)
                     streamMetric(title: "Jitter", value: streamJitterText)
                     streamMetric(title: "Packet Loss", value: streamPacketLossText)
+                    streamMetric(title: "Native Callbacks", value: streamNativeCallbackCountText)
+                    streamMetric(title: "Last Callback TS", value: streamLastCallbackText)
                 }
+
+                Label(streamCallbackStatusText, systemImage: streamCallbackStatusSymbol)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(streamCallbackStatusColor)
             }
         }
     }
@@ -348,6 +358,42 @@ public struct ShadowClientFeatureHomeView: View {
         return "--"
     }
 
+    private var streamNativeCallbackCountText: String {
+        "\(telemetryIngressActivity.callbackCount)"
+    }
+
+    private var streamLastCallbackText: String {
+        if let timestampMs = telemetryIngressActivity.lastCallbackTimestampMs {
+            return "\(timestampMs)"
+        }
+        return "--"
+    }
+
+    private var streamCallbackStatusText: String {
+        if telemetryIngressActivity.callbackCount > 0 {
+            return "Native callback active"
+        }
+
+        switch connectionState {
+        case .connected:
+            return "Connected, but no native callback samples yet"
+        case .connecting, .disconnecting:
+            return "Waiting for callback pipeline"
+        case .failed:
+            return "Callback pipeline unavailable (connection failed)"
+        case .disconnected:
+            return "Connect to a host to initialize callback pipeline"
+        }
+    }
+
+    private var streamCallbackStatusSymbol: String {
+        telemetryIngressActivity.callbackCount > 0 ? "waveform.path" : "waveform.slash"
+    }
+
+    private var streamCallbackStatusColor: Color {
+        telemetryIngressActivity.callbackCount > 0 ? .green : Color.white.opacity(0.7)
+    }
+
     private func streamMetric(title: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
@@ -411,8 +457,10 @@ public struct ShadowClientFeatureHomeView: View {
         streamOutputHeartbeatTask = Task {
             while !Task.isCancelled {
                 let model = await streamOutputRuntime.heartbeat()
+                let activity = await MoonlightSessionTelemetryIngress.callbackActivity()
                 await MainActor.run {
                     streamOutputModel = model
+                    telemetryIngressActivity = activity
                 }
 
                 try? await Task.sleep(for: .seconds(1))
