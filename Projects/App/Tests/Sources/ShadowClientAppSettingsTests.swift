@@ -33,7 +33,23 @@ func dependenciesApplyingSettingsOverridesSessionPreferences() {
 
     #expect(configured.sessionPreferences == settings.streamingPreferences)
     #expect(configured.hostCapabilities == base.hostCapabilities)
+    #expect(configured.connectionBackendLabel == base.connectionBackendLabel)
     #expect(ObjectIdentifier(configured.diagnosticsRuntime) != ObjectIdentifier(base.diagnosticsRuntime))
+}
+
+@Test("Dependencies live factory uses injected connection client")
+func dependenciesLiveFactoryUsesInjectedConnectionClient() async {
+    let bridge = MoonlightSessionTelemetryBridge()
+    let connectionClient = RecordingConnectionClient()
+    let dependencies = ShadowClientFeatureHomeDependencies.live(
+        bridge: bridge,
+        connectionClient: connectionClient
+    )
+
+    let state = await dependencies.connectionRuntime.connect(to: "192.168.0.25")
+
+    #expect(state == .connected(host: "192.168.0.25"))
+    #expect(await connectionClient.connectCalls() == ["192.168.0.25"])
 }
 
 @Test("Settings identity key changes when any toggle value changes")
@@ -62,4 +78,18 @@ func settingsStreamingIdentityKeyTracksStreamingToggles() {
     #expect(baseline.streamingIdentityKey != hdrDisabled.streamingIdentityKey)
     #expect(baseline.streamingIdentityKey != surroundDisabled.streamingIdentityKey)
     #expect(baseline.streamingIdentityKey == hudDisabled.streamingIdentityKey)
+}
+
+private actor RecordingConnectionClient: ShadowClientConnectionClient {
+    private var connectInvocations: [String] = []
+
+    func connect(to host: String) async throws {
+        connectInvocations.append(host)
+    }
+
+    func disconnect() async {}
+
+    func connectCalls() -> [String] {
+        connectInvocations
+    }
 }

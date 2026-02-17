@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import ShadowClientStreaming
 
 public enum ShadowClientConnectionState: Equatable, Sendable {
@@ -34,15 +35,15 @@ public enum ShadowClientConnectionFailure: Error, Equatable, Sendable {
     case connectRejected(String)
 }
 
-public struct ShadowClientCommandResult: Sendable {
-    public let exitCode: Int32
-    public let stdout: String
-    public let stderr: String
+public struct ShadowClientHostProbeResult: Equatable, Sendable {
+    public let reachablePorts: [Int]
 
-    public init(exitCode: Int32, stdout: String, stderr: String) {
-        self.exitCode = exitCode
-        self.stdout = stdout
-        self.stderr = stderr
+    public init(reachablePorts: [Int]) {
+        self.reachablePorts = Array(Set(reachablePorts)).sorted()
+    }
+
+    public var hasReachableService: Bool {
+        !reachablePorts.isEmpty
     }
 }
 
@@ -108,31 +109,26 @@ public actor ShadowClientConnectionRuntime {
     }
 }
 
-#if os(macOS)
-private final class MoonlightRuntimeBundleMarker {}
+public actor NativeHostProbeConnectionClient: ShadowClientConnectionClient {
+    public typealias HostProbe = @Sendable (String) async throws -> ShadowClientHostProbeResult
 
-public actor MoonlightCLIConnectionClient: ShadowClientConnectionClient {
-    public typealias CommandRunner = @Sendable (String, [String]) async throws -> ShadowClientCommandResult
-    public typealias ExecutableResolver = @Sendable () -> String?
-
-    private let commandRunner: CommandRunner
-    private let executableResolver: ExecutableResolver
+    private let hostProbe: HostProbe
+    private let requiredPorts: [Int]
     private var connectedHost: String?
-    private static let missingRuntimeMessage =
-        "Embedded stream runtime not found. Copy runtime binary to Projects/App/Features/Home/Runtime/moonlight or set SHADOW_CLIENT_MOONLIGHT_BIN."
-
-    public init() {
-        commandRunner = Self.defaultCommandRunner
-        executableResolver = Self.defaultExecutableResolver
-        connectedHost = nil
-    }
 
     public init(
-        commandRunner: @escaping CommandRunner,
-        executableResolver: @escaping ExecutableResolver
+        requiredPorts: [Int] = NativeTCPHostProbe.defaultServicePorts,
+        hostProbe: HostProbe? = nil
     ) {
-        self.commandRunner = commandRunner
-        self.executableResolver = executableResolver
+        let normalizedPorts = Array(Set(requiredPorts)).sorted()
+        self.requiredPorts = normalizedPorts
+        if let hostProbe {
+            self.hostProbe = hostProbe
+        } else {
+            self.hostProbe = { host in
+                try await NativeTCPHostProbe.probe(host: host, ports: normalizedPorts)
+            }
+        }
         connectedHost = nil
     }
 
@@ -142,19 +138,11 @@ public actor MoonlightCLIConnectionClient: ShadowClientConnectionClient {
             throw ShadowClientConnectionFailure.invalidHost
         }
 
-        guard let executable = executableResolver() else {
+        let probeResult = try await hostProbe(normalizedHost)
+        guard probeResult.hasReachableService else {
             throw ShadowClientConnectionFailure.connectRejected(
-                Self.missingRuntimeMessage
+                unavailableServiceMessage(for: normalizedHost)
             )
-        }
-
-        let result = try await commandRunner(executable, ["list", normalizedHost])
-        guard result.exitCode == 0 else {
-            let stderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            let stdout = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-            let message = !stderr.isEmpty ? stderr : (!stdout.isEmpty ? stdout : "moonlight list command failed.")
-
-            throw ShadowClientConnectionFailure.connectRejected(message)
         }
 
         connectedHost = normalizedHost
@@ -164,96 +152,142 @@ public actor MoonlightCLIConnectionClient: ShadowClientConnectionClient {
         connectedHost = nil
     }
 
-    private static let defaultExecutableResolver: ExecutableResolver = {
-        let fileManager = FileManager.default
-        return executablePathCandidates()
-            .first(where: { fileManager.isExecutableFile(atPath: $0) })
+    private func unavailableServiceMessage(for host: String) -> String {
+        let ports = requiredPorts.map(String.init).joined(separator: ", ")
+        return "No stream services reachable on \(host). Checked TCP ports: \(ports)."
+    }
+}
+
+public enum NativeTCPHostProbe {
+    public static let defaultServicePorts: [Int] = [47984, 47989, 48010]
+
+    public static func probe(
+        host: String,
+        ports: [Int] = defaultServicePorts,
+        timeout: Duration = .seconds(1)
+    ) async throws -> ShadowClientHostProbeResult {
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedHost.isEmpty else {
+            throw ShadowClientConnectionFailure.invalidHost
+        }
+
+        let normalizedPorts = Array(Set(ports.compactMap { port -> Int? in
+            guard (1...Int(UInt16.max)).contains(port) else {
+                return nil
+            }
+            return port
+        })).sorted()
+
+        let reachablePorts = await withTaskGroup(of: Int?.self, returning: [Int].self) { group in
+            for port in normalizedPorts {
+                group.addTask {
+                    let isReachable = await probeTCPPort(
+                        host: normalizedHost,
+                        port: port,
+                        timeout: timeout
+                    )
+                    return isReachable ? port : nil
+                }
+            }
+
+            var matches: [Int] = []
+            for await result in group {
+                if let port = result {
+                    matches.append(port)
+                }
+            }
+            return matches.sorted()
+        }
+
+        return ShadowClientHostProbeResult(reachablePorts: reachablePorts)
     }
 
-    private static func executablePathCandidates() -> [String] {
-        var candidates: [String] = []
-
-        if let explicitPath = ProcessInfo.processInfo.environment["SHADOW_CLIENT_MOONLIGHT_BIN"] {
-            let trimmed = explicitPath.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                candidates.append(trimmed)
-            }
+    private static func probeTCPPort(
+        host: String,
+        port: Int,
+        timeout: Duration
+    ) async -> Bool {
+        guard let endpointPort = NWEndpoint.Port(rawValue: UInt16(port)) else {
+            return false
         }
 
-        if let featureBundlePath = Bundle(for: MoonlightRuntimeBundleMarker.self).path(
-            forResource: "moonlight",
-            ofType: nil,
-            inDirectory: "Runtime"
-        ) {
-            candidates.append(featureBundlePath)
-        }
-
-        if let mainBundlePath = Bundle.main.path(
-            forResource: "moonlight",
-            ofType: nil,
-            inDirectory: "Runtime"
-        ) {
-            candidates.append(mainBundlePath)
-        }
-
-        if let sharedSupportPath = Bundle.main.sharedSupportURL?
-            .appendingPathComponent("shadow-client-runtime/moonlight")
-            .path
-        {
-            candidates.append(sharedSupportPath)
-        }
-
-        let sourceDirectory = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        candidates.append(
-            sourceDirectory
-                .appendingPathComponent("Runtime/moonlight")
-                .path
+        let connection = NWConnection(
+            host: NWEndpoint.Host(host),
+            port: endpointPort,
+            using: .tcp
+        )
+        let queue = DispatchQueue(
+            label: "com.skyline23.shadowclient.connection-probe.\(port)"
         )
 
-        let repositoryPath = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("Projects/App/Features/Home/Runtime/moonlight")
-            .path
-        candidates.append(repositoryPath)
+        return await withTaskGroup(of: Bool.self, returning: Bool.self) { group in
+            group.addTask {
+                await awaitConnectionReady(connection, queue: queue)
+            }
+            group.addTask {
+                try? await Task.sleep(for: timeout)
+                connection.cancel()
+                return false
+            }
 
-        return Array(NSOrderedSet(array: candidates)) as? [String] ?? candidates
+            let firstResult = await group.next() ?? false
+            group.cancelAll()
+            return firstResult
+        }
     }
 
-    private static let defaultCommandRunner: CommandRunner = { executable, arguments in
-        try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            let stdoutPipe = Pipe()
-            let stderrPipe = Pipe()
+    private static func awaitConnectionReady(
+        _ connection: NWConnection,
+        queue: DispatchQueue
+    ) async -> Bool {
+        await withCheckedContinuation { continuation in
+            final class ResumeGate: @unchecked Sendable {
+                private let lock = NSLock()
+                private let connection: NWConnection
+                private var continuation: CheckedContinuation<Bool, Never>?
 
-            process.executableURL = URL(fileURLWithPath: executable)
-            process.arguments = arguments
-            process.standardOutput = stdoutPipe
-            process.standardError = stderrPipe
-            process.terminationHandler = { process in
-                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                let stdout = String(decoding: stdoutData, as: UTF8.self)
-                let stderr = String(decoding: stderrData, as: UTF8.self)
+                init(
+                    connection: NWConnection,
+                    continuation: CheckedContinuation<Bool, Never>
+                ) {
+                    self.connection = connection
+                    self.continuation = continuation
+                }
 
-                continuation.resume(
-                    returning: ShadowClientCommandResult(
-                        exitCode: process.terminationStatus,
-                        stdout: stdout,
-                        stderr: stderr
-                    )
-                )
+                func finish(with result: Bool) {
+                    lock.lock()
+                    guard let continuation else {
+                        lock.unlock()
+                        return
+                    }
+                    self.continuation = nil
+                    lock.unlock()
+
+                    connection.stateUpdateHandler = nil
+                    connection.cancel()
+                    continuation.resume(returning: result)
+                }
             }
 
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
+            let gate = ResumeGate(
+                connection: connection,
+                continuation: continuation
+            )
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    gate.finish(with: true)
+                case .failed, .cancelled:
+                    gate.finish(with: false)
+                default:
+                    break
+                }
             }
+
+            connection.start(queue: queue)
         }
     }
 }
-#endif
 
 public actor SimulatedShadowClientConnectionClient: ShadowClientConnectionClient {
     private let bridge: MoonlightSessionTelemetryBridge

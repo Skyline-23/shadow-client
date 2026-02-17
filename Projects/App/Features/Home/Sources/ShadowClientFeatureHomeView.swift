@@ -7,6 +7,7 @@ public struct ShadowClientFeatureHomeDependencies {
     public let telemetryPublisher: AnyPublisher<StreamingTelemetrySnapshot, Never>
     public let diagnosticsRuntime: HomeDiagnosticsRuntime
     public let connectionRuntime: ShadowClientConnectionRuntime
+    public let connectionBackendLabel: String
     public let settingsMapper: StreamingSessionSettingsMapper
     public let sessionPreferences: StreamingUserPreferences
     public let hostCapabilities: HostStreamingCapabilities
@@ -15,6 +16,7 @@ public struct ShadowClientFeatureHomeDependencies {
         telemetryPublisher: AnyPublisher<StreamingTelemetrySnapshot, Never>,
         diagnosticsRuntime: HomeDiagnosticsRuntime,
         connectionRuntime: ShadowClientConnectionRuntime,
+        connectionBackendLabel: String,
         settingsMapper: StreamingSessionSettingsMapper,
         sessionPreferences: StreamingUserPreferences,
         hostCapabilities: HostStreamingCapabilities
@@ -22,6 +24,7 @@ public struct ShadowClientFeatureHomeDependencies {
         self.telemetryPublisher = telemetryPublisher
         self.diagnosticsRuntime = diagnosticsRuntime
         self.connectionRuntime = connectionRuntime
+        self.connectionBackendLabel = connectionBackendLabel
         self.settingsMapper = settingsMapper
         self.sessionPreferences = sessionPreferences
         self.hostCapabilities = hostCapabilities
@@ -29,7 +32,11 @@ public struct ShadowClientFeatureHomeDependencies {
 }
 
 public extension ShadowClientFeatureHomeDependencies {
-    static func live(bridge: MoonlightSessionTelemetryBridge) -> Self {
+    static func live(
+        bridge: MoonlightSessionTelemetryBridge,
+        connectionClient: any ShadowClientConnectionClient,
+        connectionBackendLabel: String = "Native Host Probe"
+    ) -> Self {
         let settingsMapper = StreamingSessionSettingsMapper()
         let sessionPreferences = StreamingUserPreferences(
             preferHDR: true,
@@ -47,25 +54,33 @@ public extension ShadowClientFeatureHomeDependencies {
             hostCapabilities: hostCapabilities
         )
         let diagnosticsRuntime = HomeDiagnosticsRuntime(launchRuntime: launchRuntime)
-        #if os(macOS)
-            let connectionClient: any ShadowClientConnectionClient = MoonlightCLIConnectionClient()
-        #else
-            let connectionClient: any ShadowClientConnectionClient = SimulatedShadowClientConnectionClient(bridge: bridge)
-        #endif
         let connectionRuntime = ShadowClientConnectionRuntime(client: connectionClient)
 
         return .init(
             telemetryPublisher: bridge.snapshotPublisher,
             diagnosticsRuntime: diagnosticsRuntime,
             connectionRuntime: connectionRuntime,
+            connectionBackendLabel: connectionBackendLabel,
             settingsMapper: settingsMapper,
             sessionPreferences: sessionPreferences,
             hostCapabilities: hostCapabilities
         )
     }
 
+    static func live(bridge: MoonlightSessionTelemetryBridge) -> Self {
+        live(
+            bridge: bridge,
+            connectionClient: NativeHostProbeConnectionClient()
+        )
+    }
+
     static func preview() -> Self {
-        live(bridge: MoonlightSessionTelemetryBridge())
+        let bridge = MoonlightSessionTelemetryBridge()
+        return live(
+            bridge: bridge,
+            connectionClient: SimulatedShadowClientConnectionClient(bridge: bridge),
+            connectionBackendLabel: "Simulated Connector"
+        )
     }
 }
 
@@ -111,11 +126,11 @@ public struct ShadowClientFeatureHomeView: View {
     public var body: some View {
         VStack(spacing: 16) {
             Text("shadow-client")
-                .font(.title2.weight(.semibold))
+                .font(.title.weight(.bold))
                 .foregroundStyle(.white)
             Text("Home running on \(platformName)")
-                .font(.footnote)
-                .foregroundStyle(Color.white.opacity(0.82))
+                .font(.callout.weight(.medium))
+                .foregroundStyle(Color.white.opacity(0.88))
             streamOutputCard
             if showsDiagnosticsHUD {
                 diagnosticsCard
@@ -158,20 +173,20 @@ public struct ShadowClientFeatureHomeView: View {
 
                 ZStack {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.black.opacity(0.5))
+                        .fill(Color.black.opacity(0.62))
 
                     VStack(spacing: 8) {
                         Image(systemName: streamStateSymbol)
-                            .font(.title2)
+                            .font(.title)
                             .foregroundStyle(streamStateColor)
                         Text(streamOutputModel.detail)
-                            .font(.footnote)
+                            .font(.callout.weight(.semibold))
                             .multilineTextAlignment(.center)
-                            .foregroundStyle(Color.white.opacity(0.84))
+                            .foregroundStyle(Color.white.opacity(0.9))
                     }
                     .padding(14)
                 }
-                .frame(height: 150)
+                .frame(height: 170)
 
                 LazyVGrid(
                     columns: [GridItem(.adaptive(minimum: 130), spacing: 8)],
@@ -196,31 +211,31 @@ public struct ShadowClientFeatureHomeView: View {
                     .font(.headline)
                     .foregroundStyle(.white)
                 Text("Tone: \(diagnostics.tone.rawValue.uppercased())")
-                    .font(.caption.weight(.semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(toneColor)
                 Text("Target Buffer: \(diagnostics.bufferMs) ms")
-                    .font(.caption.monospacedDigit())
+                    .font(.callout.monospacedDigit().weight(.semibold))
                     .foregroundStyle(Color.white.opacity(0.9))
                 Text("Jitter: \(diagnostics.jitterMs) ms | Packet Loss: \(String(format: "%.1f", diagnostics.packetLossPercent))%")
-                    .font(.caption.monospacedDigit())
+                    .font(.callout.monospacedDigit().weight(.semibold))
                     .foregroundStyle(Color.white.opacity(0.9))
                 Text("Frame Drop: \(String(format: "%.1f", diagnostics.frameDropPercent))% | AV Sync: \(diagnostics.avSyncOffsetMs) ms")
-                    .font(.caption.monospacedDigit())
+                    .font(.callout.monospacedDigit().weight(.semibold))
                     .foregroundStyle(Color.white.opacity(0.9))
                 Text("Drop Origin: NET \(diagnostics.networkDroppedFrames) | PACER \(diagnostics.pacerDroppedFrames)")
-                    .font(.caption.monospacedDigit())
+                    .font(.callout.monospacedDigit().weight(.semibold))
                     .foregroundStyle(Color.white.opacity(0.9))
                 if diagnostics.recoveryStableSamplesRemaining > 0 {
                     Text("Recovery Hold: \(diagnostics.recoveryStableSamplesRemaining) stable sample(s) remaining")
-                        .font(.caption.monospacedDigit())
+                        .font(.callout.monospacedDigit().weight(.semibold))
                         .foregroundStyle(.orange)
                 }
                 if let sessionPlan {
                     Text("Session Video: \(sessionPlan.settings.hdrVideoMode.rawValue.uppercased()) | Audio: \(sessionPlan.settings.audioMode.rawValue.uppercased())")
-                        .font(.caption.monospacedDigit())
+                        .font(.callout.monospacedDigit().weight(.semibold))
                         .foregroundStyle(Color.white.opacity(0.86))
                     Text("Reconfig V:\(sessionPlan.shouldRenegotiateVideoPipeline ? "Y" : "N") A:\(sessionPlan.shouldRenegotiateAudioPipeline ? "Y" : "N") | QDrop: \(sessionPlan.shouldApplyQualityDropImmediately ? "Y" : "N")")
-                        .font(.caption.monospacedDigit())
+                        .font(.callout.monospacedDigit().weight(.semibold))
                         .foregroundStyle(Color.white.opacity(0.75))
                 }
             }
@@ -336,16 +351,19 @@ public struct ShadowClientFeatureHomeView: View {
     private func streamMetric(title: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.caption2)
-                .foregroundStyle(Color.white.opacity(0.72))
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(Color.white.opacity(0.82))
             Text(value)
-                .font(.caption.monospacedDigit().weight(.semibold))
+                .font(.title3.monospacedDigit().weight(.bold))
                 .foregroundStyle(.white)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.black.opacity(0.5))
+        )
     }
 
     private func cardSurface<Content: View>(
@@ -353,15 +371,16 @@ public struct ShadowClientFeatureHomeView: View {
     ) -> some View {
         content()
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
+            .padding(16)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.black.opacity(0.34))
+                    .fill(Color.black.opacity(0.5))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
             )
+            .shadow(color: Color.black.opacity(0.32), radius: 14, y: 6)
     }
 
     private func startTelemetrySubscription() {

@@ -58,6 +58,7 @@ public extension ShadowClientFeatureHomeDependencies {
                 )
             ),
             connectionRuntime: connectionRuntime,
+            connectionBackendLabel: connectionBackendLabel,
             settingsMapper: settingsMapper,
             sessionPreferences: updatedPreferences,
             hostCapabilities: hostCapabilities

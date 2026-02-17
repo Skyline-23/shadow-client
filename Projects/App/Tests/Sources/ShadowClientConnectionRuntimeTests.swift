@@ -61,33 +61,24 @@ func simulatedConnectorEmitsTelemetryAfterConnect() async {
     #expect(await runtime.disconnect() == .disconnected)
 }
 
-#if os(macOS)
-@Test("Moonlight CLI connector trims host and invokes moonlight list command")
-func moonlightCLIConnectorTrimsHostAndInvokesListCommand() async throws {
-    let commandCapture = MoonlightCommandCapture()
-    let client = MoonlightCLIConnectionClient(
-        commandRunner: { executable, arguments in
-            await commandCapture.record(executable: executable, arguments: arguments)
-            return ShadowClientCommandResult(exitCode: 0, stdout: "ok", stderr: "")
-        },
-        executableResolver: { "/opt/homebrew/bin/moonlight" }
-    )
+@Test("Native host probe connector trims host and uses probe callback")
+func nativeHostProbeConnectorTrimsHostAndCallsProbe() async throws {
+    let capture = HostProbeCapture()
+    let client = NativeHostProbeConnectionClient(requiredPorts: [47984]) { host in
+        await capture.recordHost(host)
+        return ShadowClientHostProbeResult(reachablePorts: [47984])
+    }
 
     try await client.connect(to: " 192.168.1.30 ")
 
-    let call = await commandCapture.firstCall()
-    #expect(call?.executable == "/opt/homebrew/bin/moonlight")
-    #expect(call?.arguments == ["list", "192.168.1.30"])
+    #expect(await capture.hosts() == ["192.168.1.30"])
 }
 
-@Test("Moonlight CLI connector surfaces stderr when command exits non-zero")
-func moonlightCLIConnectorSurfacesCommandFailure() async {
-    let client = MoonlightCLIConnectionClient(
-        commandRunner: { _, _ in
-            ShadowClientCommandResult(exitCode: 1, stdout: "", stderr: "Connection refused")
-        },
-        executableResolver: { "/opt/homebrew/bin/moonlight" }
-    )
+@Test("Native host probe connector surfaces probe failure")
+func nativeHostProbeConnectorSurfacesProbeFailure() async {
+    let client = NativeHostProbeConnectionClient(requiredPorts: [47984]) { _ in
+        throw ShadowClientConnectionFailure.connectRejected("Connection refused")
+    }
 
     var capturedFailure: ShadowClientConnectionFailure?
     var didThrowUnexpectedError = false
@@ -103,14 +94,11 @@ func moonlightCLIConnectorSurfacesCommandFailure() async {
     #expect(capturedFailure == .connectRejected("Connection refused"))
 }
 
-@Test("Moonlight CLI connector fails when moonlight executable is unavailable")
-func moonlightCLIConnectorFailsWithoutExecutable() async {
-    let client = MoonlightCLIConnectionClient(
-        commandRunner: { _, _ in
-            ShadowClientCommandResult(exitCode: 0, stdout: "", stderr: "")
-        },
-        executableResolver: { nil }
-    )
+@Test("Native host probe connector fails when no stream service ports are reachable")
+func nativeHostProbeConnectorFailsWithoutReachablePorts() async {
+    let client = NativeHostProbeConnectionClient(requiredPorts: [47984, 47989]) { _ in
+        ShadowClientHostProbeResult(reachablePorts: [])
+    }
 
     var capturedFailure: ShadowClientConnectionFailure?
     var didThrowUnexpectedError = false
@@ -123,26 +111,22 @@ func moonlightCLIConnectorFailsWithoutExecutable() async {
     }
 
     #expect(!didThrowUnexpectedError)
-    #expect(capturedFailure == .connectRejected("Embedded stream runtime not found. Copy runtime binary to Projects/App/Features/Home/Runtime/moonlight or set SHADOW_CLIENT_MOONLIGHT_BIN."))
+    #expect(capturedFailure == .connectRejected(
+        "No stream services reachable on 192.168.1.44. Checked TCP ports: 47984, 47989."
+    ))
 }
 
-private actor MoonlightCommandCapture {
-    struct CommandCall: Equatable, Sendable {
-        let executable: String
-        let arguments: [String]
+private actor HostProbeCapture {
+    private var recordedHosts: [String] = []
+
+    func recordHost(_ host: String) {
+        recordedHosts.append(host)
     }
 
-    private var calls: [CommandCall] = []
-
-    func record(executable: String, arguments: [String]) {
-        calls.append(.init(executable: executable, arguments: arguments))
-    }
-
-    func firstCall() -> CommandCall? {
-        calls.first
+    func hosts() -> [String] {
+        recordedHosts
     }
 }
-#endif
 
 private actor RecordingConnectionClient: ShadowClientConnectionClient {
     private var connectInvocations: [String] = []

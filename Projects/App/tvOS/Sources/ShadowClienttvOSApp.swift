@@ -1,5 +1,6 @@
 import ShadowClientStreaming
 import SwiftUI
+import ShadowClientFeatureHome
 
 @main
 struct ShadowClienttvOSApp: App {
@@ -14,7 +15,10 @@ struct ShadowClienttvOSApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(
-                dependencies: .live(bridge: telemetryBridge)
+                dependencies: .live(
+                    bridge: telemetryBridge,
+                    connectionClient: NativeHostProbeConnectionClient()
+                )
             )
         }
     }

@@ -9,7 +9,7 @@ func streamMonitorAwaitsTelemetryAfterConnect() async {
     let model = await runtime.updateConnectionState(.connected(host: "192.168.0.20"), at: 1_000)
 
     #expect(model.state == .awaitingTelemetry)
-    #expect(model.detail == "Connected. Waiting for first telemetry sample.")
+    #expect(model.detail == "Host connected. Start a stream session to receive live telemetry.")
 }
 
 @Test("Stream monitor becomes live when telemetry sample arrives")

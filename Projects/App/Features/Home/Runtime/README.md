@@ -1,17 +1,8 @@
-# Embedded Stream Runtime
+# Runtime Notes
 
-Place the stream runtime executable at:
+`shadow-client` host connection checks are now implemented with native Swift `Network` APIs.
 
-`Projects/App/Features/Home/Runtime/moonlight`
+- No embedded `moonlight` executable is required.
+- No global `moonlight-qt` install is required for host probe.
 
-Requirements:
-
-- executable bit enabled (`chmod +x moonlight`)
-- binary must support command shape:
-  - `moonlight list <host>`
-
-Optional override:
-
-- set `SHADOW_CLIENT_MOONLIGHT_BIN` to an absolute executable path.
-
-The app no longer requires a globally installed `moonlight-qt` binary for host probe.
+`Projects/App/Features/Home/Runtime/` remains reserved for future native renderer/session assets only.

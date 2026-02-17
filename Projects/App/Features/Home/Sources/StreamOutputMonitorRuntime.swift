@@ -26,7 +26,7 @@ struct StreamOutputMonitorModel: Equatable, Sendable {
         .init(
             state: .disconnected,
             stateLabel: "Disconnected",
-            detail: "Connect to a host to begin stream telemetry monitoring.",
+            detail: "Connect to a host, then launch a stream to verify telemetry/video flow.",
             sampleAgeMs: nil,
             renderedFrames: nil,
             droppedFrames: nil,
@@ -104,7 +104,7 @@ actor StreamOutputMonitorRuntime {
             return .init(
                 state: .connecting,
                 stateLabel: "Connecting",
-                detail: "Negotiating stream session with the host.",
+                detail: "Negotiating host connection and waiting for stream startup.",
                 sampleAgeMs: nil,
                 renderedFrames: nil,
                 droppedFrames: nil,
@@ -131,7 +131,7 @@ actor StreamOutputMonitorRuntime {
                 return .init(
                     state: .awaitingTelemetry,
                     stateLabel: "Awaiting Telemetry",
-                    detail: "Connected. Waiting for first telemetry sample.",
+                    detail: "Host connected. Start a stream session to receive live telemetry.",
                     sampleAgeMs: nil,
                     renderedFrames: nil,
                     droppedFrames: nil,
@@ -150,7 +150,7 @@ actor StreamOutputMonitorRuntime {
                 state: ageMs > staleAfterMs ? .stale : .live,
                 stateLabel: ageMs > staleAfterMs ? "Stale" : "Live",
                 detail: ageMs > staleAfterMs
-                    ? "No telemetry update for \(ageMs) ms."
+                    ? "Telemetry paused for \(ageMs) ms. Stream output may be frozen."
                     : "Telemetry updates are flowing from the current stream.",
                 sampleAgeMs: ageMs,
                 renderedFrames: snapshot.stats.renderedFrames,
