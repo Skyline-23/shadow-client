@@ -697,8 +697,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         if let controlError = error as? ShadowClientGameStreamControlError {
             switch controlError {
-            case .pinMismatch, .challengeRejected, .pairingAlreadyInProgress:
+            case .pairingAlreadyInProgress:
                 return true
+            case .pinMismatch, .challengeRejected:
+                return false
             case .invalidPIN, .invalidKeyMaterial, .mitmDetected, .launchRejected, .malformedResponse:
                 return false
             }
@@ -731,6 +733,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalized.isEmpty else {
             return true
+        }
+
+        if normalized.contains("certificate required") ||
+            normalized.contains("certificate verification failed") ||
+            normalized.contains("not authorized")
+        {
+            return false
         }
 
         return normalized.contains("timed out") ||

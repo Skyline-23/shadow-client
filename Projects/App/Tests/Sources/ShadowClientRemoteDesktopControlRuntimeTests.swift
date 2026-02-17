@@ -64,7 +64,7 @@ func remoteDesktopRuntimeRetriesTransientPairingTimeout() async {
         appListByHost: [:]
     )
     let control = FakeControlClient(
-        simulatedPairFailures: [.requestFailed("The request timed out.")]
+        simulatedPairFailures: [ShadowClientGameStreamError.requestFailed("The request timed out.")]
     )
     let runtime = ShadowClientRemoteDesktopRuntime(
         metadataClient: metadata,
@@ -85,6 +85,92 @@ func remoteDesktopRuntimeRetriesTransientPairingTimeout() async {
         #expect(true)
     } else {
         Issue.record("Expected paired state after retry, got \(runtime.pairingState)")
+    }
+}
+
+@Test("Remote desktop runtime stops retrying when pairing challenge is rejected")
+@MainActor
+func remoteDesktopRuntimeDoesNotRetryRejectedChallenge() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.22": .init(
+                host: "192.168.0.22",
+                displayName: "Guest-PC",
+                pairStatus: .notPaired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-3"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let control = FakeControlClient(
+        simulatedPairFailures: [ShadowClientGameStreamControlError.challengeRejected]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        pinProvider: FixedPairingPINProvider(pin: "1234")
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.22"], preferredHost: "192.168.0.22")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.pairSelectedHost()
+    await waitForPairingState(runtime)
+
+    #expect(await control.pairCalls().count == 1)
+    if case let .failed(message) = runtime.pairingState {
+        #expect(message.contains("Pairing challenge was rejected"))
+    } else {
+        Issue.record("Expected failed state, got \(runtime.pairingState)")
+    }
+}
+
+@Test("Remote desktop runtime does not retry certificate-required pairing failure")
+@MainActor
+func remoteDesktopRuntimeDoesNotRetryCertificateRequiredFailure() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.23": .init(
+                host: "192.168.0.23",
+                displayName: "Studio-PC",
+                pairStatus: .notPaired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-4"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let control = FakeControlClient(
+        simulatedPairFailures: [
+            ShadowClientGameStreamError.requestFailed("TLSV1_ALERT_CERTIFICATE_REQUIRED: certificate required"),
+        ]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        pinProvider: FixedPairingPINProvider(pin: "1234")
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.23"], preferredHost: "192.168.0.23")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.pairSelectedHost()
+    await waitForPairingState(runtime)
+
+    #expect(await control.pairCalls().count == 1)
+    if case let .failed(message) = runtime.pairingState {
+        #expect(message.localizedCaseInsensitiveContains("certificate required"))
+    } else {
+        Issue.record("Expected failed state, got \(runtime.pairingState)")
     }
 }
 
@@ -179,9 +265,9 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
 
     private var recordedPairCalls: [PairCall] = []
     private var recordedLaunchCalls: [LaunchCall] = []
-    private var simulatedPairFailures: [ShadowClientGameStreamError]
+    private var simulatedPairFailures: [any Error & Sendable]
 
-    init(simulatedPairFailures: [ShadowClientGameStreamError] = []) {
+    init(simulatedPairFailures: [any Error & Sendable] = []) {
         self.simulatedPairFailures = simulatedPairFailures
     }
 
