@@ -16,6 +16,7 @@ public struct SettingsDiagnosticsHUDModel: Equatable, Sendable {
     public let avSyncOffsetMs: Int
     public let networkDroppedFrames: Int
     public let pacerDroppedFrames: Int
+    public let timestampMs: Int
 
     public init(tick: HomeDiagnosticsTick) {
         tone = tick.model.tone
@@ -32,5 +33,6 @@ public struct SettingsDiagnosticsHUDModel: Equatable, Sendable {
         avSyncOffsetMs = tick.model.avSyncOffsetMs
         networkDroppedFrames = tick.model.networkDroppedFrames
         pacerDroppedFrames = tick.model.pacerDroppedFrames
+        timestampMs = tick.timestampMs
     }
 }

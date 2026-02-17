@@ -31,6 +31,7 @@ func settingsDiagnosticsHUDModelMapsTick() {
     #expect(model.avSyncOffsetMs == 6)
     #expect(model.networkDroppedFrames == 12)
     #expect(model.pacerDroppedFrames == 2)
+    #expect(model.timestampMs == 1_024)
 }
 
 @Test("Settings diagnostics HUD model preserves zero recovery hold")
@@ -52,6 +53,7 @@ func settingsDiagnosticsHUDModelZeroRecoveryHold() {
     #expect(model.audioMode == .stereo)
     #expect(model.recoveryStableSamplesRemaining == 0)
     #expect(model.targetBufferMs == 48)
+    #expect(model.timestampMs == 1_024)
 }
 
 private func makeTick(
