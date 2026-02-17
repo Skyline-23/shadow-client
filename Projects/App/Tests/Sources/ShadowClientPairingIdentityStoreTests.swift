@@ -32,6 +32,27 @@ func pairingIdentityStoreGeneratesMaterialWhenProviderFails() async throws {
     #expect(storedPrivateKey.contains("BEGIN RSA PRIVATE KEY"))
 }
 
+@Test("Pairing identity store creates TLS client credential from generated material")
+func pairingIdentityStoreCreatesTLSClientCredential() async throws {
+    let suiteName = "ShadowClientPairingIdentityStoreTests.credential.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: suiteName) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    let store = ShadowClientPairingIdentityStore(
+        provider: FailingIdentityProvider(),
+        defaults: defaults
+    )
+
+    let credential = try await store.tlsClientCertificateCredential()
+    #expect(credential.identity != nil)
+    #expect(!credential.certificates.isEmpty)
+}
+
 @Test("Pairing identity store replaces invalid persisted key material")
 func pairingIdentityStoreReplacesInvalidPersistedMaterial() async throws {
     let suiteName = "ShadowClientPairingIdentityStoreTests.invalid.\(UUID().uuidString)"

@@ -436,100 +436,15 @@ public actor ShadowClientPairingIdentityStore {
             throw ShadowClientGameStreamControlError.invalidKeyMaterial
         }
 
-        let certFingerprint = Data(SHA256.hash(data: certDER)).hexString
-        let keyTag = Data("shadow-client.pairing.key.\(certFingerprint)".utf8)
-        let certLabel = "shadow-client.pairing.certificate.\(certFingerprint)"
-
-        let keyDeleteQuery: [CFString: Any] = [
-            kSecClass: kSecClassKey,
-            kSecAttrApplicationTag: keyTag,
-            kSecAttrKeyType: kSecAttrKeyTypeRSA,
-        ]
-        SecItemDelete(keyDeleteQuery as CFDictionary)
-
-        let keyAddQuery: [CFString: Any] = [
-            kSecClass: kSecClassKey,
-            kSecAttrApplicationTag: keyTag,
-            kSecAttrKeyType: kSecAttrKeyTypeRSA,
-            kSecAttrKeyClass: kSecAttrKeyClassPrivate,
-            kSecValueRef: privateKey,
-        ]
-        let keyStatus = SecItemAdd(keyAddQuery as CFDictionary, nil)
-        guard keyStatus == errSecSuccess || keyStatus == errSecDuplicateItem else {
+        guard let identity = SecIdentityCreate(nil, certificate, privateKey) else {
             throw ShadowClientGameStreamControlError.invalidKeyMaterial
         }
-
-        let certDeleteQuery: [CFString: Any] = [
-            kSecClass: kSecClassCertificate,
-            kSecAttrLabel: certLabel,
-        ]
-        SecItemDelete(certDeleteQuery as CFDictionary)
-
-        let certAddQuery: [CFString: Any] = [
-            kSecClass: kSecClassCertificate,
-            kSecAttrLabel: certLabel,
-            kSecValueRef: certificate,
-        ]
-        let certStatus = SecItemAdd(certAddQuery as CFDictionary, nil)
-        guard certStatus == errSecSuccess || certStatus == errSecDuplicateItem else {
-            throw ShadowClientGameStreamControlError.invalidKeyMaterial
-        }
-
-        let identity = try resolveTLSClientIdentity(
-            certificate: certificate,
-            certificateLabel: certLabel
-        )
 
         return URLCredential(
             identity: identity,
             certificates: [certificate],
             persistence: .forSession
         )
-    }
-
-    private func resolveTLSClientIdentity(
-        certificate: SecCertificate,
-        certificateLabel: String
-    ) throws -> SecIdentity {
-        #if os(macOS)
-        var identity: SecIdentity?
-        let macStatus = SecIdentityCreateWithCertificate(nil, certificate, &identity)
-        if macStatus == errSecSuccess, let identity {
-            return identity
-        }
-        #endif
-
-        var identityReference: CFTypeRef?
-        let identityQueryByCertificate: [CFString: Any] = [
-            kSecClass: kSecClassIdentity,
-            kSecReturnRef: kCFBooleanTrue as Any,
-            kSecMatchLimit: kSecMatchLimitOne,
-            kSecValueRef: certificate,
-        ]
-        let certificateQueryStatus = SecItemCopyMatching(
-            identityQueryByCertificate as CFDictionary,
-            &identityReference
-        )
-        if certificateQueryStatus == errSecSuccess, let identityReference {
-            return unsafeBitCast(identityReference, to: SecIdentity.self)
-        }
-
-        identityReference = nil
-        let identityQueryByLabel: [CFString: Any] = [
-            kSecClass: kSecClassIdentity,
-            kSecReturnRef: kCFBooleanTrue as Any,
-            kSecMatchLimit: kSecMatchLimitOne,
-            kSecAttrLabel: certificateLabel,
-        ]
-        let labelQueryStatus = SecItemCopyMatching(
-            identityQueryByLabel as CFDictionary,
-            &identityReference
-        )
-        if labelQueryStatus == errSecSuccess, let identityReference {
-            return unsafeBitCast(identityReference, to: SecIdentity.self)
-        }
-
-        throw ShadowClientGameStreamControlError.invalidKeyMaterial
     }
 }
 
