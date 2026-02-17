@@ -1136,7 +1136,7 @@ enum ShadowClientGameStreamHTTPTransport {
     }
 }
 
-private final class ShadowClientServerTrustURLSessionDelegate: NSObject, URLSessionDelegate {
+private final class ShadowClientServerTrustURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
     private let pinnedServerCertificateDER: Data?
     private let clientCertificateCredential: URLCredential?
 
@@ -1152,6 +1152,22 @@ private final class ShadowClientServerTrustURLSessionDelegate: NSObject, URLSess
     func urlSession(
         _ session: URLSession,
         didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        handleChallenge(challenge, completionHandler: completionHandler)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        handleChallenge(challenge, completionHandler: completionHandler)
+    }
+
+    private func handleChallenge(
+        _ challenge: URLAuthenticationChallenge,
         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
         if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodClientCertificate {
