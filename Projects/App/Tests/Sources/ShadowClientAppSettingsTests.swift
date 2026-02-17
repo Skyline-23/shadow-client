@@ -49,3 +49,17 @@ func settingsIdentityKeyChangesPerToggle() {
     #expect(baseline.identityKey != surroundDisabled.identityKey)
     #expect(baseline.identityKey != hudDisabled.identityKey)
 }
+
+@Test("Streaming identity key ignores HUD visibility and tracks streaming toggles only")
+func settingsStreamingIdentityKeyTracksStreamingToggles() {
+    let baseline = ShadowClientAppSettings()
+    let lowLatencyDisabled = ShadowClientAppSettings(lowLatencyMode: false)
+    let hdrDisabled = ShadowClientAppSettings(preferHDR: false)
+    let surroundDisabled = ShadowClientAppSettings(preferSurroundAudio: false)
+    let hudDisabled = ShadowClientAppSettings(showDiagnosticsHUD: false)
+
+    #expect(baseline.streamingIdentityKey != lowLatencyDisabled.streamingIdentityKey)
+    #expect(baseline.streamingIdentityKey != hdrDisabled.streamingIdentityKey)
+    #expect(baseline.streamingIdentityKey != surroundDisabled.streamingIdentityKey)
+    #expect(baseline.streamingIdentityKey == hudDisabled.streamingIdentityKey)
+}

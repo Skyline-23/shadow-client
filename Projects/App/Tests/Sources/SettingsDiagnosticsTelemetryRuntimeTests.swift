@@ -58,6 +58,30 @@ func settingsTelemetryRuntimeResetsWhenSettingsChange() async {
     #expect(lowLatencyModel.audioMode == .stereo)
 }
 
+@Test("Settings telemetry runtime keeps recovery hold when only HUD visibility changes")
+func settingsTelemetryRuntimeKeepsRecoveryOnHUDToggle() async {
+    let bridge = MoonlightSessionTelemetryBridge()
+    let runtime = SettingsDiagnosticsTelemetryRuntime(
+        baseDependencies: .live(bridge: bridge)
+    )
+
+    let hudShown = ShadowClientAppSettings(showDiagnosticsHUD: true)
+    let hudHidden = ShadowClientAppSettings(showDiagnosticsHUD: false)
+
+    _ = await runtime.ingest(
+        snapshot: unstableSnapshot(),
+        settings: hudShown
+    )
+    let stableAfterToggle = await runtime.ingest(
+        snapshot: stableSnapshot(timestampMs: 1_016),
+        settings: hudHidden
+    )
+
+    #expect(stableAfterToggle.tone == .critical)
+    #expect(stableAfterToggle.recoveryStableSamplesRemaining == 1)
+    #expect(stableAfterToggle.targetBufferMs == 48)
+}
+
 private func unstableSnapshot() -> StreamingTelemetrySnapshot {
     StreamingTelemetrySnapshot(
         stats: .init(renderedFrames: 960, droppedFrames: 40, avSyncOffsetMilliseconds: 55.0),

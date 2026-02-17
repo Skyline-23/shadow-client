@@ -33,7 +33,7 @@ public struct ShadowClientAppShellView: View {
             settingsTab
         }
         .tint(.mint)
-        .task(id: currentSettings.identityKey) {
+        .task(id: currentSettings.streamingIdentityKey) {
             restartSettingsTelemetrySubscription(for: currentSettings)
         }
         .onDisappear {
@@ -61,7 +61,7 @@ public struct ShadowClientAppShellView: View {
                             dependencies: baseDependencies.applying(settings: currentSettings),
                             showsDiagnosticsHUD: currentSettings.showDiagnosticsHUD
                         )
-                        .id(currentSettings.identityKey)
+                        .id(currentSettings.streamingIdentityKey)
                         .frame(maxWidth: .infinity, alignment: .top)
 
                         ControllerFeedbackStatusPanel()

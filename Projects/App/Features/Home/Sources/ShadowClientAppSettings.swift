@@ -36,6 +36,10 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
     public var identityKey: String {
         "\(lowLatencyMode)-\(preferHDR)-\(preferSurroundAudio)-\(showDiagnosticsHUD)"
     }
+
+    public var streamingIdentityKey: String {
+        "\(lowLatencyMode)-\(preferHDR)-\(preferSurroundAudio)"
+    }
 }
 
 public extension ShadowClientFeatureHomeDependencies {
