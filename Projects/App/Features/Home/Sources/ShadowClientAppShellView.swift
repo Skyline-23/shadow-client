@@ -24,6 +24,8 @@ public struct ShadowClientAppShellView: View {
     @State private var connectionState: ShadowClientConnectionState = .disconnected
     @State private var settingsTelemetryCancellable: AnyCancellable?
     @State private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
+    @State private var sessionInputText = ""
+    @FocusState private var sessionInputFocused: Bool
 
     public init(platformName: String, dependencies: ShadowClientFeatureHomeDependencies) {
         self.platformName = platformName
@@ -62,6 +64,9 @@ public struct ShadowClientAppShellView: View {
         .onDisappear {
             stopSettingsTelemetrySubscription()
             stopHostDiscovery()
+        }
+        .fullScreenCover(isPresented: sessionFlowPresentedBinding) {
+            remoteSessionFlowView
         }
     }
 
@@ -442,7 +447,7 @@ public struct ShadowClientAppShellView: View {
 
                         Button("Connect") {
                             connectionHost = host.host
-                            connectToHost()
+                            connectToHost(autoLaunchAfterConnect: true, preferredHostID: host.id)
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(!canStartConnection || !host.isReachable)
@@ -465,7 +470,7 @@ public struct ShadowClientAppShellView: View {
 
                         Button("Connect") {
                             connectionHost = host.host
-                            connectToHost()
+                            connectToHost(autoLaunchAfterConnect: true, preferredHostID: host.id)
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(!canStartConnection || !host.isReachable)
@@ -634,6 +639,96 @@ public struct ShadowClientAppShellView: View {
             return .green
         case .failed:
             return .red
+        }
+    }
+
+    private var sessionFlowPresentedBinding: Binding<Bool> {
+        Binding(
+            get: { remoteDesktopRuntime.activeSession != nil },
+            set: { isPresented in
+                if !isPresented {
+                    remoteDesktopRuntime.clearActiveSession()
+                    sessionInputText = ""
+                    sessionInputFocused = false
+                }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var remoteSessionFlowView: some View {
+        if let activeSession = remoteDesktopRuntime.activeSession {
+            ZStack {
+                backgroundGradient
+
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Remote Session")
+                                .font(.system(.title2, design: .rounded).weight(.bold))
+                                .foregroundStyle(.white)
+                            Text("\(activeSession.appTitle) · \(activeSession.host)")
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(Color.white.opacity(0.82))
+                        }
+
+                        Spacer(minLength: 8)
+
+                        Button("End Session") {
+                            remoteDesktopRuntime.clearActiveSession()
+                            sessionInputText = ""
+                            sessionInputFocused = false
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Stream handoff sent. Video renderer hookup is next in this flow.")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(Color.white.opacity(0.90))
+
+                        if let sessionURL = activeSession.sessionURL, !sessionURL.isEmpty {
+                            Text(sessionURL)
+                                .font(.footnote.monospaced())
+                                .foregroundStyle(Color.white.opacity(0.72))
+                                .textSelection(.enabled)
+                        }
+
+                        Label(remoteDesktopRuntime.launchState.label, systemImage: "play.circle.fill")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(launchStateColor)
+                    }
+                    .padding(14)
+                    .background(panelSurface(cornerRadius: 14))
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Input Focus")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                        TextField("Type here to keep keyboard focus while session flow is open", text: $sessionInputText)
+                            .textFieldStyle(.plain)
+                            .font(.body.monospaced())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(rowSurface(cornerRadius: 10))
+                            .focused($sessionInputFocused)
+                    }
+                    .padding(14)
+                    .background(panelSurface(cornerRadius: 14))
+
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: contentMaxWidth)
+                .padding(.horizontal, horizontalContentPadding)
+                .padding(.top, topContentPadding)
+                .padding(.bottom, 24)
+            }
+            .onAppear {
+                sessionInputFocused = true
+            }
+        } else {
+            Color.black.ignoresSafeArea()
         }
     }
 
@@ -937,7 +1032,10 @@ public struct ShadowClientAppShellView: View {
     }
 
     @MainActor
-    private func connectToHost() {
+    private func connectToHost(
+        autoLaunchAfterConnect: Bool = false,
+        preferredHostID: String? = nil
+    ) {
         let host = normalizedConnectionHost
         guard !host.isEmpty else {
             return
@@ -954,6 +1052,10 @@ public struct ShadowClientAppShellView: View {
                     refreshRemoteDesktopCatalog()
                 }
             }
+
+            if autoLaunchAfterConnect, state.isConnected {
+                await autoLaunchPreferredRemoteApp(preferredHostID: preferredHostID)
+            }
         }
     }
 
@@ -961,6 +1063,41 @@ public struct ShadowClientAppShellView: View {
     private func connectToDiscoveredHost(_ discoveredHost: ShadowClientDiscoveredHost) {
         connectionHost = discoveredHost.host
         connectToHost()
+    }
+
+    @MainActor
+    private func autoLaunchPreferredRemoteApp(preferredHostID: String?) async {
+        if let preferredHostID {
+            remoteDesktopRuntime.selectHost(preferredHostID)
+        }
+
+        remoteDesktopRuntime.refreshSelectedHostApps()
+
+        for _ in 0..<25 {
+            if case .loaded = remoteDesktopRuntime.appState {
+                if let preferred = preferredLaunchApp(from: remoteDesktopRuntime.apps) {
+                    launchRemoteApp(preferred)
+                }
+                return
+            }
+
+            if case .failed = remoteDesktopRuntime.appState {
+                return
+            }
+
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+
+        if let preferred = preferredLaunchApp(from: remoteDesktopRuntime.apps) {
+            launchRemoteApp(preferred)
+        }
+    }
+
+    private func preferredLaunchApp(from apps: [ShadowClientRemoteAppDescriptor]) -> ShadowClientRemoteAppDescriptor? {
+        if let desktop = apps.first(where: { $0.title.localizedCaseInsensitiveContains("desktop") }) {
+            return desktop
+        }
+        return apps.first
     }
 
     @MainActor
@@ -973,6 +1110,7 @@ public struct ShadowClientAppShellView: View {
 
         remoteDesktopRuntime.launchSelectedApp(
             appID: app.id,
+            appTitle: app.title,
             settings: settings
         )
     }

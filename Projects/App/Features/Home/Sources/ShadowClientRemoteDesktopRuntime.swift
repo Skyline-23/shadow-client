@@ -102,6 +102,31 @@ public struct ShadowClientRemoteAppDescriptor: Identifiable, Equatable, Sendable
     }
 }
 
+public struct ShadowClientActiveRemoteSession: Equatable, Sendable, Identifiable {
+    public let id: String
+    public let host: String
+    public let appID: Int
+    public let appTitle: String
+    public let sessionURL: String?
+    public let launchedAt: Date
+
+    public init(
+        host: String,
+        appID: Int,
+        appTitle: String,
+        sessionURL: String?,
+        launchedAt: Date = Date()
+    ) {
+        self.host = host
+        self.appID = appID
+        self.appTitle = appTitle
+        self.sessionURL = sessionURL
+        self.launchedAt = launchedAt
+        let launchedAtMs = Int(launchedAt.timeIntervalSince1970 * 1_000)
+        self.id = "\(host.lowercased())-\(appID)-\(launchedAtMs)"
+    }
+}
+
 public enum ShadowClientRemoteHostCatalogState: Equatable, Sendable {
     case idle
     case loading
@@ -428,6 +453,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @Published public private(set) var selectedHostID: String?
     @Published public private(set) var pairingState: ShadowClientRemotePairingState = .idle
     @Published public private(set) var launchState: ShadowClientRemoteLaunchState = .idle
+    @Published public private(set) var activeSession: ShadowClientActiveRemoteSession?
 
     private let metadataClient: any ShadowClientGameStreamMetadataClient
     private let controlClient: any ShadowClientGameStreamControlClient
@@ -613,6 +639,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @MainActor
     public func launchSelectedApp(
         appID: Int,
+        appTitle: String? = nil,
         settings: ShadowClientGameStreamLaunchSettings
     ) {
         guard let selectedHost else {
@@ -621,8 +648,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         launchState = .launching
+        activeSession = nil
         launchTask?.cancel()
         let controlClient = controlClient
+        let launchedAppTitle = appTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         launchTask = Task {
             do {
                 let result = try await controlClient.launch(
@@ -638,6 +667,20 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
 
                 await MainActor.run {
+                    let resolvedTitle: String
+                    if let launchedAppTitle, !launchedAppTitle.isEmpty {
+                        resolvedTitle = launchedAppTitle
+                    } else {
+                        resolvedTitle = "App \(appID)"
+                    }
+
+                    activeSession = ShadowClientActiveRemoteSession(
+                        host: selectedHost.host,
+                        appID: appID,
+                        appTitle: resolvedTitle,
+                        sessionURL: result.sessionURL
+                    )
+
                     if let sessionURL = result.sessionURL, !sessionURL.isEmpty {
                         launchState = .launched("Launch sent (\(result.verb)): \(sessionURL)")
                     } else {
@@ -651,9 +694,15 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
                 await MainActor.run {
                     launchState = .failed(error.localizedDescription)
+                    activeSession = nil
                 }
             }
         }
+    }
+
+    @MainActor
+    public func clearActiveSession() {
+        activeSession = nil
     }
 
     @MainActor
@@ -1101,15 +1150,22 @@ private final class ShadowClientXMLAppListDelegate: NSObject, XMLParserDelegate 
         currentElement = elementName
         textBuffer = ""
 
-        if elementName == "root" {
+        let normalizedElement = elementName.lowercased()
+
+        if normalizedElement == "root" {
             let code = Int(attributeDict["status_code"] ?? "") ?? -1
             let message = attributeDict["status_message"] ?? ""
             rootStatus = ShadowClientXMLRootStatus(code: code, message: message)
-        } else if elementName == "App" {
+        } else if normalizedElement == "app" {
             currentID = nil
             currentTitle = nil
             currentHDRSupported = false
             currentIsCollector = false
+
+            currentID = parseIntAttribute(attributeDict, keys: ["ID", "id"])
+            currentTitle = parseStringAttribute(attributeDict, keys: ["AppTitle", "apptitle", "title"])
+            currentHDRSupported = parseBoolAttribute(attributeDict, keys: ["IsHdrSupported", "ishdrsupported", "hdr"])
+            currentIsCollector = parseBoolAttribute(attributeDict, keys: ["IsAppCollectorGame", "isappcollectorgame", "collector"])
         }
     }
 
@@ -1134,18 +1190,18 @@ private final class ShadowClientXMLAppListDelegate: NSObject, XMLParserDelegate 
 
         let value = textBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        switch elementName {
-        case "AppTitle":
+        switch elementName.lowercased() {
+        case "apptitle":
             currentTitle = value.nonEmpty
-        case "ID":
+        case "id":
             if let parsed = Int(value) {
                 currentID = parsed
             }
-        case "IsHdrSupported":
-            currentHDRSupported = value == "1"
-        case "IsAppCollectorGame":
-            currentIsCollector = value == "1"
-        case "App":
+        case "ishdrsupported":
+            currentHDRSupported = Self.parseBoolString(value)
+        case "isappcollectorgame":
+            currentIsCollector = Self.parseBoolString(value)
+        case "app":
             if let id = currentID,
                let title = currentTitle,
                !title.isEmpty
@@ -1161,6 +1217,51 @@ private final class ShadowClientXMLAppListDelegate: NSObject, XMLParserDelegate 
             }
         default:
             break
+        }
+    }
+
+    private func parseIntAttribute(
+        _ attributes: [String: String],
+        keys: [String]
+    ) -> Int? {
+        for key in keys {
+            if let value = attributes[key], let parsed = Int(value.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                return parsed
+            }
+        }
+        return nil
+    }
+
+    private func parseStringAttribute(
+        _ attributes: [String: String],
+        keys: [String]
+    ) -> String? {
+        for key in keys {
+            if let value = attributes[key]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private func parseBoolAttribute(
+        _ attributes: [String: String],
+        keys: [String]
+    ) -> Bool {
+        for key in keys {
+            if let value = attributes[key] {
+                return Self.parseBoolString(value)
+            }
+        }
+        return false
+    }
+
+    private static func parseBoolString(_ value: String) -> Bool {
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes", "y":
+            return true
+        default:
+            return false
         }
     }
 }

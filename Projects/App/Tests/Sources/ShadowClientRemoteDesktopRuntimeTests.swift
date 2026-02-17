@@ -80,6 +80,41 @@ func gameStreamParserMapsAppListXML() throws {
     #expect(apps[1] == .init(id: 2, title: "Steam Big Picture", hdrSupported: false, isAppCollectorGame: true))
 }
 
+@Test("GameStream parser maps applist XML when App payload uses attributes")
+func gameStreamParserMapsAttributeBasedAppListXML() throws {
+    let xml = """
+    <root status_code="200" status_message="OK">
+      <App AppTitle="Desktop" ID="881448767" IsHdrSupported="1" IsAppCollectorGame="0" />
+      <App AppTitle="Steam Big Picture" ID="1093255277" IsHdrSupported="1" />
+    </root>
+    """
+
+    let apps = try ShadowClientGameStreamXMLParsers.parseAppList(xml: xml)
+
+    #expect(apps.count == 2)
+    #expect(apps[0] == .init(id: 881448767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false))
+    #expect(apps[1] == .init(id: 1093255277, title: "Steam Big Picture", hdrSupported: true, isAppCollectorGame: false))
+}
+
+@Test("GameStream parser maps applist XML with lowercase tags and boolean strings")
+func gameStreamParserMapsLowercaseAppListXML() throws {
+    let xml = """
+    <root status_code="200" status_message="OK">
+      <app>
+        <apptitle>Desktop</apptitle>
+        <id>881448767</id>
+        <ishdrsupported>true</ishdrsupported>
+        <isappcollectorgame>false</isappcollectorgame>
+      </app>
+    </root>
+    """
+
+    let apps = try ShadowClientGameStreamXMLParsers.parseAppList(xml: xml)
+
+    #expect(apps.count == 1)
+    #expect(apps[0] == .init(id: 881448767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false))
+}
+
 @Test("Metadata client falls back to HTTP when HTTPS serverinfo returns non-200 XML")
 func metadataClientFallsBackToHTTPAfterRejectedHTTPSServerInfo() async throws {
     let defaultsSuite = "shadow-client.metadata.serverinfo.\(UUID().uuidString)"
