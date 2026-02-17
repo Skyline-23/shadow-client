@@ -1,5 +1,4 @@
 import Combine
-import ShadowClientFeatureHome
 import ShadowClientStreaming
 import ShadowClientUI
 import SwiftUI
@@ -48,9 +47,12 @@ public extension ShadowClientFeatureHomeDependencies {
             hostCapabilities: hostCapabilities
         )
         let diagnosticsRuntime = HomeDiagnosticsRuntime(launchRuntime: launchRuntime)
-        let connectionRuntime = ShadowClientConnectionRuntime(
-            client: SimulatedShadowClientConnectionClient(bridge: bridge)
-        )
+        #if os(macOS)
+            let connectionClient: any ShadowClientConnectionClient = MoonlightCLIConnectionClient()
+        #else
+            let connectionClient: any ShadowClientConnectionClient = SimulatedShadowClientConnectionClient(bridge: bridge)
+        #endif
+        let connectionRuntime = ShadowClientConnectionRuntime(client: connectionClient)
 
         return .init(
             telemetryPublisher: bridge.snapshotPublisher,

@@ -34,6 +34,18 @@ public enum ShadowClientConnectionFailure: Error, Equatable, Sendable {
     case connectRejected(String)
 }
 
+public struct ShadowClientCommandResult: Sendable {
+    public let exitCode: Int32
+    public let stdout: String
+    public let stderr: String
+
+    public init(exitCode: Int32, stdout: String, stderr: String) {
+        self.exitCode = exitCode
+        self.stdout = stdout
+        self.stderr = stderr
+    }
+}
+
 public protocol ShadowClientConnectionClient: Sendable {
     func connect(to host: String) async throws
     func disconnect() async
@@ -95,6 +107,110 @@ public actor ShadowClientConnectionRuntime {
         }
     }
 }
+
+#if os(macOS)
+public actor MoonlightCLIConnectionClient: ShadowClientConnectionClient {
+    public typealias CommandRunner = @Sendable (String, [String]) async throws -> ShadowClientCommandResult
+    public typealias ExecutableResolver = @Sendable () -> String?
+
+    private let commandRunner: CommandRunner
+    private let executableResolver: ExecutableResolver
+    private var connectedHost: String?
+
+    public init() {
+        commandRunner = Self.defaultCommandRunner
+        executableResolver = Self.defaultExecutableResolver
+        connectedHost = nil
+    }
+
+    public init(
+        commandRunner: @escaping CommandRunner,
+        executableResolver: @escaping ExecutableResolver
+    ) {
+        self.commandRunner = commandRunner
+        self.executableResolver = executableResolver
+        connectedHost = nil
+    }
+
+    public func connect(to host: String) async throws {
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedHost.isEmpty else {
+            throw ShadowClientConnectionFailure.invalidHost
+        }
+
+        guard let executable = executableResolver() else {
+            throw ShadowClientConnectionFailure.connectRejected(
+                "moonlight CLI not found. Install moonlight-qt and retry."
+            )
+        }
+
+        let result = try await commandRunner(executable, ["list", normalizedHost])
+        guard result.exitCode == 0 else {
+            let stderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            let stdout = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            let message = !stderr.isEmpty ? stderr : (!stdout.isEmpty ? stdout : "moonlight list command failed.")
+
+            throw ShadowClientConnectionFailure.connectRejected(message)
+        }
+
+        connectedHost = normalizedHost
+    }
+
+    public func disconnect() async {
+        connectedHost = nil
+    }
+
+    private static let defaultExecutableResolver: ExecutableResolver = {
+        let environmentPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        let pathCandidates = environmentPath
+            .split(separator: ":")
+            .map { String($0) + "/moonlight" }
+        let fixedCandidates = [
+            "/opt/homebrew/bin/moonlight",
+            "/usr/local/bin/moonlight",
+            "/usr/bin/moonlight",
+        ]
+
+        let candidates = pathCandidates + fixedCandidates
+        let fileManager = FileManager.default
+
+        return candidates.first(where: { fileManager.isExecutableFile(atPath: $0) })
+    }
+
+    private static let defaultCommandRunner: CommandRunner = { executable, arguments in
+        try await withCheckedThrowingContinuation { continuation in
+            let process = Process()
+            let stdoutPipe = Pipe()
+            let stderrPipe = Pipe()
+
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
+            process.standardOutput = stdoutPipe
+            process.standardError = stderrPipe
+            process.terminationHandler = { process in
+                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                let stdout = String(decoding: stdoutData, as: UTF8.self)
+                let stderr = String(decoding: stderrData, as: UTF8.self)
+
+                continuation.resume(
+                    returning: ShadowClientCommandResult(
+                        exitCode: process.terminationStatus,
+                        stdout: stdout,
+                        stderr: stderr
+                    )
+                )
+            }
+
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+}
+#endif
 
 public actor SimulatedShadowClientConnectionClient: ShadowClientConnectionClient {
     private let bridge: MoonlightSessionTelemetryBridge
