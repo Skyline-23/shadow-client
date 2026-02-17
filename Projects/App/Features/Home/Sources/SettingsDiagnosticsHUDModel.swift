@@ -9,6 +9,13 @@ public struct SettingsDiagnosticsHUDModel: Equatable, Sendable {
     public let shouldRenegotiateAudioPipeline: Bool
     public let shouldApplyQualityDropImmediately: Bool
     public let recoveryStableSamplesRemaining: Int
+    public let targetBufferMs: Int
+    public let jitterMs: Int
+    public let packetLossPercent: Double
+    public let frameDropPercent: Double
+    public let avSyncOffsetMs: Int
+    public let networkDroppedFrames: Int
+    public let pacerDroppedFrames: Int
 
     public init(tick: HomeDiagnosticsTick) {
         tone = tick.model.tone
@@ -18,5 +25,12 @@ public struct SettingsDiagnosticsHUDModel: Equatable, Sendable {
         shouldRenegotiateAudioPipeline = tick.sessionPlan.shouldRenegotiateAudioPipeline
         shouldApplyQualityDropImmediately = tick.sessionPlan.shouldApplyQualityDropImmediately
         recoveryStableSamplesRemaining = tick.model.recoveryStableSamplesRemaining
+        targetBufferMs = tick.sessionPlan.settings.targetBufferMs
+        jitterMs = tick.model.jitterMs
+        packetLossPercent = tick.model.packetLossPercent
+        frameDropPercent = tick.model.frameDropPercent
+        avSyncOffsetMs = tick.model.avSyncOffsetMs
+        networkDroppedFrames = tick.model.networkDroppedFrames
+        pacerDroppedFrames = tick.model.pacerDroppedFrames
     }
 }

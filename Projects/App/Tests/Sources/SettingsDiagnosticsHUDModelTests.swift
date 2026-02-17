@@ -24,6 +24,13 @@ func settingsDiagnosticsHUDModelMapsTick() {
     #expect(!model.shouldRenegotiateAudioPipeline)
     #expect(model.shouldApplyQualityDropImmediately)
     #expect(model.recoveryStableSamplesRemaining == 3)
+    #expect(model.targetBufferMs == 48)
+    #expect(model.jitterMs == 24)
+    #expect(model.packetLossPercent == 2.0)
+    #expect(model.frameDropPercent == 1.4)
+    #expect(model.avSyncOffsetMs == 6)
+    #expect(model.networkDroppedFrames == 12)
+    #expect(model.pacerDroppedFrames == 2)
 }
 
 @Test("Settings diagnostics HUD model preserves zero recovery hold")
@@ -44,6 +51,7 @@ func settingsDiagnosticsHUDModelZeroRecoveryHold() {
     #expect(model.hdrVideoMode == .off)
     #expect(model.audioMode == .stereo)
     #expect(model.recoveryStableSamplesRemaining == 0)
+    #expect(model.targetBufferMs == 48)
 }
 
 private func makeTick(
