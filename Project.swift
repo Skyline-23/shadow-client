@@ -31,6 +31,15 @@ let project = Project(
                         "UIColorName": "",
                         "UIImageName": "",
                     ],
+                    "NSLocalNetworkUsageDescription": "shadow-client discovers streaming hosts on your local network.",
+                    "NSBonjourServices": [
+                        "_nvstream._tcp",
+                        "_sunshine._tcp",
+                        "_moonlight._tcp",
+                    ],
+                    "NSAppTransportSecurity": [
+                        "NSAllowsLocalNetworking": true,
+                    ],
                 ]
             ),
             buildableFolders: [
@@ -48,7 +57,19 @@ let project = Project(
             product: .app,
             bundleId: "com.skyline23.shadow-client.macos",
             deploymentTargets: .macOS("14.0"),
-            infoPlist: .default,
+            infoPlist: .extendingDefault(
+                with: [
+                    "NSLocalNetworkUsageDescription": "shadow-client discovers streaming hosts on your local network.",
+                    "NSBonjourServices": [
+                        "_nvstream._tcp",
+                        "_sunshine._tcp",
+                        "_moonlight._tcp",
+                    ],
+                    "NSAppTransportSecurity": [
+                        "NSAllowsLocalNetworking": true,
+                    ],
+                ]
+            ),
             buildableFolders: [
                 "Projects/App/macOS/Sources",
             ],
@@ -69,6 +90,15 @@ let project = Project(
                     "UILaunchScreen": [
                         "UIColorName": "",
                         "UIImageName": "",
+                    ],
+                    "NSLocalNetworkUsageDescription": "shadow-client discovers streaming hosts on your local network.",
+                    "NSBonjourServices": [
+                        "_nvstream._tcp",
+                        "_sunshine._tcp",
+                        "_moonlight._tcp",
+                    ],
+                    "NSAppTransportSecurity": [
+                        "NSAllowsLocalNetworking": true,
                     ],
                 ]
             ),

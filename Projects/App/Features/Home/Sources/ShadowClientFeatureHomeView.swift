@@ -7,6 +7,8 @@ public struct ShadowClientFeatureHomeDependencies {
     public let telemetryPublisher: AnyPublisher<StreamingTelemetrySnapshot, Never>
     public let diagnosticsRuntime: HomeDiagnosticsRuntime
     public let connectionRuntime: ShadowClientConnectionRuntime
+    public let hostDiscoveryRuntime: ShadowClientHostDiscoveryRuntime
+    public let remoteDesktopRuntime: ShadowClientRemoteDesktopRuntime
     public let connectionBackendLabel: String
     public let settingsMapper: StreamingSessionSettingsMapper
     public let sessionPreferences: StreamingUserPreferences
@@ -16,6 +18,8 @@ public struct ShadowClientFeatureHomeDependencies {
         telemetryPublisher: AnyPublisher<StreamingTelemetrySnapshot, Never>,
         diagnosticsRuntime: HomeDiagnosticsRuntime,
         connectionRuntime: ShadowClientConnectionRuntime,
+        hostDiscoveryRuntime: ShadowClientHostDiscoveryRuntime,
+        remoteDesktopRuntime: ShadowClientRemoteDesktopRuntime,
         connectionBackendLabel: String,
         settingsMapper: StreamingSessionSettingsMapper,
         sessionPreferences: StreamingUserPreferences,
@@ -24,6 +28,8 @@ public struct ShadowClientFeatureHomeDependencies {
         self.telemetryPublisher = telemetryPublisher
         self.diagnosticsRuntime = diagnosticsRuntime
         self.connectionRuntime = connectionRuntime
+        self.hostDiscoveryRuntime = hostDiscoveryRuntime
+        self.remoteDesktopRuntime = remoteDesktopRuntime
         self.connectionBackendLabel = connectionBackendLabel
         self.settingsMapper = settingsMapper
         self.sessionPreferences = sessionPreferences
@@ -55,11 +61,15 @@ public extension ShadowClientFeatureHomeDependencies {
         )
         let diagnosticsRuntime = HomeDiagnosticsRuntime(launchRuntime: launchRuntime)
         let connectionRuntime = ShadowClientConnectionRuntime(client: connectionClient)
+        let hostDiscoveryRuntime = ShadowClientHostDiscoveryRuntime()
+        let remoteDesktopRuntime = ShadowClientRemoteDesktopRuntime()
 
         return .init(
             telemetryPublisher: bridge.snapshotPublisher,
             diagnosticsRuntime: diagnosticsRuntime,
             connectionRuntime: connectionRuntime,
+            hostDiscoveryRuntime: hostDiscoveryRuntime,
+            remoteDesktopRuntime: remoteDesktopRuntime,
             connectionBackendLabel: connectionBackendLabel,
             settingsMapper: settingsMapper,
             sessionPreferences: sessionPreferences,
@@ -129,13 +139,11 @@ public struct ShadowClientFeatureHomeView: View {
 
     public var body: some View {
         VStack(spacing: 16) {
-            Text("shadow-client")
-                .font(.title.weight(.bold))
-                .foregroundStyle(.white)
-            Text("Home running on \(platformName)")
-                .font(.callout.weight(.medium))
-                .foregroundStyle(Color.white.opacity(0.88))
+            sessionHeader
             streamOutputCard
+            if streamOutputModel.state != .live {
+                sessionStandbyCard
+            }
             if showsDiagnosticsHUD {
                 diagnosticsCard
             } else {
@@ -156,6 +164,57 @@ public struct ShadowClientFeatureHomeView: View {
         }
         .task(id: connectionState) {
             await syncStreamOutputModel(for: connectionState)
+        }
+    }
+
+    private var sessionHeader: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Remote Session")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                Text("Platform: \(platformName)")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.8))
+            }
+
+            Spacer(minLength: 8)
+
+            VStack(alignment: .trailing, spacing: 4) {
+                Label(connectionStateBadgeText, systemImage: connectionStateBadgeSymbol)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .foregroundStyle(connectionStateBadgeColor)
+                    .background(connectionStateBadgeColor.opacity(0.18), in: Capsule())
+                Text("Native callbacks: \(telemetryIngressActivity.callbackCount)")
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.78))
+            }
+        }
+    }
+
+    private var sessionStandbyCard: some View {
+        cardSurface {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Session Launch Checklist")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+
+                Text("1) Discover/select host from Settings")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.9))
+                Text("2) Connect and verify pair status")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.9))
+                Text("3) Launch desktop/game on host")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.9))
+
+                Label(streamOutputModel.detail, systemImage: streamStateSymbol)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(streamStateColor)
+            }
         }
     }
 
@@ -277,6 +336,47 @@ public struct ShadowClientFeatureHomeView: View {
         case .warning:
             return .orange
         case .critical:
+            return .red
+        }
+    }
+
+    private var connectionStateBadgeText: String {
+        switch connectionState {
+        case .disconnected:
+            return "Disconnected"
+        case .connecting:
+            return "Connecting"
+        case .connected:
+            return "Connected"
+        case .disconnecting:
+            return "Disconnecting"
+        case .failed:
+            return "Failed"
+        }
+    }
+
+    private var connectionStateBadgeSymbol: String {
+        switch connectionState {
+        case .disconnected:
+            return "bolt.slash.fill"
+        case .connecting, .disconnecting:
+            return "clock.fill"
+        case .connected:
+            return "checkmark.circle.fill"
+        case .failed:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var connectionStateBadgeColor: Color {
+        switch connectionState {
+        case .disconnected:
+            return Color.white.opacity(0.72)
+        case .connecting, .disconnecting:
+            return .orange
+        case .connected:
+            return .green
+        case .failed:
             return .red
         }
     }
@@ -408,7 +508,7 @@ public struct ShadowClientFeatureHomeView: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.black.opacity(0.5))
+                .fill(Color.black.opacity(0.64))
         )
     }
 
@@ -420,11 +520,11 @@ public struct ShadowClientFeatureHomeView: View {
             .padding(16)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.black.opacity(0.5))
+                    .fill(Color.black.opacity(0.66))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
             )
             .shadow(color: Color.black.opacity(0.32), radius: 14, y: 6)
     }

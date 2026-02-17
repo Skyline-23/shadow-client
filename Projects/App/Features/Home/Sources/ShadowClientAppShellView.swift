@@ -18,6 +18,8 @@ public struct ShadowClientAppShellView: View {
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferSurroundAudio) private var preferSurroundAudio = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.showDiagnosticsHUD) private var showDiagnosticsHUD = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.connectionHost) private var connectionHost = ""
+    @ObservedObject private var hostDiscoveryRuntime: ShadowClientHostDiscoveryRuntime
+    @ObservedObject private var remoteDesktopRuntime: ShadowClientRemoteDesktopRuntime
     @State private var connectionState: ShadowClientConnectionState = .disconnected
     @State private var settingsTelemetryCancellable: AnyCancellable?
     @State private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
@@ -25,26 +27,40 @@ public struct ShadowClientAppShellView: View {
     public init(platformName: String, dependencies: ShadowClientFeatureHomeDependencies) {
         self.platformName = platformName
         self.baseDependencies = dependencies
+        _hostDiscoveryRuntime = ObservedObject(wrappedValue: dependencies.hostDiscoveryRuntime)
+        _remoteDesktopRuntime = ObservedObject(wrappedValue: dependencies.remoteDesktopRuntime)
         self.settingsTelemetryRuntime = SettingsDiagnosticsTelemetryRuntime(
             baseDependencies: dependencies
         )
     }
 
     public var body: some View {
-        TabView(selection: $selectedTab) {
-            homeTab
-            settingsTab
+        ZStack {
+            backgroundGradient
+            TabView(selection: $selectedTab) {
+                homeTab
+                settingsTab
+            }
         }
         .tint(.mint)
         .preferredColorScheme(.dark)
         .task {
             await syncConnectionStateFromRuntime()
+            startHostDiscovery()
+            refreshRemoteDesktopCatalog()
         }
         .task(id: currentSettings.streamingIdentityKey) {
             restartSettingsTelemetrySubscription(for: currentSettings)
         }
+        .onChange(of: hostDiscoveryRuntime.hosts, initial: false) { _, _ in
+            refreshRemoteDesktopCatalog()
+        }
+        .onChange(of: connectionHost, initial: false) { _, _ in
+            refreshRemoteDesktopCatalog()
+        }
         .onDisappear {
             stopSettingsTelemetrySubscription()
+            stopHostDiscovery()
         }
     }
 
@@ -58,231 +74,389 @@ public struct ShadowClientAppShellView: View {
     }
 
     private var homeTab: some View {
-        NavigationStack {
-            ZStack {
-                backgroundGradient
-                ScrollView {
-                    VStack(spacing: 28) {
-                        connectionStatusCard
+        ZStack {
+            backgroundGradient
+            ScrollView {
+                VStack(spacing: 28) {
+                    remoteDesktopHostCard
+                    connectionStatusCard
 
-                        ShadowClientFeatureHomeView(
-                            platformName: platformName,
-                            dependencies: baseDependencies.applying(settings: currentSettings),
-                            connectionState: connectionState,
-                            showsDiagnosticsHUD: currentSettings.showDiagnosticsHUD
-                        )
-                        .id(currentSettings.streamingIdentityKey)
-                        .frame(maxWidth: .infinity, alignment: .top)
+                    ShadowClientFeatureHomeView(
+                        platformName: platformName,
+                        dependencies: baseDependencies.applying(settings: currentSettings),
+                        connectionState: connectionState,
+                        showsDiagnosticsHUD: currentSettings.showDiagnosticsHUD
+                    )
+                    .id(currentSettings.streamingIdentityKey)
+                    .frame(maxWidth: .infinity, alignment: .top)
 
-                        ControllerFeedbackStatusPanel()
-                            .frame(maxWidth: .infinity)
-                    }
-                    .frame(maxWidth: 920)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 28)
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 40)
+                    ControllerFeedbackStatusPanel()
+                        .frame(maxWidth: .infinity)
                 }
-                .scrollContentBackground(.hidden)
+                .frame(maxWidth: 920)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 28)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 40)
             }
-            .navigationTitle("Home")
+            .scrollContentBackground(.hidden)
         }
         .tabItem { Label("Home", systemImage: "house.fill") }
         .tag(AppTab.home)
     }
 
     private var settingsTab: some View {
-        NavigationStack {
-            ZStack(alignment: .top) {
-                backgroundGradient
-                ScrollView {
-                    VStack(spacing: 18) {
-                        settingsSection(title: "Client Connection") {
-                            TextField("Host (IP or hostname)", text: $connectionHost)
-                                .font(.body.weight(.semibold))
-                                .textFieldStyle(.plain)
-                                .foregroundStyle(.white)
-                                .autocorrectionDisabled()
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 10)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(Color.black.opacity(0.32))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                                )
-                                .onSubmit {
-                                    if canConnect {
-                                        connectToHost()
-                                    }
-                                }
-
-                            settingsRow {
-                                Label("Backend: \(baseDependencies.connectionBackendLabel)", systemImage: "bolt.horizontal.circle")
-                                    .font(.callout.weight(.semibold))
-                                    .foregroundStyle(Color.white.opacity(0.9))
-                                Spacer(minLength: 0)
-                            }
-
-                            HStack(spacing: 10) {
-                                Button("Connect") {
+        ZStack(alignment: .top) {
+            backgroundGradient
+            ScrollView {
+                VStack(spacing: 18) {
+                    settingsSection(title: "Client Connection") {
+                        TextField("Host (IP or hostname)", text: $connectionHost)
+                            .font(.body.weight(.semibold))
+                            .textFieldStyle(.plain)
+                            .foregroundStyle(.white)
+                            .autocorrectionDisabled()
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(Color.black.opacity(0.32))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                            )
+                            .onSubmit {
+                                if canConnect {
                                     connectToHost()
                                 }
-                                .disabled(!canConnect)
-                                .buttonStyle(.borderedProminent)
-
-                                Button("Disconnect") {
-                                    disconnectFromHost()
-                                }
-                                .disabled(!canDisconnect)
-                                .buttonStyle(.bordered)
-
-                                Spacer(minLength: 0)
                             }
 
+                        settingsRow {
+                            Label("Backend: \(baseDependencies.connectionBackendLabel)", systemImage: "bolt.horizontal.circle")
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(Color.white.opacity(0.9))
+                            Spacer(minLength: 0)
+                        }
+
+                        settingsRow {
+                            Label("Auto Discovery: \(hostDiscoveryRuntime.state.label)", systemImage: "dot.radiowaves.left.and.right")
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(Color.white.opacity(0.9))
+                            Spacer(minLength: 0)
+                            Button {
+                                hostDiscoveryRuntime.refresh()
+                                refreshRemoteDesktopCatalog()
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        if hostDiscoveryRuntime.hosts.isEmpty {
                             settingsRow {
-                                Label(connectionStatusText, systemImage: connectionStatusSymbol)
+                                Text("No hosts discovered yet. Keep this view open or enter host manually.")
+                                    .font(.callout.weight(.medium))
+                                    .foregroundStyle(Color.white.opacity(0.82))
+                                Spacer(minLength: 0)
+                            }
+                        } else {
+                            ForEach(hostDiscoveryRuntime.hosts.prefix(8)) { discoveredHost in
+                                discoveredHostRow(discoveredHost)
+                            }
+                        }
+
+                        HStack(spacing: 10) {
+                            Button("Connect") {
+                                connectToHost()
+                            }
+                            .disabled(!canConnect)
+                            .buttonStyle(.borderedProminent)
+
+                            Button("Disconnect") {
+                                disconnectFromHost()
+                            }
+                            .disabled(!canDisconnect)
+                            .buttonStyle(.bordered)
+
+                            Spacer(minLength: 0)
+                        }
+
+                        settingsRow {
+                            Label(connectionStatusText, systemImage: connectionStatusSymbol)
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(connectionStatusColor)
+                            Spacer(minLength: 0)
+                        }
+                    }
+
+                    settingsSection(title: "Streaming Quality") {
+                        settingsRow {
+                            Toggle(isOn: $lowLatencyMode) {
+                                Label("Low-Latency Mode", systemImage: "speedometer")
                                     .font(.callout.weight(.semibold))
-                                    .foregroundStyle(connectionStatusColor)
-                                Spacer(minLength: 0)
+                                    .foregroundStyle(.white)
                             }
+                            .tint(.mint)
                         }
-
-                        settingsSection(title: "Streaming Quality") {
-                            settingsRow {
-                                Toggle(isOn: $lowLatencyMode) {
-                                    Label("Low-Latency Mode", systemImage: "speedometer")
-                                        .font(.callout.weight(.semibold))
-                                        .foregroundStyle(.white)
-                                }
-                                .tint(.mint)
+                        settingsRow {
+                            Toggle(isOn: $preferHDR) {
+                                Label("Prefer HDR", systemImage: "sparkles.tv")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
                             }
-                            settingsRow {
-                                Toggle(isOn: $preferHDR) {
-                                    Label("Prefer HDR", systemImage: "sparkles.tv")
-                                        .font(.callout.weight(.semibold))
-                                        .foregroundStyle(.white)
-                                }
-                                .tint(.mint)
-                            }
-                            settingsRow {
-                                Toggle(isOn: $preferSurroundAudio) {
-                                    Label("Prefer Surround Audio", systemImage: "hifispeaker.and.homepod.fill")
-                                        .font(.callout.weight(.semibold))
-                                        .foregroundStyle(.white)
-                                }
-                                .tint(.mint)
-                            }
+                            .tint(.mint)
                         }
-
-                        settingsSection(title: "Diagnostics") {
-                            settingsRow {
-                                Toggle(isOn: $showDiagnosticsHUD) {
-                                    Label("Show Debug HUD", systemImage: "waveform.path.ecg.rectangle")
-                                        .font(.callout.weight(.semibold))
-                                        .foregroundStyle(.white)
-                                }
-                                .tint(.mint)
+                        settingsRow {
+                            Toggle(isOn: $preferSurroundAudio) {
+                                Label("Prefer Surround Audio", systemImage: "hifispeaker.and.homepod.fill")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
                             }
+                            .tint(.mint)
                         }
+                    }
 
-                        settingsSection(title: "Session Launch Plan") {
-                            if let settingsDiagnosticsModel {
+                    settingsSection(title: "Diagnostics") {
+                        settingsRow {
+                            Toggle(isOn: $showDiagnosticsHUD) {
+                                Label("Show Debug HUD", systemImage: "waveform.path.ecg.rectangle")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+                    }
+
+                    settingsSection(title: "Session Launch Plan") {
+                        if let settingsDiagnosticsModel {
+                            diagnosticsRow(
+                                label: "Tone",
+                                value: settingsDiagnosticsModel.tone.rawValue.uppercased(),
+                                valueColor: toneColor(for: settingsDiagnosticsModel.tone)
+                            )
+                            diagnosticsRow(
+                                label: "Target Buffer",
+                                value: "\(settingsDiagnosticsModel.targetBufferMs) ms"
+                            )
+                            diagnosticsRow(
+                                label: "Jitter / Packet Loss",
+                                value: "\(settingsDiagnosticsModel.jitterMs) ms / \(String(format: "%.1f", settingsDiagnosticsModel.packetLossPercent))%"
+                            )
+                            diagnosticsRow(
+                                label: "Frame Drop / AV Sync",
+                                value: "\(String(format: "%.1f", settingsDiagnosticsModel.frameDropPercent))% / \(settingsDiagnosticsModel.avSyncOffsetMs) ms"
+                            )
+                            diagnosticsRow(
+                                label: "Drop Origin",
+                                value: "NET \(settingsDiagnosticsModel.networkDroppedFrames) / PACER \(settingsDiagnosticsModel.pacerDroppedFrames)"
+                            )
+                            diagnosticsRow(
+                                label: "Telemetry Timestamp",
+                                value: "\(settingsDiagnosticsModel.timestampMs) ms",
+                                valueColor: Color.white.opacity(0.78)
+                            )
+                            if let sampleIntervalMs = settingsDiagnosticsModel.sampleIntervalMs {
                                 diagnosticsRow(
-                                    label: "Tone",
-                                    value: settingsDiagnosticsModel.tone.rawValue.uppercased(),
-                                    valueColor: toneColor(for: settingsDiagnosticsModel.tone)
-                                )
-                                diagnosticsRow(
-                                    label: "Target Buffer",
-                                    value: "\(settingsDiagnosticsModel.targetBufferMs) ms"
-                                )
-                                diagnosticsRow(
-                                    label: "Jitter / Packet Loss",
-                                    value: "\(settingsDiagnosticsModel.jitterMs) ms / \(String(format: "%.1f", settingsDiagnosticsModel.packetLossPercent))%"
-                                )
-                                diagnosticsRow(
-                                    label: "Frame Drop / AV Sync",
-                                    value: "\(String(format: "%.1f", settingsDiagnosticsModel.frameDropPercent))% / \(settingsDiagnosticsModel.avSyncOffsetMs) ms"
-                                )
-                                diagnosticsRow(
-                                    label: "Drop Origin",
-                                    value: "NET \(settingsDiagnosticsModel.networkDroppedFrames) / PACER \(settingsDiagnosticsModel.pacerDroppedFrames)"
-                                )
-                                diagnosticsRow(
-                                    label: "Telemetry Timestamp",
-                                    value: "\(settingsDiagnosticsModel.timestampMs) ms",
+                                    label: "Sample Interval",
+                                    value: "\(sampleIntervalMs) ms",
                                     valueColor: Color.white.opacity(0.78)
                                 )
-                                if let sampleIntervalMs = settingsDiagnosticsModel.sampleIntervalMs {
-                                    diagnosticsRow(
-                                        label: "Sample Interval",
-                                        value: "\(sampleIntervalMs) ms",
-                                        valueColor: Color.white.opacity(0.78)
-                                    )
-                                } else {
-                                    diagnosticsRow(
-                                        label: "Sample Interval",
-                                        value: "--",
-                                        valueColor: Color.white.opacity(0.78)
-                                    )
-                                }
-                                if settingsDiagnosticsModel.receivedOutOfOrderSample {
-                                    diagnosticsRow(
-                                        label: "Sample Order",
-                                        value: "Out-of-order telemetry sample ignored",
-                                        valueColor: .orange
-                                    )
-                                }
-                                diagnosticsRow(
-                                    label: "Session Video / Audio",
-                                    value: "\(settingsDiagnosticsModel.hdrVideoMode.rawValue.uppercased()) / \(settingsDiagnosticsModel.audioMode.rawValue.uppercased())"
-                                )
-                                diagnosticsRow(
-                                    label: "Reconfigure",
-                                    value: "V:\(settingsDiagnosticsModel.shouldRenegotiateVideoPipeline ? "Y" : "N") A:\(settingsDiagnosticsModel.shouldRenegotiateAudioPipeline ? "Y" : "N") QDrop:\(settingsDiagnosticsModel.shouldApplyQualityDropImmediately ? "Y" : "N")",
-                                    valueColor: Color.white.opacity(0.78)
-                                )
-                                if settingsDiagnosticsModel.recoveryStableSamplesRemaining > 0 {
-                                    diagnosticsRow(
-                                        label: "Recovery Hold",
-                                        value: "\(settingsDiagnosticsModel.recoveryStableSamplesRemaining) stable sample(s) remaining",
-                                        valueColor: .orange
-                                    )
-                                }
                             } else {
-                                settingsRow {
-                                    Label("Awaiting telemetry samples from active session.", systemImage: "antenna.radiowaves.left.and.right")
-                                        .font(.callout.weight(.semibold))
-                                        .foregroundStyle(Color.white.opacity(0.82))
-                                    Spacer(minLength: 0)
-                                }
+                                diagnosticsRow(
+                                    label: "Sample Interval",
+                                    value: "--",
+                                    valueColor: Color.white.opacity(0.78)
+                                )
                             }
-                        }
-
-                        settingsSection(title: "Controller") {
+                            if settingsDiagnosticsModel.receivedOutOfOrderSample {
+                                diagnosticsRow(
+                                    label: "Sample Order",
+                                    value: "Out-of-order telemetry sample ignored",
+                                    valueColor: .orange
+                                )
+                            }
+                            diagnosticsRow(
+                                label: "Session Video / Audio",
+                                value: "\(settingsDiagnosticsModel.hdrVideoMode.rawValue.uppercased()) / \(settingsDiagnosticsModel.audioMode.rawValue.uppercased())"
+                            )
+                            diagnosticsRow(
+                                label: "Reconfigure",
+                                value: "V:\(settingsDiagnosticsModel.shouldRenegotiateVideoPipeline ? "Y" : "N") A:\(settingsDiagnosticsModel.shouldRenegotiateAudioPipeline ? "Y" : "N") QDrop:\(settingsDiagnosticsModel.shouldApplyQualityDropImmediately ? "Y" : "N")",
+                                valueColor: Color.white.opacity(0.78)
+                            )
+                            if settingsDiagnosticsModel.recoveryStableSamplesRemaining > 0 {
+                                diagnosticsRow(
+                                    label: "Recovery Hold",
+                                    value: "\(settingsDiagnosticsModel.recoveryStableSamplesRemaining) stable sample(s) remaining",
+                                    valueColor: .orange
+                                )
+                            }
+                        } else {
                             settingsRow {
-                                Label("USB-first DualSense feedback contract remains enabled.", systemImage: "gamecontroller.fill")
+                                Label("Awaiting telemetry samples from active session.", systemImage: "antenna.radiowaves.left.and.right")
                                     .font(.callout.weight(.semibold))
                                     .foregroundStyle(Color.white.opacity(0.82))
                                 Spacer(minLength: 0)
                             }
                         }
                     }
-                    .frame(maxWidth: 920)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 24)
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 40)
+
+                    settingsSection(title: "Controller") {
+                        settingsRow {
+                            Label("USB-first DualSense feedback contract remains enabled.", systemImage: "gamecontroller.fill")
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(Color.white.opacity(0.82))
+                            Spacer(minLength: 0)
+                        }
+                    }
                 }
+                .frame(maxWidth: 920)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 24)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 40)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .navigationTitle("Settings")
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
         .tag(AppTab.settings)
+    }
+
+    private var remoteDesktopHostCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Label("Remote Desktop Hosts", systemImage: "desktopcomputer")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(.white)
+                Spacer(minLength: 8)
+                Label(remoteDesktopRuntime.hostState.label, systemImage: "dot.radiowaves.left.and.right")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .foregroundStyle(Color.white.opacity(0.9))
+                    .background(Color.white.opacity(0.12), in: Capsule())
+                Button {
+                    refreshRemoteDesktopCatalog()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if remoteDesktopRuntime.hosts.isEmpty {
+                settingsRow {
+                    Text("No hosts in catalog yet. Keep Settings > Client Connection open for discovery or set host manually.")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.88))
+                    Spacer(minLength: 0)
+                }
+            } else {
+                ForEach(remoteDesktopRuntime.hosts.prefix(6)) { host in
+                    remoteDesktopHostRow(host)
+                }
+            }
+
+            remoteDesktopAppListSection
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.black.opacity(0.62))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+        )
+    }
+
+    private func remoteDesktopHostRow(_ host: ShadowClientRemoteHostDescriptor) -> some View {
+        settingsRow {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(host.displayName)
+                    .font(.callout.weight(.bold))
+                    .foregroundStyle(.white)
+                Text("\(host.host) · \(host.statusLabel)")
+                    .font(.footnote.monospacedDigit())
+                    .foregroundStyle(remoteHostStatusColor(host))
+                Text(host.detailLabel)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.74))
+            }
+
+            Spacer(minLength: 8)
+
+            Button("Use") {
+                connectionHost = host.host
+            }
+            .buttonStyle(.bordered)
+
+            Button("Connect") {
+                connectionHost = host.host
+                connectToHost()
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!canStartConnection || !host.isReachable)
+
+            Button("Select") {
+                remoteDesktopRuntime.selectHost(host.id)
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+
+    private var remoteDesktopAppListSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Host App Library")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Spacer(minLength: 8)
+                Label(remoteDesktopRuntime.appState.label, systemImage: "gamecontroller.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.84))
+                Button {
+                    remoteDesktopRuntime.refreshSelectedHostApps()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if let selectedHost = remoteDesktopRuntime.selectedHost {
+                Text("Selected Host: \(selectedHost.displayName) (\(selectedHost.host))")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.78))
+            } else {
+                Text("Select a host to inspect available desktop/game apps.")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.78))
+            }
+
+            if remoteDesktopRuntime.apps.isEmpty {
+                settingsRow {
+                    Text("No app metadata loaded yet. The host may require pairing before app list queries.")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.82))
+                    Spacer(minLength: 0)
+                }
+            } else {
+                ForEach(remoteDesktopRuntime.apps.prefix(8)) { app in
+                    settingsRow {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(app.title)
+                                .font(.callout.weight(.bold))
+                                .foregroundStyle(.white)
+                            Text("App ID: \(app.id) · HDR: \(app.hdrSupported ? "Y" : "N")")
+                                .font(.footnote.monospacedDigit())
+                                .foregroundStyle(Color.white.opacity(0.72))
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
     }
 
     private var connectionStatusCard: some View {
@@ -305,12 +479,31 @@ public struct ShadowClientAppShellView: View {
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.black.opacity(0.34))
+                .fill(Color.black.opacity(0.56))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
+    }
+
+    private func remoteHostStatusColor(_ host: ShadowClientRemoteHostDescriptor) -> Color {
+        if host.lastError != nil {
+            return .red
+        }
+
+        if host.currentGameID > 0 {
+            return .orange
+        }
+
+        switch host.pairStatus {
+        case .paired:
+            return .green
+        case .notPaired:
+            return .yellow
+        case .unknown:
+            return Color.white.opacity(0.78)
+        }
     }
 
     private var backgroundGradient: some View {
@@ -343,11 +536,11 @@ public struct ShadowClientAppShellView: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.black.opacity(0.42))
+                .fill(Color.black.opacity(0.58))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                .stroke(Color.white.opacity(0.10), lineWidth: 1)
         )
     }
 
@@ -362,7 +555,7 @@ public struct ShadowClientAppShellView: View {
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.black.opacity(0.28))
+                .fill(Color.black.opacity(0.46))
         )
     }
 
@@ -380,6 +573,30 @@ public struct ShadowClientAppShellView: View {
                 .font(.callout.monospacedDigit().weight(.semibold))
                 .foregroundStyle(valueColor)
                 .multilineTextAlignment(.trailing)
+        }
+    }
+
+    private func discoveredHostRow(_ discoveredHost: ShadowClientDiscoveredHost) -> some View {
+        settingsRow {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(discoveredHost.name)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.white)
+                Text("\(discoveredHost.host):\(discoveredHost.port) · \(discoveredHost.serviceType)")
+                    .font(.footnote.monospacedDigit())
+                    .foregroundStyle(Color.white.opacity(0.74))
+            }
+            Spacer(minLength: 8)
+            Button("Use") {
+                connectionHost = discoveredHost.host
+                refreshRemoteDesktopCatalog()
+            }
+            .buttonStyle(.bordered)
+            Button("Connect") {
+                connectToDiscoveredHost(discoveredHost)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!canStartConnection)
         }
     }
 
@@ -403,6 +620,10 @@ public struct ShadowClientAppShellView: View {
             return false
         }
 
+        return canStartConnection
+    }
+
+    private var canStartConnection: Bool {
         switch connectionState {
         case .connected, .connecting, .disconnecting:
             return false
@@ -493,11 +714,36 @@ public struct ShadowClientAppShellView: View {
     }
 
     @MainActor
+    private func startHostDiscovery() {
+        hostDiscoveryRuntime.start()
+    }
+
+    @MainActor
+    private func refreshRemoteDesktopCatalog() {
+        var candidates = hostDiscoveryRuntime.hosts.map(\.host)
+        if !normalizedConnectionHost.isEmpty {
+            candidates.append(normalizedConnectionHost)
+        }
+
+        remoteDesktopRuntime.refreshHosts(
+            candidates: candidates,
+            preferredHost: normalizedConnectionHost.isEmpty ? nil : normalizedConnectionHost
+        )
+    }
+
+    @MainActor
+    private func stopHostDiscovery() {
+        hostDiscoveryRuntime.stop()
+    }
+
+    @MainActor
     private func connectToHost() {
         let host = normalizedConnectionHost
         guard !host.isEmpty else {
             return
         }
+
+        refreshRemoteDesktopCatalog()
 
         Task {
             let state = await baseDependencies.connectionRuntime.connect(to: host)
@@ -505,9 +751,16 @@ public struct ShadowClientAppShellView: View {
                 connectionState = state
                 if let connectedHost = state.host, !connectedHost.isEmpty {
                     connectionHost = connectedHost
+                    refreshRemoteDesktopCatalog()
                 }
             }
         }
+    }
+
+    @MainActor
+    private func connectToDiscoveredHost(_ discoveredHost: ShadowClientDiscoveredHost) {
+        connectionHost = discoveredHost.host
+        connectToHost()
     }
 
     @MainActor
@@ -517,6 +770,7 @@ public struct ShadowClientAppShellView: View {
             await MainActor.run {
                 connectionState = state
                 settingsDiagnosticsModel = nil
+                refreshRemoteDesktopCatalog()
             }
         }
     }

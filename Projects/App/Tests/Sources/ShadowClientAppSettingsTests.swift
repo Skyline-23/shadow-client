@@ -34,6 +34,8 @@ func dependenciesApplyingSettingsOverridesSessionPreferences() {
     #expect(configured.sessionPreferences == settings.streamingPreferences)
     #expect(configured.hostCapabilities == base.hostCapabilities)
     #expect(configured.connectionBackendLabel == base.connectionBackendLabel)
+    #expect(ObjectIdentifier(configured.hostDiscoveryRuntime) == ObjectIdentifier(base.hostDiscoveryRuntime))
+    #expect(ObjectIdentifier(configured.remoteDesktopRuntime) == ObjectIdentifier(base.remoteDesktopRuntime))
     #expect(ObjectIdentifier(configured.diagnosticsRuntime) != ObjectIdentifier(base.diagnosticsRuntime))
 }
 
