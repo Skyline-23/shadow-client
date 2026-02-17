@@ -1,6 +1,7 @@
 import CommonCrypto
 import CryptoKit
 import Foundation
+import os
 import Security
 
 public enum ShadowClientRemotePairingState: Equatable, Sendable {
@@ -537,6 +538,11 @@ public actor ShadowClientPinnedHostCertificateStore {
 }
 
 public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient {
+    private static let pairingLogger = Logger(
+        subsystem: "com.skyline23.shadow-client",
+        category: "Pairing"
+    )
+
     private let identityStore: ShadowClientPairingIdentityStore
     private let pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
     private let defaultHTTPPort: Int
@@ -586,29 +592,24 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let saltedPin = Data(salt + Data(trimmedPIN.utf8))
         let aesKey = Data(hashAlgorithm.digest(saltedPin).prefix(16))
 
-        let stage1XML: String
-        do {
-            stage1XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
-                host: endpoint.host,
-                port: endpoint.port,
-                scheme: "http",
-                command: "pair",
-                parameters: [
-                    "devicename": "shadow-client",
-                    "updateState": "1",
-                    "phrase": "getservercert",
-                    "salt": salt.hexString,
-                    "clientcert": certPEMData.hexString,
-                ],
-                uniqueID: uniqueID,
-                pinnedServerCertificateDER: nil,
-                timeout: pairingPINEntryTimeout
-            )
-        } catch let error as ShadowClientGameStreamError {
-            throw Self.remapPairingStageError(error, stage: "getservercert")
-        }
+        let stage1XML = try await requestPairXML(
+            stage: "getservercert",
+            host: endpoint.host,
+            port: endpoint.port,
+            scheme: "http",
+            parameters: [
+                "devicename": "shadow-client",
+                "updateState": "1",
+                "phrase": "getservercert",
+                "salt": salt.hexString,
+                "clientcert": certPEMData.hexString,
+            ],
+            uniqueID: uniqueID,
+            pinnedServerCertificateDER: nil,
+            timeout: pairingPINEntryTimeout
+        )
 
-        let stage1Doc = try parsePairResponseXML(stage1XML)
+        let stage1Doc = try parsePairStageXML(stage1XML, stage: "getservercert")
         guard stage1Doc.values["paired"]?.first == "1" else {
             throw ShadowClientGameStreamControlError.challengeRejected
         }
@@ -628,11 +629,11 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             operation: CCOperation(kCCEncrypt)
         )
 
-        let stage2XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
+        let stage2XML = try await requestPairXML(
+            stage: "clientchallenge",
             host: endpoint.host,
             port: endpoint.port,
             scheme: "http",
-            command: "pair",
             parameters: [
                 "devicename": "shadow-client",
                 "updateState": "1",
@@ -642,7 +643,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             pinnedServerCertificateDER: nil,
             timeout: pairingStageTimeout
         )
-        let stage2Doc = try parsePairResponseXML(stage2XML)
+        let stage2Doc = try parsePairStageXML(stage2XML, stage: "clientchallenge")
         guard stage2Doc.values["paired"]?.first == "1" else {
             try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
             throw ShadowClientGameStreamControlError.challengeRejected
@@ -686,11 +687,11 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             operation: CCOperation(kCCEncrypt)
         )
 
-        let stage3XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
+        let stage3XML = try await requestPairXML(
+            stage: "serverchallengeresp",
             host: endpoint.host,
             port: endpoint.port,
             scheme: "http",
-            command: "pair",
             parameters: [
                 "devicename": "shadow-client",
                 "updateState": "1",
@@ -700,7 +701,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             pinnedServerCertificateDER: nil,
             timeout: pairingStageTimeout
         )
-        let stage3Doc = try parsePairResponseXML(stage3XML)
+        let stage3Doc = try parsePairStageXML(stage3XML, stage: "serverchallengeresp")
         guard stage3Doc.values["paired"]?.first == "1" else {
             try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
             throw ShadowClientGameStreamControlError.challengeRejected
@@ -744,11 +745,11 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         clientPairingSecret.append(clientSecret)
         clientPairingSecret.append(clientSecretSignature)
 
-        let stage4XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
+        let stage4XML = try await requestPairXML(
+            stage: "clientpairingsecret",
             host: endpoint.host,
             port: endpoint.port,
             scheme: "http",
-            command: "pair",
             parameters: [
                 "devicename": "shadow-client",
                 "updateState": "1",
@@ -758,7 +759,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             pinnedServerCertificateDER: nil,
             timeout: pairingStageTimeout
         )
-        let stage4Doc = try parsePairResponseXML(stage4XML)
+        let stage4Doc = try parsePairStageXML(stage4XML, stage: "clientpairingsecret")
         guard stage4Doc.values["paired"]?.first == "1" else {
             try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
             throw ShadowClientGameStreamControlError.challengeRejected
@@ -771,18 +772,18 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             "phrase": "pairchallenge",
         ]
         do {
-            let stage5XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
+            let stage5XML = try await requestPairXML(
+                stage: "pairchallenge",
                 host: endpoint.host,
                 port: resolvedHTTPSPort,
                 scheme: "https",
-                command: "pair",
                 parameters: stage5Parameters,
                 uniqueID: uniqueID,
                 pinnedServerCertificateDER: serverCertDER,
                 clientCertificateCredential: tlsClientCredential,
                 timeout: pairingStageTimeout
             )
-            let stage5Doc = try parsePairResponseXML(stage5XML)
+            let stage5Doc = try parsePairStageXML(stage5XML, stage: "pairchallenge")
             guard stage5Doc.values["paired"]?.first == "1" else {
                 try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
                 throw ShadowClientGameStreamControlError.challengeRejected
@@ -884,6 +885,62 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let document = try ShadowClientXMLFlatDocumentParser.parse(xml: xml)
         try Self.validateRootStatus(document.rootStatus)
         return document
+    }
+
+    private func parsePairStageXML(
+        _ xml: String,
+        stage: String
+    ) throws -> ShadowClientXMLFlatDocument {
+        do {
+            return try parsePairResponseXML(xml)
+        } catch let error as ShadowClientGameStreamError {
+            throw Self.remapPairingStageError(error, stage: stage)
+        }
+    }
+
+    private func requestPairXML(
+        stage: String,
+        host: String,
+        port: Int,
+        scheme: String,
+        parameters: [String: String],
+        uniqueID: String,
+        pinnedServerCertificateDER: Data?,
+        clientCertificateCredential: URLCredential? = nil,
+        timeout: TimeInterval
+    ) async throws -> String {
+        Self.pairingLogger.debug(
+            "Pair stage \(stage, privacy: .public) start \(scheme, privacy: .public)://\(host, privacy: .public):\(port, privacy: .public)"
+        )
+        do {
+            let xml = try await ShadowClientGameStreamHTTPTransport.requestXML(
+                host: host,
+                port: port,
+                scheme: scheme,
+                command: "pair",
+                parameters: parameters,
+                uniqueID: uniqueID,
+                pinnedServerCertificateDER: pinnedServerCertificateDER,
+                clientCertificateCredential: clientCertificateCredential,
+                timeout: timeout
+            )
+            Self.pairingLogger.debug(
+                "Pair stage \(stage, privacy: .public) completed"
+            )
+            return xml
+        } catch let error as ShadowClientGameStreamError {
+            Self.pairingLogger.error(
+                "Pair stage \(stage, privacy: .public) failed: \(error.localizedDescription, privacy: .public)"
+            )
+            throw Self.remapPairingStageError(error, stage: stage)
+        } catch {
+            Self.pairingLogger.error(
+                "Pair stage \(stage, privacy: .public) failed with non-stream error: \(error.localizedDescription, privacy: .public)"
+            )
+            throw ShadowClientGameStreamError.requestFailed(
+                "Pairing \(stage) failed: \(error.localizedDescription)"
+            )
+        }
     }
 
     private func sendUnpair(host: String, port: Int, uniqueID: String) async throws {
@@ -1012,13 +1069,32 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             let timeoutLike = normalized.contains("timed out") || normalized.contains("timeout")
             guard timeoutLike, stage == "getservercert" else {
-                return error
+                let base = message.trimmingCharacters(in: .whitespacesAndNewlines)
+                let detail = base.isEmpty ? "Host request failed." : base
+                return .requestFailed("Pairing \(stage) failed: \(detail)")
             }
 
             return .requestFailed(
                 "Pairing timed out while waiting for Sunshine PIN confirmation. Enter the displayed PIN on the host and retry."
             )
-        default:
+        case let .responseRejected(code, message):
+            let detail = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            if detail.isEmpty {
+                return .responseRejected(
+                    code: code,
+                    message: "Pairing \(stage) rejected by host."
+                )
+            }
+
+            return .responseRejected(
+                code: code,
+                message: "Pairing \(stage) rejected by host: \(detail)"
+            )
+        case .invalidResponse:
+            return .requestFailed("Pairing \(stage) failed: Host response is invalid.")
+        case .malformedXML:
+            return .requestFailed("Pairing \(stage) failed: Host returned malformed XML.")
+        case .invalidHost, .invalidURL:
             return error
         }
     }
