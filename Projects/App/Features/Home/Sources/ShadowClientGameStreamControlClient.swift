@@ -436,7 +436,13 @@ public actor ShadowClientPairingIdentityStore {
             throw ShadowClientGameStreamControlError.invalidKeyMaterial
         }
 
-        guard let identity = SecIdentityCreate(nil, certificate, privateKey) else {
+        let identity = makeKeychainBackedIdentity(
+            certificate: certificate,
+            privateKey: privateKey,
+            certificateDER: certDER
+        ) ?? SecIdentityCreate(nil, certificate, privateKey)
+
+        guard let identity else {
             throw ShadowClientGameStreamControlError.invalidKeyMaterial
         }
 
@@ -445,6 +451,54 @@ public actor ShadowClientPairingIdentityStore {
             certificates: [certificate],
             persistence: .forSession
         )
+    }
+
+    private func makeKeychainBackedIdentity(
+        certificate: SecCertificate,
+        privateKey: SecKey,
+        certificateDER: Data
+    ) -> SecIdentity? {
+        let fingerprint = Data(SHA256.hash(data: certificateDER)).hexString
+        let keyTag = Data("shadow-client.tls.key.\(fingerprint)".utf8)
+        let certLabel = "shadow-client.tls.cert.\(fingerprint)"
+
+        let addKeyQuery: [CFString: Any] = [
+            kSecClass: kSecClassKey,
+            kSecAttrApplicationTag: keyTag,
+            kSecAttrKeyClass: kSecAttrKeyClassPrivate,
+            kSecAttrIsPermanent: true,
+            kSecValueRef: privateKey,
+        ]
+        let keyStatus = SecItemAdd(addKeyQuery as CFDictionary, nil)
+        guard keyStatus == errSecSuccess || keyStatus == errSecDuplicateItem else {
+            return nil
+        }
+
+        let addCertQuery: [CFString: Any] = [
+            kSecClass: kSecClassCertificate,
+            kSecAttrLabel: certLabel,
+            kSecValueRef: certificate,
+        ]
+        let certStatus = SecItemAdd(addCertQuery as CFDictionary, nil)
+        guard certStatus == errSecSuccess || certStatus == errSecDuplicateItem else {
+            return nil
+        }
+
+        let identityQuery: [CFString: Any] = [
+            kSecClass: kSecClassIdentity,
+            kSecAttrLabel: certLabel,
+            kSecReturnRef: true,
+            kSecMatchLimit: kSecMatchLimitOne,
+        ]
+        var identityRef: CFTypeRef?
+        let identityStatus = SecItemCopyMatching(identityQuery as CFDictionary, &identityRef)
+        guard
+            identityStatus == errSecSuccess,
+            let identityRef
+        else {
+            return nil
+        }
+        return unsafeBitCast(identityRef, to: SecIdentity.self)
     }
 }
 
