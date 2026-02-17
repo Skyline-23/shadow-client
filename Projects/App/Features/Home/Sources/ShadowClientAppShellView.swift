@@ -16,7 +16,7 @@ public struct ShadowClientAppShellView: View {
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferHDR) private var preferHDR = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferSurroundAudio) private var preferSurroundAudio = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.showDiagnosticsHUD) private var showDiagnosticsHUD = true
-    @State private var connectionHost = ""
+    @AppStorage(ShadowClientAppSettings.StorageKeys.connectionHost) private var connectionHost = ""
     @State private var connectionState: ShadowClientConnectionState = .disconnected
     @State private var settingsTelemetryCancellable: AnyCancellable?
     @State private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
@@ -61,6 +61,8 @@ public struct ShadowClientAppShellView: View {
                 backgroundGradient
                 ScrollView {
                     VStack(spacing: 28) {
+                        connectionStatusCard
+
                         ShadowClientFeatureHomeView(
                             platformName: platformName,
                             dependencies: baseDependencies.applying(settings: currentSettings),
@@ -72,6 +74,8 @@ public struct ShadowClientAppShellView: View {
                         ControllerFeedbackStatusPanel()
                             .frame(maxWidth: .infinity)
                     }
+                    .frame(maxWidth: 920)
+                    .frame(maxWidth: .infinity)
                     .padding(.top, 28)
                     .padding(.horizontal, 20)
                     .padding(.bottom, 40)
@@ -86,102 +90,144 @@ public struct ShadowClientAppShellView: View {
 
     private var settingsTab: some View {
         NavigationStack {
-            Form {
-                Section("Client Connection") {
-                    TextField("Host (IP or hostname)", text: $connectionHost)
-                    HStack {
-                        Button("Connect") {
-                            connectToHost()
-                        }
-                        .disabled(!canConnect)
+            ZStack(alignment: .top) {
+                backgroundGradient
+                Form {
+                    Section("Client Connection") {
+                        TextField("Host (IP or hostname)", text: $connectionHost)
+                            .autocorrectionDisabled()
+                            .onSubmit {
+                                if canConnect {
+                                    connectToHost()
+                                }
+                            }
 
-                        Button("Disconnect") {
-                            disconnectFromHost()
-                        }
-                        .disabled(!canDisconnect)
-                    }
-
-                    Text(connectionStatusText)
-                        .font(.footnote)
-                        .foregroundStyle(connectionStatusColor)
-                }
-
-                Section("Streaming Quality") {
-                    Toggle(isOn: $lowLatencyMode) {
-                        Label("Low-Latency Mode", systemImage: "speedometer")
-                    }
-                    Toggle(isOn: $preferHDR) {
-                        Label("Prefer HDR", systemImage: "sparkles.tv")
-                    }
-                    Toggle(isOn: $preferSurroundAudio) {
-                        Label("Prefer Surround Audio", systemImage: "hifispeaker.and.homepod.fill")
-                    }
-                }
-
-                Section("Diagnostics") {
-                    Toggle(isOn: $showDiagnosticsHUD) {
-                        Label("Show Debug HUD", systemImage: "waveform.path.ecg.rectangle")
-                    }
-                }
-
-                Section("Session Launch Plan") {
-                    if let settingsDiagnosticsModel {
-                        Text("Tone: \(settingsDiagnosticsModel.tone.rawValue.uppercased())")
-                            .font(.footnote.monospacedDigit())
-                        Text("Target Buffer: \(settingsDiagnosticsModel.targetBufferMs) ms")
-                            .font(.footnote.monospacedDigit())
-                        Text("Jitter: \(settingsDiagnosticsModel.jitterMs) ms | Packet Loss: \(String(format: "%.1f", settingsDiagnosticsModel.packetLossPercent))%")
-                            .font(.footnote.monospacedDigit())
-                        Text("Frame Drop: \(String(format: "%.1f", settingsDiagnosticsModel.frameDropPercent))% | AV Sync: \(settingsDiagnosticsModel.avSyncOffsetMs) ms")
-                            .font(.footnote.monospacedDigit())
-                        Text("Drop Origin: NET \(settingsDiagnosticsModel.networkDroppedFrames) | PACER \(settingsDiagnosticsModel.pacerDroppedFrames)")
-                            .font(.footnote.monospacedDigit())
-                        Text("Telemetry Timestamp: \(settingsDiagnosticsModel.timestampMs) ms")
-                            .font(.footnote.monospacedDigit())
+                        Label("Backend: \(connectionBackendLabel)", systemImage: "bolt.horizontal.circle")
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
-                        if let sampleIntervalMs = settingsDiagnosticsModel.sampleIntervalMs {
-                            Text("Sample Interval: \(sampleIntervalMs) ms")
+
+                        HStack {
+                            Button("Connect") {
+                                connectToHost()
+                            }
+                            .disabled(!canConnect)
+                            .buttonStyle(.borderedProminent)
+
+                            Button("Disconnect") {
+                                disconnectFromHost()
+                            }
+                            .disabled(!canDisconnect)
+                            .buttonStyle(.bordered)
+
+                            Spacer(minLength: 0)
+                        }
+
+                        Label(connectionStatusText, systemImage: connectionStatusSymbol)
+                            .font(.footnote)
+                            .foregroundStyle(connectionStatusColor)
+                    }
+
+                    Section("Streaming Quality") {
+                        Toggle(isOn: $lowLatencyMode) {
+                            Label("Low-Latency Mode", systemImage: "speedometer")
+                        }
+                        Toggle(isOn: $preferHDR) {
+                            Label("Prefer HDR", systemImage: "sparkles.tv")
+                        }
+                        Toggle(isOn: $preferSurroundAudio) {
+                            Label("Prefer Surround Audio", systemImage: "hifispeaker.and.homepod.fill")
+                        }
+                    }
+
+                    Section("Diagnostics") {
+                        Toggle(isOn: $showDiagnosticsHUD) {
+                            Label("Show Debug HUD", systemImage: "waveform.path.ecg.rectangle")
+                        }
+                    }
+
+                    Section("Session Launch Plan") {
+                        if let settingsDiagnosticsModel {
+                            Text("Tone: \(settingsDiagnosticsModel.tone.rawValue.uppercased())")
+                                .font(.footnote.monospacedDigit())
+                            Text("Target Buffer: \(settingsDiagnosticsModel.targetBufferMs) ms")
+                                .font(.footnote.monospacedDigit())
+                            Text("Jitter: \(settingsDiagnosticsModel.jitterMs) ms | Packet Loss: \(String(format: "%.1f", settingsDiagnosticsModel.packetLossPercent))%")
+                                .font(.footnote.monospacedDigit())
+                            Text("Frame Drop: \(String(format: "%.1f", settingsDiagnosticsModel.frameDropPercent))% | AV Sync: \(settingsDiagnosticsModel.avSyncOffsetMs) ms")
+                                .font(.footnote.monospacedDigit())
+                            Text("Drop Origin: NET \(settingsDiagnosticsModel.networkDroppedFrames) | PACER \(settingsDiagnosticsModel.pacerDroppedFrames)")
+                                .font(.footnote.monospacedDigit())
+                            Text("Telemetry Timestamp: \(settingsDiagnosticsModel.timestampMs) ms")
                                 .font(.footnote.monospacedDigit())
                                 .foregroundStyle(.secondary)
+                            if let sampleIntervalMs = settingsDiagnosticsModel.sampleIntervalMs {
+                                Text("Sample Interval: \(sampleIntervalMs) ms")
+                                    .font(.footnote.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("Sample Interval: --")
+                                    .font(.footnote.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                            if settingsDiagnosticsModel.receivedOutOfOrderSample {
+                                Text("Out-of-order telemetry sample ignored")
+                                    .font(.footnote.monospacedDigit())
+                                    .foregroundStyle(.orange)
+                            }
+                            Text("Session Video: \(settingsDiagnosticsModel.hdrVideoMode.rawValue.uppercased()) | Audio: \(settingsDiagnosticsModel.audioMode.rawValue.uppercased())")
+                                .font(.footnote.monospacedDigit())
+                            Text("Reconfig V:\(settingsDiagnosticsModel.shouldRenegotiateVideoPipeline ? "Y" : "N") A:\(settingsDiagnosticsModel.shouldRenegotiateAudioPipeline ? "Y" : "N") | QDrop: \(settingsDiagnosticsModel.shouldApplyQualityDropImmediately ? "Y" : "N")")
+                                .font(.footnote.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                            if settingsDiagnosticsModel.recoveryStableSamplesRemaining > 0 {
+                                Text("Recovery Hold: \(settingsDiagnosticsModel.recoveryStableSamplesRemaining) stable sample(s) remaining")
+                                    .font(.footnote.monospacedDigit())
+                                    .foregroundStyle(.orange)
+                            }
                         } else {
-                            Text("Sample Interval: --")
-                                .font(.footnote.monospacedDigit())
+                            Label("Awaiting telemetry samples from active session.", systemImage: "antenna.radiowaves.left.and.right")
+                                .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
-                        if settingsDiagnosticsModel.receivedOutOfOrderSample {
-                            Text("Out-of-order telemetry sample ignored")
-                                .font(.footnote.monospacedDigit())
-                                .foregroundStyle(.orange)
-                        }
-                        Text("Session Video: \(settingsDiagnosticsModel.hdrVideoMode.rawValue.uppercased()) | Audio: \(settingsDiagnosticsModel.audioMode.rawValue.uppercased())")
-                            .font(.footnote.monospacedDigit())
-                        Text("Reconfig V:\(settingsDiagnosticsModel.shouldRenegotiateVideoPipeline ? "Y" : "N") A:\(settingsDiagnosticsModel.shouldRenegotiateAudioPipeline ? "Y" : "N") | QDrop: \(settingsDiagnosticsModel.shouldApplyQualityDropImmediately ? "Y" : "N")")
-                            .font(.footnote.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                        if settingsDiagnosticsModel.recoveryStableSamplesRemaining > 0 {
-                            Text("Recovery Hold: \(settingsDiagnosticsModel.recoveryStableSamplesRemaining) stable sample(s) remaining")
-                                .font(.footnote.monospacedDigit())
-                                .foregroundStyle(.orange)
-                        }
-                    } else {
-                        Label("Awaiting telemetry samples from active session.", systemImage: "antenna.radiowaves.left.and.right")
+                    }
+
+                    Section("Controller") {
+                        Label("USB-first DualSense feedback contract remains enabled.", systemImage: "gamecontroller.fill")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
                 }
-
-                Section("Controller") {
-                    Label("USB-first DualSense feedback contract remains enabled.", systemImage: "gamecontroller.fill")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                .formStyle(.grouped)
+                .scrollContentBackground(.hidden)
+                .frame(maxWidth: settingsFormMaxWidth)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.top, 8)
             }
-            .scrollContentBackground(.hidden)
-            .background(backgroundGradient)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle("Settings")
         }
         .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
         .tag(AppTab.settings)
+    }
+
+    private var connectionStatusCard: some View {
+        HStack(spacing: 12) {
+            Circle()
+                .fill(connectionStatusColor)
+                .frame(width: 10, height: 10)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Client Connection")
+                    .font(.headline)
+                Text(connectionStatusText)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
+        .padding(14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var backgroundGradient: some View {
@@ -195,6 +241,22 @@ public struct ShadowClientAppShellView: View {
             endPoint: .bottomTrailing
         )
         .ignoresSafeArea()
+    }
+
+    private var settingsFormMaxWidth: CGFloat? {
+        #if os(macOS)
+            return 780
+        #else
+            return nil
+        #endif
+    }
+
+    private var connectionBackendLabel: String {
+        #if os(macOS)
+            return "Moonlight CLI Probe"
+        #else
+            return "Simulated Connector"
+        #endif
     }
 
     private var normalizedConnectionHost: String {
@@ -248,6 +310,19 @@ public struct ShadowClientAppShellView: View {
             return .orange
         case .disconnected:
             return .secondary
+        }
+    }
+
+    private var connectionStatusSymbol: String {
+        switch connectionState {
+        case .connected:
+            return "checkmark.circle.fill"
+        case .failed:
+            return "exclamationmark.triangle.fill"
+        case .connecting, .disconnecting:
+            return "clock.fill"
+        case .disconnected:
+            return "bolt.slash.fill"
         }
     }
 

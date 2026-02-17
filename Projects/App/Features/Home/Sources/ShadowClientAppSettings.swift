@@ -6,6 +6,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         public static let preferHDR = "settings.preferHDR"
         public static let preferSurroundAudio = "settings.preferSurroundAudio"
         public static let showDiagnosticsHUD = "settings.showDiagnosticsHUD"
+        public static let connectionHost = "settings.connectionHost"
     }
 
     public let lowLatencyMode: Bool
