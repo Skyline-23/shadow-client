@@ -285,9 +285,16 @@ public actor ShadowClientPairingIdentityStore {
             return cachedMaterial
         }
 
-        let loaded = try provider.loadIdentityMaterial()
-        cachedMaterial = loaded
-        return loaded
+        do {
+            let loaded = try provider.loadIdentityMaterial()
+            let validated = try validateIdentityMaterial(loaded)
+            cachedMaterial = validated
+            return validated
+        } catch {
+            let generated = try ShadowClientPairingIdentityMaterialFactory.generate()
+            upsertIdentityMaterial(generated)
+            return generated
+        }
     }
 
     private func pemBodyData(pem: String) throws -> Data {
@@ -305,6 +312,33 @@ public actor ShadowClientPairingIdentityStore {
         }
 
         return data
+    }
+
+    private func validateIdentityMaterial(
+        _ material: ShadowClientPairingIdentityMaterial
+    ) throws -> ShadowClientPairingIdentityMaterial {
+        let certDER = try pemBodyData(pem: material.certificatePEM)
+        guard SecCertificateCreateWithData(nil, certDER as CFData) != nil else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        let keyDER = try pemBodyData(pem: material.privateKeyPEM)
+        let attributes: [CFString: Any] = [
+            kSecAttrKeyType: kSecAttrKeyTypeRSA,
+            kSecAttrKeyClass: kSecAttrKeyClassPrivate,
+            kSecAttrKeySizeInBits: 2048,
+        ]
+
+        var error: Unmanaged<CFError>?
+        guard let key = SecKeyCreateWithData(keyDER as CFData, attributes as CFDictionary, &error) else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        guard SecKeyIsAlgorithmSupported(key, .sign, .rsaSignatureMessagePKCS1v15SHA256) else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        return material
     }
 }
 
@@ -842,8 +876,8 @@ enum ShadowClientGameStreamHTTPTransport {
         request.timeoutInterval = 8
 
         let session: URLSession
-        if scheme == "https", let pinnedServerCertificateDER {
-            let delegate = ShadowClientPinnedCertificateURLSessionDelegate(
+        if scheme == "https" {
+            let delegate = ShadowClientServerTrustURLSessionDelegate(
                 pinnedServerCertificateDER: pinnedServerCertificateDER
             )
             session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
@@ -856,7 +890,7 @@ enum ShadowClientGameStreamHTTPTransport {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
-            throw ShadowClientGameStreamError.requestFailed(error.localizedDescription)
+            throw ShadowClientGameStreamError.requestFailed(Self.requestFailureMessage(error))
         }
 
         guard response is HTTPURLResponse else {
@@ -869,12 +903,20 @@ enum ShadowClientGameStreamHTTPTransport {
 
         return xml
     }
+
+    private static func requestFailureMessage(_ error: Error) -> String {
+        if let urlError = error as? URLError, urlError.code == .appTransportSecurityRequiresSecureConnection {
+            return "Insecure HTTP is blocked by App Transport Security for this request."
+        }
+
+        return error.localizedDescription
+    }
 }
 
-private final class ShadowClientPinnedCertificateURLSessionDelegate: NSObject, URLSessionDelegate {
-    private let pinnedServerCertificateDER: Data
+private final class ShadowClientServerTrustURLSessionDelegate: NSObject, URLSessionDelegate {
+    private let pinnedServerCertificateDER: Data?
 
-    init(pinnedServerCertificateDER: Data) {
+    init(pinnedServerCertificateDER: Data?) {
         self.pinnedServerCertificateDER = pinnedServerCertificateDER
         super.init()
     }
@@ -891,21 +933,233 @@ private final class ShadowClientPinnedCertificateURLSessionDelegate: NSObject, U
             return
         }
 
-        guard
-            let certificateChain = SecTrustCopyCertificateChain(serverTrust) as? [SecCertificate],
-            let leafCertificate = certificateChain.first
-        else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
+        if let pinnedServerCertificateDER {
+            guard
+                let certificateChain = SecTrustCopyCertificateChain(serverTrust) as? [SecCertificate],
+                let leafCertificate = certificateChain.first
+            else {
+                completionHandler(.cancelAuthenticationChallenge, nil)
+                return
+            }
 
-        let presentedDER = SecCertificateCopyData(leafCertificate) as Data
-        guard presentedDER == pinnedServerCertificateDER else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
+            let presentedDER = SecCertificateCopyData(leafCertificate) as Data
+            guard presentedDER == pinnedServerCertificateDER else {
+                completionHandler(.cancelAuthenticationChallenge, nil)
+                return
+            }
         }
 
         completionHandler(.useCredential, URLCredential(trust: serverTrust))
+    }
+}
+
+private enum ShadowClientPairingIdentityMaterialFactory {
+    private static let rsaEncryptionOID = Data([0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01])
+    private static let sha256WithRSAEncryptionOID = Data([0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B])
+    private static let commonNameOID = Data([0x55, 0x04, 0x03])
+
+    static func generate(commonName: String = "shadow-client") throws -> ShadowClientPairingIdentityMaterial {
+        let privateKeyAttributes: [CFString: Any] = [
+            kSecAttrKeyType: kSecAttrKeyTypeRSA,
+            kSecAttrKeySizeInBits: 2048,
+        ]
+
+        var error: Unmanaged<CFError>?
+        guard let privateKey = SecKeyCreateRandomKey(privateKeyAttributes as CFDictionary, &error) else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        guard let privateKeyDERValue = SecKeyCopyExternalRepresentation(privateKey, &error) else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        guard let publicKeyDERValue = SecKeyCopyExternalRepresentation(publicKey, &error) else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        let privateKeyDER = privateKeyDERValue as Data
+        let publicKeyDER = publicKeyDERValue as Data
+        let certificateDER = try createSelfSignedCertificateDER(
+            commonName: commonName,
+            publicKeyRSADER: publicKeyDER,
+            privateKey: privateKey
+        )
+
+        return ShadowClientPairingIdentityMaterial(
+            certificatePEM: makePEM(blockType: "CERTIFICATE", der: certificateDER),
+            privateKeyPEM: makePEM(blockType: "RSA PRIVATE KEY", der: privateKeyDER)
+        )
+    }
+
+    private static func createSelfSignedCertificateDER(
+        commonName: String,
+        publicKeyRSADER: Data,
+        privateKey: SecKey
+    ) throws -> Data {
+        let version = derContextSpecificExplicit(
+            tag: 0,
+            inner: derInteger(Data([0x02]))
+        )
+        let serial = derInteger(makeSerialNumber())
+        let signatureAlgorithm = derSequence([
+            derObjectIdentifier(sha256WithRSAEncryptionOID),
+            derNull(),
+        ])
+        let issuer = derName(commonName: commonName)
+        let validity = derSequence([
+            derUTCTime(date: Date().addingTimeInterval(-300)),
+            derUTCTime(date: Date().addingTimeInterval(60 * 60 * 24 * 365 * 20)),
+        ])
+        let subject = issuer
+        let subjectPublicKeyInfo = derSequence([
+            derSequence([
+                derObjectIdentifier(rsaEncryptionOID),
+                derNull(),
+            ]),
+            derBitString(publicKeyRSADER),
+        ])
+        let tbsCertificate = derSequence([
+            version,
+            serial,
+            signatureAlgorithm,
+            issuer,
+            validity,
+            subject,
+            subjectPublicKeyInfo,
+        ])
+
+        var error: Unmanaged<CFError>?
+        guard let signature = SecKeyCreateSignature(
+            privateKey,
+            .rsaSignatureMessagePKCS1v15SHA256,
+            tbsCertificate as CFData,
+            &error
+        ) as Data? else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        return derSequence([
+            tbsCertificate,
+            signatureAlgorithm,
+            derBitString(signature),
+        ])
+    }
+
+    private static func makeSerialNumber() -> Data {
+        var serial = Data(count: 16)
+        _ = serial.withUnsafeMutableBytes { rawBuffer in
+            SecRandomCopyBytes(kSecRandomDefault, rawBuffer.count, rawBuffer.baseAddress!)
+        }
+
+        if serial.isEmpty {
+            return Data([0x01])
+        }
+
+        if serial[serial.startIndex] == 0 {
+            serial[serial.startIndex] = 0x01
+        }
+
+        return serial
+    }
+
+    private static func makePEM(blockType: String, der: Data) -> String {
+        let body = der.base64EncodedString(
+            options: [.lineLength64Characters, .endLineWithLineFeed]
+        )
+        return "-----BEGIN \(blockType)-----\n\(body)-----END \(blockType)-----"
+    }
+
+    private static func der(_ tag: UInt8, _ value: Data) -> Data {
+        var result = Data([tag])
+        result.append(derLength(value.count))
+        result.append(value)
+        return result
+    }
+
+    private static func derLength(_ length: Int) -> Data {
+        if length < 0x80 {
+            return Data([UInt8(length)])
+        }
+
+        var bytes: [UInt8] = []
+        var current = length
+        while current > 0 {
+            bytes.insert(UInt8(current & 0xFF), at: 0)
+            current >>= 8
+        }
+
+        var encoded = Data([0x80 | UInt8(bytes.count)])
+        encoded.append(contentsOf: bytes)
+        return encoded
+    }
+
+    private static func derSequence(_ elements: [Data]) -> Data {
+        der(0x30, elements.reduce(into: Data()) { partialResult, element in
+            partialResult.append(element)
+        })
+    }
+
+    private static func derSet(_ elements: [Data]) -> Data {
+        der(0x31, elements.reduce(into: Data()) { partialResult, element in
+            partialResult.append(element)
+        })
+    }
+
+    private static func derInteger(_ bytes: Data) -> Data {
+        var normalized = Data(bytes.drop { $0 == 0 })
+        if normalized.isEmpty {
+            normalized = Data([0])
+        }
+
+        var value = normalized
+        if value[value.startIndex] & 0x80 != 0 {
+            value.insert(0x00, at: value.startIndex)
+        }
+
+        return der(0x02, value)
+    }
+
+    private static func derObjectIdentifier(_ bytes: Data) -> Data {
+        der(0x06, bytes)
+    }
+
+    private static func derNull() -> Data {
+        der(0x05, Data())
+    }
+
+    private static func derUTF8String(_ value: String) -> Data {
+        der(0x0C, Data(value.utf8))
+    }
+
+    private static func derUTCTime(date: Date) -> Data {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyMMddHHmmss'Z'"
+        return der(0x17, Data(formatter.string(from: date).utf8))
+    }
+
+    private static func derBitString(_ value: Data) -> Data {
+        var content = Data([0x00])
+        content.append(value)
+        return der(0x03, content)
+    }
+
+    private static func derContextSpecificExplicit(tag: UInt8, inner: Data) -> Data {
+        der(0xA0 | tag, inner)
+    }
+
+    private static func derName(commonName: String) -> Data {
+        let commonNameAttribute = derSequence([
+            derObjectIdentifier(commonNameOID),
+            derUTF8String(commonName),
+        ])
+        let relativeDistinguishedName = derSet([commonNameAttribute])
+        return derSequence([relativeDistinguishedName])
     }
 }
 
