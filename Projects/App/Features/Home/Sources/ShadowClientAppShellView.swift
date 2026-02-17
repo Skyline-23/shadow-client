@@ -35,6 +35,7 @@ public struct ShadowClientAppShellView: View {
             settingsTab
         }
         .tint(.mint)
+        .preferredColorScheme(.dark)
         .task {
             await syncConnectionStateFromRuntime()
         }
@@ -66,6 +67,7 @@ public struct ShadowClientAppShellView: View {
                         ShadowClientFeatureHomeView(
                             platformName: platformName,
                             dependencies: baseDependencies.applying(settings: currentSettings),
+                            connectionState: connectionState,
                             showsDiagnosticsHUD: currentSettings.showDiagnosticsHUD
                         )
                         .id(currentSettings.streamingIdentityKey)
@@ -198,6 +200,7 @@ public struct ShadowClientAppShellView: View {
                     }
                 }
                 .formStyle(.grouped)
+                .environment(\.colorScheme, .dark)
                 .scrollContentBackground(.hidden)
                 .frame(maxWidth: settingsFormMaxWidth)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -219,15 +222,23 @@ public struct ShadowClientAppShellView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Client Connection")
                     .font(.headline)
+                    .foregroundStyle(.white)
                 Text(connectionStatusText)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.white.opacity(0.82))
             }
 
             Spacer()
         }
         .padding(14)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.black.opacity(0.34))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
     }
 
     private var backgroundGradient: some View {
@@ -253,7 +264,7 @@ public struct ShadowClientAppShellView: View {
 
     private var connectionBackendLabel: String {
         #if os(macOS)
-            return "Moonlight CLI Probe"
+            return "Embedded Runtime Probe"
         #else
             return "Simulated Connector"
         #endif

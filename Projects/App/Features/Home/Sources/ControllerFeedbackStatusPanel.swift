@@ -152,9 +152,10 @@ struct ControllerFeedbackStatusPanel: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Simulated Controller State")
                     .font(.headline)
+                    .foregroundStyle(.white)
                 Text(mappingSummary)
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.white.opacity(0.78))
                 Picker("Transport", selection: $transport) {
                     Text("USB").tag(DualSenseTransport.usb)
                     Text("Bluetooth").tag(DualSenseTransport.bluetooth)
@@ -171,13 +172,20 @@ struct ControllerFeedbackStatusPanel: View {
                     Text("Simulate Left Trigger")
                     Slider(value: $simulateLeftTriggerValue, in: -1.0 ... 2.0, step: 0.05)
                     Text(String(format: "%.2f", simulateLeftTriggerValue))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.white.opacity(0.78))
                 }
             }
             .font(.caption)
         }
         .padding(16)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.black.opacity(0.34))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
         .task(id: runtimeTaskKey) {
             await refreshRuntimeSnapshot(state: simulationState, inputPlan: inputPlan)
         }
@@ -192,9 +200,10 @@ struct ControllerFeedbackStatusPanel: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(statusModel.title)
                     .font(.headline)
+                    .foregroundStyle(.white)
                 Text(statusModel.detail)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.white.opacity(0.8))
             }
         }
     }
@@ -213,6 +222,7 @@ struct ControllerFeedbackStatusPanel: View {
             Image(systemName: passes ? "checkmark.circle.fill" : "xmark.circle.fill")
                 .foregroundStyle(passes ? .green : .red)
             Text(title)
+                .foregroundStyle(.white)
         }
     }
 
