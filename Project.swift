@@ -9,7 +9,21 @@ let project = Project(
             product: .framework,
             bundleId: "com.skyline23.shadow-client.feature.home",
             deploymentTargets: .multiplatform(iOS: "17.0", macOS: "14.0", tvOS: "17.0"),
-            infoPlist: .default,
+            infoPlist: .extendingDefault(
+                with: [
+                    "NSAppTransportSecurity": [
+                        "NSAllowsArbitraryLoads": true,
+                        "NSAllowsLocalNetworking": true,
+                        "NSExceptionDomains": [
+                            "wifi.skyline23.com": [
+                                "NSIncludesSubdomains": true,
+                                "NSExceptionAllowsInsecureHTTPLoads": true,
+                                "NSTemporaryExceptionAllowsInsecureHTTPLoads": true,
+                            ],
+                        ],
+                    ],
+                ]
+            ),
             buildableFolders: [
                 "Projects/App/Features/Home/Sources",
             ],
@@ -40,6 +54,13 @@ let project = Project(
                     "NSAppTransportSecurity": [
                         "NSAllowsArbitraryLoads": true,
                         "NSAllowsLocalNetworking": true,
+                        "NSExceptionDomains": [
+                            "wifi.skyline23.com": [
+                                "NSIncludesSubdomains": true,
+                                "NSExceptionAllowsInsecureHTTPLoads": true,
+                                "NSTemporaryExceptionAllowsInsecureHTTPLoads": true,
+                            ],
+                        ],
                     ],
                 ]
             ),
@@ -69,6 +90,13 @@ let project = Project(
                     "NSAppTransportSecurity": [
                         "NSAllowsArbitraryLoads": true,
                         "NSAllowsLocalNetworking": true,
+                        "NSExceptionDomains": [
+                            "wifi.skyline23.com": [
+                                "NSIncludesSubdomains": true,
+                                "NSExceptionAllowsInsecureHTTPLoads": true,
+                                "NSTemporaryExceptionAllowsInsecureHTTPLoads": true,
+                            ],
+                        ],
                     ],
                 ]
             ),
@@ -102,6 +130,13 @@ let project = Project(
                     "NSAppTransportSecurity": [
                         "NSAllowsArbitraryLoads": true,
                         "NSAllowsLocalNetworking": true,
+                        "NSExceptionDomains": [
+                            "wifi.skyline23.com": [
+                                "NSIncludesSubdomains": true,
+                                "NSExceptionAllowsInsecureHTTPLoads": true,
+                                "NSTemporaryExceptionAllowsInsecureHTTPLoads": true,
+                            ],
+                        ],
                     ],
                 ]
             ),

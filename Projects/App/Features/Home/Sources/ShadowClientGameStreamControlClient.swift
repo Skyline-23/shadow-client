@@ -1070,7 +1070,8 @@ private enum ShadowClientPairingIdentityMaterialFactory {
         let body = der.base64EncodedString(
             options: [.lineLength64Characters, .endLineWithLineFeed]
         )
-        return "-----BEGIN \(blockType)-----\n\(body)-----END \(blockType)-----"
+        let normalizedBody = body.hasSuffix("\n") ? body : "\(body)\n"
+        return "-----BEGIN \(blockType)-----\n\(normalizedBody)-----END \(blockType)-----\n"
     }
 
     private static func der(_ tag: UInt8, _ value: Data) -> Data {
