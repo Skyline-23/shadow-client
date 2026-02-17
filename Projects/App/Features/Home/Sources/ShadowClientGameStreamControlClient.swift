@@ -381,17 +381,26 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
     private let pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
     private let defaultHTTPPort: Int
     private let defaultHTTPSPort: Int
+    private let defaultRequestTimeout: TimeInterval
+    private let pairingPINEntryTimeout: TimeInterval
+    private let pairingStageTimeout: TimeInterval
 
     public init(
         identityStore: ShadowClientPairingIdentityStore = .shared,
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore = .shared,
         defaultHTTPPort: Int = 47989,
-        defaultHTTPSPort: Int = 47984
+        defaultHTTPSPort: Int = 47984,
+        defaultRequestTimeout: TimeInterval = 8,
+        pairingPINEntryTimeout: TimeInterval = 90,
+        pairingStageTimeout: TimeInterval = 15
     ) {
         self.identityStore = identityStore
         self.pinnedCertificateStore = pinnedCertificateStore
         self.defaultHTTPPort = defaultHTTPPort
         self.defaultHTTPSPort = defaultHTTPSPort
+        self.defaultRequestTimeout = defaultRequestTimeout
+        self.pairingPINEntryTimeout = pairingPINEntryTimeout
+        self.pairingStageTimeout = pairingStageTimeout
     }
 
     public func pair(host: String, pin: String, appVersion: String?) async throws -> ShadowClientGameStreamPairingResult {
@@ -410,8 +419,9 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let saltedPin = Data(salt + Data(trimmedPIN.utf8))
         let aesKey = Data(hashAlgorithm.digest(saltedPin).prefix(16))
 
+        let stage1XML: String
         do {
-            let stage1XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
+            stage1XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
                 host: endpoint.host,
                 port: endpoint.port,
                 scheme: "http",
@@ -424,186 +434,217 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                     "clientcert": certPEMData.hexString,
                 ],
                 uniqueID: uniqueID,
-                pinnedServerCertificateDER: nil
+                pinnedServerCertificateDER: nil,
+                timeout: pairingPINEntryTimeout
             )
-
-            let stage1Doc = try parsePairResponseXML(stage1XML)
-            guard stage1Doc.values["paired"]?.first == "1" else {
-                throw ShadowClientGameStreamControlError.challengeRejected
-            }
-
-            guard
-                let plainCertHex = stage1Doc.values["plaincert"]?.first,
-                let serverCertDER = Data(hexString: plainCertHex)
-            else {
-                try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
-                throw ShadowClientGameStreamControlError.pairingAlreadyInProgress
-            }
-
-            let randomChallenge = Self.randomBytes(length: 16)
-            let encryptedChallenge = try Self.cryptAES(
-                input: randomChallenge,
-                key: aesKey,
-                operation: CCOperation(kCCEncrypt)
-            )
-
-            let stage2XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
-                host: endpoint.host,
-                port: endpoint.port,
-                scheme: "http",
-                command: "pair",
-                parameters: [
-                    "devicename": "shadow-client",
-                    "updateState": "1",
-                    "clientchallenge": encryptedChallenge.hexString,
-                ],
-                uniqueID: uniqueID,
-                pinnedServerCertificateDER: nil
-            )
-            let stage2Doc = try parsePairResponseXML(stage2XML)
-            guard stage2Doc.values["paired"]?.first == "1" else {
-                try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
-                throw ShadowClientGameStreamControlError.challengeRejected
-            }
-
-            guard
-                let challengeResponseHex = stage2Doc.values["challengeresponse"]?.first,
-                let challengeResponseCipher = Data(hexString: challengeResponseHex)
-            else {
-                try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
-                throw ShadowClientGameStreamControlError.malformedResponse
-            }
-
-            let challengeResponseData = try Self.cryptAES(
-                input: challengeResponseCipher,
-                key: aesKey,
-                operation: CCOperation(kCCDecrypt)
-            )
-            guard challengeResponseData.count >= hashAlgorithm.digestLength + 16 else {
-                try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
-                throw ShadowClientGameStreamControlError.malformedResponse
-            }
-
-            let serverResponse = Data(challengeResponseData.prefix(hashAlgorithm.digestLength))
-            let challengeNonce = Data(challengeResponseData.dropFirst(hashAlgorithm.digestLength).prefix(16))
-            let clientSecret = Self.randomBytes(length: 16)
-
-            var challengeResponsePayload = Data()
-            challengeResponsePayload.append(challengeNonce)
-            challengeResponsePayload.append(clientCertSignature)
-            challengeResponsePayload.append(clientSecret)
-
-            var paddedHash = hashAlgorithm.digest(challengeResponsePayload)
-            if paddedHash.count < 32 {
-                paddedHash.append(Data(repeating: 0, count: 32 - paddedHash.count))
-            }
-
-            let encryptedResponseHash = try Self.cryptAES(
-                input: paddedHash,
-                key: aesKey,
-                operation: CCOperation(kCCEncrypt)
-            )
-
-            let stage3XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
-                host: endpoint.host,
-                port: endpoint.port,
-                scheme: "http",
-                command: "pair",
-                parameters: [
-                    "devicename": "shadow-client",
-                    "updateState": "1",
-                    "serverchallengeresp": encryptedResponseHash.hexString,
-                ],
-                uniqueID: uniqueID,
-                pinnedServerCertificateDER: nil
-            )
-            let stage3Doc = try parsePairResponseXML(stage3XML)
-            guard stage3Doc.values["paired"]?.first == "1" else {
-                try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
-                throw ShadowClientGameStreamControlError.challengeRejected
-            }
-
-            guard
-                let pairingSecretHex = stage3Doc.values["pairingsecret"]?.first,
-                let pairingSecret = Data(hexString: pairingSecretHex),
-                pairingSecret.count > 16
-            else {
-                try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
-                throw ShadowClientGameStreamControlError.malformedResponse
-            }
-
-            let serverSecret = Data(pairingSecret.prefix(16))
-            let serverSignature = Data(pairingSecret.dropFirst(16))
-
-            let signatureValid = try Self.verifySignature(
-                message: serverSecret,
-                signature: serverSignature,
-                certificateDER: serverCertDER
-            )
-            guard signatureValid else {
-                try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
-                throw ShadowClientGameStreamControlError.mitmDetected
-            }
-
-            let serverCertSignature = try ShadowClientX509DER.signatureBytes(fromCertificateDER: serverCertDER)
-            var expectedResponseData = Data()
-            expectedResponseData.append(randomChallenge)
-            expectedResponseData.append(serverCertSignature)
-            expectedResponseData.append(serverSecret)
-
-            if hashAlgorithm.digest(expectedResponseData) != serverResponse {
-                try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
-                throw ShadowClientGameStreamControlError.pinMismatch
-            }
-
-            let clientSecretSignature = try await identityStore.sign(clientSecret)
-            var clientPairingSecret = Data()
-            clientPairingSecret.append(clientSecret)
-            clientPairingSecret.append(clientSecretSignature)
-
-            let stage4XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
-                host: endpoint.host,
-                port: endpoint.port,
-                scheme: "http",
-                command: "pair",
-                parameters: [
-                    "devicename": "shadow-client",
-                    "updateState": "1",
-                    "clientpairingsecret": clientPairingSecret.hexString,
-                ],
-                uniqueID: uniqueID,
-                pinnedServerCertificateDER: nil
-            )
-            let stage4Doc = try parsePairResponseXML(stage4XML)
-            guard stage4Doc.values["paired"]?.first == "1" else {
-                try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
-                throw ShadowClientGameStreamControlError.challengeRejected
-            }
-
-            let stage5XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
-                host: endpoint.host,
-                port: defaultHTTPSPort,
-                scheme: "https",
-                command: "pair",
-                parameters: [
-                    "devicename": "shadow-client",
-                    "updateState": "1",
-                    "phrase": "pairchallenge",
-                ],
-                uniqueID: uniqueID,
-                pinnedServerCertificateDER: serverCertDER
-            )
-            let stage5Doc = try parsePairResponseXML(stage5XML)
-            guard stage5Doc.values["paired"]?.first == "1" else {
-                try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
-                throw ShadowClientGameStreamControlError.challengeRejected
-            }
-
-            await pinnedCertificateStore.setCertificateDER(serverCertDER, forHost: endpoint.host)
-            return ShadowClientGameStreamPairingResult(host: endpoint.host)
-        } catch {
-            throw error
+        } catch let error as ShadowClientGameStreamError {
+            throw Self.remapPairingStageError(error, stage: "getservercert")
         }
+
+        let stage1Doc = try parsePairResponseXML(stage1XML)
+        guard stage1Doc.values["paired"]?.first == "1" else {
+            throw ShadowClientGameStreamControlError.challengeRejected
+        }
+
+        guard
+            let plainCertHex = stage1Doc.values["plaincert"]?.first,
+            let serverCertDER = Data(hexString: plainCertHex)
+        else {
+            try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
+            throw ShadowClientGameStreamControlError.pairingAlreadyInProgress
+        }
+
+        let randomChallenge = Self.randomBytes(length: 16)
+        let encryptedChallenge = try Self.cryptAES(
+            input: randomChallenge,
+            key: aesKey,
+            operation: CCOperation(kCCEncrypt)
+        )
+
+        let stage2XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
+            host: endpoint.host,
+            port: endpoint.port,
+            scheme: "http",
+            command: "pair",
+            parameters: [
+                "devicename": "shadow-client",
+                "updateState": "1",
+                "clientchallenge": encryptedChallenge.hexString,
+            ],
+            uniqueID: uniqueID,
+            pinnedServerCertificateDER: nil,
+            timeout: pairingStageTimeout
+        )
+        let stage2Doc = try parsePairResponseXML(stage2XML)
+        guard stage2Doc.values["paired"]?.first == "1" else {
+            try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
+            throw ShadowClientGameStreamControlError.challengeRejected
+        }
+
+        guard
+            let challengeResponseHex = stage2Doc.values["challengeresponse"]?.first,
+            let challengeResponseCipher = Data(hexString: challengeResponseHex)
+        else {
+            try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
+            throw ShadowClientGameStreamControlError.malformedResponse
+        }
+
+        let challengeResponseData = try Self.cryptAES(
+            input: challengeResponseCipher,
+            key: aesKey,
+            operation: CCOperation(kCCDecrypt)
+        )
+        guard challengeResponseData.count >= hashAlgorithm.digestLength + 16 else {
+            try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
+            throw ShadowClientGameStreamControlError.malformedResponse
+        }
+
+        let serverResponse = Data(challengeResponseData.prefix(hashAlgorithm.digestLength))
+        let challengeNonce = Data(challengeResponseData.dropFirst(hashAlgorithm.digestLength).prefix(16))
+        let clientSecret = Self.randomBytes(length: 16)
+
+        var challengeResponsePayload = Data()
+        challengeResponsePayload.append(challengeNonce)
+        challengeResponsePayload.append(clientCertSignature)
+        challengeResponsePayload.append(clientSecret)
+
+        var paddedHash = hashAlgorithm.digest(challengeResponsePayload)
+        if paddedHash.count < 32 {
+            paddedHash.append(Data(repeating: 0, count: 32 - paddedHash.count))
+        }
+
+        let encryptedResponseHash = try Self.cryptAES(
+            input: paddedHash,
+            key: aesKey,
+            operation: CCOperation(kCCEncrypt)
+        )
+
+        let stage3XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
+            host: endpoint.host,
+            port: endpoint.port,
+            scheme: "http",
+            command: "pair",
+            parameters: [
+                "devicename": "shadow-client",
+                "updateState": "1",
+                "serverchallengeresp": encryptedResponseHash.hexString,
+            ],
+            uniqueID: uniqueID,
+            pinnedServerCertificateDER: nil,
+            timeout: pairingStageTimeout
+        )
+        let stage3Doc = try parsePairResponseXML(stage3XML)
+        guard stage3Doc.values["paired"]?.first == "1" else {
+            try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
+            throw ShadowClientGameStreamControlError.challengeRejected
+        }
+
+        guard
+            let pairingSecretHex = stage3Doc.values["pairingsecret"]?.first,
+            let pairingSecret = Data(hexString: pairingSecretHex),
+            pairingSecret.count > 16
+        else {
+            try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
+            throw ShadowClientGameStreamControlError.malformedResponse
+        }
+
+        let serverSecret = Data(pairingSecret.prefix(16))
+        let serverSignature = Data(pairingSecret.dropFirst(16))
+
+        let signatureValid = try Self.verifySignature(
+            message: serverSecret,
+            signature: serverSignature,
+            certificateDER: serverCertDER
+        )
+        guard signatureValid else {
+            try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
+            throw ShadowClientGameStreamControlError.mitmDetected
+        }
+
+        let serverCertSignature = try ShadowClientX509DER.signatureBytes(fromCertificateDER: serverCertDER)
+        var expectedResponseData = Data()
+        expectedResponseData.append(randomChallenge)
+        expectedResponseData.append(serverCertSignature)
+        expectedResponseData.append(serverSecret)
+
+        if hashAlgorithm.digest(expectedResponseData) != serverResponse {
+            try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
+            throw ShadowClientGameStreamControlError.pinMismatch
+        }
+
+        let clientSecretSignature = try await identityStore.sign(clientSecret)
+        var clientPairingSecret = Data()
+        clientPairingSecret.append(clientSecret)
+        clientPairingSecret.append(clientSecretSignature)
+
+        let stage4XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
+            host: endpoint.host,
+            port: endpoint.port,
+            scheme: "http",
+            command: "pair",
+            parameters: [
+                "devicename": "shadow-client",
+                "updateState": "1",
+                "clientpairingsecret": clientPairingSecret.hexString,
+            ],
+            uniqueID: uniqueID,
+            pinnedServerCertificateDER: nil,
+            timeout: pairingStageTimeout
+        )
+        let stage4Doc = try parsePairResponseXML(stage4XML)
+        guard stage4Doc.values["paired"]?.first == "1" else {
+            try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
+            throw ShadowClientGameStreamControlError.challengeRejected
+        }
+
+        let stage5Parameters: [String: String] = [
+            "devicename": "shadow-client",
+            "updateState": "1",
+            "phrase": "pairchallenge",
+        ]
+        let stage5Attempts: [(scheme: String, port: Int, pinned: Data?)] = [
+            (scheme: "https", port: defaultHTTPSPort, pinned: serverCertDER),
+            (scheme: "http", port: endpoint.port, pinned: nil),
+        ]
+
+        var stage5Error: Error?
+        var stage5Succeeded = false
+        for attempt in stage5Attempts {
+            do {
+                let stage5XML = try await ShadowClientGameStreamHTTPTransport.requestXML(
+                    host: endpoint.host,
+                    port: attempt.port,
+                    scheme: attempt.scheme,
+                    command: "pair",
+                    parameters: stage5Parameters,
+                    uniqueID: uniqueID,
+                    pinnedServerCertificateDER: attempt.pinned,
+                    timeout: pairingStageTimeout
+                )
+                let stage5Doc = try parsePairResponseXML(stage5XML)
+                guard stage5Doc.values["paired"]?.first == "1" else {
+                    stage5Error = ShadowClientGameStreamControlError.challengeRejected
+                    continue
+                }
+
+                stage5Succeeded = true
+                break
+            } catch {
+                stage5Error = error
+                continue
+            }
+        }
+
+        guard stage5Succeeded else {
+            try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
+            if let stage5Error {
+                throw stage5Error
+            }
+            throw ShadowClientGameStreamControlError.challengeRejected
+        }
+
+        await pinnedCertificateStore.setCertificateDER(serverCertDER, forHost: endpoint.host)
+        return ShadowClientGameStreamPairingResult(host: endpoint.host)
     }
 
     public func launch(
@@ -664,7 +705,8 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                     command: verb,
                     parameters: parameters,
                     uniqueID: uniqueID,
-                    pinnedServerCertificateDER: attempt.pinned
+                    pinnedServerCertificateDER: attempt.pinned,
+                    timeout: defaultRequestTimeout
                 )
 
                 let document = try ShadowClientXMLFlatDocumentParser.parse(xml: xml)
@@ -701,7 +743,8 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             command: "unpair",
             parameters: [:],
             uniqueID: uniqueID,
-            pinnedServerCertificateDER: nil
+            pinnedServerCertificateDER: nil,
+            timeout: pairingStageTimeout
         )
     }
 
@@ -808,6 +851,26 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             &error
         )
     }
+
+    private static func remapPairingStageError(
+        _ error: ShadowClientGameStreamError,
+        stage: String
+    ) -> ShadowClientGameStreamError {
+        switch error {
+        case let .requestFailed(message):
+            let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let timeoutLike = normalized.contains("timed out") || normalized.contains("timeout")
+            guard timeoutLike, stage == "getservercert" else {
+                return error
+            }
+
+            return .requestFailed(
+                "Pairing timed out while waiting for Sunshine PIN confirmation. Enter the displayed PIN on the host and retry."
+            )
+        default:
+            return error
+        }
+    }
 }
 
 private enum PairHashAlgorithm {
@@ -853,7 +916,8 @@ enum ShadowClientGameStreamHTTPTransport {
         command: String,
         parameters: [String: String],
         uniqueID: String,
-        pinnedServerCertificateDER: Data?
+        pinnedServerCertificateDER: Data?,
+        timeout: TimeInterval = 8
     ) async throws -> String {
         var components = URLComponents()
         components.scheme = scheme
@@ -873,7 +937,7 @@ enum ShadowClientGameStreamHTTPTransport {
         }
 
         var request = URLRequest(url: url)
-        request.timeoutInterval = 8
+        request.timeoutInterval = timeout
 
         let session: URLSession
         if scheme == "https" {

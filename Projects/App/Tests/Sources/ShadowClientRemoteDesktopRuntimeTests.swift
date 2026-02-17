@@ -133,8 +133,12 @@ func remoteDesktopRuntimeRefreshesHostsAndLoadsApps() async {
     await waitForAppCatalogReady(runtime)
 
     #expect(runtime.selectedHost?.host == "192.168.0.30")
-    #expect(runtime.appState == .loaded)
     #expect(runtime.apps.isEmpty)
+    if case let .failed(message) = runtime.appState {
+        #expect(message == "Host requires pairing before app list queries.")
+    } else {
+        Issue.record("Expected failed app state for unpaired host, got \(runtime.appState)")
+    }
 }
 
 private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient {

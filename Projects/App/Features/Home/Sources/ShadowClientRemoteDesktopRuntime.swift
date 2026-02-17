@@ -471,7 +471,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let controlClient = controlClient
         pairTask = Task {
             do {
-                let pairingDeadline = Date().addingTimeInterval(60)
+                let pairingDeadline = Date().addingTimeInterval(120)
                 while true {
                     do {
                         _ = try await controlClient.pair(
@@ -585,6 +585,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return
         }
 
+        guard selectedHost.pairStatus == .paired else {
+            refreshAppsTask?.cancel()
+            apps = []
+            appState = .failed("Host requires pairing before app list queries.")
+            return
+        }
+
         appState = .loading
         refreshAppsTask?.cancel()
         let metadataClient = metadataClient
@@ -662,16 +669,49 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return false
         }
 
-        guard let controlError = error as? ShadowClientGameStreamControlError else {
-            return false
+        if let controlError = error as? ShadowClientGameStreamControlError {
+            switch controlError {
+            case .pinMismatch, .challengeRejected, .pairingAlreadyInProgress:
+                return true
+            case .invalidPIN, .invalidKeyMaterial, .mitmDetected, .launchRejected, .malformedResponse:
+                return false
+            }
         }
 
-        switch controlError {
-        case .pinMismatch, .challengeRejected, .pairingAlreadyInProgress:
-            return true
-        case .invalidPIN, .invalidKeyMaterial, .mitmDetected, .launchRejected, .malformedResponse:
-            return false
+        if let streamError = error as? ShadowClientGameStreamError {
+            switch streamError {
+            case let .requestFailed(message):
+                return shouldRetryTransientPairingFailure(message: message)
+            case .invalidResponse:
+                return true
+            case .invalidHost, .invalidURL, .malformedXML, .responseRejected:
+                return false
+            }
         }
+
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
+                return true
+            default:
+                return false
+            }
+        }
+
+        return false
+    }
+
+    private static func shouldRetryTransientPairingFailure(message: String) -> Bool {
+        let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else {
+            return true
+        }
+
+        return normalized.contains("timed out") ||
+            normalized.contains("timeout") ||
+            normalized.contains("network connection was lost") ||
+            normalized.contains("could not connect") ||
+            normalized.contains("cannot connect")
     }
 
     private static func normalizedHostCandidates(_ candidates: [String]) -> [String] {

@@ -44,6 +44,50 @@ func remoteDesktopRuntimePairsSelectedHost() async {
     }
 }
 
+@Test("Remote desktop runtime retries transient pairing timeout and eventually pairs")
+@MainActor
+func remoteDesktopRuntimeRetriesTransientPairingTimeout() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.21": .init(
+                host: "192.168.0.21",
+                displayName: "Office-PC",
+                pairStatus: .notPaired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-2"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let control = FakeControlClient(
+        simulatedPairFailures: [.requestFailed("The request timed out.")]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        pinProvider: FixedPairingPINProvider(pin: "1234")
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.21"], preferredHost: "192.168.0.21")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.pairSelectedHost()
+    await waitForPairingState(runtime, maxAttempts: 200)
+
+    let calls = await control.pairCalls()
+    #expect(calls.count >= 2)
+
+    if case .paired = runtime.pairingState {
+        #expect(true)
+    } else {
+        Issue.record("Expected paired state after retry, got \(runtime.pairingState)")
+    }
+}
+
 @Test("Remote desktop runtime launches selected app through injected control client")
 @MainActor
 func remoteDesktopRuntimeLaunchesSelectedApp() async {
@@ -134,11 +178,22 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
 
     private var recordedPairCalls: [PairCall] = []
     private var recordedLaunchCalls: [LaunchCall] = []
+    private var simulatedPairFailures: [ShadowClientGameStreamError]
+
+    init(simulatedPairFailures: [ShadowClientGameStreamError] = []) {
+        self.simulatedPairFailures = simulatedPairFailures
+    }
 
     func pair(host: String, pin: String, appVersion: String?) async throws -> ShadowClientGameStreamPairingResult {
         recordedPairCalls.append(
             PairCall(host: host, pin: pin, appVersion: appVersion)
         )
+
+        if !simulatedPairFailures.isEmpty {
+            let nextError = simulatedPairFailures.removeFirst()
+            throw nextError
+        }
+
         return .init(host: host)
     }
 
