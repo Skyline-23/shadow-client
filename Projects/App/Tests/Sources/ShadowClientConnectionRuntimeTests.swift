@@ -123,7 +123,7 @@ func moonlightCLIConnectorFailsWithoutExecutable() async {
     }
 
     #expect(!didThrowUnexpectedError)
-    #expect(capturedFailure == .connectRejected("moonlight CLI not found. Install moonlight-qt and retry."))
+    #expect(capturedFailure == .connectRejected("Embedded stream runtime not found. Copy runtime binary to Projects/App/Features/Home/Runtime/moonlight or set SHADOW_CLIENT_MOONLIGHT_BIN."))
 }
 
 private actor MoonlightCommandCapture {

@@ -109,6 +109,8 @@ public actor ShadowClientConnectionRuntime {
 }
 
 #if os(macOS)
+private final class MoonlightRuntimeBundleMarker {}
+
 public actor MoonlightCLIConnectionClient: ShadowClientConnectionClient {
     public typealias CommandRunner = @Sendable (String, [String]) async throws -> ShadowClientCommandResult
     public typealias ExecutableResolver = @Sendable () -> String?
@@ -116,6 +118,8 @@ public actor MoonlightCLIConnectionClient: ShadowClientConnectionClient {
     private let commandRunner: CommandRunner
     private let executableResolver: ExecutableResolver
     private var connectedHost: String?
+    private static let missingRuntimeMessage =
+        "Embedded stream runtime not found. Copy runtime binary to Projects/App/Features/Home/Runtime/moonlight or set SHADOW_CLIENT_MOONLIGHT_BIN."
 
     public init() {
         commandRunner = Self.defaultCommandRunner
@@ -140,7 +144,7 @@ public actor MoonlightCLIConnectionClient: ShadowClientConnectionClient {
 
         guard let executable = executableResolver() else {
             throw ShadowClientConnectionFailure.connectRejected(
-                "moonlight CLI not found. Install moonlight-qt and retry."
+                Self.missingRuntimeMessage
             )
         }
 
@@ -161,20 +165,59 @@ public actor MoonlightCLIConnectionClient: ShadowClientConnectionClient {
     }
 
     private static let defaultExecutableResolver: ExecutableResolver = {
-        let environmentPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
-        let pathCandidates = environmentPath
-            .split(separator: ":")
-            .map { String($0) + "/moonlight" }
-        let fixedCandidates = [
-            "/opt/homebrew/bin/moonlight",
-            "/usr/local/bin/moonlight",
-            "/usr/bin/moonlight",
-        ]
-
-        let candidates = pathCandidates + fixedCandidates
         let fileManager = FileManager.default
+        return executablePathCandidates()
+            .first(where: { fileManager.isExecutableFile(atPath: $0) })
+    }
 
-        return candidates.first(where: { fileManager.isExecutableFile(atPath: $0) })
+    private static func executablePathCandidates() -> [String] {
+        var candidates: [String] = []
+
+        if let explicitPath = ProcessInfo.processInfo.environment["SHADOW_CLIENT_MOONLIGHT_BIN"] {
+            let trimmed = explicitPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                candidates.append(trimmed)
+            }
+        }
+
+        if let featureBundlePath = Bundle(for: MoonlightRuntimeBundleMarker.self).path(
+            forResource: "moonlight",
+            ofType: nil,
+            inDirectory: "Runtime"
+        ) {
+            candidates.append(featureBundlePath)
+        }
+
+        if let mainBundlePath = Bundle.main.path(
+            forResource: "moonlight",
+            ofType: nil,
+            inDirectory: "Runtime"
+        ) {
+            candidates.append(mainBundlePath)
+        }
+
+        if let sharedSupportPath = Bundle.main.sharedSupportURL?
+            .appendingPathComponent("shadow-client-runtime/moonlight")
+            .path
+        {
+            candidates.append(sharedSupportPath)
+        }
+
+        let sourceDirectory = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        candidates.append(
+            sourceDirectory
+                .appendingPathComponent("Runtime/moonlight")
+                .path
+        )
+
+        let repositoryPath = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Projects/App/Features/Home/Runtime/moonlight")
+            .path
+        candidates.append(repositoryPath)
+
+        return Array(NSOrderedSet(array: candidates)) as? [String] ?? candidates
     }
 
     private static let defaultCommandRunner: CommandRunner = { executable, arguments in
