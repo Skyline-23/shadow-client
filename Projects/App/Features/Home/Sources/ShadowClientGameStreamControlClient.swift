@@ -245,13 +245,138 @@ public actor ShadowClientPairingIdentityStore {
     }
 
     public func clientCertificateSignature() throws -> Data {
-        let material = try resolveMaterial()
-        let certDER = try pemBodyData(pem: material.certificatePEM)
-        return try ShadowClientX509DER.signatureBytes(fromCertificateDER: certDER)
+        try withRecoveredMaterial { material in
+            let certDER = try pemBodyData(pem: material.certificatePEM)
+            return try ShadowClientX509DER.signatureBytes(fromCertificateDER: certDER)
+        }
     }
 
     public func sign(_ message: Data) throws -> Data {
-        let material = try resolveMaterial()
+        try withRecoveredMaterial { material in
+            try sign(message, material: material)
+        }
+    }
+
+    private func resolveMaterial() throws -> ShadowClientPairingIdentityMaterial {
+        if let cachedMaterial {
+            return cachedMaterial
+        }
+
+        do {
+            let loaded = try provider.loadIdentityMaterial()
+            let validated = try validateIdentityMaterial(loaded)
+            cachedMaterial = validated
+            return validated
+        } catch {
+            let generated = try ShadowClientPairingIdentityMaterialFactory.generate()
+            upsertIdentityMaterial(generated)
+            return generated
+        }
+    }
+
+    private func withRecoveredMaterial<T>(
+        operation: (ShadowClientPairingIdentityMaterial) throws -> T
+    ) throws -> T {
+        do {
+            let material = try resolveMaterial()
+            return try operation(material)
+        } catch let error as ShadowClientGameStreamControlError {
+            switch error {
+            case .invalidKeyMaterial:
+                let regenerated = try regenerateIdentityMaterial()
+                return try operation(regenerated)
+            case .invalidPIN, .pairingAlreadyInProgress, .challengeRejected, .pinMismatch, .mitmDetected, .launchRejected, .malformedResponse:
+                throw error
+            }
+        } catch {
+            throw error
+        }
+    }
+
+    private func regenerateIdentityMaterial() throws -> ShadowClientPairingIdentityMaterial {
+        let generated = try ShadowClientPairingIdentityMaterialFactory.generate()
+        upsertIdentityMaterial(generated)
+        return generated
+    }
+
+    private func pemBodyData(pem: String) throws -> Data {
+        let lines = pem
+            .components(separatedBy: .newlines)
+            .filter { line in
+                !line.hasPrefix("-----BEGIN") &&
+                    !line.hasPrefix("-----END") &&
+                    !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            .joined()
+
+        guard let data = Data(base64Encoded: lines) else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        return data
+    }
+
+    private func validateIdentityMaterial(
+        _ material: ShadowClientPairingIdentityMaterial
+    ) throws -> ShadowClientPairingIdentityMaterial {
+        let certDER = try pemBodyData(pem: material.certificatePEM)
+        guard let cert = SecCertificateCreateWithData(nil, certDER as CFData) else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+        _ = try ShadowClientX509DER.signatureBytes(fromCertificateDER: certDER)
+
+        let keyDER = try pemBodyData(pem: material.privateKeyPEM)
+        let attributes: [CFString: Any] = [
+            kSecAttrKeyType: kSecAttrKeyTypeRSA,
+            kSecAttrKeyClass: kSecAttrKeyClassPrivate,
+            kSecAttrKeySizeInBits: 2048,
+        ]
+
+        var error: Unmanaged<CFError>?
+        guard let key = SecKeyCreateWithData(keyDER as CFData, attributes as CFDictionary, &error) else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        guard SecKeyIsAlgorithmSupported(key, .sign, .rsaSignatureMessagePKCS1v15SHA256) else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        guard let certificatePublicKey = SecCertificateCopyKey(cert) else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        guard SecKeyIsAlgorithmSupported(certificatePublicKey, .verify, .rsaSignatureMessagePKCS1v15SHA256) else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        let probe = Data("shadow-client-material-validation".utf8)
+        guard let probeSignature = SecKeyCreateSignature(
+            key,
+            .rsaSignatureMessagePKCS1v15SHA256,
+            probe as CFData,
+            &error
+        ) as Data? else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        var verifyError: Unmanaged<CFError>?
+        guard SecKeyVerifySignature(
+            certificatePublicKey,
+            .rsaSignatureMessagePKCS1v15SHA256,
+            probe as CFData,
+            probeSignature as CFData,
+            &verifyError
+        ) else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        return material
+    }
+
+    private func sign(
+        _ message: Data,
+        material: ShadowClientPairingIdentityMaterial
+    ) throws -> Data {
         let keyData = try pemBodyData(pem: material.privateKeyPEM)
         let attributes: [CFString: Any] = [
             kSecAttrKeyType: kSecAttrKeyTypeRSA,
@@ -278,67 +403,6 @@ public actor ShadowClientPairingIdentityStore {
         }
 
         return signature
-    }
-
-    private func resolveMaterial() throws -> ShadowClientPairingIdentityMaterial {
-        if let cachedMaterial {
-            return cachedMaterial
-        }
-
-        do {
-            let loaded = try provider.loadIdentityMaterial()
-            let validated = try validateIdentityMaterial(loaded)
-            cachedMaterial = validated
-            return validated
-        } catch {
-            let generated = try ShadowClientPairingIdentityMaterialFactory.generate()
-            upsertIdentityMaterial(generated)
-            return generated
-        }
-    }
-
-    private func pemBodyData(pem: String) throws -> Data {
-        let lines = pem
-            .components(separatedBy: .newlines)
-            .filter { line in
-                !line.hasPrefix("-----BEGIN") &&
-                    !line.hasPrefix("-----END") &&
-                    !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }
-            .joined()
-
-        guard let data = Data(base64Encoded: lines) else {
-            throw ShadowClientGameStreamControlError.invalidKeyMaterial
-        }
-
-        return data
-    }
-
-    private func validateIdentityMaterial(
-        _ material: ShadowClientPairingIdentityMaterial
-    ) throws -> ShadowClientPairingIdentityMaterial {
-        let certDER = try pemBodyData(pem: material.certificatePEM)
-        guard SecCertificateCreateWithData(nil, certDER as CFData) != nil else {
-            throw ShadowClientGameStreamControlError.invalidKeyMaterial
-        }
-
-        let keyDER = try pemBodyData(pem: material.privateKeyPEM)
-        let attributes: [CFString: Any] = [
-            kSecAttrKeyType: kSecAttrKeyTypeRSA,
-            kSecAttrKeyClass: kSecAttrKeyClassPrivate,
-            kSecAttrKeySizeInBits: 2048,
-        ]
-
-        var error: Unmanaged<CFError>?
-        guard let key = SecKeyCreateWithData(keyDER as CFData, attributes as CFDictionary, &error) else {
-            throw ShadowClientGameStreamControlError.invalidKeyMaterial
-        }
-
-        guard SecKeyIsAlgorithmSupported(key, .sign, .rsaSignatureMessagePKCS1v15SHA256) else {
-            throw ShadowClientGameStreamControlError.invalidKeyMaterial
-        }
-
-        return material
     }
 }
 

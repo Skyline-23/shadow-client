@@ -62,6 +62,64 @@ func pairingIdentityStoreReplacesInvalidPersistedMaterial() async throws {
     #expect(replacedPrivateKey != "broken-key")
 }
 
+@Test("Pairing identity store replaces persisted certificate-key mismatch")
+func pairingIdentityStoreReplacesMismatchedPersistedMaterial() async throws {
+    let sourceSuiteA = "ShadowClientPairingIdentityStoreTests.mismatch.sourceA.\(UUID().uuidString)"
+    let sourceSuiteB = "ShadowClientPairingIdentityStoreTests.mismatch.sourceB.\(UUID().uuidString)"
+    let targetSuite = "ShadowClientPairingIdentityStoreTests.mismatch.target.\(UUID().uuidString)"
+
+    guard
+        let sourceDefaultsA = UserDefaults(suiteName: sourceSuiteA),
+        let sourceDefaultsB = UserDefaults(suiteName: sourceSuiteB),
+        let targetDefaults = UserDefaults(suiteName: targetSuite)
+    else {
+        Issue.record("Expected isolated defaults suites")
+        return
+    }
+
+    defer {
+        sourceDefaultsA.removePersistentDomain(forName: sourceSuiteA)
+        sourceDefaultsB.removePersistentDomain(forName: sourceSuiteB)
+        targetDefaults.removePersistentDomain(forName: targetSuite)
+    }
+
+    let sourceMaterialA = try await generatePersistedIdentityMaterial(defaults: sourceDefaultsA)
+    let sourceMaterialB = try await generatePersistedIdentityMaterial(defaults: sourceDefaultsB)
+
+    targetDefaults.set(sourceMaterialA.certificatePEM, forKey: ShadowClientPairingIdentityDefaultsKeys.certificatePEM)
+    targetDefaults.set(sourceMaterialB.privateKeyPEM, forKey: ShadowClientPairingIdentityDefaultsKeys.privateKeyPEM)
+
+    let store = ShadowClientPairingIdentityStore(
+        provider: ShadowClientUserDefaultsIdentityProvider(defaults: targetDefaults),
+        defaults: targetDefaults
+    )
+
+    _ = try await store.clientCertificatePEMData()
+
+    let replacedCertificate = targetDefaults.string(forKey: ShadowClientPairingIdentityDefaultsKeys.certificatePEM) ?? ""
+    let replacedPrivateKey = targetDefaults.string(forKey: ShadowClientPairingIdentityDefaultsKeys.privateKeyPEM) ?? ""
+
+    #expect(replacedCertificate.contains("BEGIN CERTIFICATE"))
+    #expect(replacedPrivateKey.contains("BEGIN RSA PRIVATE KEY"))
+    #expect(!(replacedCertificate == sourceMaterialA.certificatePEM && replacedPrivateKey == sourceMaterialB.privateKeyPEM))
+}
+
+private func generatePersistedIdentityMaterial(defaults: UserDefaults) async throws -> ShadowClientPairingIdentityMaterial {
+    let store = ShadowClientPairingIdentityStore(
+        provider: FailingIdentityProvider(),
+        defaults: defaults
+    )
+    _ = try await store.clientCertificatePEMData()
+
+    let certificate = defaults.string(forKey: ShadowClientPairingIdentityDefaultsKeys.certificatePEM) ?? ""
+    let privateKey = defaults.string(forKey: ShadowClientPairingIdentityDefaultsKeys.privateKeyPEM) ?? ""
+
+    #expect(certificate.contains("BEGIN CERTIFICATE"))
+    #expect(privateKey.contains("BEGIN RSA PRIVATE KEY"))
+
+    return .init(certificatePEM: certificate, privateKeyPEM: privateKey)
+}
+
 private struct FailingIdentityProvider: ShadowClientPairingIdentityProviding {
     func loadIdentityMaterial() throws -> ShadowClientPairingIdentityMaterial {
         throw ShadowClientGameStreamControlError.invalidKeyMaterial
