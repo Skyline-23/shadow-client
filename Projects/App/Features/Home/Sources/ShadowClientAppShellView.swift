@@ -16,6 +16,8 @@ public struct ShadowClientAppShellView: View {
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferHDR) private var preferHDR = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferSurroundAudio) private var preferSurroundAudio = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.showDiagnosticsHUD) private var showDiagnosticsHUD = true
+    @State private var connectionHost = ""
+    @State private var connectionState: ShadowClientConnectionState = .disconnected
     @State private var settingsTelemetryCancellable: AnyCancellable?
     @State private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
 
@@ -33,6 +35,9 @@ public struct ShadowClientAppShellView: View {
             settingsTab
         }
         .tint(.mint)
+        .task {
+            await syncConnectionStateFromRuntime()
+        }
         .task(id: currentSettings.streamingIdentityKey) {
             restartSettingsTelemetrySubscription(for: currentSettings)
         }
@@ -82,6 +87,25 @@ public struct ShadowClientAppShellView: View {
     private var settingsTab: some View {
         NavigationStack {
             Form {
+                Section("Client Connection") {
+                    TextField("Host (IP or hostname)", text: $connectionHost)
+                    HStack {
+                        Button("Connect") {
+                            connectToHost()
+                        }
+                        .disabled(!canConnect)
+
+                        Button("Disconnect") {
+                            disconnectFromHost()
+                        }
+                        .disabled(!canDisconnect)
+                    }
+
+                    Text(connectionStatusText)
+                        .font(.footnote)
+                        .foregroundStyle(connectionStatusColor)
+                }
+
                 Section("Streaming Quality") {
                     Toggle(isOn: $lowLatencyMode) {
                         Label("Low-Latency Mode", systemImage: "speedometer")
@@ -173,6 +197,60 @@ public struct ShadowClientAppShellView: View {
         .ignoresSafeArea()
     }
 
+    private var normalizedConnectionHost: String {
+        connectionHost.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canConnect: Bool {
+        guard !normalizedConnectionHost.isEmpty else {
+            return false
+        }
+
+        switch connectionState {
+        case .connected, .connecting, .disconnecting:
+            return false
+        case .disconnected, .failed:
+            return true
+        }
+    }
+
+    private var canDisconnect: Bool {
+        switch connectionState {
+        case .connected, .connecting, .failed:
+            return true
+        case .disconnected, .disconnecting:
+            return false
+        }
+    }
+
+    private var connectionStatusText: String {
+        switch connectionState {
+        case .disconnected:
+            return "Status: Disconnected"
+        case let .connecting(host):
+            return "Status: Connecting to \(host)..."
+        case let .connected(host):
+            return "Status: Connected to \(host)"
+        case .disconnecting:
+            return "Status: Disconnecting..."
+        case let .failed(_, message):
+            return "Status: Connection Failed - \(message)"
+        }
+    }
+
+    private var connectionStatusColor: Color {
+        switch connectionState {
+        case .connected:
+            return .green
+        case .failed:
+            return .red
+        case .connecting, .disconnecting:
+            return .orange
+        case .disconnected:
+            return .secondary
+        }
+    }
+
     @MainActor
     private func restartSettingsTelemetrySubscription(for settings: ShadowClientAppSettings) {
         settingsTelemetryCancellable?.cancel()
@@ -194,5 +272,42 @@ public struct ShadowClientAppShellView: View {
     private func stopSettingsTelemetrySubscription() {
         settingsTelemetryCancellable?.cancel()
         settingsTelemetryCancellable = nil
+    }
+
+    @MainActor
+    private func syncConnectionStateFromRuntime() async {
+        connectionState = await baseDependencies.connectionRuntime.currentState()
+        if connectionHost.isEmpty, let host = connectionState.host, !host.isEmpty {
+            connectionHost = host
+        }
+    }
+
+    @MainActor
+    private func connectToHost() {
+        let host = normalizedConnectionHost
+        guard !host.isEmpty else {
+            return
+        }
+
+        Task {
+            let state = await baseDependencies.connectionRuntime.connect(to: host)
+            await MainActor.run {
+                connectionState = state
+                if let connectedHost = state.host, !connectedHost.isEmpty {
+                    connectionHost = connectedHost
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func disconnectFromHost() {
+        Task {
+            let state = await baseDependencies.connectionRuntime.disconnect()
+            await MainActor.run {
+                connectionState = state
+                settingsDiagnosticsModel = nil
+            }
+        }
     }
 }

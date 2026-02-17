@@ -7,6 +7,7 @@ import SwiftUI
 public struct ShadowClientFeatureHomeDependencies {
     public let telemetryPublisher: AnyPublisher<StreamingTelemetrySnapshot, Never>
     public let diagnosticsRuntime: HomeDiagnosticsRuntime
+    public let connectionRuntime: ShadowClientConnectionRuntime
     public let settingsMapper: StreamingSessionSettingsMapper
     public let sessionPreferences: StreamingUserPreferences
     public let hostCapabilities: HostStreamingCapabilities
@@ -14,12 +15,14 @@ public struct ShadowClientFeatureHomeDependencies {
     public init(
         telemetryPublisher: AnyPublisher<StreamingTelemetrySnapshot, Never>,
         diagnosticsRuntime: HomeDiagnosticsRuntime,
+        connectionRuntime: ShadowClientConnectionRuntime,
         settingsMapper: StreamingSessionSettingsMapper,
         sessionPreferences: StreamingUserPreferences,
         hostCapabilities: HostStreamingCapabilities
     ) {
         self.telemetryPublisher = telemetryPublisher
         self.diagnosticsRuntime = diagnosticsRuntime
+        self.connectionRuntime = connectionRuntime
         self.settingsMapper = settingsMapper
         self.sessionPreferences = sessionPreferences
         self.hostCapabilities = hostCapabilities
@@ -45,10 +48,14 @@ public extension ShadowClientFeatureHomeDependencies {
             hostCapabilities: hostCapabilities
         )
         let diagnosticsRuntime = HomeDiagnosticsRuntime(launchRuntime: launchRuntime)
+        let connectionRuntime = ShadowClientConnectionRuntime(
+            client: SimulatedShadowClientConnectionClient(bridge: bridge)
+        )
 
         return .init(
             telemetryPublisher: bridge.snapshotPublisher,
             diagnosticsRuntime: diagnosticsRuntime,
+            connectionRuntime: connectionRuntime,
             settingsMapper: settingsMapper,
             sessionPreferences: sessionPreferences,
             hostCapabilities: hostCapabilities
