@@ -302,6 +302,12 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
     ) async throws -> String {
         let uniqueID = await identityStore.uniqueID()
         let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: host)
+        let clientCertificateCredential: URLCredential?
+        if scheme == "https" {
+            clientCertificateCredential = try await identityStore.tlsClientCertificateCredential()
+        } else {
+            clientCertificateCredential = nil
+        }
         return try await ShadowClientGameStreamHTTPTransport.requestXML(
             host: host,
             port: port,
@@ -309,7 +315,8 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             command: command,
             parameters: [:],
             uniqueID: uniqueID,
-            pinnedServerCertificateDER: pinnedCertificateDER
+            pinnedServerCertificateDER: pinnedCertificateDER,
+            clientCertificateCredential: clientCertificateCredential
         )
     }
 
@@ -345,6 +352,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var pairTask: Task<Void, Never>?
     private var launchTask: Task<Void, Never>?
     private var latestHostCandidates: [String] = []
+    private var appRefreshGeneration: UInt64 = 0
 
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
@@ -477,7 +485,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         _ = try await controlClient.pair(
                             host: selectedHost.host,
                             pin: generatedPIN,
-                            appVersion: selectedHost.appVersion
+                            appVersion: selectedHost.appVersion,
+                            httpsPort: selectedHost.httpsPort
                         )
                         break
                     } catch {
@@ -571,6 +580,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     @MainActor
     public func refreshSelectedHostApps() {
+        appRefreshGeneration &+= 1
+        let refreshGeneration = appRefreshGeneration
+
         guard let selectedHost else {
             refreshAppsTask?.cancel()
             apps = []
@@ -595,17 +607,25 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         appState = .loading
         refreshAppsTask?.cancel()
         let metadataClient = metadataClient
+        let host = selectedHost.host
+        let httpsPort = selectedHost.httpsPort
         refreshAppsTask = Task {
             do {
                 let resolved = try await metadataClient.fetchAppList(
-                    host: selectedHost.host,
-                    httpsPort: selectedHost.httpsPort
+                    host: host,
+                    httpsPort: httpsPort
                 )
                 let sorted = resolved.sorted {
                     $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
                 }
 
                 guard !Task.isCancelled else {
+                    await MainActor.run {
+                        guard appRefreshGeneration == refreshGeneration, appState == .loading else {
+                            return
+                        }
+                        appState = .idle
+                    }
                     return
                 }
 
@@ -616,6 +636,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             } catch {
                 let message = error.localizedDescription
                 guard !Task.isCancelled else {
+                    await MainActor.run {
+                        guard appRefreshGeneration == refreshGeneration, appState == .loading else {
+                            return
+                        }
+                        appState = .idle
+                    }
                     return
                 }
 

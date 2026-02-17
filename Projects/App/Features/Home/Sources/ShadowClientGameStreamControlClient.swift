@@ -144,7 +144,12 @@ public struct ShadowClientUserDefaultsIdentityProvider: ShadowClientPairingIdent
 }
 
 public protocol ShadowClientGameStreamControlClient: Sendable {
-    func pair(host: String, pin: String, appVersion: String?) async throws -> ShadowClientGameStreamPairingResult
+    func pair(
+        host: String,
+        pin: String,
+        appVersion: String?,
+        httpsPort: Int?
+    ) async throws -> ShadowClientGameStreamPairingResult
     func launch(
         host: String,
         httpsPort: Int,
@@ -254,6 +259,12 @@ public actor ShadowClientPairingIdentityStore {
     public func sign(_ message: Data) throws -> Data {
         try withRecoveredMaterial { material in
             try sign(message, material: material)
+        }
+    }
+
+    public func tlsClientCertificateCredential() throws -> URLCredential {
+        try withRecoveredMaterial { material in
+            try makeTLSClientCertificateCredential(material: material)
         }
     }
 
@@ -404,6 +415,122 @@ public actor ShadowClientPairingIdentityStore {
 
         return signature
     }
+
+    private func makeTLSClientCertificateCredential(
+        material: ShadowClientPairingIdentityMaterial
+    ) throws -> URLCredential {
+        let certDER = try pemBodyData(pem: material.certificatePEM)
+        guard let certificate = SecCertificateCreateWithData(nil, certDER as CFData) else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        let keyData = try pemBodyData(pem: material.privateKeyPEM)
+        let attributes: [CFString: Any] = [
+            kSecAttrKeyType: kSecAttrKeyTypeRSA,
+            kSecAttrKeyClass: kSecAttrKeyClassPrivate,
+            kSecAttrKeySizeInBits: 2048,
+        ]
+
+        var error: Unmanaged<CFError>?
+        guard let privateKey = SecKeyCreateWithData(keyData as CFData, attributes as CFDictionary, &error) else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        let certFingerprint = Data(SHA256.hash(data: certDER)).hexString
+        let keyTag = Data("shadow-client.pairing.key.\(certFingerprint)".utf8)
+        let certLabel = "shadow-client.pairing.certificate.\(certFingerprint)"
+
+        let keyDeleteQuery: [CFString: Any] = [
+            kSecClass: kSecClassKey,
+            kSecAttrApplicationTag: keyTag,
+            kSecAttrKeyType: kSecAttrKeyTypeRSA,
+        ]
+        SecItemDelete(keyDeleteQuery as CFDictionary)
+
+        let keyAddQuery: [CFString: Any] = [
+            kSecClass: kSecClassKey,
+            kSecAttrApplicationTag: keyTag,
+            kSecAttrKeyType: kSecAttrKeyTypeRSA,
+            kSecAttrKeyClass: kSecAttrKeyClassPrivate,
+            kSecValueRef: privateKey,
+        ]
+        let keyStatus = SecItemAdd(keyAddQuery as CFDictionary, nil)
+        guard keyStatus == errSecSuccess || keyStatus == errSecDuplicateItem else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        let certDeleteQuery: [CFString: Any] = [
+            kSecClass: kSecClassCertificate,
+            kSecAttrLabel: certLabel,
+        ]
+        SecItemDelete(certDeleteQuery as CFDictionary)
+
+        let certAddQuery: [CFString: Any] = [
+            kSecClass: kSecClassCertificate,
+            kSecAttrLabel: certLabel,
+            kSecValueRef: certificate,
+        ]
+        let certStatus = SecItemAdd(certAddQuery as CFDictionary, nil)
+        guard certStatus == errSecSuccess || certStatus == errSecDuplicateItem else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
+        let identity = try resolveTLSClientIdentity(
+            certificate: certificate,
+            certificateLabel: certLabel
+        )
+
+        return URLCredential(
+            identity: identity,
+            certificates: [certificate],
+            persistence: .forSession
+        )
+    }
+
+    private func resolveTLSClientIdentity(
+        certificate: SecCertificate,
+        certificateLabel: String
+    ) throws -> SecIdentity {
+        #if os(macOS)
+        var identity: SecIdentity?
+        let macStatus = SecIdentityCreateWithCertificate(nil, certificate, &identity)
+        if macStatus == errSecSuccess, let identity {
+            return identity
+        }
+        #endif
+
+        var identityReference: CFTypeRef?
+        let identityQueryByCertificate: [CFString: Any] = [
+            kSecClass: kSecClassIdentity,
+            kSecReturnRef: kCFBooleanTrue as Any,
+            kSecMatchLimit: kSecMatchLimitOne,
+            kSecValueRef: certificate,
+        ]
+        let certificateQueryStatus = SecItemCopyMatching(
+            identityQueryByCertificate as CFDictionary,
+            &identityReference
+        )
+        if certificateQueryStatus == errSecSuccess, let identityReference {
+            return unsafeBitCast(identityReference, to: SecIdentity.self)
+        }
+
+        identityReference = nil
+        let identityQueryByLabel: [CFString: Any] = [
+            kSecClass: kSecClassIdentity,
+            kSecReturnRef: kCFBooleanTrue as Any,
+            kSecMatchLimit: kSecMatchLimitOne,
+            kSecAttrLabel: certificateLabel,
+        ]
+        let labelQueryStatus = SecItemCopyMatching(
+            identityQueryByLabel as CFDictionary,
+            &identityReference
+        )
+        if labelQueryStatus == errSecSuccess, let identityReference {
+            return unsafeBitCast(identityReference, to: SecIdentity.self)
+        }
+
+        throw ShadowClientGameStreamControlError.invalidKeyMaterial
+    }
 }
 
 public actor ShadowClientPinnedHostCertificateStore {
@@ -467,7 +594,12 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         self.pairingStageTimeout = pairingStageTimeout
     }
 
-    public func pair(host: String, pin: String, appVersion: String?) async throws -> ShadowClientGameStreamPairingResult {
+    public func pair(
+        host: String,
+        pin: String,
+        appVersion: String?,
+        httpsPort: Int?
+    ) async throws -> ShadowClientGameStreamPairingResult {
         let trimmedPIN = pin.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedPIN.count >= 4 else {
             throw ShadowClientGameStreamControlError.invalidPIN
@@ -477,6 +609,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let uniqueID = await identityStore.uniqueID()
         let certPEMData = try await identityStore.clientCertificatePEMData()
         let clientCertSignature = try await identityStore.clientCertificateSignature()
+        let tlsClientCredential = try await identityStore.tlsClientCertificateCredential()
 
         let hashAlgorithm = PairHashAlgorithm.from(appVersion: appVersion)
         let salt = Self.randomBytes(length: 16)
@@ -661,14 +794,15 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             throw ShadowClientGameStreamControlError.challengeRejected
         }
 
+        let resolvedHTTPSPort = httpsPort ?? defaultHTTPSPort
         let stage5Parameters: [String: String] = [
             "devicename": "shadow-client",
             "updateState": "1",
             "phrase": "pairchallenge",
         ]
-        let stage5Attempts: [(scheme: String, port: Int, pinned: Data?)] = [
-            (scheme: "https", port: defaultHTTPSPort, pinned: serverCertDER),
-            (scheme: "http", port: endpoint.port, pinned: nil),
+        let stage5Attempts: [(scheme: String, port: Int, pinned: Data?, credential: URLCredential?)] = [
+            (scheme: "https", port: resolvedHTTPSPort, pinned: serverCertDER, credential: tlsClientCredential),
+            (scheme: "http", port: endpoint.port, pinned: nil, credential: nil),
         ]
 
         var stage5Error: Error?
@@ -683,6 +817,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                     parameters: stage5Parameters,
                     uniqueID: uniqueID,
                     pinnedServerCertificateDER: attempt.pinned,
+                    clientCertificateCredential: attempt.credential,
                     timeout: pairingStageTimeout
                 )
                 let stage5Doc = try parsePairResponseXML(stage5XML)
@@ -721,6 +856,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
         let uniqueID = await identityStore.uniqueID()
         let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
+        let tlsClientCredential = try await identityStore.tlsClientCertificateCredential()
 
         let remoteInputKey = Self.randomBytes(length: 16)
         let remoteInputIV = Self.randomBytes(length: 16)
@@ -755,9 +891,9 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         }
 
         var capturedError: Error?
-        let attempts: [(scheme: String, port: Int, pinned: Data?)] = [
-            (scheme: "https", port: httpsPort, pinned: pinnedServerCertificate),
-            (scheme: "http", port: endpoint.port, pinned: nil),
+        let attempts: [(scheme: String, port: Int, pinned: Data?, credential: URLCredential?)] = [
+            (scheme: "https", port: httpsPort, pinned: pinnedServerCertificate, credential: tlsClientCredential),
+            (scheme: "http", port: endpoint.port, pinned: nil, credential: nil),
         ]
 
         for attempt in attempts {
@@ -770,6 +906,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                     parameters: parameters,
                     uniqueID: uniqueID,
                     pinnedServerCertificateDER: attempt.pinned,
+                    clientCertificateCredential: attempt.credential,
                     timeout: defaultRequestTimeout
                 )
 
@@ -981,6 +1118,7 @@ enum ShadowClientGameStreamHTTPTransport {
         parameters: [String: String],
         uniqueID: String,
         pinnedServerCertificateDER: Data?,
+        clientCertificateCredential: URLCredential? = nil,
         timeout: TimeInterval = 8
     ) async throws -> String {
         var components = URLComponents()
@@ -1006,7 +1144,8 @@ enum ShadowClientGameStreamHTTPTransport {
         let session: URLSession
         if scheme == "https" {
             let delegate = ShadowClientServerTrustURLSessionDelegate(
-                pinnedServerCertificateDER: pinnedServerCertificateDER
+                pinnedServerCertificateDER: pinnedServerCertificateDER,
+                clientCertificateCredential: clientCertificateCredential
             )
             session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         } else {
@@ -1043,9 +1182,14 @@ enum ShadowClientGameStreamHTTPTransport {
 
 private final class ShadowClientServerTrustURLSessionDelegate: NSObject, URLSessionDelegate {
     private let pinnedServerCertificateDER: Data?
+    private let clientCertificateCredential: URLCredential?
 
-    init(pinnedServerCertificateDER: Data?) {
+    init(
+        pinnedServerCertificateDER: Data?,
+        clientCertificateCredential: URLCredential?
+    ) {
         self.pinnedServerCertificateDER = pinnedServerCertificateDER
+        self.clientCertificateCredential = clientCertificateCredential
         super.init()
     }
 
@@ -1054,9 +1198,17 @@ private final class ShadowClientServerTrustURLSessionDelegate: NSObject, URLSess
         didReceive challenge: URLAuthenticationChallenge,
         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
+        if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodClientCertificate {
+            guard let clientCertificateCredential else {
+                completionHandler(.rejectProtectionSpace, nil)
+                return
+            }
+            completionHandler(.useCredential, clientCertificateCredential)
+            return
+        }
+
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              let serverTrust = challenge.protectionSpace.serverTrust
-        else {
+              let serverTrust = challenge.protectionSpace.serverTrust else {
             completionHandler(.performDefaultHandling, nil)
             return
         }

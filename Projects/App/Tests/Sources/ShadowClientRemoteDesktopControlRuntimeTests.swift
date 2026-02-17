@@ -34,7 +34,7 @@ func remoteDesktopRuntimePairsSelectedHost() async {
     await waitForPairingState(runtime)
 
     #expect(await control.pairCalls() == [
-        .init(host: "192.168.0.20", pin: "1234", appVersion: "7.0.0"),
+        .init(host: "192.168.0.20", pin: "1234", appVersion: "7.0.0", httpsPort: 47984),
     ])
 
     if case .paired = runtime.pairingState {
@@ -166,6 +166,7 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
         let host: String
         let pin: String
         let appVersion: String?
+        let httpsPort: Int?
     }
 
     struct LaunchCall: Equatable {
@@ -184,9 +185,14 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
         self.simulatedPairFailures = simulatedPairFailures
     }
 
-    func pair(host: String, pin: String, appVersion: String?) async throws -> ShadowClientGameStreamPairingResult {
+    func pair(
+        host: String,
+        pin: String,
+        appVersion: String?,
+        httpsPort: Int?
+    ) async throws -> ShadowClientGameStreamPairingResult {
         recordedPairCalls.append(
-            PairCall(host: host, pin: pin, appVersion: appVersion)
+            PairCall(host: host, pin: pin, appVersion: appVersion, httpsPort: httpsPort)
         )
 
         if !simulatedPairFailures.isEmpty {
