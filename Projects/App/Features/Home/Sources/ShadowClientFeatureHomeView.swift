@@ -37,11 +37,50 @@ public struct ShadowClientFeatureHomeDependencies {
     }
 }
 
+public struct ShadowClientRemoteDesktopDependencies {
+    public let metadataClient: any ShadowClientGameStreamMetadataClient
+    public let controlClient: any ShadowClientGameStreamControlClient
+
+    public init(
+        metadataClient: any ShadowClientGameStreamMetadataClient,
+        controlClient: any ShadowClientGameStreamControlClient
+    ) {
+        self.metadataClient = metadataClient
+        self.controlClient = controlClient
+    }
+}
+
+public extension ShadowClientRemoteDesktopDependencies {
+    static func live(
+        identityStore: ShadowClientPairingIdentityStore = .shared,
+        pinnedCertificateStore: ShadowClientPinnedHostCertificateStore = .shared,
+        defaultHTTPPort: Int = 47989,
+        defaultHTTPSPort: Int = 47984
+    ) -> Self {
+        .init(
+            metadataClient: NativeGameStreamMetadataClient(
+                identityStore: identityStore,
+                pinnedCertificateStore: pinnedCertificateStore,
+                defaultHTTPPort: defaultHTTPPort,
+                defaultHTTPSPort: defaultHTTPSPort
+            ),
+            controlClient: NativeGameStreamControlClient(
+                identityStore: identityStore,
+                pinnedCertificateStore: pinnedCertificateStore,
+                defaultHTTPPort: defaultHTTPPort,
+                defaultHTTPSPort: defaultHTTPSPort
+            )
+        )
+    }
+}
+
 public extension ShadowClientFeatureHomeDependencies {
     static func live(
         bridge: MoonlightSessionTelemetryBridge,
         connectionClient: any ShadowClientConnectionClient,
-        connectionBackendLabel: String = "Native Host Probe"
+        connectionBackendLabel: String = "Native Host Probe",
+        hostDiscoveryRuntime: ShadowClientHostDiscoveryRuntime = .init(),
+        remoteDesktopDependencies: ShadowClientRemoteDesktopDependencies = .live()
     ) -> Self {
         let settingsMapper = StreamingSessionSettingsMapper()
         let sessionPreferences = StreamingUserPreferences(
@@ -61,8 +100,10 @@ public extension ShadowClientFeatureHomeDependencies {
         )
         let diagnosticsRuntime = HomeDiagnosticsRuntime(launchRuntime: launchRuntime)
         let connectionRuntime = ShadowClientConnectionRuntime(client: connectionClient)
-        let hostDiscoveryRuntime = ShadowClientHostDiscoveryRuntime()
-        let remoteDesktopRuntime = ShadowClientRemoteDesktopRuntime()
+        let remoteDesktopRuntime = ShadowClientRemoteDesktopRuntime(
+            metadataClient: remoteDesktopDependencies.metadataClient,
+            controlClient: remoteDesktopDependencies.controlClient
+        )
 
         return .init(
             telemetryPublisher: bridge.snapshotPublisher,

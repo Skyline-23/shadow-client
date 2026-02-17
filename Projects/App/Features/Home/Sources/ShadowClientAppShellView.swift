@@ -21,6 +21,7 @@ public struct ShadowClientAppShellView: View {
     @ObservedObject private var hostDiscoveryRuntime: ShadowClientHostDiscoveryRuntime
     @ObservedObject private var remoteDesktopRuntime: ShadowClientRemoteDesktopRuntime
     @State private var connectionState: ShadowClientConnectionState = .disconnected
+    @State private var pairingPIN = ""
     @State private var settingsTelemetryCancellable: AnyCancellable?
     @State private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
 
@@ -357,6 +358,38 @@ public struct ShadowClientAppShellView: View {
                 }
             }
 
+            settingsRow {
+                SecureField("Pair PIN", text: $pairingPIN)
+                    .textFieldStyle(.plain)
+                    .font(.callout.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.black.opacity(0.36))
+                    )
+                Button {
+                    remoteDesktopRuntime.pairSelectedHost(pin: pairingPIN)
+                } label: {
+                    if remoteDesktopRuntime.pairingState == .pairing {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text("Pair")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(pairingPIN.trimmingCharacters(in: .whitespacesAndNewlines).count < 4)
+            }
+
+            settingsRow {
+                Label(remoteDesktopRuntime.pairingState.label, systemImage: "number.square")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(pairingStateColor)
+                Spacer(minLength: 0)
+            }
+
             remoteDesktopAppListSection
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -372,7 +405,9 @@ public struct ShadowClientAppShellView: View {
     }
 
     private func remoteDesktopHostRow(_ host: ShadowClientRemoteHostDescriptor) -> some View {
-        settingsRow {
+        let isSelected = remoteDesktopRuntime.selectedHostID == host.id
+
+        return settingsRow {
             VStack(alignment: .leading, spacing: 4) {
                 Text(host.displayName)
                     .font(.callout.weight(.bold))
@@ -389,6 +424,7 @@ public struct ShadowClientAppShellView: View {
 
             Button("Use") {
                 connectionHost = host.host
+                remoteDesktopRuntime.selectHost(host.id)
             }
             .buttonStyle(.bordered)
 
@@ -399,11 +435,16 @@ public struct ShadowClientAppShellView: View {
             .buttonStyle(.borderedProminent)
             .disabled(!canStartConnection || !host.isReachable)
 
-            Button("Select") {
+            Button(isSelected ? "Selected" : "Select") {
                 remoteDesktopRuntime.selectHost(host.id)
             }
             .buttonStyle(.bordered)
+            .disabled(isSelected)
         }
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(isSelected ? Color.mint.opacity(0.9) : Color.clear, lineWidth: 1.5)
+        )
     }
 
     private var remoteDesktopAppListSection: some View {
@@ -452,9 +493,21 @@ public struct ShadowClientAppShellView: View {
                                 .font(.footnote.monospacedDigit())
                                 .foregroundStyle(Color.white.opacity(0.72))
                         }
-                        Spacer(minLength: 0)
+                        Spacer(minLength: 8)
+                        Button("Launch") {
+                            launchRemoteApp(app)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(remoteDesktopRuntime.launchState == .launching)
                     }
                 }
+            }
+
+            settingsRow {
+                Label(remoteDesktopRuntime.launchState.label, systemImage: "play.circle.fill")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(launchStateColor)
+                Spacer(minLength: 0)
             }
         }
     }
@@ -503,6 +556,32 @@ public struct ShadowClientAppShellView: View {
             return .yellow
         case .unknown:
             return Color.white.opacity(0.78)
+        }
+    }
+
+    private var pairingStateColor: Color {
+        switch remoteDesktopRuntime.pairingState {
+        case .idle:
+            return Color.white.opacity(0.74)
+        case .pairing:
+            return .orange
+        case .paired:
+            return .green
+        case .failed:
+            return .red
+        }
+    }
+
+    private var launchStateColor: Color {
+        switch remoteDesktopRuntime.launchState {
+        case .idle:
+            return Color.white.opacity(0.74)
+        case .launching:
+            return .orange
+        case .launched:
+            return .green
+        case .failed:
+            return .red
         }
     }
 
@@ -761,6 +840,20 @@ public struct ShadowClientAppShellView: View {
     private func connectToDiscoveredHost(_ discoveredHost: ShadowClientDiscoveredHost) {
         connectionHost = discoveredHost.host
         connectToHost()
+    }
+
+    @MainActor
+    private func launchRemoteApp(_ app: ShadowClientRemoteAppDescriptor) {
+        let settings = ShadowClientGameStreamLaunchSettings(
+            enableHDR: preferHDR && app.hdrSupported,
+            enableSurroundAudio: preferSurroundAudio,
+            lowLatencyMode: lowLatencyMode
+        )
+
+        remoteDesktopRuntime.launchSelectedApp(
+            appID: app.id,
+            settings: settings
+        )
     }
 
     @MainActor

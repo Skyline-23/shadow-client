@@ -38,6 +38,7 @@ let project = Project(
                         "_moonlight._tcp",
                     ],
                     "NSAppTransportSecurity": [
+                        "NSAllowsArbitraryLoads": true,
                         "NSAllowsLocalNetworking": true,
                     ],
                 ]
@@ -66,6 +67,7 @@ let project = Project(
                         "_moonlight._tcp",
                     ],
                     "NSAppTransportSecurity": [
+                        "NSAllowsArbitraryLoads": true,
                         "NSAllowsLocalNetworking": true,
                     ],
                 ]
@@ -98,6 +100,7 @@ let project = Project(
                         "_moonlight._tcp",
                     ],
                     "NSAppTransportSecurity": [
+                        "NSAllowsArbitraryLoads": true,
                         "NSAllowsLocalNetworking": true,
                     ],
                 ]

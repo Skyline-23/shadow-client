@@ -192,31 +192,54 @@ public protocol ShadowClientGameStreamMetadataClient: Sendable {
 }
 
 public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient {
-    private let session: URLSession
+    private let identityStore: ShadowClientPairingIdentityStore
+    private let pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
     private let defaultHTTPPort: Int
     private let defaultHTTPSPort: Int
-    private let uniqueID: String
 
     public init(
-        session: URLSession = .shared,
+        identityStore: ShadowClientPairingIdentityStore = .shared,
+        pinnedCertificateStore: ShadowClientPinnedHostCertificateStore = .shared,
         defaultHTTPPort: Int = 47989,
-        defaultHTTPSPort: Int = 47984,
-        uniqueID: String = "0123456789ABCDEF"
+        defaultHTTPSPort: Int = 47984
     ) {
-        self.session = session
+        self.identityStore = identityStore
+        self.pinnedCertificateStore = pinnedCertificateStore
         self.defaultHTTPPort = defaultHTTPPort
         self.defaultHTTPSPort = defaultHTTPSPort
-        self.uniqueID = uniqueID
     }
 
     public func fetchServerInfo(host: String) async throws -> ShadowClientGameStreamServerInfo {
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
-        let xml = try await requestXML(
-            host: endpoint.host,
-            port: endpoint.port,
-            scheme: "http",
-            command: "serverinfo"
-        )
+        var capturedError: Error?
+        let attempts: [(scheme: String, port: Int)] = [
+            (scheme: "https", port: defaultHTTPSPort),
+            (scheme: "http", port: endpoint.port),
+        ]
+
+        var xml: String?
+        for attempt in attempts {
+            do {
+                xml = try await requestXML(
+                    host: endpoint.host,
+                    port: attempt.port,
+                    scheme: attempt.scheme,
+                    command: "serverinfo"
+                )
+                break
+            } catch {
+                capturedError = error
+            }
+        }
+
+        guard let xml else {
+            if let capturedError = capturedError as? ShadowClientGameStreamError {
+                throw capturedError
+            }
+            throw ShadowClientGameStreamError.requestFailed(
+                capturedError?.localizedDescription ?? "Server info request failed."
+            )
+        }
 
         return try ShadowClientGameStreamXMLParsers.parseServerInfo(
             xml: xml,
@@ -265,40 +288,17 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         scheme: String,
         command: String
     ) async throws -> String {
-        var components = URLComponents()
-
-        components.scheme = scheme
-        components.host = host
-        components.port = port
-        components.path = "/\(command)"
-        components.queryItems = [
-            .init(name: "uniqueid", value: uniqueID),
-            .init(name: "uuid", value: UUID().uuidString),
-        ]
-
-        guard let url = components.url else {
-            throw ShadowClientGameStreamError.invalidURL
-        }
-
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 5
-
-        let (data, response): (Data, URLResponse)
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw ShadowClientGameStreamError.requestFailed(error.localizedDescription)
-        }
-
-        guard response is HTTPURLResponse else {
-            throw ShadowClientGameStreamError.invalidResponse
-        }
-
-        guard let xml = String(data: data, encoding: .utf8), !xml.isEmpty else {
-            throw ShadowClientGameStreamError.malformedXML
-        }
-
-        return xml
+        let uniqueID = await identityStore.uniqueID()
+        let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: host)
+        return try await ShadowClientGameStreamHTTPTransport.requestXML(
+            host: host,
+            port: port,
+            scheme: scheme,
+            command: command,
+            parameters: [:],
+            uniqueID: uniqueID,
+            pinnedServerCertificateDER: pinnedCertificateDER
+        )
     }
 
     private static func parseHostEndpoint(host: String, fallbackPort: Int) throws -> (host: String, port: Int) {
@@ -322,20 +322,30 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @Published public private(set) var hostState: ShadowClientRemoteHostCatalogState = .idle
     @Published public private(set) var appState: ShadowClientRemoteAppCatalogState = .idle
     @Published public private(set) var selectedHostID: String?
+    @Published public private(set) var pairingState: ShadowClientRemotePairingState = .idle
+    @Published public private(set) var launchState: ShadowClientRemoteLaunchState = .idle
 
     private let metadataClient: any ShadowClientGameStreamMetadataClient
+    private let controlClient: any ShadowClientGameStreamControlClient
     private var refreshHostsTask: Task<Void, Never>?
     private var refreshAppsTask: Task<Void, Never>?
+    private var pairTask: Task<Void, Never>?
+    private var launchTask: Task<Void, Never>?
+    private var latestHostCandidates: [String] = []
 
     public init(
-        metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient()
+        metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
+        controlClient: any ShadowClientGameStreamControlClient = NativeGameStreamControlClient()
     ) {
         self.metadataClient = metadataClient
+        self.controlClient = controlClient
     }
 
     deinit {
         refreshHostsTask?.cancel()
         refreshAppsTask?.cancel()
+        pairTask?.cancel()
+        launchTask?.cancel()
     }
 
     @MainActor
@@ -353,6 +363,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         preferredHost: String? = nil
     ) {
         let normalizedCandidates = Self.normalizedHostCandidates(candidates)
+        latestHostCandidates = normalizedCandidates
         guard !normalizedCandidates.isEmpty else {
             refreshHostsTask?.cancel()
             refreshAppsTask?.cancel()
@@ -361,6 +372,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             selectedHostID = nil
             hostState = .idle
             appState = .idle
+            pairingState = .idle
+            launchState = .idle
             return
         }
 
@@ -417,6 +430,97 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
 
                 refreshSelectedHostApps()
+            }
+        }
+    }
+
+    @MainActor
+    public func pairSelectedHost(pin: String) {
+        guard let selectedHost else {
+            pairingState = .failed("Select host first.")
+            return
+        }
+
+        let normalizedPIN = pin.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedPIN.isEmpty else {
+            pairingState = .failed("Enter PIN first.")
+            return
+        }
+
+        pairingState = .pairing
+        pairTask?.cancel()
+        let controlClient = controlClient
+        pairTask = Task {
+            do {
+                _ = try await controlClient.pair(
+                    host: selectedHost.host,
+                    pin: normalizedPIN,
+                    appVersion: selectedHost.appVersion
+                )
+
+                guard !Task.isCancelled else {
+                    return
+                }
+
+                await MainActor.run {
+                    pairingState = .paired("Paired")
+                    let candidates = latestHostCandidates.isEmpty ? hosts.map(\.host) : latestHostCandidates
+                    refreshHosts(candidates: candidates, preferredHost: selectedHost.host)
+                }
+            } catch {
+                guard !Task.isCancelled else {
+                    return
+                }
+
+                await MainActor.run {
+                    pairingState = .failed(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    public func launchSelectedApp(
+        appID: Int,
+        settings: ShadowClientGameStreamLaunchSettings
+    ) {
+        guard let selectedHost else {
+            launchState = .failed("Select host first.")
+            return
+        }
+
+        launchState = .launching
+        launchTask?.cancel()
+        let controlClient = controlClient
+        launchTask = Task {
+            do {
+                let result = try await controlClient.launch(
+                    host: selectedHost.host,
+                    httpsPort: selectedHost.httpsPort,
+                    appID: appID,
+                    currentGameID: selectedHost.currentGameID,
+                    settings: settings
+                )
+
+                guard !Task.isCancelled else {
+                    return
+                }
+
+                await MainActor.run {
+                    if let sessionURL = result.sessionURL, !sessionURL.isEmpty {
+                        launchState = .launched("Launch sent (\(result.verb)): \(sessionURL)")
+                    } else {
+                        launchState = .launched("Launch sent (\(result.verb))")
+                    }
+                }
+            } catch {
+                guard !Task.isCancelled else {
+                    return
+                }
+
+                await MainActor.run {
+                    launchState = .failed(error.localizedDescription)
+                }
             }
         }
     }
@@ -648,17 +752,17 @@ enum ShadowClientGameStreamXMLParsers {
     }
 }
 
-private struct ShadowClientXMLRootStatus: Equatable {
+struct ShadowClientXMLRootStatus: Equatable {
     let code: Int
     let message: String
 }
 
-private struct ShadowClientXMLFlatDocument {
+struct ShadowClientXMLFlatDocument {
     let rootStatus: ShadowClientXMLRootStatus?
     let values: [String: [String]]
 }
 
-private enum ShadowClientXMLFlatDocumentParser {
+enum ShadowClientXMLFlatDocumentParser {
     static func parse(xml: String) throws -> ShadowClientXMLFlatDocument {
         guard let data = xml.data(using: .utf8) else {
             throw ShadowClientGameStreamError.malformedXML
@@ -679,7 +783,7 @@ private enum ShadowClientXMLFlatDocumentParser {
     }
 }
 
-private final class ShadowClientXMLFlatDocumentDelegate: NSObject, XMLParserDelegate {
+final class ShadowClientXMLFlatDocumentDelegate: NSObject, XMLParserDelegate {
     private(set) var rootStatus: ShadowClientXMLRootStatus?
     private(set) var values: [String: [String]] = [:]
 
