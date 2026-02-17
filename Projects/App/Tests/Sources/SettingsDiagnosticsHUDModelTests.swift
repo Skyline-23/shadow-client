@@ -33,6 +33,7 @@ func settingsDiagnosticsHUDModelMapsTick() {
     #expect(model.pacerDroppedFrames == 2)
     #expect(model.timestampMs == 1_024)
     #expect(model.sampleIntervalMs == nil)
+    #expect(model.receivedOutOfOrderSample == false)
 }
 
 @Test("Settings diagnostics HUD model preserves zero recovery hold")
@@ -56,6 +57,7 @@ func settingsDiagnosticsHUDModelZeroRecoveryHold() {
     #expect(model.targetBufferMs == 48)
     #expect(model.timestampMs == 1_024)
     #expect(model.sampleIntervalMs == nil)
+    #expect(model.receivedOutOfOrderSample == false)
 }
 
 private func makeTick(

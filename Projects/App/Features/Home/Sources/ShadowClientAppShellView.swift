@@ -124,6 +124,11 @@ public struct ShadowClientAppShellView: View {
                                 .font(.footnote.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
+                        if settingsDiagnosticsModel.receivedOutOfOrderSample {
+                            Text("Out-of-order telemetry sample ignored")
+                                .font(.footnote.monospacedDigit())
+                                .foregroundStyle(.orange)
+                        }
                         Text("Session Video: \(settingsDiagnosticsModel.hdrVideoMode.rawValue.uppercased()) | Audio: \(settingsDiagnosticsModel.audioMode.rawValue.uppercased())")
                             .font(.footnote.monospacedDigit())
                         Text("Reconfig V:\(settingsDiagnosticsModel.shouldRenegotiateVideoPipeline ? "Y" : "N") A:\(settingsDiagnosticsModel.shouldRenegotiateAudioPipeline ? "Y" : "N") | QDrop: \(settingsDiagnosticsModel.shouldApplyQualityDropImmediately ? "Y" : "N")")

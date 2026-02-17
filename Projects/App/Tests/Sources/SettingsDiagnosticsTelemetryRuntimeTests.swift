@@ -130,6 +130,32 @@ func settingsTelemetryRuntimeClearsSampleIntervalOnStreamingSettingsChange() asy
     #expect(afterStreamingChange.sampleIntervalMs == nil)
 }
 
+@Test("Settings telemetry runtime flags out-of-order samples")
+func settingsTelemetryRuntimeFlagsOutOfOrderSamples() async {
+    let bridge = MoonlightSessionTelemetryBridge()
+    let runtime = SettingsDiagnosticsTelemetryRuntime(
+        baseDependencies: .live(bridge: bridge)
+    )
+    let settings = ShadowClientAppSettings()
+
+    _ = await runtime.ingest(
+        snapshot: stableSnapshot(timestampMs: 10_000),
+        settings: settings
+    )
+    let second = await runtime.ingest(
+        snapshot: stableSnapshot(timestampMs: 10_016),
+        settings: settings
+    )
+    let outOfOrder = await runtime.ingest(
+        snapshot: stableSnapshot(timestampMs: 10_008),
+        settings: settings
+    )
+
+    #expect(second.receivedOutOfOrderSample == false)
+    #expect(outOfOrder.receivedOutOfOrderSample == true)
+    #expect(outOfOrder.sampleIntervalMs == nil)
+}
+
 private func unstableSnapshot() -> StreamingTelemetrySnapshot {
     StreamingTelemetrySnapshot(
         stats: .init(renderedFrames: 960, droppedFrames: 40, avSyncOffsetMilliseconds: 55.0),
