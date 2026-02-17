@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 public struct ShadowClientAppShellView: View {
@@ -8,17 +9,22 @@ public struct ShadowClientAppShellView: View {
 
     private let platformName: String
     private let baseDependencies: ShadowClientFeatureHomeDependencies
+    private let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
 
     @State private var selectedTab: AppTab = .home
     @AppStorage(ShadowClientAppSettings.StorageKeys.lowLatencyMode) private var lowLatencyMode = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferHDR) private var preferHDR = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferSurroundAudio) private var preferSurroundAudio = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.showDiagnosticsHUD) private var showDiagnosticsHUD = true
-    @State private var latestDiagnosticsTick: HomeDiagnosticsTick?
+    @State private var settingsTelemetryCancellable: AnyCancellable?
+    @State private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
 
     public init(platformName: String, dependencies: ShadowClientFeatureHomeDependencies) {
         self.platformName = platformName
         self.baseDependencies = dependencies
+        self.settingsTelemetryRuntime = SettingsDiagnosticsTelemetryRuntime(
+            baseDependencies: dependencies
+        )
     }
 
     public var body: some View {
@@ -27,6 +33,12 @@ public struct ShadowClientAppShellView: View {
             settingsTab
         }
         .tint(.mint)
+        .task(id: currentSettings.identityKey) {
+            restartSettingsTelemetrySubscription(for: currentSettings)
+        }
+        .onDisappear {
+            stopSettingsTelemetrySubscription()
+        }
     }
 
     private var currentSettings: ShadowClientAppSettings {
@@ -38,10 +50,6 @@ public struct ShadowClientAppShellView: View {
         )
     }
 
-    private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel? {
-        latestDiagnosticsTick.map(SettingsDiagnosticsHUDModel.init(tick:))
-    }
-
     private var homeTab: some View {
         NavigationStack {
             ZStack {
@@ -51,10 +59,7 @@ public struct ShadowClientAppShellView: View {
                         ShadowClientFeatureHomeView(
                             platformName: platformName,
                             dependencies: baseDependencies.applying(settings: currentSettings),
-                            showsDiagnosticsHUD: currentSettings.showDiagnosticsHUD,
-                            onDiagnosticsTick: { tick in
-                                latestDiagnosticsTick = tick
-                            }
+                            showsDiagnosticsHUD: currentSettings.showDiagnosticsHUD
                         )
                         .id(currentSettings.identityKey)
                         .frame(maxWidth: .infinity, alignment: .top)
@@ -118,7 +123,7 @@ public struct ShadowClientAppShellView: View {
                                 .foregroundStyle(.orange)
                         }
                     } else {
-                        Label("Awaiting telemetry samples from Home tab.", systemImage: "antenna.radiowaves.left.and.right")
+                        Label("Awaiting telemetry samples from active session.", systemImage: "antenna.radiowaves.left.and.right")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -149,5 +154,28 @@ public struct ShadowClientAppShellView: View {
             endPoint: .bottomTrailing
         )
         .ignoresSafeArea()
+    }
+
+    @MainActor
+    private func restartSettingsTelemetrySubscription(for settings: ShadowClientAppSettings) {
+        settingsTelemetryCancellable?.cancel()
+        settingsTelemetryCancellable = baseDependencies.telemetryPublisher.sink { snapshot in
+            Task {
+                let model = await settingsTelemetryRuntime.ingest(
+                    snapshot: snapshot,
+                    settings: settings
+                )
+
+                await MainActor.run {
+                    settingsDiagnosticsModel = model
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func stopSettingsTelemetrySubscription() {
+        settingsTelemetryCancellable?.cancel()
+        settingsTelemetryCancellable = nil
     }
 }
