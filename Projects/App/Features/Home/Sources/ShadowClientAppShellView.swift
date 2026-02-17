@@ -21,7 +21,6 @@ public struct ShadowClientAppShellView: View {
     @ObservedObject private var hostDiscoveryRuntime: ShadowClientHostDiscoveryRuntime
     @ObservedObject private var remoteDesktopRuntime: ShadowClientRemoteDesktopRuntime
     @State private var connectionState: ShadowClientConnectionState = .disconnected
-    @State private var pairingPIN = ""
     @State private var settingsTelemetryCancellable: AnyCancellable?
     @State private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
 
@@ -359,28 +358,33 @@ public struct ShadowClientAppShellView: View {
             }
 
             settingsRow {
-                SecureField("Pair PIN", text: $pairingPIN)
-                    .textFieldStyle(.plain)
-                    .font(.callout.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.black.opacity(0.36))
-                    )
                 Button {
-                    remoteDesktopRuntime.pairSelectedHost(pin: pairingPIN)
+                    remoteDesktopRuntime.pairSelectedHost()
                 } label: {
-                    if remoteDesktopRuntime.pairingState == .pairing {
+                    if case .pairing = remoteDesktopRuntime.pairingState {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Text("Pair")
+                        Text("Start Pairing")
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(pairingPIN.trimmingCharacters(in: .whitespacesAndNewlines).count < 4)
+                .disabled(remoteDesktopRuntime.selectedHost == nil)
+                Spacer(minLength: 0)
+            }
+
+            if let pairingPIN = remoteDesktopRuntime.activePairingPIN {
+                settingsRow {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Pair PIN: \(pairingPIN)")
+                            .font(.title3.monospacedDigit().weight(.bold))
+                            .foregroundStyle(.mint)
+                        Text("Enter this PIN in Sunshine Web UI.")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(Color.white.opacity(0.82))
+                    }
+                    Spacer(minLength: 0)
+                }
             }
 
             settingsRow {

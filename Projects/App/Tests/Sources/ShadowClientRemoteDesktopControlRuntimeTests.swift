@@ -21,12 +21,16 @@ func remoteDesktopRuntimePairsSelectedHost() async {
         appListByHost: [:]
     )
     let control = FakeControlClient()
-    let runtime = ShadowClientRemoteDesktopRuntime(metadataClient: metadata, controlClient: control)
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        pinProvider: FixedPairingPINProvider(pin: "1234")
+    )
 
     runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
     await waitForControlHostLoaded(runtime)
 
-    runtime.pairSelectedHost(pin: "1234")
+    runtime.pairSelectedHost()
     await waitForPairingState(runtime)
 
     #expect(await control.pairCalls() == [
@@ -187,11 +191,20 @@ private func waitForPairingState(
     maxAttempts: Int = 50
 ) async {
     for _ in 0..<maxAttempts {
-        if runtime.pairingState != .pairing {
+        if case .pairing = runtime.pairingState {
+            try? await Task.sleep(for: .milliseconds(20))
+            continue
+        } else {
             return
         }
+    }
+}
 
-        try? await Task.sleep(for: .milliseconds(20))
+private struct FixedPairingPINProvider: ShadowClientPairingPINProviding {
+    let pin: String
+
+    func nextPIN() -> String {
+        pin
     }
 }
 

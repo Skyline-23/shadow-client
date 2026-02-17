@@ -4,21 +4,18 @@ import ShadowClientFeatureHome
 
 @main
 struct ShadowClientmacOSApp: App {
-    private let telemetryBridge: MoonlightSessionTelemetryBridge
+    private let container: ShadowClientFeatureHomeContainer
 
     init() {
         let bridge = MoonlightSessionTelemetryBridge()
-        self.telemetryBridge = bridge
         MoonlightSessionTelemetryIngress.configure(bridge: bridge)
+        self.container = .live(bridge: bridge)
     }
 
     var body: some Scene {
         WindowGroup {
             ContentView(
-                dependencies: .live(
-                    bridge: telemetryBridge,
-                    connectionClient: NativeHostProbeConnectionClient()
-                )
+                dependencies: container.dependencies
             )
         }
     }

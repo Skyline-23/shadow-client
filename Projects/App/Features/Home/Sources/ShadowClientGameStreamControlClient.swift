@@ -5,7 +5,7 @@ import Security
 
 public enum ShadowClientRemotePairingState: Equatable, Sendable {
     case idle
-    case pairing
+    case pairing(host: String, pin: String)
     case paired(String)
     case failed(String)
 }
@@ -15,12 +15,21 @@ public extension ShadowClientRemotePairingState {
         switch self {
         case .idle:
             return "Idle"
-        case .pairing:
-            return "Pairing"
+        case let .pairing(host, _):
+            return "Pairing with \(host). Enter displayed PIN in Sunshine."
         case let .paired(message):
             return message
         case let .failed(message):
             return "Failed - \(message)"
+        }
+    }
+
+    var activePIN: String? {
+        switch self {
+        case let .pairing(_, pin):
+            return pin
+        case .idle, .paired, .failed:
+            return nil
         }
     }
 }

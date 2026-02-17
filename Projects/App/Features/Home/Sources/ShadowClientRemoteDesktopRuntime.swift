@@ -146,6 +146,18 @@ public extension ShadowClientRemoteAppCatalogState {
     }
 }
 
+public protocol ShadowClientPairingPINProviding {
+    func nextPIN() -> String
+}
+
+public struct ShadowClientRandomPairingPINProvider: ShadowClientPairingPINProviding {
+    public init() {}
+
+    public func nextPIN() -> String {
+        String(format: "%04d", Int.random(in: 0...9_999))
+    }
+}
+
 public enum ShadowClientGameStreamError: Error, Equatable, Sendable {
     case invalidHost
     case invalidURL
@@ -327,6 +339,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     private let metadataClient: any ShadowClientGameStreamMetadataClient
     private let controlClient: any ShadowClientGameStreamControlClient
+    private let pinProvider: any ShadowClientPairingPINProviding
     private var refreshHostsTask: Task<Void, Never>?
     private var refreshAppsTask: Task<Void, Never>?
     private var pairTask: Task<Void, Never>?
@@ -335,10 +348,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
-        controlClient: any ShadowClientGameStreamControlClient = NativeGameStreamControlClient()
+        controlClient: any ShadowClientGameStreamControlClient = NativeGameStreamControlClient(),
+        pinProvider: any ShadowClientPairingPINProviding = ShadowClientRandomPairingPINProvider()
     ) {
         self.metadataClient = metadataClient
         self.controlClient = controlClient
+        self.pinProvider = pinProvider
     }
 
     deinit {
@@ -355,6 +370,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         return hosts.first { $0.id == selectedHostID }
+    }
+
+    @MainActor
+    public var activePairingPIN: String? {
+        pairingState.activePIN
     }
 
     @MainActor
@@ -435,28 +455,42 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    public func pairSelectedHost(pin: String) {
+    public func pairSelectedHost() {
         guard let selectedHost else {
             pairingState = .failed("Select host first.")
             return
         }
 
-        let normalizedPIN = pin.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedPIN.isEmpty else {
-            pairingState = .failed("Enter PIN first.")
-            return
-        }
+        let generatedPIN = pinProvider.nextPIN()
 
-        pairingState = .pairing
+        pairingState = .pairing(
+            host: selectedHost.displayName.isEmpty ? selectedHost.host : selectedHost.displayName,
+            pin: generatedPIN
+        )
         pairTask?.cancel()
         let controlClient = controlClient
         pairTask = Task {
             do {
-                _ = try await controlClient.pair(
-                    host: selectedHost.host,
-                    pin: normalizedPIN,
-                    appVersion: selectedHost.appVersion
-                )
+                let pairingDeadline = Date().addingTimeInterval(60)
+                while true {
+                    do {
+                        _ = try await controlClient.pair(
+                            host: selectedHost.host,
+                            pin: generatedPIN,
+                            appVersion: selectedHost.appVersion
+                        )
+                        break
+                    } catch {
+                        let shouldRetry = Self.shouldRetryPairing(
+                            error: error,
+                            deadline: pairingDeadline
+                        )
+                        guard shouldRetry else {
+                            throw error
+                        }
+                        try? await Task.sleep(for: .milliseconds(900))
+                    }
+                }
 
                 guard !Task.isCancelled else {
                     return
@@ -620,6 +654,23 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 uniqueID: nil,
                 lastError: message
             )
+        }
+    }
+
+    private static func shouldRetryPairing(error: Error, deadline: Date) -> Bool {
+        guard Date() < deadline else {
+            return false
+        }
+
+        guard let controlError = error as? ShadowClientGameStreamControlError else {
+            return false
+        }
+
+        switch controlError {
+        case .pinMismatch, .challengeRejected, .pairingAlreadyInProgress:
+            return true
+        case .invalidPIN, .invalidKeyMaterial, .mitmDetected, .launchRejected, .malformedResponse:
+            return false
         }
     }
 
