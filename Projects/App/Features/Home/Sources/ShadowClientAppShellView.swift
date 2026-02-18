@@ -1,5 +1,6 @@
 import Combine
 import ShadowClientUI
+import AVKit
 import SwiftUI
 
 public struct ShadowClientAppShellView: View {
@@ -48,6 +49,7 @@ public struct ShadowClientAppShellView: View {
     @AppStorage(ShadowClientAppSettings.StorageKeys.guiDisplayMode) private var guiDisplayModeRawValue = ShadowClientGUIDisplayMode.windowed.rawValue
     @ObservedObject private var hostDiscoveryRuntime: ShadowClientHostDiscoveryRuntime
     @ObservedObject private var remoteDesktopRuntime: ShadowClientRemoteDesktopRuntime
+    @StateObject private var sessionPlaybackRuntime = ShadowClientSessionPlaybackRuntime()
     @State private var connectionState: ShadowClientConnectionState = .disconnected
     @State private var settingsTelemetryCancellable: AnyCancellable?
     @State private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
@@ -110,6 +112,14 @@ public struct ShadowClientAppShellView: View {
         .onDisappear {
             stopSettingsTelemetrySubscription()
             stopHostDiscovery()
+            sessionPlaybackRuntime.stop()
+        }
+        .onChange(of: activeSessionPlaybackURL, initial: true) { _, sessionURL in
+            if sessionURL.isEmpty {
+                sessionPlaybackRuntime.stop()
+            } else {
+                sessionPlaybackRuntime.start(sessionURL: sessionURL)
+            }
         }
         .animation(.easeInOut(duration: 0.2), value: remoteDesktopRuntime.activeSession != nil)
     }
@@ -193,6 +203,49 @@ public struct ShadowClientAppShellView: View {
     private var selectedGUIDisplayMode: ShadowClientGUIDisplayMode {
         get { ShadowClientGUIDisplayMode(rawValue: guiDisplayModeRawValue) ?? .windowed }
         nonmutating set { guiDisplayModeRawValue = newValue.rawValue }
+    }
+
+    private var activeSessionPlaybackURL: String {
+        remoteDesktopRuntime.activeSession?.sessionURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private var sessionPlaybackStatusText: String {
+        if activeSessionPlaybackURL.isEmpty {
+            return "Session opened. Launch desktop/game on host to start remote stream."
+        }
+
+        switch sessionPlaybackRuntime.state {
+        case .idle:
+            return "Connecting to remote stream..."
+        case .playing:
+            return "Remote stream is active."
+        case let .failed(message):
+            return message
+        }
+    }
+
+    private var sessionPlaybackOverlay: (title: String, symbol: String)? {
+        if activeSessionPlaybackURL.isEmpty {
+            return (
+                title: "Waiting for remote desktop stream...",
+                symbol: "desktopcomputer"
+            )
+        }
+
+        switch sessionPlaybackRuntime.state {
+        case .idle:
+            return (
+                title: "Connecting to remote desktop stream...",
+                symbol: "antenna.radiowaves.left.and.right"
+            )
+        case .playing:
+            return nil
+        case .failed:
+            return (
+                title: "Remote desktop stream failed to start.",
+                symbol: "exclamationmark.triangle"
+            )
+        }
     }
 
     private var homeTab: some View {
@@ -1101,7 +1154,25 @@ public struct ShadowClientAppShellView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Stream handoff sent. Video renderer hookup is next in this flow.")
+                        ZStack {
+#if os(macOS)
+                            ShadowClientMacOSSessionPlayerView(player: sessionPlaybackRuntime.player)
+#else
+                            VideoPlayer(player: sessionPlaybackRuntime.player)
+#endif
+
+                            if let overlay = sessionPlaybackOverlay {
+                                playbackOverlayLabel(
+                                    overlay.title,
+                                    symbol: overlay.symbol
+                                )
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: horizontalSizeClass == .compact ? 220 : 360)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                        Text(sessionPlaybackStatusText)
                             .font(.callout.weight(.semibold))
                             .foregroundStyle(Color.white.opacity(0.90))
 
@@ -1238,6 +1309,16 @@ public struct ShadowClientAppShellView: View {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(Color.white.opacity(0.14), lineWidth: 0.8)
             )
+    }
+
+    private func playbackOverlayLabel(_ title: String, symbol: String) -> some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(Color.black.opacity(0.45))
+            .overlay {
+                Label(title, systemImage: symbol)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.85))
+            }
     }
 
     private func settingsSection<Content: View>(
