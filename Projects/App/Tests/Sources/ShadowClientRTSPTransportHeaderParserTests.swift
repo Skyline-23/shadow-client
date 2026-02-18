@@ -65,3 +65,61 @@ func sunshinePingPayloadParserAcceptsValid16BytePayload() {
 
     #expect(payload == Data("3727B184C4E23026".utf8))
 }
+
+@Test("Sunshine ping payload parser strips quotes around payload")
+func sunshinePingPayloadParserStripsQuotesAroundPayload() {
+    let payload = ShadowClientRTSPTransportHeaderParser.parseSunshinePingPayload(from: "\"3727B184C4E23026\"")
+
+    #expect(payload == Data("3727B184C4E23026".utf8))
+}
+
+@Test("Sunshine ping payload parser ignores trailing parameters")
+func sunshinePingPayloadParserIgnoresTrailingParameters() {
+    let payload = ShadowClientRTSPTransportHeaderParser.parseSunshinePingPayload(from: "\"3727B184C4E23026;foo=bar\"")
+
+    #expect(payload == Data("3727B184C4E23026".utf8))
+}
+
+@Test("Sunshine ping payload parser returns first 16-byte token")
+func sunshinePingPayloadParserReturnsFirst16ByteToken() {
+    let payload = ShadowClientRTSPTransportHeaderParser.parseSunshinePingPayload(
+        from: "short-token 3727B184C4E23026 1111222233334444"
+    )
+
+    #expect(payload == Data("3727B184C4E23026".utf8))
+}
+
+@Test("Sunshine control connect-data parser returns nil for nil value")
+func sunshineControlConnectDataParserReturnsNilForNilValue() {
+    let value = ShadowClientRTSPTransportHeaderParser.parseSunshineControlConnectData(from: nil)
+
+    #expect(value == nil)
+}
+
+@Test("Sunshine control connect-data parser parses decimal value")
+func sunshineControlConnectDataParserParsesDecimalValue() {
+    let value = ShadowClientRTSPTransportHeaderParser.parseSunshineControlConnectData(from: "305419896")
+
+    #expect(value == 305_419_896)
+}
+
+@Test("Sunshine control connect-data parser parses hex value")
+func sunshineControlConnectDataParserParsesHexValue() {
+    let value = ShadowClientRTSPTransportHeaderParser.parseSunshineControlConnectData(from: "0x12345678")
+
+    #expect(value == 0x12345678)
+}
+
+@Test("Sunshine control connect-data parser parses quoted hex value with trailing parameters")
+func sunshineControlConnectDataParserParsesQuotedHexValueWithTrailingParameters() {
+    let value = ShadowClientRTSPTransportHeaderParser.parseSunshineControlConnectData(from: "\"0x2A\";foo=bar")
+
+    #expect(value == 42)
+}
+
+@Test("Sunshine control connect-data parser returns nil for malformed values")
+func sunshineControlConnectDataParserReturnsNilForMalformedValues() {
+    let value = ShadowClientRTSPTransportHeaderParser.parseSunshineControlConnectData(from: "not-a-number")
+
+    #expect(value == nil)
+}
