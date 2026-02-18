@@ -286,37 +286,26 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
 
     public func connect(to sessionURL: String, host: String, appTitle: String) async throws {
         let endpoint = try Self.parseEndpoint(from: sessionURL)
-        let connection = NWConnection(
-            host: NWEndpoint.Host(endpoint.host),
-            port: endpoint.port,
-            using: .tcp
-        )
-        let queue = DispatchQueue(
-            label: "com.skyline23.shadowclient.video-session.\(endpoint.port.rawValue)"
+        let fallbackHost = Self.normalizedFallbackHost(host)
+        let candidates = Self.connectionCandidates(
+            endpoint: endpoint,
+            fallbackHost: fallbackHost
         )
 
-        let firstOutcome = await withTaskGroup(
-            of: Result<Bool, Error>.self,
-            returning: Result<Bool, Error>.self
-        ) { group in
-            group.addTask {
-                .success(await Self.awaitConnectionReady(connection, queue: queue))
+        for candidate in candidates {
+            let isReady = try await Self.probeEndpoint(
+                host: candidate.host,
+                port: candidate.port,
+                timeout: timeout
+            )
+            if isReady {
+                return
             }
-            group.addTask {
-                do {
-                    try await Task.sleep(for: timeout)
-                    connection.cancel()
-                    return .success(false)
-                } catch {
-                    return .failure(error)
-                }
-            }
-
-            let firstResult = await group.next() ?? .success(false)
-            group.cancelAll()
-            return firstResult
         }
-        _ = (try? firstOutcome.get()) ?? false
+
+        throw ShadowClientGameStreamError.requestFailed(
+            "Could not connect to video session endpoint."
+        )
     }
 
     public func disconnect() async {}
@@ -345,6 +334,71 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
         }
 
         return (host: host, port: port)
+    }
+
+    private static func normalizedFallbackHost(_ rawHost: String) -> String? {
+        let trimmed = rawHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        let candidate = trimmed.contains("://") ? trimmed : "http://\(trimmed)"
+        guard let parsed = URL(string: candidate), let host = parsed.host, !host.isEmpty else {
+            return nil
+        }
+        return host
+    }
+
+    private static func connectionCandidates(
+        endpoint: (host: String, port: NWEndpoint.Port),
+        fallbackHost: String?
+    ) -> [(host: String, port: NWEndpoint.Port)] {
+        var candidates: [(host: String, port: NWEndpoint.Port)] = [endpoint]
+        guard let fallbackHost, fallbackHost.caseInsensitiveCompare(endpoint.host) != .orderedSame else {
+            return candidates
+        }
+
+        candidates.append((host: fallbackHost, port: endpoint.port))
+        return candidates
+    }
+
+    private static func probeEndpoint(
+        host: String,
+        port: NWEndpoint.Port,
+        timeout: Duration
+    ) async throws -> Bool {
+        let connection = NWConnection(
+            host: NWEndpoint.Host(host),
+            port: port,
+            using: .tcp
+        )
+        let queue = DispatchQueue(
+            label: "com.skyline23.shadowclient.video-session.\(host).\(port.rawValue)"
+        )
+
+        let firstOutcome = await withTaskGroup(
+            of: Result<Bool, Error>.self,
+            returning: Result<Bool, Error>.self
+        ) { group in
+            group.addTask {
+                .success(await Self.awaitConnectionReady(connection, queue: queue))
+            }
+            group.addTask {
+                do {
+                    try await Task.sleep(for: timeout)
+                    connection.cancel()
+                    return .success(false)
+                } catch {
+                    return .failure(error)
+                }
+            }
+
+            let firstResult = await group.next() ?? .success(false)
+            group.cancelAll()
+            return firstResult
+        }
+
+        return try firstOutcome.get()
     }
 
     private static func awaitConnectionReady(
@@ -878,6 +932,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         "Host did not return a video session URL."
                     )
                 }
+                let routedSessionURL = Self.routedSessionURL(
+                    sessionURL,
+                    preferredHost: selectedHost.host
+                )
 
                 let resolvedTitle: String
                 if let launchedAppTitle, !launchedAppTitle.isEmpty {
@@ -887,7 +945,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
 
                 try await sessionConnectionClient.connect(
-                    to: sessionURL,
+                    to: routedSessionURL,
                     host: selectedHost.host,
                     appTitle: resolvedTitle
                 )
@@ -914,14 +972,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         host: selectedHost.host,
                         appID: appID,
                         appTitle: resolvedTitle,
-                        sessionURL: sessionURL
+                        sessionURL: routedSessionURL
                     )
                     if sessionPresentationMode == .externalRuntime {
                         launchState = .launched(
                             "Remote desktop launched (\(result.verb)): \(resolvedTitle) on \(selectedHost.host)"
                         )
                     } else {
-                        launchState = .launched("Video session connected (\(result.verb)): \(sessionURL)")
+                        launchState = .launched("Remote session transport connected (\(result.verb)): \(routedSessionURL)")
                     }
                 }
             } catch {
@@ -1229,6 +1287,78 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         return host.lowercased()
+    }
+
+    private static func routedSessionURL(
+        _ sessionURL: String,
+        preferredHost: String
+    ) -> String {
+        let trimmedURL = sessionURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedURL.isEmpty else {
+            return sessionURL
+        }
+
+        let candidate = trimmedURL.contains("://") ? trimmedURL : "rtsp://\(trimmedURL)"
+        guard var components = URLComponents(string: candidate),
+              let returnedHost = components.host,
+              let normalizedPreferredHost = normalizeCandidate(preferredHost)?
+                .split(separator: ":")
+                .first
+                .map(String.init),
+              !normalizedPreferredHost.isEmpty
+        else {
+            return candidate
+        }
+
+        if shouldPreferRequestedHost(
+            returnedHost: returnedHost,
+            requestedHost: normalizedPreferredHost
+        ) {
+            components.host = normalizedPreferredHost
+            return components.string ?? candidate
+        }
+
+        return candidate
+    }
+
+    private static func shouldPreferRequestedHost(
+        returnedHost: String,
+        requestedHost: String
+    ) -> Bool {
+        if returnedHost.caseInsensitiveCompare(requestedHost) == .orderedSame {
+            return false
+        }
+
+        return isPrivateOrLocalHost(returnedHost)
+    }
+
+    private static func isPrivateOrLocalHost(_ host: String) -> Bool {
+        let lower = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lower == "localhost" || lower == "::1" || lower.hasPrefix("fe80:") || lower.hasPrefix("fc") || lower.hasPrefix("fd") {
+            return true
+        }
+
+        let parts = lower.split(separator: ".")
+        guard parts.count == 4,
+              let octet1 = Int(parts[0]),
+              let octet2 = Int(parts[1])
+        else {
+            return false
+        }
+
+        if octet1 == 10 || octet1 == 127 {
+            return true
+        }
+        if octet1 == 192 && octet2 == 168 {
+            return true
+        }
+        if octet1 == 172 && (16...31).contains(octet2) {
+            return true
+        }
+        if octet1 == 169 && octet2 == 254 {
+            return true
+        }
+        return false
     }
 
     private static func compareHosts(

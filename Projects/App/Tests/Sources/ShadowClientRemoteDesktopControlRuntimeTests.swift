@@ -272,6 +272,57 @@ func remoteDesktopRuntimeConnectsVideoSessionBeforeLaunchSuccess() async {
     }
 }
 
+@Test("Remote desktop runtime rewrites private session URL host to selected host route")
+@MainActor
+func remoteDesktopRuntimeRewritesPrivateSessionURLHostForReachability() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "wifi.skyline23.com": .init(
+                host: "wifi.skyline23.com",
+                displayName: "Skyline23-PC",
+                pairStatus: .paired,
+                currentGameID: 881_448_767,
+                serverState: "SUNSHINE_SERVER_BUSY",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-11"
+            ),
+        ],
+        appListByHost: [
+            "wifi.skyline23.com": [
+                .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.52:48010", verb: "resume")
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["wifi.skyline23.com"], preferredHost: "wifi.skyline23.com")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 881_448_767,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+
+    #expect(await sessionConnector.connectCalls() == ["rtsp://wifi.skyline23.com:48010"])
+    #expect(runtime.activeSession?.sessionURL == "rtsp://wifi.skyline23.com:48010")
+    if case .launched = runtime.launchState {
+        #expect(true)
+    } else {
+        Issue.record("Expected launched state, got \(runtime.launchState)")
+    }
+}
+
 @Test("Remote desktop runtime fails launch when host returns missing video session URL")
 @MainActor
 func remoteDesktopRuntimeFailsLaunchWhenSessionURLIsMissing() async {
