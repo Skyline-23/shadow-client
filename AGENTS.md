@@ -58,3 +58,5 @@ Use subagents in parallel for non-trivial work with disjoint ownership, then mer
   2. Perform taps and wait for transition.
   3. `logging stop-simulator-log-capture --log-session-id ...` and attach relevant RTSP/decoder lines to the report.
 - If `tap` tools are not exposed through function wrappers, use the `xcodebuildmcp` CLI workflow (`ui-automation tap`, `snapshot-ui`, `logging ...`) instead of skipping interaction validation.
+- Use `xcodebuildmcp --style minimal ...` for CLI calls to avoid known next-step rendering failures in normal style.
+- When duplicate labels exist (for example two `Refresh` buttons), do not tap by label. Use `snapshot-ui` coordinates and tap by `-x/-y`.
