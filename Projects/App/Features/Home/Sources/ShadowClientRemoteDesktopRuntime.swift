@@ -706,6 +706,21 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
+    public func openSessionFlow(host: String, appTitle: String = "Remote Desktop") {
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedHost.isEmpty else {
+            return
+        }
+
+        activeSession = ShadowClientActiveRemoteSession(
+            host: normalizedHost,
+            appID: 0,
+            appTitle: appTitle,
+            sessionURL: nil
+        )
+    }
+
+    @MainActor
     public func selectHost(_ hostID: String) {
         guard hosts.contains(where: { $0.id == hostID }) else {
             return

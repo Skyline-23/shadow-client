@@ -71,6 +71,12 @@ public struct ShadowClientAppShellView: View {
                 homeTab
                 settingsTab
             }
+
+            if remoteDesktopRuntime.activeSession != nil {
+                remoteSessionFlowView
+                    .zIndex(10)
+                    .transition(.opacity)
+            }
         }
         .tint(accentColor)
         .preferredColorScheme(.dark)
@@ -105,9 +111,7 @@ public struct ShadowClientAppShellView: View {
             stopSettingsTelemetrySubscription()
             stopHostDiscovery()
         }
-        .fullScreenCover(isPresented: sessionFlowPresentedBinding) {
-            remoteSessionFlowView
-        }
+        .animation(.easeInOut(duration: 0.2), value: remoteDesktopRuntime.activeSession != nil)
     }
 
     private var currentSettings: ShadowClientAppSettings {
@@ -1069,19 +1073,6 @@ public struct ShadowClientAppShellView: View {
         }
     }
 
-    private var sessionFlowPresentedBinding: Binding<Bool> {
-        Binding(
-            get: { remoteDesktopRuntime.activeSession != nil },
-            set: { isPresented in
-                if !isPresented {
-                    remoteDesktopRuntime.clearActiveSession()
-                    sessionInputText = ""
-                    sessionInputFocused = false
-                }
-            }
-        )
-    }
-
     @ViewBuilder
     private var remoteSessionFlowView: some View {
         if let activeSession = remoteDesktopRuntime.activeSession {
@@ -1151,11 +1142,9 @@ public struct ShadowClientAppShellView: View {
                 .padding(.top, topContentPadding)
                 .padding(.bottom, 24)
             }
-            .onAppear {
-                sessionInputFocused = true
-            }
-        } else {
-            Color.black.ignoresSafeArea()
+                    .onAppear {
+                        sessionInputFocused = true
+                    }
         }
     }
 
@@ -1538,6 +1527,12 @@ public struct ShadowClientAppShellView: View {
             }
 
             if autoLaunchAfterConnect, state.isConnected {
+                await MainActor.run {
+                    remoteDesktopRuntime.openSessionFlow(
+                        host: state.host ?? host,
+                        appTitle: "Remote Desktop"
+                    )
+                }
                 await autoLaunchPreferredRemoteApp(preferredHostID: preferredHostID)
             }
         }
