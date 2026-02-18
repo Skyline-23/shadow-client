@@ -230,7 +230,14 @@ public protocol ShadowClientGameStreamMetadataClient: Sendable {
 }
 
 public protocol ShadowClientRemoteSessionConnectionClient: Sendable {
-    func connect(to sessionURL: String) async throws
+    var presentationMode: ShadowClientRemoteSessionPresentationMode { get }
+    func connect(to sessionURL: String, host: String, appTitle: String) async throws
+    func disconnect() async
+}
+
+public enum ShadowClientRemoteSessionPresentationMode: Equatable, Sendable {
+    case embeddedPlayer
+    case externalRuntime
 }
 
 public enum ShadowClientRemoteMouseButton: Equatable, Sendable {
@@ -259,19 +266,25 @@ public struct NoopShadowClientRemoteSessionInputClient: ShadowClientRemoteSessio
 }
 
 public struct NoopShadowClientRemoteSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
+    public let presentationMode: ShadowClientRemoteSessionPresentationMode = .embeddedPlayer
+
     public init() {}
 
-    public func connect(to sessionURL: String) async throws {}
+    public func connect(to sessionURL: String, host: String, appTitle: String) async throws {}
+
+    public func disconnect() async {}
 }
 
 public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
+    public let presentationMode: ShadowClientRemoteSessionPresentationMode = .embeddedPlayer
+
     private let timeout: Duration
 
     public init(timeout: Duration = .seconds(10)) {
         self.timeout = timeout
     }
 
-    public func connect(to sessionURL: String) async throws {
+    public func connect(to sessionURL: String, host: String, appTitle: String) async throws {
         let endpoint = try Self.parseEndpoint(from: sessionURL)
         let connection = NWConnection(
             host: NWEndpoint.Host(endpoint.host),
@@ -311,6 +324,8 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
             )
         }
     }
+
+    public func disconnect() async {}
 
     private static func parseEndpoint(
         from sessionURL: String
@@ -616,6 +631,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @Published public private(set) var pairingState: ShadowClientRemotePairingState = .idle
     @Published public private(set) var launchState: ShadowClientRemoteLaunchState = .idle
     @Published public private(set) var activeSession: ShadowClientActiveRemoteSession?
+    public let sessionPresentationMode: ShadowClientRemoteSessionPresentationMode
 
     private let metadataClient: any ShadowClientGameStreamMetadataClient
     private let controlClient: any ShadowClientGameStreamControlClient
@@ -643,6 +659,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         self.sessionConnectionClient = sessionConnectionClient
         self.sessionInputClient = sessionInputClient
         self.pinProvider = pinProvider
+        self.sessionPresentationMode = sessionConnectionClient.presentationMode
     }
 
     deinit {
@@ -851,6 +868,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let launchedAppTitle = appTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         launchTask = Task {
             do {
+                await sessionConnectionClient.disconnect()
+
                 let result = try await controlClient.launch(
                     host: selectedHost.host,
                     httpsPort: selectedHost.httpsPort,
@@ -866,7 +885,18 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     )
                 }
 
-                try await sessionConnectionClient.connect(to: sessionURL)
+                let resolvedTitle: String
+                if let launchedAppTitle, !launchedAppTitle.isEmpty {
+                    resolvedTitle = launchedAppTitle
+                } else {
+                    resolvedTitle = "App \(appID)"
+                }
+
+                try await sessionConnectionClient.connect(
+                    to: sessionURL,
+                    host: selectedHost.host,
+                    appTitle: resolvedTitle
+                )
 
                 if Task.isCancelled {
                     await MainActor.run {
@@ -885,12 +915,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     guard self.launchGeneration == currentLaunchGeneration else {
                         return
                     }
-                    let resolvedTitle: String
-                    if let launchedAppTitle, !launchedAppTitle.isEmpty {
-                        resolvedTitle = launchedAppTitle
-                    } else {
-                        resolvedTitle = "App \(appID)"
-                    }
 
                     activeSession = ShadowClientActiveRemoteSession(
                         host: selectedHost.host,
@@ -898,7 +922,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         appTitle: resolvedTitle,
                         sessionURL: sessionURL
                     )
-                    launchState = .launched("Video session connected (\(result.verb)): \(sessionURL)")
+                    if sessionPresentationMode == .externalRuntime {
+                        launchState = .launched(
+                            "Remote desktop launched (\(result.verb)): \(resolvedTitle) on \(selectedHost.host)"
+                        )
+                    } else {
+                        launchState = .launched("Video session connected (\(result.verb)): \(sessionURL)")
+                    }
                 }
             } catch {
                 if Task.isCancelled {
@@ -927,7 +957,17 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     @MainActor
     public func clearActiveSession() {
+        launchTask?.cancel()
+        launchTask = nil
+        launchGeneration &+= 1
+
         activeSession = nil
+        launchState = .idle
+
+        let sessionConnectionClient = sessionConnectionClient
+        Task {
+            await sessionConnectionClient.disconnect()
+        }
     }
 
     @MainActor
