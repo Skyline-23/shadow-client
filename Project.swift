@@ -28,6 +28,7 @@ let project = Project(
                 "Projects/App/Features/Home/Sources",
             ],
             dependencies: [
+                .sdk(name: "AppIntents", type: .framework),
                 .external(name: "ShadowClientInput"),
                 .external(name: "ShadowClientStreaming"),
                 .external(name: "ShadowClientUI"),
@@ -69,6 +70,7 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
+                .sdk(name: "AppIntents", type: .framework),
                 .external(name: "ShadowClientStreaming"),
                 .external(name: "ShadowClientUI"),
             ]
@@ -162,6 +164,7 @@ let project = Project(
             dependencies: [
                 .target(name: "ShadowClientiOSApp"),
                 .target(name: "ShadowClientFeatureHome"),
+                .sdk(name: "AppIntents", type: .framework),
                 .external(name: "Testing"),
             ]
         ),
