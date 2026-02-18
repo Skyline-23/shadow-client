@@ -70,7 +70,6 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
-                .sdk(name: "AppIntents", type: .framework),
                 .external(name: "ShadowClientStreaming"),
                 .external(name: "ShadowClientUI"),
             ]
