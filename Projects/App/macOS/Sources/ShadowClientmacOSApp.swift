@@ -9,13 +9,7 @@ struct ShadowClientmacOSApp: App {
     init() {
         let bridge = MoonlightSessionTelemetryBridge()
         MoonlightSessionTelemetryIngress.configure(bridge: bridge)
-        self.container = .live(
-            bridge: bridge,
-            connectionClient: NativeHostProbeConnectionClient(),
-            remoteDesktopDependencies: .live(
-                sessionConnectionClient: ShadowClientmacOSMoonlightSessionConnectionClient()
-            )
-        )
+        self.container = .live(bridge: bridge)
     }
 
     var body: some Scene {

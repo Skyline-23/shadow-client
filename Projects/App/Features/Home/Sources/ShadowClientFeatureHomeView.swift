@@ -64,16 +64,14 @@ public extension ShadowClientRemoteDesktopDependencies {
         identityStore: ShadowClientPairingIdentityStore = .shared,
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore = .shared,
         defaultHTTPPort: Int = 47989,
-        defaultHTTPSPort: Int = 47984,
-        sessionConnectionClient: (any ShadowClientRemoteSessionConnectionClient)? = nil
+        defaultHTTPSPort: Int = 47984
     ) -> Self {
         live(
             identityStore: identityStore,
             pinnedCertificateStore: pinnedCertificateStore,
             defaultHTTPPort: defaultHTTPPort,
             defaultHTTPSPort: defaultHTTPSPort,
-            sessionConnectTimeout: .seconds(10),
-            sessionConnectionClient: sessionConnectionClient
+            sessionConnectTimeout: .seconds(10)
         )
     }
 
@@ -82,8 +80,7 @@ public extension ShadowClientRemoteDesktopDependencies {
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore,
         defaultHTTPPort: Int,
         defaultHTTPSPort: Int,
-        sessionConnectTimeout: Duration,
-        sessionConnectionClient: (any ShadowClientRemoteSessionConnectionClient)? = nil
+        sessionConnectTimeout: Duration
     ) -> Self {
         .init(
             metadataClient: NativeGameStreamMetadataClient(
@@ -98,7 +95,7 @@ public extension ShadowClientRemoteDesktopDependencies {
                 defaultHTTPPort: defaultHTTPPort,
                 defaultHTTPSPort: defaultHTTPSPort
             ),
-            sessionConnectionClient: sessionConnectionClient ?? NativeShadowClientRemoteSessionConnectionClient(
+            sessionConnectionClient: NativeShadowClientRemoteSessionConnectionClient(
                 timeout: sessionConnectTimeout
             ),
             sessionInputClient: NoopShadowClientRemoteSessionInputClient(),
