@@ -1,0 +1,299 @@
+import Foundation
+
+public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
+    private static let nvVideoPacketHeaderSize = 16
+    private static let streamPacketIndexMask: UInt32 = 0x00FF_FFFF
+    private static let flagContainsPicData: UInt8 = 0x01
+    private static let flagEOF: UInt8 = 0x02
+    private static let flagSOF: UInt8 = 0x04
+    private static let allowedFlags: UInt8 = flagContainsPicData | flagEOF | flagSOF
+
+    private struct ParsedPacket {
+        let frameIndex: UInt32
+        let streamPacketIndex: UInt32
+        let flags: UInt8
+        let fecCurrentBlockNumber: UInt8
+        let fecLastBlockNumber: UInt8
+        let payload: Data
+    }
+
+    private struct FirstPacketHeader {
+        let frameHeaderSize: Int
+        let lastPacketPayloadLength: UInt16
+    }
+
+    private var currentFrame = Data()
+    private var decodingFrame = false
+    private var currentFrameIndex: UInt32 = 0
+    private var nextFrameIndex: UInt32?
+    private var lastPacketInStream: UInt32?
+    private var lastPacketPayloadLength: UInt16 = 0
+
+    public init() {}
+
+    public mutating func reset() {
+        currentFrame.removeAll(keepingCapacity: false)
+        decodingFrame = false
+        currentFrameIndex = 0
+        nextFrameIndex = nil
+        lastPacketInStream = nil
+        lastPacketPayloadLength = 0
+    }
+
+    public mutating func ingest(payload: Data, marker: Bool) -> Data? {
+        _ = marker
+
+        guard let packet = parseVideoPacket(from: payload) else {
+            dropFrameState()
+            return nil
+        }
+
+        guard (packet.flags & ~Self.allowedFlags) == 0 else {
+            dropFrameState()
+            return nil
+        }
+
+        let firstPacket = isFirstPacket(
+            flags: packet.flags,
+            fecBlockNumber: packet.fecCurrentBlockNumber
+        )
+        let lastPacket = isLastPacket(
+            flags: packet.flags,
+            fecCurrentBlockNumber: packet.fecCurrentBlockNumber,
+            fecLastBlockNumber: packet.fecLastBlockNumber
+        )
+
+        guard validateStreamContinuity(
+            packet: packet,
+            firstPacket: firstPacket
+        ) else {
+            dropFrameState()
+            return nil
+        }
+
+        guard validateFrameContinuity(
+            packet: packet,
+            firstPacket: firstPacket
+        ) else {
+            dropFrameState()
+            return nil
+        }
+
+        lastPacketInStream = packet.streamPacketIndex
+
+        var packetPayload = packet.payload
+        var frameHeaderSize = 0
+        if firstPacket {
+            guard let header = parseFirstPacketHeader(from: packetPayload) else {
+                dropFrameState()
+                return nil
+            }
+
+            frameHeaderSize = header.frameHeaderSize
+            lastPacketPayloadLength = header.lastPacketPayloadLength
+            if frameHeaderSize > 0 {
+                packetPayload.removeFirst(frameHeaderSize)
+            }
+        }
+
+        if lastPacket {
+            guard let truncatedPayload = truncateLastPacketPayload(
+                packetPayload,
+                frameHeaderSize: frameHeaderSize
+            ) else {
+                nextFrameIndex = packet.frameIndex &+ 1
+                dropFrameState()
+                return nil
+            }
+            packetPayload = truncatedPayload
+        }
+
+        if !packetPayload.isEmpty {
+            currentFrame.append(packetPayload)
+        }
+
+        guard lastPacket else {
+            return nil
+        }
+
+        let frame = currentFrame
+        decodingFrame = false
+        currentFrameIndex = 0
+        lastPacketPayloadLength = 0
+        nextFrameIndex = packet.frameIndex &+ 1
+        currentFrame.removeAll(keepingCapacity: true)
+        return frame.isEmpty ? nil : frame
+    }
+
+    private mutating func dropFrameState() {
+        decodingFrame = false
+        currentFrameIndex = 0
+        lastPacketPayloadLength = 0
+        currentFrame.removeAll(keepingCapacity: true)
+    }
+
+    private func parseVideoPacket(from payload: Data) -> ParsedPacket? {
+        guard payload.count >= Self.nvVideoPacketHeaderSize else {
+            return nil
+        }
+
+        let streamPacketIndexRaw = readUInt32LE(payload, at: 0)
+        let frameIndex = readUInt32LE(payload, at: 4)
+        let flags = payload[8]
+        let multiFecBlocks = payload[11]
+
+        let streamPacketIndex = (streamPacketIndexRaw >> 8) & Self.streamPacketIndexMask
+        let fecCurrentBlockNumber = (multiFecBlocks >> 4) & 0x03
+        let fecLastBlockNumber = (multiFecBlocks >> 6) & 0x03
+        let packetPayload = Data(payload.dropFirst(Self.nvVideoPacketHeaderSize))
+
+        return ParsedPacket(
+            frameIndex: frameIndex,
+            streamPacketIndex: streamPacketIndex,
+            flags: flags,
+            fecCurrentBlockNumber: fecCurrentBlockNumber,
+            fecLastBlockNumber: fecLastBlockNumber,
+            payload: packetPayload
+        )
+    }
+
+    private func isFirstPacket(flags: UInt8, fecBlockNumber: UInt8) -> Bool {
+        let normalizedFlags = flags & ~Self.flagContainsPicData
+        let isFrameStart = normalizedFlags == Self.flagSOF || normalizedFlags == (Self.flagSOF | Self.flagEOF)
+        return isFrameStart && fecBlockNumber == 0
+    }
+
+    private func isLastPacket(
+        flags: UInt8,
+        fecCurrentBlockNumber: UInt8,
+        fecLastBlockNumber: UInt8
+    ) -> Bool {
+        return (flags & Self.flagEOF) != 0 && fecCurrentBlockNumber == fecLastBlockNumber
+    }
+
+    private mutating func validateStreamContinuity(
+        packet: ParsedPacket,
+        firstPacket: Bool
+    ) -> Bool {
+        guard let lastPacketInStream else {
+            return firstPacket
+        }
+
+        let expectedStreamPacketIndex = (lastPacketInStream &+ 1) & Self.streamPacketIndexMask
+        if isBefore24(packet.streamPacketIndex, expectedStreamPacketIndex) {
+            return false
+        }
+
+        let hasSOF = (packet.flags & Self.flagSOF) != 0
+        if !hasSOF, packet.streamPacketIndex != expectedStreamPacketIndex {
+            return false
+        }
+
+        return true
+    }
+
+    private mutating func validateFrameContinuity(
+        packet: ParsedPacket,
+        firstPacket: Bool
+    ) -> Bool {
+        if let nextFrameIndex, isBefore32(packet.frameIndex, nextFrameIndex) {
+            return false
+        }
+
+        if firstPacket {
+            decodingFrame = true
+            currentFrameIndex = packet.frameIndex
+            currentFrame.removeAll(keepingCapacity: true)
+            return true
+        }
+
+        guard decodingFrame else {
+            return false
+        }
+        guard currentFrameIndex == packet.frameIndex else {
+            return false
+        }
+        return true
+    }
+
+    private func parseFirstPacketHeader(from payload: Data) -> FirstPacketHeader? {
+        guard payload.count >= 6 else {
+            return nil
+        }
+        let frameHeaderSize = selectFrameHeaderSize(for: payload)
+        guard frameHeaderSize <= payload.count else {
+            return nil
+        }
+        let lastPayloadLength = readUInt16LE(payload, at: 4)
+        return FirstPacketHeader(
+            frameHeaderSize: frameHeaderSize,
+            lastPacketPayloadLength: lastPayloadLength
+        )
+    }
+
+    private func selectFrameHeaderSize(for payload: Data) -> Int {
+        guard let firstByte = payload.first else {
+            return 0
+        }
+
+        if firstByte == 0x01 {
+            return payload.count >= 8 ? 8 : 0
+        }
+
+        if firstByte == 0x81 {
+            if payload.count >= 44 {
+                return 44
+            }
+            if payload.count >= 41 {
+                return 41
+            }
+            if payload.count >= 24 {
+                return 24
+            }
+            if payload.count >= 8 {
+                return 8
+            }
+            return 0
+        }
+
+        return payload.count >= 8 ? 8 : 0
+    }
+
+    private func truncateLastPacketPayload(
+        _ payload: Data,
+        frameHeaderSize: Int
+    ) -> Data? {
+        let payloadLength = Int(lastPacketPayloadLength)
+        guard payloadLength > frameHeaderSize else {
+            return nil
+        }
+        let expectedPayloadLength = payloadLength - frameHeaderSize
+        guard expectedPayloadLength <= payload.count else {
+            return nil
+        }
+        return Data(payload.prefix(expectedPayloadLength))
+    }
+
+    private func readUInt16LE(_ data: Data, at offset: Int) -> UInt16 {
+        return UInt16(data[offset]) | (UInt16(data[offset + 1]) << 8)
+    }
+
+    private func readUInt32LE(_ data: Data, at offset: Int) -> UInt32 {
+        return UInt32(data[offset]) |
+            (UInt32(data[offset + 1]) << 8) |
+            (UInt32(data[offset + 2]) << 16) |
+            (UInt32(data[offset + 3]) << 24)
+    }
+
+    private func isBefore24(_ lhs: UInt32, _ rhs: UInt32) -> Bool {
+        let difference = (lhs &- rhs) & Self.streamPacketIndexMask
+        return difference > (Self.streamPacketIndexMask / 2)
+    }
+
+    private func isBefore32(_ lhs: UInt32, _ rhs: UInt32) -> Bool {
+        let difference = lhs &- rhs
+        return difference > (UInt32.max / 2)
+    }
+}
+
+public typealias ShadowClientAV1RTPDepacketizer = ShadowClientMoonlightNVRTPDepacketizer
