@@ -1607,12 +1607,6 @@ public struct ShadowClientAppShellView: View {
             }
 
             if autoLaunchAfterConnect, state.isConnected {
-                await MainActor.run {
-                    remoteDesktopRuntime.openSessionFlow(
-                        host: state.host ?? host,
-                        appTitle: "Remote Desktop"
-                    )
-                }
                 await autoLaunchPreferredRemoteApp(preferredHostID: preferredHostID)
             }
         }
