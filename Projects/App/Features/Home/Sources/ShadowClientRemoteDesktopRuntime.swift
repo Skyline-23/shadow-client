@@ -877,9 +877,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     currentGameID: selectedHost.currentGameID,
                     settings: settings
                 )
-                guard let sessionURL = result.sessionURL?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !sessionURL.isEmpty
-                else {
+                let resolvedSessionURL = result.sessionURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let connectSessionURL: String
+                if let resolvedSessionURL, !resolvedSessionURL.isEmpty {
+                    connectSessionURL = resolvedSessionURL
+                } else if sessionPresentationMode == .externalRuntime {
+                    connectSessionURL = "rtsp://\(selectedHost.host)"
+                } else {
                     throw ShadowClientGameStreamError.requestFailed(
                         "Host did not return a video session URL."
                     )
@@ -893,7 +897,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
 
                 try await sessionConnectionClient.connect(
-                    to: sessionURL,
+                    to: connectSessionURL,
                     host: selectedHost.host,
                     appTitle: resolvedTitle
                 )
@@ -920,14 +924,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         host: selectedHost.host,
                         appID: appID,
                         appTitle: resolvedTitle,
-                        sessionURL: sessionURL
+                        sessionURL: resolvedSessionURL
                     )
                     if sessionPresentationMode == .externalRuntime {
                         launchState = .launched(
                             "Remote desktop launched (\(result.verb)): \(resolvedTitle) on \(selectedHost.host)"
                         )
                     } else {
-                        launchState = .launched("Video session connected (\(result.verb)): \(sessionURL)")
+                        launchState = .launched("Video session connected (\(result.verb)): \(connectSessionURL)")
                     }
                 }
             } catch {
