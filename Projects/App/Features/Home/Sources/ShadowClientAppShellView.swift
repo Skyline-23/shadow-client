@@ -1,6 +1,5 @@
 import Combine
 import ShadowClientUI
-import AVKit
 import SwiftUI
 
 public struct ShadowClientAppShellView: View {
@@ -49,7 +48,6 @@ public struct ShadowClientAppShellView: View {
     @AppStorage(ShadowClientAppSettings.StorageKeys.guiDisplayMode) private var guiDisplayModeRawValue = ShadowClientGUIDisplayMode.windowed.rawValue
     @ObservedObject private var hostDiscoveryRuntime: ShadowClientHostDiscoveryRuntime
     @ObservedObject private var remoteDesktopRuntime: ShadowClientRemoteDesktopRuntime
-    @StateObject private var sessionPlaybackRuntime = ShadowClientSessionPlaybackRuntime()
     @State private var connectionState: ShadowClientConnectionState = .disconnected
     @State private var settingsTelemetryCancellable: AnyCancellable?
     @State private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
@@ -111,14 +109,6 @@ public struct ShadowClientAppShellView: View {
         .onDisappear {
             stopSettingsTelemetrySubscription()
             stopHostDiscovery()
-            sessionPlaybackRuntime.stop()
-        }
-        .onChange(of: activeSessionPlaybackURL, initial: true) { _, sessionURL in
-            if sessionURL.isEmpty {
-                sessionPlaybackRuntime.stop()
-            } else {
-                sessionPlaybackRuntime.start(sessionURL: sessionURL)
-            }
         }
         .animation(.easeInOut(duration: 0.2), value: remoteDesktopRuntime.activeSession != nil)
     }
@@ -204,40 +194,47 @@ public struct ShadowClientAppShellView: View {
         nonmutating set { guiDisplayModeRawValue = newValue.rawValue }
     }
 
-    private var activeSessionPlaybackURL: String {
+    private var activeSessionEndpoint: String {
         remoteDesktopRuntime.activeSession?.sessionURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
-    private var sessionPlaybackStatusText: String {
-        if activeSessionPlaybackURL.isEmpty {
+    private var sessionRuntimeStatusText: String {
+        if activeSessionEndpoint.isEmpty {
             return "Session opened. Launch desktop/game on host to start remote stream."
         }
 
-        switch sessionPlaybackRuntime.state {
+        switch remoteDesktopRuntime.launchState {
         case .idle:
+            return "Session opened. Launch desktop/game on host to start remote stream."
+        case .launching:
             return "Connecting to remote stream..."
-        case .playing:
-            return "Remote stream is active."
+        case .launched:
+            return "Remote stream session connected. Rendering is handled by native runtime."
         case let .failed(message):
             return message
         }
     }
 
-    private var sessionPlaybackOverlay: (title: String, symbol: String)? {
-        if activeSessionPlaybackURL.isEmpty {
+    private var sessionRuntimeOverlay: (title: String, symbol: String)? {
+        if activeSessionEndpoint.isEmpty {
             return (
                 title: "Waiting for remote desktop stream...",
                 symbol: "desktopcomputer"
             )
         }
 
-        switch sessionPlaybackRuntime.state {
+        switch remoteDesktopRuntime.launchState {
         case .idle:
             return (
                 title: "Connecting to remote desktop stream...",
                 symbol: "antenna.radiowaves.left.and.right"
             )
-        case .playing:
+        case .launching:
+            return (
+                title: "Connecting to remote desktop stream...",
+                symbol: "antenna.radiowaves.left.and.right"
+            )
+        case .launched:
             return nil
         case .failed:
             return (
@@ -1133,13 +1130,9 @@ public struct ShadowClientAppShellView: View {
                     .ignoresSafeArea()
 
                 ZStack {
-#if os(macOS)
-                    ShadowClientMacOSSessionPlayerView(player: sessionPlaybackRuntime.player)
-#else
-                    VideoPlayer(player: sessionPlaybackRuntime.player)
-#endif
+                    ShadowClientRealtimeSessionSurfaceView()
 
-                    if let overlay = sessionPlaybackOverlay {
+                    if let overlay = sessionRuntimeOverlay {
                         playbackOverlayLabel(
                             overlay.title,
                             symbol: overlay.symbol
@@ -1195,7 +1188,7 @@ public struct ShadowClientAppShellView: View {
 
                     if sessionControlsVisible {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(sessionPlaybackStatusText)
+                            Text(sessionRuntimeStatusText)
                                 .font(.callout.weight(.semibold))
                                 .foregroundStyle(Color.white.opacity(0.90))
 
