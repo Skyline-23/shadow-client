@@ -209,7 +209,7 @@ public struct ShadowClientAppShellView: View {
         case .launching:
             return "Connecting to remote stream..."
         case .launched:
-            return "Remote stream session connected. Rendering is handled by native runtime."
+            return "Remote session transport connected. Waiting for native frame decoder."
         case let .failed(message):
             return message
         }
@@ -235,7 +235,10 @@ public struct ShadowClientAppShellView: View {
                 symbol: "antenna.radiowaves.left.and.right"
             )
         case .launched:
-            return nil
+            return (
+                title: "Waiting for native frame decoder...",
+                symbol: "hourglass"
+            )
         case .failed:
             return (
                 title: "Remote desktop stream failed to start.",
