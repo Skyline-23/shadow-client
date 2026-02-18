@@ -53,6 +53,7 @@ public struct ShadowClientAppShellView: View {
     @State private var connectionState: ShadowClientConnectionState = .disconnected
     @State private var settingsTelemetryCancellable: AnyCancellable?
     @State private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
+    @State private var sessionControlsVisible = true
 
     public init(platformName: String, dependencies: ShadowClientFeatureHomeDependencies) {
         self.platformName = platformName
@@ -1128,92 +1129,104 @@ public struct ShadowClientAppShellView: View {
     private var remoteSessionFlowView: some View {
         if let activeSession = remoteDesktopRuntime.activeSession {
             ZStack {
-                backgroundGradient
+                Color.black
+                    .ignoresSafeArea()
 
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Remote Session")
-                                .font(.system(.title2, design: .rounded).weight(.bold))
-                                .foregroundStyle(.white)
-                            Text("\(activeSession.appTitle) · \(activeSession.host)")
-                                .font(.callout.weight(.semibold))
-                                .foregroundStyle(Color.white.opacity(0.82))
-                        }
-
-                        Spacer(minLength: 8)
-
-                        Button("End Session") {
-                            remoteDesktopRuntime.clearActiveSession()
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        ZStack {
+                ZStack {
 #if os(macOS)
-                            ShadowClientMacOSSessionPlayerView(player: sessionPlaybackRuntime.player)
+                    ShadowClientMacOSSessionPlayerView(player: sessionPlaybackRuntime.player)
 #else
-                            VideoPlayer(player: sessionPlaybackRuntime.player)
+                    VideoPlayer(player: sessionPlaybackRuntime.player)
 #endif
 
-                            if let overlay = sessionPlaybackOverlay {
-                                playbackOverlayLabel(
-                                    overlay.title,
-                                    symbol: overlay.symbol
-                                )
-                            }
+                    if let overlay = sessionPlaybackOverlay {
+                        playbackOverlayLabel(
+                            overlay.title,
+                            symbol: overlay.symbol
+                        )
+                        .padding(.horizontal, 20)
+                    }
 
 #if os(macOS)
-                            ShadowClientMacOSSessionInputCaptureView { event in
-                                remoteDesktopRuntime.sendInput(event)
-                            }
-                            .background(Color.clear)
+                    ShadowClientMacOSSessionInputCaptureView { event in
+                        remoteDesktopRuntime.sendInput(event)
+                    }
+                    .background(Color.clear)
 #endif
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        sessionControlsVisible.toggle()
+                    }
+                }
+
+                VStack(spacing: 0) {
+                    if sessionControlsVisible {
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Remote Session")
+                                    .font(.system(.headline, design: .rounded).weight(.bold))
+                                    .foregroundStyle(.white)
+                                Text("\(activeSession.appTitle) · \(activeSession.host)")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(Color.white.opacity(0.86))
+                                    .lineLimit(1)
+                            }
+
+                            Spacer(minLength: 8)
+
+                            Button("End Session") {
+                                remoteDesktopRuntime.clearActiveSession()
+                            }
+                            .buttonStyle(.borderedProminent)
                         }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: horizontalSizeClass == .compact ? 220 : 360)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(.ultraThinMaterial)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                        Text(sessionPlaybackStatusText)
-                            .font(.callout.weight(.semibold))
-                            .foregroundStyle(Color.white.opacity(0.90))
-
-                        if let sessionURL = activeSession.sessionURL, !sessionURL.isEmpty {
-                            Text(sessionURL)
-                                .font(.footnote.monospaced())
-                                .foregroundStyle(Color.white.opacity(0.72))
-                                .textSelection(.enabled)
-                        }
-
-                        Label(remoteDesktopRuntime.launchState.label, systemImage: "play.circle.fill")
-                            .font(.callout.weight(.semibold))
-                            .foregroundStyle(launchStateColor)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 12)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                     }
-                    .padding(14)
-                    .background(panelSurface(cornerRadius: 14))
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Input Capture")
-                            .font(.headline)
-                            .foregroundStyle(.white)
-                        Text("Click the stream surface to focus, then use keyboard and mouse for remote desktop input.")
-                            .font(.body)
-                            .foregroundStyle(Color.white.opacity(0.86))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(rowSurface(cornerRadius: 10))
-                    }
-                    .padding(14)
-                    .background(panelSurface(cornerRadius: 14))
 
                     Spacer(minLength: 0)
+
+                    if sessionControlsVisible {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(sessionPlaybackStatusText)
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(Color.white.opacity(0.90))
+
+                            HStack(spacing: 8) {
+                                Label(remoteDesktopRuntime.launchState.label, systemImage: "play.circle.fill")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(launchStateColor)
+
+                                if let sessionURL = activeSession.sessionURL, !sessionURL.isEmpty {
+                                    Spacer(minLength: 6)
+                                    Text(sessionURL)
+                                        .font(.footnote.monospaced())
+                                        .foregroundStyle(Color.white.opacity(0.70))
+                                        .lineLimit(1)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.ultraThinMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 12)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                 }
-                .frame(maxWidth: contentMaxWidth)
-                .padding(.horizontal, horizontalContentPadding)
-                .padding(.top, topContentPadding)
-                .padding(.bottom, 24)
+            }
+            .onAppear {
+                sessionControlsVisible = true
             }
         }
     }
@@ -1630,7 +1643,9 @@ public struct ShadowClientAppShellView: View {
             if case .loaded = remoteDesktopRuntime.appState {
                 if let preferred = preferredLaunchApp(from: remoteDesktopRuntime.apps) {
                     launchRemoteApp(preferred)
+                    return
                 }
+                await launchDesktopFallbackIfNeeded()
                 return
             }
 
