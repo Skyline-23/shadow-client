@@ -41,3 +41,20 @@ PRs must include scope, commands run, iOS/macOS/tvOS coverage, and measurable la
 
 ## Agent Execution Rules
 Use subagents in parallel for non-trivial work with disjoint ownership, then merge after tests pass. Update `AGENTS.md` whenever architecture priorities or execution rules change.
+
+### Subagent Lifecycle Discipline
+- Keep subagents ownership-scoped (one concern per agent) and run in parallel only for disjoint files/tasks.
+- At the end of every work batch, close completed/idle subagents and report a short status summary (`in-use`, `completed/closed`, `remaining`).
+- Do not leave stale agents running between unrelated batches.
+
+### XcodeBuildMCP Interactive Validation (Required)
+- Always verify simulator defaults first: `session-show-defaults` then `session-set-defaults` (workspace, scheme, simulatorId, bundleId).
+- For tap/click validation, use XcodeBuildMCP UI automation in this order:
+  1. `snapshot_ui` to get exact element coordinates.
+  2. `ui-automation tap` (`Connect` -> `Launch`) using simulator coordinates or element label/id.
+  3. `ui-automation screenshot` after each important state change.
+- For transport/decoder debugging, wrap interaction with structured logs:
+  1. `logging start-simulator-log-capture --simulator-id ... --bundle-id ...`
+  2. Perform taps and wait for transition.
+  3. `logging stop-simulator-log-capture --log-session-id ...` and attach relevant RTSP/decoder lines to the report.
+- If `tap` tools are not exposed through function wrappers, use the `xcodebuildmcp` CLI workflow (`ui-automation tap`, `snapshot-ui`, `logging ...`) instead of skipping interaction validation.
