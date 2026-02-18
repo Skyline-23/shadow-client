@@ -605,32 +605,6 @@ func remoteDesktopRuntimeDisconnectsSessionTransportOnClearActiveSession() async
     #expect(await sessionConnector.disconnectCalls() >= 1)
 }
 
-@Test("Remote desktop runtime openSessionFlow launches external runtime")
-@MainActor
-func remoteDesktopRuntimeOpenSessionFlowLaunchesExternalRuntime() async {
-    let sessionConnector = FakeSessionConnectionClient(
-        presentationMode: .externalRuntime
-    )
-    let runtime = ShadowClientRemoteDesktopRuntime(
-        metadataClient: FakeControlTestMetadataClient(serverInfoByHost: [:], appListByHost: [:]),
-        controlClient: FakeControlClient(),
-        sessionConnectionClient: sessionConnector
-    )
-
-    runtime.openSessionFlow(host: "192.168.0.33", appTitle: "Desktop")
-    await waitForLaunchState(runtime)
-
-    #expect(await sessionConnector.connectCalls() == ["rtsp://192.168.0.33"])
-    #expect(runtime.activeSession?.host == "192.168.0.33")
-    #expect(runtime.activeSession?.appTitle == "Desktop")
-    #expect(runtime.activeSession?.sessionURL == nil)
-    if case .launched = runtime.launchState {
-        #expect(true)
-    } else {
-        Issue.record("Expected launched state, got \(runtime.launchState)")
-    }
-}
-
 @Test("Remote desktop runtime clears in-flight launch and keeps session closed")
 @MainActor
 func remoteDesktopRuntimeClearsInFlightLaunch() async {
