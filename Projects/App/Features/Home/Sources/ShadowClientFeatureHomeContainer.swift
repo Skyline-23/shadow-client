@@ -35,6 +35,7 @@ public final class ShadowClientFeatureHomeContainer {
             metadataClient: remoteDesktopDependencies.metadataClient,
             controlClient: remoteDesktopDependencies.controlClient,
             sessionConnectionClient: remoteDesktopDependencies.sessionConnectionClient,
+            sessionInputClient: remoteDesktopDependencies.sessionInputClient,
             pinProvider: remoteDesktopDependencies.pinProvider
         )
 

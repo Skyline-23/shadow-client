@@ -428,6 +428,77 @@ func remoteDesktopRuntimeKeepsLatestLaunchStateWhenPriorLaunchIsCancelled() asyn
     }
 }
 
+@Test("Remote desktop runtime forwards captured input events to active session input client")
+@MainActor
+func remoteDesktopRuntimeForwardsCapturedInputEventsToActiveSessionInputClient() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.28": .init(
+                host: "192.168.0.28",
+                displayName: "Loft-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-9"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.28": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.28:48010/session", verb: "launch")
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let sessionInput = FakeSessionInputClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector,
+        sessionInputClient: sessionInput
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.28"], preferredHost: "192.168.0.28")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+
+    runtime.sendInput(.keyDown(keyCode: 13, characters: "w"))
+    runtime.sendInput(.pointerButton(button: .left, isPressed: true))
+    await waitForSessionInputCalls(sessionInput, expectedCount: 2)
+
+    let calls = await sessionInput.inputCalls()
+    #expect(calls.count == 2)
+    #expect(calls.allSatisfy { $0.host == "192.168.0.28" })
+    #expect(calls.allSatisfy { $0.sessionURL == "rtsp://192.168.0.28:48010/session" })
+}
+
+@Test("Remote desktop runtime ignores input when active session has no session URL")
+@MainActor
+func remoteDesktopRuntimeIgnoresInputWhenActiveSessionHasNoSessionURL() async {
+    let sessionInput = FakeSessionInputClient()
+    let runtimeWithInput = ShadowClientRemoteDesktopRuntime(
+        metadataClient: FakeControlTestMetadataClient(serverInfoByHost: [:], appListByHost: [:]),
+        controlClient: FakeControlClient(),
+        sessionInputClient: sessionInput
+    )
+
+    runtimeWithInput.openSessionFlow(host: "192.168.0.29", appTitle: "Remote Desktop")
+    runtimeWithInput.sendInput(.keyDown(keyCode: 13, characters: "w"))
+    try? await Task.sleep(for: .milliseconds(80))
+
+    #expect(await sessionInput.inputCalls().isEmpty)
+}
+
 private actor FakeControlTestMetadataClient: ShadowClientGameStreamMetadataClient {
     private let serverInfoByHost: [String: ShadowClientGameStreamServerInfo]
     private let appListByHost: [String: [ShadowClientRemoteAppDescriptor]]
@@ -573,6 +644,26 @@ private actor BlockingFirstSessionConnectionClient: ShadowClientRemoteSessionCon
     }
 }
 
+private actor FakeSessionInputClient: ShadowClientRemoteSessionInputClient {
+    struct InputCall: Equatable {
+        let event: ShadowClientRemoteInputEvent
+        let host: String
+        let sessionURL: String
+    }
+
+    private var recordedInputCalls: [InputCall] = []
+
+    func send(event: ShadowClientRemoteInputEvent, host: String, sessionURL: String) async throws {
+        recordedInputCalls.append(
+            .init(event: event, host: host, sessionURL: sessionURL)
+        )
+    }
+
+    func inputCalls() -> [InputCall] {
+        recordedInputCalls
+    }
+}
+
 @MainActor
 private func waitForControlHostLoaded(
     _ runtime: ShadowClientRemoteDesktopRuntime,
@@ -631,6 +722,20 @@ private func waitForSessionConnectCalls(
 ) async {
     for _ in 0..<maxAttempts {
         if await connector.connectCalls().count >= expectedCount {
+            return
+        }
+
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+private func waitForSessionInputCalls(
+    _ inputClient: FakeSessionInputClient,
+    expectedCount: Int,
+    maxAttempts: Int = 50
+) async {
+    for _ in 0..<maxAttempts {
+        if await inputClient.inputCalls().count >= expectedCount {
             return
         }
 

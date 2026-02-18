@@ -233,6 +233,31 @@ public protocol ShadowClientRemoteSessionConnectionClient: Sendable {
     func connect(to sessionURL: String) async throws
 }
 
+public enum ShadowClientRemoteMouseButton: Equatable, Sendable {
+    case left
+    case right
+    case middle
+    case other(Int)
+}
+
+public enum ShadowClientRemoteInputEvent: Equatable, Sendable {
+    case keyDown(keyCode: UInt16, characters: String?)
+    case keyUp(keyCode: UInt16, characters: String?)
+    case pointerMoved(x: Double, y: Double)
+    case pointerButton(button: ShadowClientRemoteMouseButton, isPressed: Bool)
+    case scroll(deltaX: Double, deltaY: Double)
+}
+
+public protocol ShadowClientRemoteSessionInputClient: Sendable {
+    func send(event: ShadowClientRemoteInputEvent, host: String, sessionURL: String) async throws
+}
+
+public struct NoopShadowClientRemoteSessionInputClient: ShadowClientRemoteSessionInputClient {
+    public init() {}
+
+    public func send(event: ShadowClientRemoteInputEvent, host: String, sessionURL: String) async throws {}
+}
+
 public struct NoopShadowClientRemoteSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
     public init() {}
 
@@ -595,6 +620,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private let metadataClient: any ShadowClientGameStreamMetadataClient
     private let controlClient: any ShadowClientGameStreamControlClient
     private let sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient
+    private let sessionInputClient: any ShadowClientRemoteSessionInputClient
     private let pinProvider: any ShadowClientPairingPINProviding
     private var refreshHostsTask: Task<Void, Never>?
     private var refreshAppsTask: Task<Void, Never>?
@@ -609,11 +635,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
         controlClient: any ShadowClientGameStreamControlClient = NativeGameStreamControlClient(),
         sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient = NoopShadowClientRemoteSessionConnectionClient(),
+        sessionInputClient: any ShadowClientRemoteSessionInputClient = NoopShadowClientRemoteSessionInputClient(),
         pinProvider: any ShadowClientPairingPINProviding = ShadowClientRandomPairingPINProvider()
     ) {
         self.metadataClient = metadataClient
         self.controlClient = controlClient
         self.sessionConnectionClient = sessionConnectionClient
+        self.sessionInputClient = sessionInputClient
         self.pinProvider = pinProvider
     }
 
@@ -900,6 +928,26 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @MainActor
     public func clearActiveSession() {
         activeSession = nil
+    }
+
+    @MainActor
+    public func sendInput(_ event: ShadowClientRemoteInputEvent) {
+        guard let activeSession,
+              let sessionURL = activeSession.sessionURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !sessionURL.isEmpty
+        else {
+            return
+        }
+
+        let host = activeSession.host
+        let sessionInputClient = sessionInputClient
+        Task {
+            try? await sessionInputClient.send(
+                event: event,
+                host: host,
+                sessionURL: sessionURL
+            )
+        }
     }
 
     @MainActor
