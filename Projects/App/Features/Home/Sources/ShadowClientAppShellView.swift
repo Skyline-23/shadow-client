@@ -113,10 +113,14 @@ public struct ShadowClientAppShellView: View {
             sessionPlaybackRuntime.stop()
         }
         .onChange(of: activeSessionPlaybackURL, initial: true) { _, sessionURL in
-            if sessionURL.isEmpty {
+            if remoteDesktopRuntime.sessionPresentationMode == .externalRuntime {
                 sessionPlaybackRuntime.stop()
             } else {
-                sessionPlaybackRuntime.start(sessionURL: sessionURL)
+                if sessionURL.isEmpty {
+                    sessionPlaybackRuntime.stop()
+                } else {
+                    sessionPlaybackRuntime.start(sessionURL: sessionURL)
+                }
             }
         }
         .animation(.easeInOut(duration: 0.2), value: remoteDesktopRuntime.activeSession != nil)
@@ -208,6 +212,10 @@ public struct ShadowClientAppShellView: View {
     }
 
     private var sessionPlaybackStatusText: String {
+        if remoteDesktopRuntime.sessionPresentationMode == .externalRuntime {
+            return "Remote desktop is launched through Moonlight runtime. Use the Moonlight window for live input and video."
+        }
+
         if activeSessionPlaybackURL.isEmpty {
             return "Session opened. Launch desktop/game on host to start remote stream."
         }
@@ -223,6 +231,13 @@ public struct ShadowClientAppShellView: View {
     }
 
     private var sessionPlaybackOverlay: (title: String, symbol: String)? {
+        if remoteDesktopRuntime.sessionPresentationMode == .externalRuntime {
+            return (
+                title: "Remote desktop runs in Moonlight window",
+                symbol: "desktopcomputer.and.arrow.down"
+            )
+        }
+
         if activeSessionPlaybackURL.isEmpty {
             return (
                 title: "Waiting for remote desktop stream...",
@@ -1151,11 +1166,12 @@ public struct ShadowClientAppShellView: View {
 
                     VStack(alignment: .leading, spacing: 10) {
                         ZStack {
-#if os(macOS)
-                            ShadowClientMacOSSessionPlayerView(player: sessionPlaybackRuntime.player)
-#else
-                            VideoPlayer(player: sessionPlaybackRuntime.player)
-#endif
+                            if remoteDesktopRuntime.sessionPresentationMode == .externalRuntime {
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color.black.opacity(0.66))
+                            } else {
+                                VideoPlayer(player: sessionPlaybackRuntime.player)
+                            }
 
                             if let overlay = sessionPlaybackOverlay {
                                 playbackOverlayLabel(
@@ -1163,13 +1179,6 @@ public struct ShadowClientAppShellView: View {
                                     symbol: overlay.symbol
                                 )
                             }
-
-#if os(macOS)
-                            ShadowClientMacOSSessionInputCaptureView { event in
-                                remoteDesktopRuntime.sendInput(event)
-                            }
-                            .background(Color.clear)
-#endif
                         }
                         .frame(maxWidth: .infinity)
                         .frame(height: horizontalSizeClass == .compact ? 220 : 360)
@@ -1193,20 +1202,37 @@ public struct ShadowClientAppShellView: View {
                     .padding(14)
                     .background(panelSurface(cornerRadius: 14))
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Input Capture")
-                            .font(.headline)
-                            .foregroundStyle(.white)
-                        Text("Click the stream surface to focus, then use keyboard and mouse for remote desktop input.")
-                            .font(.body)
-                            .foregroundStyle(Color.white.opacity(0.86))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(rowSurface(cornerRadius: 10))
+                    if remoteDesktopRuntime.sessionPresentationMode == .externalRuntime {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Input Path")
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                            Text("Keyboard, mouse, and controller input are handled in the Moonlight window.")
+                                .font(.body)
+                                .foregroundStyle(Color.white.opacity(0.86))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(rowSurface(cornerRadius: 10))
+                        }
+                        .padding(14)
+                        .background(panelSurface(cornerRadius: 14))
+                    } else {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Input Capture")
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                            Text("Click the stream surface to focus, then use keyboard and mouse for remote desktop input.")
+                                .font(.body)
+                                .foregroundStyle(Color.white.opacity(0.86))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(rowSurface(cornerRadius: 10))
+                        }
+                        .padding(14)
+                        .background(panelSurface(cornerRadius: 14))
                     }
-                    .padding(14)
-                    .background(panelSurface(cornerRadius: 14))
 
                     Spacer(minLength: 0)
                 }
