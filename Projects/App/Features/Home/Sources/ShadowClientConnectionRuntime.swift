@@ -225,9 +225,13 @@ public enum NativeTCPHostProbe {
                 await awaitConnectionReady(connection, queue: queue)
             }
             group.addTask {
-                try? await Task.sleep(for: timeout)
-                connection.cancel()
-                return false
+                do {
+                    try await Task.sleep(for: timeout)
+                    connection.cancel()
+                    return false
+                } catch {
+                    return false
+                }
             }
 
             let firstResult = await group.next() ?? false
@@ -264,7 +268,9 @@ public enum NativeTCPHostProbe {
                     lock.unlock()
 
                     connection.stateUpdateHandler = nil
-                    connection.cancel()
+                    if result {
+                        connection.cancel()
+                    }
                     continuation.resume(returning: result)
                 }
             }
