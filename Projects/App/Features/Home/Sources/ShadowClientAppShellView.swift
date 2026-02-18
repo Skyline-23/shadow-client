@@ -53,8 +53,6 @@ public struct ShadowClientAppShellView: View {
     @State private var connectionState: ShadowClientConnectionState = .disconnected
     @State private var settingsTelemetryCancellable: AnyCancellable?
     @State private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
-    @State private var sessionInputText = ""
-    @FocusState private var sessionInputFocused: Bool
 
     public init(platformName: String, dependencies: ShadowClientFeatureHomeDependencies) {
         self.platformName = platformName
@@ -1147,8 +1145,6 @@ public struct ShadowClientAppShellView: View {
 
                         Button("End Session") {
                             remoteDesktopRuntime.clearActiveSession()
-                            sessionInputText = ""
-                            sessionInputFocused = false
                         }
                         .buttonStyle(.borderedProminent)
                     }
@@ -1167,6 +1163,13 @@ public struct ShadowClientAppShellView: View {
                                     symbol: overlay.symbol
                                 )
                             }
+
+#if os(macOS)
+                            ShadowClientMacOSSessionInputCaptureView { event in
+                                remoteDesktopRuntime.sendInput(event)
+                            }
+                            .background(Color.clear)
+#endif
                         }
                         .frame(maxWidth: .infinity)
                         .frame(height: horizontalSizeClass == .compact ? 220 : 360)
@@ -1191,17 +1194,16 @@ public struct ShadowClientAppShellView: View {
                     .background(panelSurface(cornerRadius: 14))
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Input Focus")
+                        Text("Input Capture")
                             .font(.headline)
                             .foregroundStyle(.white)
-                        TextField("Type here to keep keyboard focus while session flow is open", text: $sessionInputText)
-                            .textFieldStyle(.plain)
-                            .font(.body.monospaced())
-                            .foregroundStyle(.white)
+                        Text("Click the stream surface to focus, then use keyboard and mouse for remote desktop input.")
+                            .font(.body)
+                            .foregroundStyle(Color.white.opacity(0.86))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .background(rowSurface(cornerRadius: 10))
-                            .focused($sessionInputFocused)
                     }
                     .padding(14)
                     .background(panelSurface(cornerRadius: 14))
@@ -1213,9 +1215,6 @@ public struct ShadowClientAppShellView: View {
                 .padding(.top, topContentPadding)
                 .padding(.bottom, 24)
             }
-                    .onAppear {
-                        sessionInputFocused = true
-                    }
         }
     }
 
