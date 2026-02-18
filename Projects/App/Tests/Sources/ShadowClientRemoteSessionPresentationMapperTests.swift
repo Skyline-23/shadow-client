@@ -37,6 +37,19 @@ func remoteSessionPresentationMapperLaunched() {
     #expect(model.overlay?.symbol == "hourglass")
 }
 
+@Test("Remote session presentation mapper hides overlay once native rendering is live")
+func remoteSessionPresentationMapperRenderingLive() {
+    let model = ShadowClientRemoteSessionPresentationMapper.make(
+        activeSessionEndpoint: "rtsp://wifi.skyline23.com:48010",
+        launchState: .launched("Remote session transport connected"),
+        renderState: .rendering
+    )
+
+    #expect(model.launchTone == .launched)
+    #expect(model.statusText.localizedCaseInsensitiveContains("live"))
+    #expect(model.overlay == nil)
+}
+
 @Test("Remote session presentation mapper preserves launch failure reason")
 func remoteSessionPresentationMapperFailure() {
     let model = ShadowClientRemoteSessionPresentationMapper.make(

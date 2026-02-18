@@ -761,6 +761,7 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
 
 private actor FakeSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
     let presentationMode: ShadowClientRemoteSessionPresentationMode = .embeddedPlayer
+    nonisolated let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init()
 
     private var recordedConnectCalls: [String] = []
     private var disconnectCallCount = 0
@@ -793,6 +794,7 @@ private actor FakeSessionConnectionClient: ShadowClientRemoteSessionConnectionCl
 
 private actor BlockingFirstSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
     let presentationMode: ShadowClientRemoteSessionPresentationMode = .embeddedPlayer
+    nonisolated let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init()
 
     private var recordedConnectCalls: [String] = []
     private var disconnectCallCount = 0

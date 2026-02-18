@@ -231,6 +231,7 @@ public protocol ShadowClientGameStreamMetadataClient: Sendable {
 
 public protocol ShadowClientRemoteSessionConnectionClient: Sendable {
     var presentationMode: ShadowClientRemoteSessionPresentationMode { get }
+    var sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext { get }
     func connect(to sessionURL: String, host: String, appTitle: String) async throws
     func disconnect() async
 }
@@ -267,6 +268,7 @@ public struct NoopShadowClientRemoteSessionInputClient: ShadowClientRemoteSessio
 
 public struct NoopShadowClientRemoteSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
     public let presentationMode: ShadowClientRemoteSessionPresentationMode = .embeddedPlayer
+    public let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init()
 
     public init() {}
 
@@ -277,11 +279,18 @@ public struct NoopShadowClientRemoteSessionConnectionClient: ShadowClientRemoteS
 
 public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
     public let presentationMode: ShadowClientRemoteSessionPresentationMode = .embeddedPlayer
+    public let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext
 
     private let timeout: Duration
+    private let sessionRuntime: ShadowClientRealtimeRTSPSessionRuntime
 
-    public init(timeout: Duration = .seconds(10)) {
+    public init(
+        timeout: Duration = .seconds(10),
+        sessionRuntime: ShadowClientRealtimeRTSPSessionRuntime = .init()
+    ) {
         self.timeout = timeout
+        self.sessionRuntime = sessionRuntime
+        self.sessionSurfaceContext = sessionRuntime.surfaceContext
     }
 
     public func connect(to sessionURL: String, host: String, appTitle: String) async throws {
@@ -292,6 +301,7 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
             fallbackHost: fallbackHost
         )
 
+        var capturedRuntimeError: Error?
         for candidate in candidates {
             let isReady = try await Self.probeEndpoint(
                 host: candidate.host,
@@ -299,16 +309,37 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
                 timeout: timeout
             )
             if isReady {
-                return
+                do {
+                    let routedURL = Self.rewriteHost(
+                        for: sessionURL,
+                        host: candidate.host
+                    )
+                    try await sessionRuntime.connect(
+                        sessionURL: routedURL,
+                        host: host,
+                        appTitle: appTitle
+                    )
+                    return
+                } catch {
+                    capturedRuntimeError = error
+                }
             }
         }
 
+        if let capturedRuntimeError {
+            throw ShadowClientGameStreamError.requestFailed(
+                capturedRuntimeError.localizedDescription
+            )
+        }
+
         throw ShadowClientGameStreamError.requestFailed(
-            "Could not connect to video session endpoint."
+            "Could not connect to remote session endpoint."
         )
     }
 
-    public func disconnect() async {}
+    public func disconnect() async {
+        try? await sessionRuntime.disconnect()
+    }
 
     private static func parseEndpoint(
         from sessionURL: String
@@ -450,6 +481,23 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
 
             connection.start(queue: queue)
         }
+    }
+
+    private static func rewriteHost(
+        for sessionURL: String,
+        host: String
+    ) -> String {
+        let trimmed = sessionURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return sessionURL
+        }
+
+        let candidate = trimmed.contains("://") ? trimmed : "rtsp://\(trimmed)"
+        guard var components = URLComponents(string: candidate) else {
+            return candidate
+        }
+        components.host = host
+        return components.string ?? candidate
     }
 }
 
@@ -680,6 +728,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @Published public private(set) var launchState: ShadowClientRemoteLaunchState = .idle
     @Published public private(set) var activeSession: ShadowClientActiveRemoteSession?
     public let sessionPresentationMode: ShadowClientRemoteSessionPresentationMode
+    public let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext
 
     private let metadataClient: any ShadowClientGameStreamMetadataClient
     private let controlClient: any ShadowClientGameStreamControlClient
@@ -708,6 +757,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         self.sessionInputClient = sessionInputClient
         self.pinProvider = pinProvider
         self.sessionPresentationMode = sessionConnectionClient.presentationMode
+        self.sessionSurfaceContext = sessionConnectionClient.sessionSurfaceContext
     }
 
     deinit {
@@ -929,7 +979,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                       !sessionURL.isEmpty
                 else {
                     throw ShadowClientGameStreamError.requestFailed(
-                        "Host did not return a video session URL."
+                        "Host did not return a remote session URL."
                     )
                 }
                 let routedSessionURL = Self.routedSessionURL(
