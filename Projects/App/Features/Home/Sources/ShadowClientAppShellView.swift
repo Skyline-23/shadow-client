@@ -67,14 +67,14 @@ public struct ShadowClientAppShellView: View {
     public var body: some View {
         ZStack {
             backgroundGradient
-            TabView(selection: $selectedTab) {
-                homeTab
-                settingsTab
-            }
-
-            if remoteDesktopRuntime.activeSession != nil {
+            if remoteDesktopRuntime.activeSession == nil {
+                TabView(selection: $selectedTab) {
+                    homeTab
+                    settingsTab
+                }
+            } else {
                 remoteSessionFlowView
-                    .zIndex(10)
+                    .ignoresSafeArea()
                     .transition(.opacity)
             }
         }
@@ -542,7 +542,7 @@ public struct ShadowClientAppShellView: View {
                     settingsSection(title: "Advanced Settings") {
                         settingsPickerRow(
                             title: "Video decoder",
-                            symbol: "chip",
+                            symbol: "cpu",
                             selection: Binding(
                                 get: { selectedVideoDecoder },
                                 set: { selectedVideoDecoder = $0 }
@@ -1561,6 +1561,7 @@ public struct ShadowClientAppShellView: View {
             }
 
             if case .failed = remoteDesktopRuntime.appState {
+                await launchDesktopFallbackIfNeeded()
                 return
             }
 
@@ -1569,7 +1570,10 @@ public struct ShadowClientAppShellView: View {
 
         if let preferred = preferredLaunchApp(from: remoteDesktopRuntime.apps) {
             launchRemoteApp(preferred)
+            return
         }
+
+        await launchDesktopFallbackIfNeeded()
     }
 
     private func preferredLaunchApp(from apps: [ShadowClientRemoteAppDescriptor]) -> ShadowClientRemoteAppDescriptor? {
@@ -1588,6 +1592,45 @@ public struct ShadowClientAppShellView: View {
             appTitle: app.title,
             settings: settings
         )
+    }
+
+    @MainActor
+    private func launchDesktopFallbackIfNeeded() async {
+        guard let selectedHost = remoteDesktopRuntime.selectedHost else {
+            return
+        }
+        guard selectedHost.pairStatus == .paired else {
+            return
+        }
+        guard remoteDesktopRuntime.launchState != .launching else {
+            return
+        }
+
+        let settings = currentSettings.launchSettings(hostApp: nil)
+
+        remoteDesktopRuntime.launchSelectedApp(
+            appID: 881_448_767,
+            appTitle: "Desktop",
+            settings: settings
+        )
+
+        for _ in 0..<15 {
+            if case .launched = remoteDesktopRuntime.launchState {
+                return
+            }
+            if case .failed = remoteDesktopRuntime.launchState {
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+
+        if case .failed = remoteDesktopRuntime.launchState {
+            remoteDesktopRuntime.launchSelectedApp(
+                appID: 1,
+                appTitle: "Desktop",
+                settings: settings
+            )
+        }
     }
 
     @MainActor
