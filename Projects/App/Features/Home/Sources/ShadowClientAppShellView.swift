@@ -198,53 +198,11 @@ public struct ShadowClientAppShellView: View {
         remoteDesktopRuntime.activeSession?.sessionURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
-    private var sessionRuntimeStatusText: String {
-        if activeSessionEndpoint.isEmpty {
-            return "Session opened. Launch desktop/game on host to start remote stream."
-        }
-
-        switch remoteDesktopRuntime.launchState {
-        case .idle:
-            return "Session opened. Launch desktop/game on host to start remote stream."
-        case .launching:
-            return "Connecting to remote stream..."
-        case .launched:
-            return "Remote session transport connected. Waiting for native frame decoder."
-        case let .failed(message):
-            return message
-        }
-    }
-
-    private var sessionRuntimeOverlay: (title: String, symbol: String)? {
-        if activeSessionEndpoint.isEmpty {
-            return (
-                title: "Waiting for remote desktop stream...",
-                symbol: "desktopcomputer"
-            )
-        }
-
-        switch remoteDesktopRuntime.launchState {
-        case .idle:
-            return (
-                title: "Connecting to remote desktop stream...",
-                symbol: "antenna.radiowaves.left.and.right"
-            )
-        case .launching:
-            return (
-                title: "Connecting to remote desktop stream...",
-                symbol: "antenna.radiowaves.left.and.right"
-            )
-        case .launched:
-            return (
-                title: "Waiting for native frame decoder...",
-                symbol: "hourglass"
-            )
-        case .failed:
-            return (
-                title: "Remote desktop stream failed to start.",
-                symbol: "exclamationmark.triangle"
-            )
-        }
+    private var sessionPresentationModel: ShadowClientRemoteSessionPresentationModel {
+        ShadowClientRemoteSessionPresentationMapper.make(
+            activeSessionEndpoint: activeSessionEndpoint,
+            launchState: remoteDesktopRuntime.launchState
+        )
     }
 
     private var homeTab: some View {
@@ -1113,7 +1071,7 @@ public struct ShadowClientAppShellView: View {
     }
 
     private var launchStateColor: Color {
-        switch remoteDesktopRuntime.launchState {
+        switch sessionPresentationModel.launchTone {
         case .idle:
             return Color.white.opacity(0.74)
         case .launching:
@@ -1135,7 +1093,7 @@ public struct ShadowClientAppShellView: View {
                 ZStack {
                     ShadowClientRealtimeSessionSurfaceView()
 
-                    if let overlay = sessionRuntimeOverlay {
+                    if let overlay = sessionPresentationModel.overlay {
                         playbackOverlayLabel(
                             overlay.title,
                             symbol: overlay.symbol
@@ -1191,7 +1149,7 @@ public struct ShadowClientAppShellView: View {
 
                     if sessionControlsVisible {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(sessionRuntimeStatusText)
+                            Text(sessionPresentationModel.statusText)
                                 .font(.callout.weight(.semibold))
                                 .foregroundStyle(Color.white.opacity(0.90))
 
