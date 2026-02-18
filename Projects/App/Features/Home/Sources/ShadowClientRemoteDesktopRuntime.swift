@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import Network
 
 public enum ShadowClientRemoteHostPairStatus: String, Equatable, Sendable {
     case paired
@@ -226,6 +227,142 @@ public struct ShadowClientGameStreamServerInfo: Equatable, Sendable {
 public protocol ShadowClientGameStreamMetadataClient: Sendable {
     func fetchServerInfo(host: String) async throws -> ShadowClientGameStreamServerInfo
     func fetchAppList(host: String, httpsPort: Int?) async throws -> [ShadowClientRemoteAppDescriptor]
+}
+
+public protocol ShadowClientRemoteSessionConnectionClient: Sendable {
+    func connect(to sessionURL: String) async throws
+}
+
+public struct NoopShadowClientRemoteSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
+    public init() {}
+
+    public func connect(to sessionURL: String) async throws {}
+}
+
+public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
+    private let timeout: Duration
+
+    public init(timeout: Duration = .seconds(10)) {
+        self.timeout = timeout
+    }
+
+    public func connect(to sessionURL: String) async throws {
+        let endpoint = try Self.parseEndpoint(from: sessionURL)
+        let connection = NWConnection(
+            host: NWEndpoint.Host(endpoint.host),
+            port: endpoint.port,
+            using: .tcp
+        )
+        let queue = DispatchQueue(
+            label: "com.skyline23.shadowclient.video-session.\(endpoint.port.rawValue)"
+        )
+
+        let firstOutcome = await withTaskGroup(
+            of: Result<Bool, Error>.self,
+            returning: Result<Bool, Error>.self
+        ) { group in
+            group.addTask {
+                .success(await Self.awaitConnectionReady(connection, queue: queue))
+            }
+            group.addTask {
+                do {
+                    try await Task.sleep(for: timeout)
+                    connection.cancel()
+                    return .success(false)
+                } catch {
+                    return .failure(error)
+                }
+            }
+
+            let firstResult = await group.next() ?? .success(false)
+            group.cancelAll()
+            return firstResult
+        }
+        let isReady = try firstOutcome.get()
+
+        guard isReady else {
+            throw ShadowClientGameStreamError.requestFailed(
+                "Could not connect to video session endpoint."
+            )
+        }
+    }
+
+    private static func parseEndpoint(
+        from sessionURL: String
+    ) throws -> (host: String, port: NWEndpoint.Port) {
+        let trimmed = sessionURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw ShadowClientGameStreamError.invalidURL
+        }
+
+        let candidate = trimmed.contains("://") ? trimmed : "rtsp://\(trimmed)"
+        guard let url = URL(string: candidate),
+              let host = url.host
+        else {
+            throw ShadowClientGameStreamError.invalidURL
+        }
+
+        let portValue = url.port ?? 554
+        guard (1...65_535).contains(portValue) else {
+            throw ShadowClientGameStreamError.invalidURL
+        }
+        guard let port = NWEndpoint.Port(rawValue: UInt16(portValue)) else {
+            throw ShadowClientGameStreamError.invalidURL
+        }
+
+        return (host: host, port: port)
+    }
+
+    private static func awaitConnectionReady(
+        _ connection: NWConnection,
+        queue: DispatchQueue
+    ) async -> Bool {
+        await withCheckedContinuation { continuation in
+            final class ResumeGate: @unchecked Sendable {
+                private let lock = NSLock()
+                private let connection: NWConnection
+                private var continuation: CheckedContinuation<Bool, Never>?
+
+                init(
+                    connection: NWConnection,
+                    continuation: CheckedContinuation<Bool, Never>
+                ) {
+                    self.connection = connection
+                    self.continuation = continuation
+                }
+
+                func finish(with result: Bool) {
+                    lock.lock()
+                    guard let continuation else {
+                        lock.unlock()
+                        return
+                    }
+                    self.continuation = nil
+                    lock.unlock()
+
+                    connection.stateUpdateHandler = nil
+                    if result {
+                        connection.cancel()
+                    }
+                    continuation.resume(returning: result)
+                }
+            }
+
+            let gate = ResumeGate(connection: connection, continuation: continuation)
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    gate.finish(with: true)
+                case .failed, .cancelled:
+                    gate.finish(with: false)
+                default:
+                    break
+                }
+            }
+
+            connection.start(queue: queue)
+        }
+    }
 }
 
 public protocol ShadowClientGameStreamRequestTransporting: Sendable {
@@ -457,6 +594,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     private let metadataClient: any ShadowClientGameStreamMetadataClient
     private let controlClient: any ShadowClientGameStreamControlClient
+    private let sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient
     private let pinProvider: any ShadowClientPairingPINProviding
     private var refreshHostsTask: Task<Void, Never>?
     private var refreshAppsTask: Task<Void, Never>?
@@ -464,14 +602,18 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var launchTask: Task<Void, Never>?
     private var latestHostCandidates: [String] = []
     private var appRefreshGeneration: UInt64 = 0
+    private var pairGeneration: UInt64 = 0
+    private var launchGeneration: UInt64 = 0
 
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
         controlClient: any ShadowClientGameStreamControlClient = NativeGameStreamControlClient(),
+        sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient = NoopShadowClientRemoteSessionConnectionClient(),
         pinProvider: any ShadowClientPairingPINProviding = ShadowClientRandomPairingPINProvider()
     ) {
         self.metadataClient = metadataClient
         self.controlClient = controlClient
+        self.sessionConnectionClient = sessionConnectionClient
         self.pinProvider = pinProvider
     }
 
@@ -587,6 +729,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             pin: generatedPIN
         )
         pairTask?.cancel()
+        pairGeneration &+= 1
+        let currentPairGeneration = pairGeneration
         let controlClient = controlClient
         pairTask = Task {
             do {
@@ -611,25 +755,47 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         guard shouldRetry else {
                             throw error
                         }
-                        try? await Task.sleep(for: .milliseconds(900))
+                        try await Task.sleep(for: .milliseconds(900))
                     }
                 }
 
-                guard !Task.isCancelled else {
+                if Task.isCancelled {
+                    await MainActor.run {
+                        guard self.pairGeneration == currentPairGeneration,
+                              case .pairing = pairingState
+                        else {
+                            return
+                        }
+                        pairingState = .idle
+                    }
                     return
                 }
 
                 await MainActor.run {
+                    guard self.pairGeneration == currentPairGeneration else {
+                        return
+                    }
                     pairingState = .paired("Paired")
                     let candidates = latestHostCandidates.isEmpty ? hosts.map(\.host) : latestHostCandidates
                     refreshHosts(candidates: candidates, preferredHost: selectedHost.host)
                 }
             } catch {
-                guard !Task.isCancelled else {
+                if Task.isCancelled {
+                    await MainActor.run {
+                        guard self.pairGeneration == currentPairGeneration,
+                              case .pairing = pairingState
+                        else {
+                            return
+                        }
+                        pairingState = .idle
+                    }
                     return
                 }
 
                 await MainActor.run {
+                    guard self.pairGeneration == currentPairGeneration else {
+                        return
+                    }
                     pairingState = .failed(error.localizedDescription)
                 }
             }
@@ -650,7 +816,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         launchState = .launching
         activeSession = nil
         launchTask?.cancel()
+        launchGeneration &+= 1
+        let currentLaunchGeneration = launchGeneration
         let controlClient = controlClient
+        let sessionConnectionClient = sessionConnectionClient
         let launchedAppTitle = appTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         launchTask = Task {
             do {
@@ -661,12 +830,33 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     currentGameID: selectedHost.currentGameID,
                     settings: settings
                 )
+                guard let sessionURL = result.sessionURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !sessionURL.isEmpty
+                else {
+                    throw ShadowClientGameStreamError.requestFailed(
+                        "Host did not return a video session URL."
+                    )
+                }
 
-                guard !Task.isCancelled else {
+                try await sessionConnectionClient.connect(to: sessionURL)
+
+                if Task.isCancelled {
+                    await MainActor.run {
+                        guard self.launchGeneration == currentLaunchGeneration,
+                              launchState == .launching
+                        else {
+                            return
+                        }
+                        launchState = .idle
+                        activeSession = nil
+                    }
                     return
                 }
 
                 await MainActor.run {
+                    guard self.launchGeneration == currentLaunchGeneration else {
+                        return
+                    }
                     let resolvedTitle: String
                     if let launchedAppTitle, !launchedAppTitle.isEmpty {
                         resolvedTitle = launchedAppTitle
@@ -678,21 +868,28 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         host: selectedHost.host,
                         appID: appID,
                         appTitle: resolvedTitle,
-                        sessionURL: result.sessionURL
+                        sessionURL: sessionURL
                     )
-
-                    if let sessionURL = result.sessionURL, !sessionURL.isEmpty {
-                        launchState = .launched("Launch sent (\(result.verb)): \(sessionURL)")
-                    } else {
-                        launchState = .launched("Launch sent (\(result.verb))")
-                    }
+                    launchState = .launched("Video session connected (\(result.verb)): \(sessionURL)")
                 }
             } catch {
-                guard !Task.isCancelled else {
+                if Task.isCancelled {
+                    await MainActor.run {
+                        guard self.launchGeneration == currentLaunchGeneration,
+                              launchState == .launching
+                        else {
+                            return
+                        }
+                        launchState = .idle
+                        activeSession = nil
+                    }
                     return
                 }
 
                 await MainActor.run {
+                    guard self.launchGeneration == currentLaunchGeneration else {
+                        return
+                    }
                     launchState = .failed(error.localizedDescription)
                     activeSession = nil
                 }

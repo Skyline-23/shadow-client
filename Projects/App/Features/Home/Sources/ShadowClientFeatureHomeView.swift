@@ -40,15 +40,18 @@ public struct ShadowClientFeatureHomeDependencies {
 public struct ShadowClientRemoteDesktopDependencies {
     public let metadataClient: any ShadowClientGameStreamMetadataClient
     public let controlClient: any ShadowClientGameStreamControlClient
+    public let sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient
     public let pinProvider: any ShadowClientPairingPINProviding
 
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient,
         controlClient: any ShadowClientGameStreamControlClient,
+        sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient,
         pinProvider: any ShadowClientPairingPINProviding
     ) {
         self.metadataClient = metadataClient
         self.controlClient = controlClient
+        self.sessionConnectionClient = sessionConnectionClient
         self.pinProvider = pinProvider
     }
 }
@@ -59,6 +62,22 @@ public extension ShadowClientRemoteDesktopDependencies {
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore = .shared,
         defaultHTTPPort: Int = 47989,
         defaultHTTPSPort: Int = 47984
+    ) -> Self {
+        live(
+            identityStore: identityStore,
+            pinnedCertificateStore: pinnedCertificateStore,
+            defaultHTTPPort: defaultHTTPPort,
+            defaultHTTPSPort: defaultHTTPSPort,
+            sessionConnectTimeout: .seconds(10)
+        )
+    }
+
+    static func live(
+        identityStore: ShadowClientPairingIdentityStore,
+        pinnedCertificateStore: ShadowClientPinnedHostCertificateStore,
+        defaultHTTPPort: Int,
+        defaultHTTPSPort: Int,
+        sessionConnectTimeout: Duration
     ) -> Self {
         .init(
             metadataClient: NativeGameStreamMetadataClient(
@@ -72,6 +91,9 @@ public extension ShadowClientRemoteDesktopDependencies {
                 pinnedCertificateStore: pinnedCertificateStore,
                 defaultHTTPPort: defaultHTTPPort,
                 defaultHTTPSPort: defaultHTTPSPort
+            ),
+            sessionConnectionClient: NativeShadowClientRemoteSessionConnectionClient(
+                timeout: sessionConnectTimeout
             ),
             pinProvider: ShadowClientRandomPairingPINProvider()
         )
