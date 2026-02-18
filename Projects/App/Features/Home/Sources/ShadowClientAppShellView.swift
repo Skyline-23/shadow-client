@@ -16,9 +16,36 @@ public struct ShadowClientAppShellView: View {
     @State private var selectedTab: AppTab = .home
     @AppStorage(ShadowClientAppSettings.StorageKeys.lowLatencyMode) private var lowLatencyMode = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferHDR) private var preferHDR = true
-    @AppStorage(ShadowClientAppSettings.StorageKeys.preferSurroundAudio) private var preferSurroundAudio = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.showDiagnosticsHUD) private var showDiagnosticsHUD = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.connectionHost) private var connectionHost = ""
+    @AppStorage(ShadowClientAppSettings.StorageKeys.resolution) private var resolutionRawValue = ShadowClientStreamingResolutionPreset.p1080.rawValue
+    @AppStorage(ShadowClientAppSettings.StorageKeys.frameRate) private var frameRateRawValue = ShadowClientStreamingFrameRatePreset.fps60.rawValue
+    @AppStorage(ShadowClientAppSettings.StorageKeys.bitrateKbps) private var bitrateKbps = 22_000
+    @AppStorage(ShadowClientAppSettings.StorageKeys.displayMode) private var displayModeRawValue = ShadowClientDisplayMode.borderlessFullscreen.rawValue
+    @AppStorage(ShadowClientAppSettings.StorageKeys.audioConfiguration) private var audioConfigurationRawValue = ShadowClientAudioConfiguration.surround71.rawValue
+    @AppStorage(ShadowClientAppSettings.StorageKeys.videoCodec) private var videoCodecRawValue = ShadowClientVideoCodecPreference.auto.rawValue
+    @AppStorage(ShadowClientAppSettings.StorageKeys.videoDecoder) private var videoDecoderRawValue = ShadowClientVideoDecoderPreference.forceHardware.rawValue
+    @AppStorage(ShadowClientAppSettings.StorageKeys.enableVSync) private var enableVSync = false
+    @AppStorage(ShadowClientAppSettings.StorageKeys.enableFramePacing) private var enableFramePacing = false
+    @AppStorage(ShadowClientAppSettings.StorageKeys.enableYUV444) private var enableYUV444 = false
+    @AppStorage(ShadowClientAppSettings.StorageKeys.unlockBitrateLimit) private var unlockBitrateLimit = false
+    @AppStorage(ShadowClientAppSettings.StorageKeys.optimizeMouseForDesktop) private var optimizeMouseForDesktop = false
+    @AppStorage(ShadowClientAppSettings.StorageKeys.captureSystemKeyboardShortcuts) private var captureSystemKeyboardShortcuts = false
+    @AppStorage(ShadowClientAppSettings.StorageKeys.keyboardShortcutCaptureMode) private var keyboardShortcutCaptureModeRawValue = ShadowClientKeyboardShortcutCaptureMode.fullscreenOnly.rawValue
+    @AppStorage(ShadowClientAppSettings.StorageKeys.useTouchscreenTrackpad) private var useTouchscreenTrackpad = false
+    @AppStorage(ShadowClientAppSettings.StorageKeys.swapMouseButtons) private var swapMouseButtons = false
+    @AppStorage(ShadowClientAppSettings.StorageKeys.reverseMouseScrollDirection) private var reverseMouseScrollDirection = false
+    @AppStorage(ShadowClientAppSettings.StorageKeys.swapABXYButtons) private var swapABXYButtons = false
+    @AppStorage(ShadowClientAppSettings.StorageKeys.forceGamepadOneAlwaysConnected) private var forceGamepadOneAlwaysConnected = false
+    @AppStorage(ShadowClientAppSettings.StorageKeys.enableGamepadMouseMode) private var enableGamepadMouseMode = true
+    @AppStorage(ShadowClientAppSettings.StorageKeys.processGamepadInputInBackground) private var processGamepadInputInBackground = false
+    @AppStorage(ShadowClientAppSettings.StorageKeys.optimizeGameSettingsForStreaming) private var optimizeGameSettingsForStreaming = true
+    @AppStorage(ShadowClientAppSettings.StorageKeys.quitAppOnHostAfterStream) private var quitAppOnHostAfterStream = false
+    @AppStorage(ShadowClientAppSettings.StorageKeys.muteHostSpeakersWhileStreaming) private var muteHostSpeakersWhileStreaming = true
+    @AppStorage(ShadowClientAppSettings.StorageKeys.muteAudioWhenInactiveWindow) private var muteAudioWhenInactiveWindow = true
+    @AppStorage(ShadowClientAppSettings.StorageKeys.autoFindHosts) private var autoFindHosts = true
+    @AppStorage(ShadowClientAppSettings.StorageKeys.language) private var languageRawValue = ShadowClientLanguagePreference.automatic.rawValue
+    @AppStorage(ShadowClientAppSettings.StorageKeys.guiDisplayMode) private var guiDisplayModeRawValue = ShadowClientGUIDisplayMode.windowed.rawValue
     @ObservedObject private var hostDiscoveryRuntime: ShadowClientHostDiscoveryRuntime
     @ObservedObject private var remoteDesktopRuntime: ShadowClientRemoteDesktopRuntime
     @State private var connectionState: ShadowClientConnectionState = .disconnected
@@ -61,6 +88,19 @@ public struct ShadowClientAppShellView: View {
         .onChange(of: connectionHost, initial: false) { _, _ in
             refreshRemoteDesktopCatalog()
         }
+        .onChange(of: autoFindHosts, initial: false) { _, _ in
+            if autoFindHosts {
+                startHostDiscovery()
+            } else {
+                stopHostDiscovery()
+            }
+            refreshRemoteDesktopCatalog()
+        }
+        .onChange(of: unlockBitrateLimit, initial: false) { _, unlocked in
+            if !unlocked && bitrateKbps > 150_000 {
+                bitrateKbps = 150_000
+            }
+        }
         .onDisappear {
             stopSettingsTelemetrySubscription()
             stopHostDiscovery()
@@ -74,9 +114,81 @@ public struct ShadowClientAppShellView: View {
         ShadowClientAppSettings(
             lowLatencyMode: lowLatencyMode,
             preferHDR: preferHDR,
-            preferSurroundAudio: preferSurroundAudio,
-            showDiagnosticsHUD: showDiagnosticsHUD
+            showDiagnosticsHUD: showDiagnosticsHUD,
+            resolution: selectedResolution,
+            frameRate: selectedFrameRate,
+            bitrateKbps: bitrateKbps,
+            displayMode: selectedDisplayMode,
+            audioConfiguration: selectedAudioConfiguration,
+            videoCodec: selectedVideoCodec,
+            videoDecoder: selectedVideoDecoder,
+            enableVSync: enableVSync,
+            enableFramePacing: enableFramePacing,
+            enableYUV444: enableYUV444,
+            unlockBitrateLimit: unlockBitrateLimit,
+            optimizeMouseForDesktop: optimizeMouseForDesktop,
+            captureSystemKeyboardShortcuts: captureSystemKeyboardShortcuts,
+            keyboardShortcutCaptureMode: selectedKeyboardShortcutCaptureMode,
+            useTouchscreenTrackpad: useTouchscreenTrackpad,
+            swapMouseButtons: swapMouseButtons,
+            reverseMouseScrollDirection: reverseMouseScrollDirection,
+            swapABXYButtons: swapABXYButtons,
+            forceGamepadOneAlwaysConnected: forceGamepadOneAlwaysConnected,
+            enableGamepadMouseMode: enableGamepadMouseMode,
+            processGamepadInputInBackground: processGamepadInputInBackground,
+            optimizeGameSettingsForStreaming: optimizeGameSettingsForStreaming,
+            quitAppOnHostAfterStream: quitAppOnHostAfterStream,
+            muteHostSpeakersWhileStreaming: muteHostSpeakersWhileStreaming,
+            muteAudioWhenInactiveWindow: muteAudioWhenInactiveWindow,
+            autoFindHosts: autoFindHosts,
+            language: selectedLanguage,
+            guiDisplayMode: selectedGUIDisplayMode
         )
+    }
+
+    private var selectedResolution: ShadowClientStreamingResolutionPreset {
+        get { ShadowClientStreamingResolutionPreset(rawValue: resolutionRawValue) ?? .p1080 }
+        nonmutating set { resolutionRawValue = newValue.rawValue }
+    }
+
+    private var selectedFrameRate: ShadowClientStreamingFrameRatePreset {
+        get { ShadowClientStreamingFrameRatePreset(rawValue: frameRateRawValue) ?? .fps60 }
+        nonmutating set { frameRateRawValue = newValue.rawValue }
+    }
+
+    private var selectedDisplayMode: ShadowClientDisplayMode {
+        get { ShadowClientDisplayMode(rawValue: displayModeRawValue) ?? .borderlessFullscreen }
+        nonmutating set { displayModeRawValue = newValue.rawValue }
+    }
+
+    private var selectedAudioConfiguration: ShadowClientAudioConfiguration {
+        get { ShadowClientAudioConfiguration(rawValue: audioConfigurationRawValue) ?? .surround71 }
+        nonmutating set { audioConfigurationRawValue = newValue.rawValue }
+    }
+
+    private var selectedVideoCodec: ShadowClientVideoCodecPreference {
+        get { ShadowClientVideoCodecPreference(rawValue: videoCodecRawValue) ?? .auto }
+        nonmutating set { videoCodecRawValue = newValue.rawValue }
+    }
+
+    private var selectedVideoDecoder: ShadowClientVideoDecoderPreference {
+        get { ShadowClientVideoDecoderPreference(rawValue: videoDecoderRawValue) ?? .forceHardware }
+        nonmutating set { videoDecoderRawValue = newValue.rawValue }
+    }
+
+    private var selectedKeyboardShortcutCaptureMode: ShadowClientKeyboardShortcutCaptureMode {
+        get { ShadowClientKeyboardShortcutCaptureMode(rawValue: keyboardShortcutCaptureModeRawValue) ?? .fullscreenOnly }
+        nonmutating set { keyboardShortcutCaptureModeRawValue = newValue.rawValue }
+    }
+
+    private var selectedLanguage: ShadowClientLanguagePreference {
+        get { ShadowClientLanguagePreference(rawValue: languageRawValue) ?? .automatic }
+        nonmutating set { languageRawValue = newValue.rawValue }
+    }
+
+    private var selectedGUIDisplayMode: ShadowClientGUIDisplayMode {
+        get { ShadowClientGUIDisplayMode(rawValue: guiDisplayModeRawValue) ?? .windowed }
+        nonmutating set { guiDisplayModeRawValue = newValue.rawValue }
     }
 
     private var homeTab: some View {
@@ -139,7 +251,10 @@ public struct ShadowClientAppShellView: View {
                         }
 
                         settingsRow {
-                            Label("Auto Discovery: \(hostDiscoveryRuntime.state.label)", systemImage: "dot.radiowaves.left.and.right")
+                            Label(
+                                "Auto Discovery: \(autoFindHosts ? hostDiscoveryRuntime.state.label : "Disabled")",
+                                systemImage: "dot.radiowaves.left.and.right"
+                            )
                                 .font(.callout.weight(.semibold))
                                 .foregroundStyle(Color.white.opacity(0.9))
                             Spacer(minLength: 0)
@@ -150,6 +265,7 @@ public struct ShadowClientAppShellView: View {
                                 Image(systemName: "arrow.clockwise")
                             }
                             .buttonStyle(.bordered)
+                            .disabled(!autoFindHosts)
                         }
 
                         if hostDiscoveryRuntime.hosts.isEmpty {
@@ -189,7 +305,66 @@ public struct ShadowClientAppShellView: View {
                         }
                     }
 
-                    settingsSection(title: "Streaming Quality") {
+                    settingsSection(title: "Basic Settings") {
+                        settingsPickerRow(
+                            title: "Resolution",
+                            symbol: "rectangle.expand.vertical",
+                            selection: Binding(
+                                get: { selectedResolution },
+                                set: { selectedResolution = $0 }
+                            )
+                        ) {
+                            ForEach(ShadowClientStreamingResolutionPreset.allCases, id: \.self) { option in
+                                Text(option.label).tag(option)
+                            }
+                        }
+
+                        settingsPickerRow(
+                            title: "Frame Rate",
+                            symbol: "film.stack",
+                            selection: Binding(
+                                get: { selectedFrameRate },
+                                set: { selectedFrameRate = $0 }
+                            )
+                        ) {
+                            ForEach(ShadowClientStreamingFrameRatePreset.allCases, id: \.self) { option in
+                                Text("\(option.rawValue) FPS").tag(option)
+                            }
+                        }
+
+                        settingsRow {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Label("Video bitrate", systemImage: "dial.medium")
+                                        .font(.callout.weight(.semibold))
+                                        .foregroundStyle(.white)
+                                    Spacer(minLength: 8)
+                                    Text("\(bitrateKbps) Kbps")
+                                        .font(.footnote.monospacedDigit().weight(.bold))
+                                        .foregroundStyle(.mint)
+                                }
+                                Slider(
+                                    value: bitrateSliderBinding,
+                                    in: 500...maxBitrateKbps,
+                                    step: 500
+                                )
+                                .tint(.mint)
+                            }
+                        }
+
+                        settingsPickerRow(
+                            title: "Display mode",
+                            symbol: "macwindow",
+                            selection: Binding(
+                                get: { selectedDisplayMode },
+                                set: { selectedDisplayMode = $0 }
+                            )
+                        ) {
+                            ForEach(ShadowClientDisplayMode.allCases, id: \.self) { option in
+                                Text(option.label).tag(option)
+                            }
+                        }
+
                         settingsRow {
                             Toggle(isOn: $lowLatencyMode) {
                                 Label("Low-Latency Mode", systemImage: "speedometer")
@@ -198,21 +373,268 @@ public struct ShadowClientAppShellView: View {
                             }
                             .tint(.mint)
                         }
+
                         settingsRow {
                             Toggle(isOn: $preferHDR) {
-                                Label("Prefer HDR", systemImage: "sparkles.tv")
+                                Label("Enable HDR (Experimental)", systemImage: "sparkles.tv")
                                     .font(.callout.weight(.semibold))
                                     .foregroundStyle(.white)
                             }
                             .tint(.mint)
                         }
+
                         settingsRow {
-                            Toggle(isOn: $preferSurroundAudio) {
-                                Label("Prefer Surround Audio", systemImage: "hifispeaker.and.homepod.fill")
+                            Toggle(isOn: $enableVSync) {
+                                Label("V-Sync", systemImage: "arrow.triangle.2.circlepath")
                                     .font(.callout.weight(.semibold))
                                     .foregroundStyle(.white)
                             }
                             .tint(.mint)
+                        }
+
+                        settingsRow {
+                            Toggle(isOn: $enableFramePacing) {
+                                Label("Frame pacing", systemImage: "waveform.path")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+                    }
+
+                    settingsSection(title: "Audio Settings") {
+                        settingsPickerRow(
+                            title: "Audio configuration",
+                            symbol: "hifispeaker.and.homepod.fill",
+                            selection: Binding(
+                                get: { selectedAudioConfiguration },
+                                set: { selectedAudioConfiguration = $0 }
+                            )
+                        ) {
+                            ForEach(ShadowClientAudioConfiguration.allCases, id: \.self) { option in
+                                Text(option.label).tag(option)
+                            }
+                        }
+
+                        settingsRow {
+                            Toggle(isOn: $muteHostSpeakersWhileStreaming) {
+                                Text("Mute host PC speakers while streaming")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+
+                        settingsRow {
+                            Toggle(isOn: $muteAudioWhenInactiveWindow) {
+                                Text("Mute audio stream when app is not active")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+                    }
+
+                    settingsSection(title: "Input Settings") {
+                        settingsRow {
+                            Toggle(isOn: $optimizeMouseForDesktop) {
+                                Text("Optimize mouse for remote desktop instead of games")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+
+                        settingsRow {
+                            Toggle(isOn: $captureSystemKeyboardShortcuts) {
+                                Text("Capture system keyboard shortcuts")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+
+                        if captureSystemKeyboardShortcuts {
+                            settingsPickerRow(
+                                title: "Shortcut capture mode",
+                                symbol: "command",
+                                selection: Binding(
+                                    get: { selectedKeyboardShortcutCaptureMode },
+                                    set: { selectedKeyboardShortcutCaptureMode = $0 }
+                                )
+                            ) {
+                                ForEach(ShadowClientKeyboardShortcutCaptureMode.allCases, id: \.self) { option in
+                                    Text(option.label).tag(option)
+                                }
+                            }
+                        }
+
+                        settingsRow {
+                            Toggle(isOn: $useTouchscreenTrackpad) {
+                                Text("Use touchscreen as virtual trackpad")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+
+                        settingsRow {
+                            Toggle(isOn: $swapMouseButtons) {
+                                Text("Swap left and right mouse buttons")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+
+                        settingsRow {
+                            Toggle(isOn: $reverseMouseScrollDirection) {
+                                Text("Reverse mouse scrolling direction")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+                    }
+
+                    settingsSection(title: "Gamepad Settings") {
+                        settingsRow {
+                            Toggle(isOn: $swapABXYButtons) {
+                                Text("Swap A/B and X/Y gamepad buttons")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+
+                        settingsRow {
+                            Toggle(isOn: $forceGamepadOneAlwaysConnected) {
+                                Text("Force gamepad #1 always connected")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+
+                        settingsRow {
+                            Toggle(isOn: $enableGamepadMouseMode) {
+                                Text("Enable mouse control with gamepads by holding Start")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+
+                        settingsRow {
+                            Toggle(isOn: $processGamepadInputInBackground) {
+                                Text("Process gamepad input while app is in background")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+                    }
+
+                    settingsSection(title: "Advanced Settings") {
+                        settingsPickerRow(
+                            title: "Video decoder",
+                            symbol: "chip",
+                            selection: Binding(
+                                get: { selectedVideoDecoder },
+                                set: { selectedVideoDecoder = $0 }
+                            )
+                        ) {
+                            ForEach(ShadowClientVideoDecoderPreference.allCases, id: \.self) { option in
+                                Text(option.label).tag(option)
+                            }
+                        }
+
+                        settingsPickerRow(
+                            title: "Video codec",
+                            symbol: "film",
+                            selection: Binding(
+                                get: { selectedVideoCodec },
+                                set: { selectedVideoCodec = $0 }
+                            )
+                        ) {
+                            ForEach(ShadowClientVideoCodecPreference.allCases, id: \.self) { option in
+                                Text(videoCodecLabel(option)).tag(option)
+                            }
+                        }
+
+                        settingsRow {
+                            Toggle(isOn: $enableYUV444) {
+                                Text("Enable YUV 4:4:4 (Experimental)")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+
+                        settingsRow {
+                            Toggle(isOn: $unlockBitrateLimit) {
+                                Text("Unlock bitrate limit (Experimental)")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+
+                        settingsRow {
+                            Toggle(isOn: $autoFindHosts) {
+                                Text("Automatically find PCs on local network")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+                    }
+
+                    settingsSection(title: "Host Settings") {
+                        settingsRow {
+                            Toggle(isOn: $optimizeGameSettingsForStreaming) {
+                                Text("Optimize game settings for streaming")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+
+                        settingsRow {
+                            Toggle(isOn: $quitAppOnHostAfterStream) {
+                                Text("Quit app on host after ending stream")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+                    }
+
+                    settingsSection(title: "UI Settings") {
+                        settingsPickerRow(
+                            title: "Language",
+                            symbol: "globe",
+                            selection: Binding(
+                                get: { selectedLanguage },
+                                set: { selectedLanguage = $0 }
+                            )
+                        ) {
+                            ForEach(ShadowClientLanguagePreference.allCases, id: \.self) { option in
+                                Text(option.label).tag(option)
+                            }
+                        }
+
+                        settingsPickerRow(
+                            title: "GUI display mode",
+                            symbol: "rectangle.3.group",
+                            selection: Binding(
+                                get: { selectedGUIDisplayMode },
+                                set: { selectedGUIDisplayMode = $0 }
+                            )
+                        ) {
+                            ForEach(ShadowClientGUIDisplayMode.allCases, id: \.self) { option in
+                                Text(option.label).tag(option)
+                            }
                         }
                     }
 
@@ -411,11 +833,15 @@ public struct ShadowClientAppShellView: View {
                             .font(.callout.weight(.bold))
                             .foregroundStyle(.white)
                             .lineLimit(2)
+                            .truncationMode(.tail)
+                            .minimumScaleFactor(0.85)
 
                         Text(host.host)
                             .font(.footnote.monospaced())
                             .foregroundStyle(Color.white.opacity(0.86))
                             .lineLimit(2)
+                            .truncationMode(.middle)
+                            .minimumScaleFactor(0.8)
 
                         Text(host.statusLabel)
                             .font(.footnote.weight(.semibold))
@@ -425,6 +851,7 @@ public struct ShadowClientAppShellView: View {
                             .font(.footnote.weight(.semibold))
                             .foregroundStyle(Color.white.opacity(0.82))
                             .lineLimit(3)
+                            .truncationMode(.tail)
                     }
 
                     Spacer(minLength: 8)
@@ -851,7 +1278,29 @@ public struct ShadowClientAppShellView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(rowSurface(cornerRadius: 10))
+            .background(rowSurface(cornerRadius: 10))
+    }
+
+    private func settingsPickerRow<Value: Hashable, Content: View>(
+        title: String,
+        symbol: String,
+        selection: Binding<Value>,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        settingsRow {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(title, systemImage: symbol)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.white)
+
+                Picker(title, selection: selection) {
+                    content()
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     private func diagnosticsRow(
@@ -877,9 +1326,13 @@ public struct ShadowClientAppShellView: View {
                 Text(discoveredHost.name)
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 Text("\(discoveredHost.host):\(discoveredHost.port) · \(discoveredHost.serviceType)")
                     .font(.footnote.monospacedDigit())
                     .foregroundStyle(Color.white.opacity(0.74))
+                    .lineLimit(2)
+                    .truncationMode(.middle)
             }
             Spacer(minLength: 8)
             Button("Use") {
@@ -904,6 +1357,33 @@ public struct ShadowClientAppShellView: View {
         case .critical:
             return .red
         }
+    }
+
+    private func videoCodecLabel(_ codec: ShadowClientVideoCodecPreference) -> String {
+        switch codec {
+        case .auto:
+            return "Auto"
+        case .av1:
+            return "AV1"
+        case .h265:
+            return "H.265"
+        case .h264:
+            return "H.264"
+        }
+    }
+
+    private var maxBitrateKbps: Double {
+        unlockBitrateLimit ? 500_000 : 150_000
+    }
+
+    private var bitrateSliderBinding: Binding<Double> {
+        Binding(
+            get: { Double(bitrateKbps) },
+            set: { newValue in
+                let clamped = min(max(500, Int(newValue.rounded() / 500) * 500), Int(maxBitrateKbps))
+                bitrateKbps = clamped
+            }
+        )
     }
 
     private var normalizedConnectionHost: String {
@@ -1010,12 +1490,16 @@ public struct ShadowClientAppShellView: View {
 
     @MainActor
     private func startHostDiscovery() {
+        guard autoFindHosts else {
+            hostDiscoveryRuntime.stop()
+            return
+        }
         hostDiscoveryRuntime.start()
     }
 
     @MainActor
     private func refreshRemoteDesktopCatalog() {
-        var candidates = hostDiscoveryRuntime.hosts.map(\.host)
+        var candidates: [String] = autoFindHosts ? hostDiscoveryRuntime.hosts.map(\.host) : []
         if !normalizedConnectionHost.isEmpty {
             candidates.append(normalizedConnectionHost)
         }
@@ -1102,11 +1586,7 @@ public struct ShadowClientAppShellView: View {
 
     @MainActor
     private func launchRemoteApp(_ app: ShadowClientRemoteAppDescriptor) {
-        let settings = ShadowClientGameStreamLaunchSettings(
-            enableHDR: preferHDR && app.hdrSupported,
-            enableSurroundAudio: preferSurroundAudio,
-            lowLatencyMode: lowLatencyMode
-        )
+        let settings = currentSettings.launchSettings(hostApp: app)
 
         remoteDesktopRuntime.launchSelectedApp(
             appID: app.id,

@@ -35,14 +35,14 @@ func settingsTelemetryRuntimeResetsWhenSettingsChange() async {
     let surroundPreferred = ShadowClientAppSettings(
         lowLatencyMode: false,
         preferHDR: true,
-        preferSurroundAudio: true,
-        showDiagnosticsHUD: true
+        showDiagnosticsHUD: true,
+        audioConfiguration: .surround71
     )
     let lowLatencyPreferred = ShadowClientAppSettings(
         lowLatencyMode: true,
         preferHDR: true,
-        preferSurroundAudio: true,
-        showDiagnosticsHUD: true
+        showDiagnosticsHUD: true,
+        audioConfiguration: .surround71
     )
 
     let surroundModel = await runtime.ingest(
@@ -54,8 +54,8 @@ func settingsTelemetryRuntimeResetsWhenSettingsChange() async {
         settings: lowLatencyPreferred
     )
 
-    #expect(surroundModel.audioMode == .surround51)
-    #expect(lowLatencyModel.audioMode == .stereo)
+    #expect(surroundModel.audioMode == StreamAudioMode.surround51)
+    #expect(lowLatencyModel.audioMode == StreamAudioMode.stereo)
 }
 
 @Test("Settings telemetry runtime keeps recovery hold when only HUD visibility changes")

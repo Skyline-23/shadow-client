@@ -7,11 +7,11 @@ func appSettingsMapToStreamingPreferences() {
     let settings = ShadowClientAppSettings(
         lowLatencyMode: false,
         preferHDR: false,
-        preferSurroundAudio: true,
-        showDiagnosticsHUD: true
+        showDiagnosticsHUD: true,
+        audioConfiguration: .surround71
     )
 
-    #expect(settings.streamingPreferences == .init(
+    #expect(settings.streamingPreferences == StreamingUserPreferences(
         preferHDR: false,
         preferSurroundAudio: true,
         lowLatencyMode: false
@@ -25,8 +25,8 @@ func dependenciesApplyingSettingsOverridesSessionPreferences() {
     let settings = ShadowClientAppSettings(
         lowLatencyMode: false,
         preferHDR: false,
-        preferSurroundAudio: false,
-        showDiagnosticsHUD: false
+        showDiagnosticsHUD: false,
+        audioConfiguration: .stereo
     )
 
     let configured = base.applying(settings: settings)
@@ -59,7 +59,7 @@ func settingsIdentityKeyChangesPerToggle() {
     let baseline = ShadowClientAppSettings()
     let lowLatencyDisabled = ShadowClientAppSettings(lowLatencyMode: false)
     let hdrDisabled = ShadowClientAppSettings(preferHDR: false)
-    let surroundDisabled = ShadowClientAppSettings(preferSurroundAudio: false)
+    let surroundDisabled = ShadowClientAppSettings(audioConfiguration: .stereo)
     let hudDisabled = ShadowClientAppSettings(showDiagnosticsHUD: false)
 
     #expect(baseline.identityKey != lowLatencyDisabled.identityKey)
@@ -73,13 +73,68 @@ func settingsStreamingIdentityKeyTracksStreamingToggles() {
     let baseline = ShadowClientAppSettings()
     let lowLatencyDisabled = ShadowClientAppSettings(lowLatencyMode: false)
     let hdrDisabled = ShadowClientAppSettings(preferHDR: false)
-    let surroundDisabled = ShadowClientAppSettings(preferSurroundAudio: false)
+    let surroundDisabled = ShadowClientAppSettings(audioConfiguration: .stereo)
     let hudDisabled = ShadowClientAppSettings(showDiagnosticsHUD: false)
 
     #expect(baseline.streamingIdentityKey != lowLatencyDisabled.streamingIdentityKey)
     #expect(baseline.streamingIdentityKey != hdrDisabled.streamingIdentityKey)
     #expect(baseline.streamingIdentityKey != surroundDisabled.streamingIdentityKey)
     #expect(baseline.streamingIdentityKey == hudDisabled.streamingIdentityKey)
+}
+
+@Test("App settings map to launch settings including codec, bitrate, and geometry")
+func appSettingsMapToLaunchSettings() {
+    let settings = ShadowClientAppSettings(
+        lowLatencyMode: false,
+        preferHDR: true,
+        resolution: .p2160,
+        frameRate: .fps120,
+        bitrateKbps: 42_000,
+        audioConfiguration: .surround51,
+        videoCodec: .av1,
+        enableVSync: true,
+        enableFramePacing: true,
+        enableYUV444: true,
+        unlockBitrateLimit: true,
+        optimizeGameSettingsForStreaming: true,
+        quitAppOnHostAfterStream: true
+    )
+    let hostApp = ShadowClientRemoteAppDescriptor(
+        id: 99,
+        title: "Desktop",
+        hdrSupported: true,
+        isAppCollectorGame: false
+    )
+
+    let launch = settings.launchSettings(hostApp: hostApp)
+
+    #expect(launch.width == 3840)
+    #expect(launch.height == 2160)
+    #expect(launch.fps == 120)
+    #expect(launch.bitrateKbps == 42_000)
+    #expect(launch.preferredCodec == .av1)
+    #expect(launch.enableHDR == true)
+    #expect(launch.enableSurroundAudio == true)
+    #expect(launch.enableVSync == true)
+    #expect(launch.enableFramePacing == true)
+    #expect(launch.enableYUV444 == true)
+    #expect(launch.unlockBitrateLimit == true)
+    #expect(launch.optimizeGameSettingsForStreaming == true)
+    #expect(launch.quitAppOnHostAfterStreamEnds == true)
+}
+
+@Test("Launch settings disable HDR when selected app does not support HDR")
+func launchSettingsDisableHDRForNonHDRApp() {
+    let settings = ShadowClientAppSettings(preferHDR: true)
+    let hostApp = ShadowClientRemoteAppDescriptor(
+        id: 10,
+        title: "Legacy App",
+        hdrSupported: false,
+        isAppCollectorGame: false
+    )
+
+    let launch = settings.launchSettings(hostApp: hostApp)
+    #expect(launch.enableHDR == false)
 }
 
 private actor RecordingConnectionClient: ShadowClientConnectionClient {

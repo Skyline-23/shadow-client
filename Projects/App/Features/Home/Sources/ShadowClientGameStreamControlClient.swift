@@ -57,28 +57,75 @@ public extension ShadowClientRemoteLaunchState {
     }
 }
 
+public enum ShadowClientVideoCodecPreference: String, CaseIterable, Equatable, Sendable {
+    case auto
+    case av1
+    case h265
+    case h264
+
+    var launchParameterValue: String? {
+        switch self {
+        case .auto:
+            return nil
+        case .av1:
+            return "av1"
+        case .h265:
+            return "hevc"
+        case .h264:
+            return "h264"
+        }
+    }
+}
+
 public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
     public let width: Int
     public let height: Int
     public let fps: Int
+    public let bitrateKbps: Int
+    public let preferredCodec: ShadowClientVideoCodecPreference
     public let enableHDR: Bool
     public let enableSurroundAudio: Bool
     public let lowLatencyMode: Bool
+    public let enableVSync: Bool
+    public let enableFramePacing: Bool
+    public let enableYUV444: Bool
+    public let unlockBitrateLimit: Bool
+    public let forceHardwareDecoding: Bool
+    public let optimizeGameSettingsForStreaming: Bool
+    public let quitAppOnHostAfterStreamEnds: Bool
 
     public init(
         width: Int = 1920,
         height: Int = 1080,
         fps: Int = 60,
+        bitrateKbps: Int = 20_000,
+        preferredCodec: ShadowClientVideoCodecPreference = .auto,
         enableHDR: Bool,
         enableSurroundAudio: Bool,
-        lowLatencyMode: Bool
+        lowLatencyMode: Bool,
+        enableVSync: Bool = false,
+        enableFramePacing: Bool = false,
+        enableYUV444: Bool = false,
+        unlockBitrateLimit: Bool = false,
+        forceHardwareDecoding: Bool = true,
+        optimizeGameSettingsForStreaming: Bool = true,
+        quitAppOnHostAfterStreamEnds: Bool = false
     ) {
         self.width = max(640, width)
         self.height = max(360, height)
         self.fps = max(30, fps)
+        self.bitrateKbps = min(max(500, bitrateKbps), 500_000)
+        self.preferredCodec = preferredCodec
         self.enableHDR = enableHDR
         self.enableSurroundAudio = enableSurroundAudio
         self.lowLatencyMode = lowLatencyMode
+        self.enableVSync = enableVSync
+        self.enableFramePacing = enableFramePacing
+        self.enableYUV444 = enableYUV444
+        self.unlockBitrateLimit = unlockBitrateLimit
+        self.forceHardwareDecoding = forceHardwareDecoding
+        self.optimizeGameSettingsForStreaming = optimizeGameSettingsForStreaming
+        self.quitAppOnHostAfterStreamEnds = quitAppOnHostAfterStreamEnds
     }
 }
 
@@ -836,6 +883,36 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             "gcmap": "1",
             "gcpersist": "0",
         ]
+
+        parameters["bitrate"] = "\(settings.bitrateKbps)"
+
+        if let codec = settings.preferredCodec.launchParameterValue {
+            // Sunshine/GameStream stacks don't fully agree on this key, so send both.
+            parameters["videoCodec"] = codec
+            parameters["codec"] = codec
+        }
+
+        if settings.enableYUV444 {
+            parameters["yuv444"] = "1"
+        }
+        if settings.unlockBitrateLimit {
+            parameters["unlockBitrate"] = "1"
+        }
+        if settings.enableVSync {
+            parameters["vsync"] = "1"
+        }
+        if settings.enableFramePacing {
+            parameters["framePacing"] = "1"
+        }
+        if !settings.forceHardwareDecoding {
+            parameters["forceHardwareDecode"] = "0"
+        }
+        if settings.optimizeGameSettingsForStreaming {
+            parameters["optimizeGameSettings"] = "1"
+        }
+        if settings.quitAppOnHostAfterStreamEnds {
+            parameters["quitappafter"] = "1"
+        }
 
         if settings.enableHDR {
             parameters["hdrMode"] = "1"
