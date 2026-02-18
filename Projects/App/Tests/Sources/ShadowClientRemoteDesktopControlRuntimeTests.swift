@@ -317,63 +317,6 @@ func remoteDesktopRuntimeFailsLaunchWhenSessionURLIsMissing() async {
     #expect(runtime.activeSession == nil)
 }
 
-@Test("Remote desktop runtime allows external launch when host omits session URL")
-@MainActor
-func remoteDesktopRuntimeAllowsExternalLaunchWithoutSessionURL() async {
-    let metadata = FakeControlTestMetadataClient(
-        serverInfoByHost: [
-            "192.168.0.32": .init(
-                host: "192.168.0.32",
-                displayName: "Desk-External",
-                pairStatus: .paired,
-                currentGameID: 0,
-                serverState: "SUNSHINE_SERVER_FREE",
-                httpsPort: 47984,
-                appVersion: "7.0.0",
-                gfeVersion: nil,
-                uniqueID: "HOST-12"
-            ),
-        ],
-        appListByHost: [
-            "192.168.0.32": [
-                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
-            ],
-        ]
-    )
-    let control = FakeControlClient(
-        simulatedLaunchResult: .init(sessionURL: nil, verb: "launch")
-    )
-    let sessionConnector = FakeSessionConnectionClient(
-        presentationMode: .externalRuntime
-    )
-    let runtime = ShadowClientRemoteDesktopRuntime(
-        metadataClient: metadata,
-        controlClient: control,
-        sessionConnectionClient: sessionConnector
-    )
-
-    runtime.refreshHosts(candidates: ["192.168.0.32"], preferredHost: "192.168.0.32")
-    await waitForControlHostLoaded(runtime)
-
-    runtime.launchSelectedApp(
-        appID: 1,
-        appTitle: "Desktop",
-        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
-    )
-    await waitForLaunchState(runtime)
-
-    let connectCalls = await sessionConnector.connectCalls()
-    #expect(connectCalls.count == 1)
-    #expect(connectCalls.first == "rtsp://192.168.0.32")
-    #expect(runtime.activeSession?.sessionURL == nil)
-
-    if case .launched = runtime.launchState {
-        #expect(true)
-    } else {
-        Issue.record("Expected launched state, got \(runtime.launchState)")
-    }
-}
-
 @Test("Remote desktop runtime fails launch when video session endpoint is unreachable")
 @MainActor
 func remoteDesktopRuntimeFailsLaunchWhenVideoSessionConnectionFails() async {
@@ -766,17 +709,13 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
 }
 
 private actor FakeSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
-    let presentationMode: ShadowClientRemoteSessionPresentationMode
+    let presentationMode: ShadowClientRemoteSessionPresentationMode = .embeddedPlayer
 
     private var recordedConnectCalls: [String] = []
     private var disconnectCallCount = 0
     private let simulatedFailure: (any Error & Sendable)?
 
-    init(
-        presentationMode: ShadowClientRemoteSessionPresentationMode = .embeddedPlayer,
-        simulatedFailure: (any Error & Sendable)? = nil
-    ) {
-        self.presentationMode = presentationMode
+    init(simulatedFailure: (any Error & Sendable)? = nil) {
         self.simulatedFailure = simulatedFailure
     }
 

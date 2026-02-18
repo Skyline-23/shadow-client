@@ -6,7 +6,6 @@ actor ShadowClientmacOSMoonlightSessionConnectionClient: ShadowClientRemoteSessi
     let presentationMode: ShadowClientRemoteSessionPresentationMode = .externalRuntime
 
     private var activeProcess: Process?
-    private static let startupProbeDelay: Duration = .milliseconds(350)
 
     func connect(to sessionURL: String, host: String, appTitle: String) async throws {
         await disconnect()
@@ -31,8 +30,6 @@ actor ShadowClientmacOSMoonlightSessionConnectionClient: ShadowClientRemoteSessi
             : appTitle
 
         let process = Process()
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = [
             "stream",
@@ -44,8 +41,6 @@ actor ShadowClientmacOSMoonlightSessionConnectionClient: ShadowClientRemoteSessi
             "--capture-system-keys",
             "never",
         ]
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
         process.terminationHandler = { [weak self] terminatedProcess in
             Task {
                 await self?.clearActiveProcess(ifSameAs: terminatedProcess)
@@ -59,12 +54,6 @@ actor ShadowClientmacOSMoonlightSessionConnectionClient: ShadowClientRemoteSessi
         }
 
         activeProcess = process
-
-        try await verifyStartup(
-            process: process,
-            stdoutPipe: stdoutPipe,
-            stderrPipe: stderrPipe
-        )
     }
 
     func disconnect() async {
@@ -127,32 +116,6 @@ actor ShadowClientmacOSMoonlightSessionConnectionClient: ShadowClientRemoteSessi
         self.activeProcess = nil
     }
 
-    private func verifyStartup(
-        process: Process,
-        stdoutPipe: Pipe,
-        stderrPipe: Pipe
-    ) async throws {
-        try? await Task.sleep(for: Self.startupProbeDelay)
-        guard !Task.isCancelled else {
-            return
-        }
-
-        guard process.isRunning else {
-            let stderr = Self.readPipeOutput(stderrPipe)
-            let stdout = Self.readPipeOutput(stdoutPipe)
-            let details = Self.summarizeLaunchFailure(
-                stderr: stderr,
-                stdout: stdout,
-                exitCode: process.terminationStatus
-            )
-
-            if let activeProcess, activeProcess === process {
-                self.activeProcess = nil
-            }
-            throw ShadowClientGameStreamError.requestFailed(details)
-        }
-    }
-
     private func waitForExit(
         of process: Process,
         timeout: Duration
@@ -178,31 +141,5 @@ actor ShadowClientmacOSMoonlightSessionConnectionClient: ShadowClientRemoteSessi
         }
 
         _ = kill(pid, SIGKILL)
-    }
-
-    private static func readPipeOutput(_ pipe: Pipe) -> String {
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard !data.isEmpty else {
-            return ""
-        }
-
-        return String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    }
-
-    private static func summarizeLaunchFailure(
-        stderr: String,
-        stdout: String,
-        exitCode: Int32
-    ) -> String {
-        if !stderr.isEmpty {
-            return "Moonlight stream exited early (\(exitCode)): \(stderr)"
-        }
-
-        if !stdout.isEmpty {
-            return "Moonlight stream exited early (\(exitCode)): \(stdout)"
-        }
-
-        return "Moonlight stream exited before session startup (exit code \(exitCode))."
     }
 }
