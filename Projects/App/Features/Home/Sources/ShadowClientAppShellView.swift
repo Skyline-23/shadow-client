@@ -1633,13 +1633,26 @@ public struct ShadowClientAppShellView: View {
             }
 
             if autoLaunchAfterConnect, state.isConnected {
+                await autoLaunchPreferredRemoteApp(preferredHostID: preferredHostID)
+
                 await MainActor.run {
-                    remoteDesktopRuntime.openSessionFlow(
-                        host: state.host ?? host,
-                        appTitle: "Remote Desktop"
+                    guard remoteDesktopRuntime.sessionPresentationMode == .externalRuntime else {
+                        return
+                    }
+
+                    switch remoteDesktopRuntime.launchState {
+                    case .launching, .launched:
+                        return
+                    case .idle, .failed:
+                        break
+                    }
+
+                    let targetHost = state.host ?? host
+                    remoteDesktopRuntime.launchExternalSession(
+                        host: targetHost,
+                        appTitle: "Desktop"
                     )
                 }
-                await autoLaunchPreferredRemoteApp(preferredHostID: preferredHostID)
             }
         }
     }
@@ -1662,6 +1675,7 @@ public struct ShadowClientAppShellView: View {
             if case .loaded = remoteDesktopRuntime.appState {
                 if let preferred = preferredLaunchApp(from: remoteDesktopRuntime.apps) {
                     launchRemoteApp(preferred)
+                    await waitForLaunchTerminalState(maxAttempts: 20)
                 }
                 return
             }
@@ -1676,6 +1690,7 @@ public struct ShadowClientAppShellView: View {
 
         if let preferred = preferredLaunchApp(from: remoteDesktopRuntime.apps) {
             launchRemoteApp(preferred)
+            await waitForLaunchTerminalState(maxAttempts: 20)
             return
         }
 
@@ -1748,6 +1763,18 @@ public struct ShadowClientAppShellView: View {
                 settingsDiagnosticsModel = nil
                 refreshRemoteDesktopCatalog()
             }
+        }
+    }
+
+    @MainActor
+    private func waitForLaunchTerminalState(maxAttempts: Int) async {
+        for _ in 0..<maxAttempts {
+            if case .launching = remoteDesktopRuntime.launchState {
+                try? await Task.sleep(for: .milliseconds(200))
+                continue
+            }
+
+            return
         }
     }
 }

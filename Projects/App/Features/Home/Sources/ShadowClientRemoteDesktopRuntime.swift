@@ -1001,12 +1001,104 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return
         }
 
+        if sessionPresentationMode == .externalRuntime {
+            launchExternalSession(host: normalizedHost, appTitle: appTitle)
+            return
+        }
+
         activeSession = ShadowClientActiveRemoteSession(
             host: normalizedHost,
             appID: 0,
             appTitle: appTitle,
             sessionURL: nil
         )
+    }
+
+    @MainActor
+    public func launchExternalSession(host: String, appTitle: String = "Desktop") {
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedHost.isEmpty else {
+            launchState = .failed("Select host first.")
+            activeSession = nil
+            return
+        }
+
+        guard sessionPresentationMode == .externalRuntime else {
+            openSessionFlow(host: normalizedHost, appTitle: appTitle)
+            return
+        }
+
+        let normalizedTitle = appTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedTitle = normalizedTitle.isEmpty ? "Desktop" : normalizedTitle
+        let fallbackSessionURL = "rtsp://\(normalizedHost)"
+
+        launchState = .launching
+        activeSession = nil
+        launchTask?.cancel()
+        launchGeneration &+= 1
+        let currentLaunchGeneration = launchGeneration
+        let sessionConnectionClient = sessionConnectionClient
+
+        launchTask = Task {
+            do {
+                await sessionConnectionClient.disconnect()
+                try await sessionConnectionClient.connect(
+                    to: fallbackSessionURL,
+                    host: normalizedHost,
+                    appTitle: resolvedTitle
+                )
+
+                if Task.isCancelled {
+                    await MainActor.run {
+                        guard self.launchGeneration == currentLaunchGeneration,
+                              launchState == .launching
+                        else {
+                            return
+                        }
+                        launchState = .idle
+                        activeSession = nil
+                    }
+                    return
+                }
+
+                await MainActor.run {
+                    guard self.launchGeneration == currentLaunchGeneration else {
+                        return
+                    }
+
+                    activeSession = ShadowClientActiveRemoteSession(
+                        host: normalizedHost,
+                        appID: 0,
+                        appTitle: resolvedTitle,
+                        sessionURL: nil
+                    )
+                    launchState = .launched(
+                        "Remote desktop launched (external runtime): \(resolvedTitle) on \(normalizedHost)"
+                    )
+                }
+            } catch {
+                if Task.isCancelled {
+                    await MainActor.run {
+                        guard self.launchGeneration == currentLaunchGeneration,
+                              launchState == .launching
+                        else {
+                            return
+                        }
+                        launchState = .idle
+                        activeSession = nil
+                    }
+                    return
+                }
+
+                await MainActor.run {
+                    guard self.launchGeneration == currentLaunchGeneration else {
+                        return
+                    }
+                    launchState = .failed(error.localizedDescription)
+                    activeSession = nil
+                }
+            }
+        }
     }
 
     @MainActor
