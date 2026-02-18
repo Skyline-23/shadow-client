@@ -201,7 +201,8 @@ public struct ShadowClientAppShellView: View {
     private var sessionPresentationModel: ShadowClientRemoteSessionPresentationModel {
         ShadowClientRemoteSessionPresentationMapper.make(
             activeSessionEndpoint: activeSessionEndpoint,
-            launchState: remoteDesktopRuntime.launchState
+            launchState: remoteDesktopRuntime.launchState,
+            renderState: remoteDesktopRuntime.sessionSurfaceContext.renderState
         )
     }
 
@@ -1091,7 +1092,9 @@ public struct ShadowClientAppShellView: View {
                     .ignoresSafeArea()
 
                 ZStack {
-                    ShadowClientRealtimeSessionSurfaceView()
+                    ShadowClientRealtimeSessionSurfaceView(
+                        context: remoteDesktopRuntime.sessionSurfaceContext
+                    )
 
                     if let overlay = sessionPresentationModel.overlay {
                         playbackOverlayLabel(

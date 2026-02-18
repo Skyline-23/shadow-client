@@ -4,6 +4,8 @@ import SwiftUI
 import AppKit
 
 struct ShadowClientRealtimeSessionSurfaceRepresentable: NSViewRepresentable {
+    let surfaceContext: ShadowClientRealtimeSessionSurfaceContext
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         view.wantsLayer = true
