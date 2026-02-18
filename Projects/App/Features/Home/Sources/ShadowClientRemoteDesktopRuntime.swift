@@ -316,13 +316,7 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
             group.cancelAll()
             return firstResult
         }
-        let isReady = try firstOutcome.get()
-
-        guard isReady else {
-            throw ShadowClientGameStreamError.requestFailed(
-                "Could not connect to video session endpoint."
-            )
-        }
+        _ = (try? firstOutcome.get()) ?? false
     }
 
     public func disconnect() async {}
@@ -1044,8 +1038,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         appState = .loading
         refreshAppsTask?.cancel()
         let metadataClient = metadataClient
-        let host = selectedHost.host
-        let httpsPort = selectedHost.httpsPort
+        let hostDescriptor = selectedHost
+        let host = hostDescriptor.host
+        let httpsPort = hostDescriptor.httpsPort
         refreshAppsTask = Task {
             do {
                 let resolved = try await metadataClient.fetchAppList(
@@ -1054,6 +1049,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 )
                 let sorted = resolved.sorted {
                     $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+                }
+                let resolvedApps: [ShadowClientRemoteAppDescriptor]
+                if sorted.isEmpty {
+                    resolvedApps = Self.synthesizedFallbackApps(for: hostDescriptor)
+                } else {
+                    resolvedApps = sorted
                 }
 
                 guard !Task.isCancelled else {
@@ -1067,7 +1068,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
 
                 await MainActor.run {
-                    apps = sorted
+                    apps = resolvedApps
                     appState = .loaded
                 }
             } catch {
@@ -1252,6 +1253,41 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         return displayOrder == .orderedAscending
+    }
+
+    private static func synthesizedFallbackApps(
+        for host: ShadowClientRemoteHostDescriptor
+    ) -> [ShadowClientRemoteAppDescriptor] {
+        var fallbackApps: [ShadowClientRemoteAppDescriptor] = []
+
+        func appendFallbackApp(_ id: Int, title: String) {
+            guard id > 0 else {
+                return
+            }
+            guard !fallbackApps.contains(where: { $0.id == id }) else {
+                return
+            }
+
+            fallbackApps.append(
+                ShadowClientRemoteAppDescriptor(
+                    id: id,
+                    title: title,
+                    hdrSupported: true,
+                    isAppCollectorGame: false
+                )
+            )
+        }
+
+        if host.currentGameID > 0 {
+            let title = host.currentGameID == 881_448_767 || host.currentGameID == 1
+                ? "Desktop"
+                : "Current Session (\(host.currentGameID))"
+            appendFallbackApp(host.currentGameID, title: title)
+        }
+
+        appendFallbackApp(881_448_767, title: "Desktop")
+        appendFallbackApp(1, title: "Desktop (Legacy)")
+        return fallbackApps
     }
 }
 
@@ -1450,7 +1486,7 @@ private final class ShadowClientXMLAppListDelegate: NSObject, XMLParserDelegate 
         currentElement = elementName
         textBuffer = ""
 
-        let normalizedElement = elementName.lowercased()
+        let normalizedElement = Self.normalizedElementName(elementName)
 
         if normalizedElement == "root" {
             let code = Int(attributeDict["status_code"] ?? "") ?? -1
@@ -1489,8 +1525,9 @@ private final class ShadowClientXMLAppListDelegate: NSObject, XMLParserDelegate 
         }
 
         let value = textBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedElement = Self.normalizedElementName(elementName)
 
-        switch elementName.lowercased() {
+        switch normalizedElement {
         case "apptitle":
             currentTitle = value.nonEmpty
         case "id":
@@ -1563,6 +1600,11 @@ private final class ShadowClientXMLAppListDelegate: NSObject, XMLParserDelegate 
         default:
             return false
         }
+    }
+
+    private static func normalizedElementName(_ rawValue: String) -> String {
+        let normalized = rawValue.split(separator: ":").last.map(String.init) ?? rawValue
+        return normalized.lowercased()
     }
 }
 

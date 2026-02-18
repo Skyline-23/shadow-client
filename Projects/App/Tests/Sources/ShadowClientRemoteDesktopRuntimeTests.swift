@@ -115,6 +115,24 @@ func gameStreamParserMapsLowercaseAppListXML() throws {
     #expect(apps[0] == .init(id: 881448767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false))
 }
 
+@Test("GameStream parser maps applist XML with namespace-prefixed tags")
+func gameStreamParserMapsNamespacedAppListXML() throws {
+    let xml = """
+    <root status_code="200" status_message="OK" xmlns:gfe="urn:test">
+      <gfe:App>
+        <gfe:AppTitle>Desktop</gfe:AppTitle>
+        <gfe:ID>881448767</gfe:ID>
+        <gfe:IsHdrSupported>1</gfe:IsHdrSupported>
+      </gfe:App>
+    </root>
+    """
+
+    let apps = try ShadowClientGameStreamXMLParsers.parseAppList(xml: xml)
+
+    #expect(apps.count == 1)
+    #expect(apps[0] == .init(id: 881448767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false))
+}
+
 @Test("Metadata client falls back to HTTP when HTTPS serverinfo returns non-200 XML")
 func metadataClientFallsBackToHTTPAfterRejectedHTTPSServerInfo() async throws {
     let defaultsSuite = "shadow-client.metadata.serverinfo.\(UUID().uuidString)"
@@ -322,6 +340,43 @@ func remoteDesktopRuntimeRefreshesHostsAndLoadsApps() async {
     } else {
         Issue.record("Expected failed app state for unpaired host, got \(runtime.appState)")
     }
+}
+
+@Test("Remote desktop runtime synthesizes desktop fallback apps when paired host app list is empty")
+@MainActor
+func remoteDesktopRuntimeSynthesizesFallbackAppsForEmptyCatalog() async {
+    let client = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.40": .init(
+                host: "192.168.0.40",
+                displayName: "Studio-PC",
+                pairStatus: .paired,
+                currentGameID: 881_448_767,
+                serverState: "SUNSHINE_SERVER_BUSY",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "C"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.40": [],
+        ]
+    )
+
+    let runtime = ShadowClientRemoteDesktopRuntime(metadataClient: client)
+    runtime.refreshHosts(
+        candidates: ["192.168.0.40"],
+        preferredHost: "192.168.0.40"
+    )
+
+    await waitForHostCatalogReady(runtime)
+    await waitForAppCatalogReady(runtime)
+
+    #expect(runtime.hostState == .loaded)
+    #expect(runtime.appState == .loaded)
+    #expect(runtime.apps.contains(where: { $0.id == 881_448_767 }))
+    #expect(runtime.apps.contains(where: { $0.id == 1 }))
 }
 
 private struct FailingIdentityProvider: ShadowClientPairingIdentityProviding {
