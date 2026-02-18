@@ -223,11 +223,14 @@ private actor ShadowClientRTSPInterleavedClient {
     private var cseq = 1
     private var sessionHeader: String?
     private var remoteHost: NWEndpoint.Host?
+    private var localHost: NWEndpoint.Host?
     private var audioServerPort: NWEndpoint.Port?
     private var videoServerPort: NWEndpoint.Port?
+    private var controlServerPort: NWEndpoint.Port?
     private var audioPingPayload: Data?
     private var videoPingPayload: Data?
     private var controlConnectData: UInt32?
+    private var controlChannelRuntime: ShadowClientSunshineControlChannelRuntime?
     private var useSessionIdentifierV1 = false
 
     init(timeout: Duration) {
@@ -258,6 +261,10 @@ private actor ShadowClientRTSPInterleavedClient {
         if let resolvedHost = resolvedRemoteHost(from: connection) {
             remoteHost = resolvedHost
             logger.notice("RTSP resolved remote endpoint host \(String(describing: resolvedHost), privacy: .public)")
+        }
+        if let resolvedHost = resolvedLocalHost(from: connection) {
+            localHost = resolvedHost
+            logger.notice("RTSP resolved local endpoint host \(String(describing: resolvedHost), privacy: .public)")
         }
         logger.notice("RTSP connected to \(host, privacy: .public):\(portValue, privacy: .public)")
         logger.notice("RTSP session URL \(normalizedURL.absoluteString, privacy: .public)")
@@ -425,6 +432,7 @@ private actor ShadowClientRTSPInterleavedClient {
         logger.notice("RTSP video SETUP ok for payload type \(track.rtpPayloadType, privacy: .public) via \(selectedSetupURL ?? track.controlURL, privacy: .public)")
 
         var parsedControlConnectData: UInt32?
+        var parsedControlServerPort: NWEndpoint.Port?
         let controlSetupCandidates = controlStreamURLCandidates(
             sessionURL: normalizedURL.absoluteString
         )
@@ -445,6 +453,12 @@ private actor ShadowClientRTSPInterleavedClient {
                     url: controlURL,
                     headers: headers
                 )
+                if let transport = response.headers["transport"],
+                   let parsedPort = ShadowClientRTSPTransportHeaderParser.parseServerPort(from: transport)
+                {
+                    parsedControlServerPort = NWEndpoint.Port(rawValue: parsedPort)
+                    logger.notice("RTSP negotiated UDP control server port \(parsedPort, privacy: .public)")
+                }
                 if let parsed = ShadowClientRTSPTransportHeaderParser.parseSunshineControlConnectData(
                     from: response.headers["x-ss-connect-data"]
                 ) {
@@ -458,6 +472,7 @@ private actor ShadowClientRTSPInterleavedClient {
             }
         }
         controlConnectData = parsedControlConnectData
+        controlServerPort = parsedControlServerPort
 
         let handshakeNegotiation = ShadowClientSunshineHandshakeNegotiation(
             audioPingPayload: audioPingPayload,
@@ -548,6 +563,8 @@ private actor ShadowClientRTSPInterleavedClient {
                 "RTSP PLAY failed: \(lastPlayError?.localizedDescription ?? "unknown")"
             )
         }
+
+        await startSunshineControlChannelIfNeeded(host: host)
         return track
     }
 
@@ -571,6 +588,7 @@ private actor ShadowClientRTSPInterleavedClient {
         } else {
             remoteHost = .init(host)
         }
+        localHost = resolvedLocalHost(from: nextConnection)
     }
 
     private func normalizeRTSPURL(_ url: URL) -> URL {
@@ -837,13 +855,47 @@ private actor ShadowClientRTSPInterleavedClient {
         return 0
     }
 
-    func stop() {
+    private func startSunshineControlChannelIfNeeded(host: String) async {
+        guard let controlServerPort else {
+            logger.notice("RTSP control bootstrap skipped (no negotiated control server port)")
+            return
+        }
+
+        if let controlChannelRuntime {
+            await controlChannelRuntime.stop()
+            self.controlChannelRuntime = nil
+        }
+
+        let controlHost = remoteHost ?? .init(host)
+        let runtime = ShadowClientSunshineControlChannelRuntime()
+
+        do {
+            try await runtime.start(
+                host: controlHost,
+                port: controlServerPort,
+                connectData: controlConnectData
+            )
+            controlChannelRuntime = runtime
+        } catch {
+            logger.error("RTSP control bootstrap failed: \(error.localizedDescription, privacy: .public)")
+            await runtime.stop()
+        }
+    }
+
+    func stop() async {
+        if let controlChannelRuntime {
+            await controlChannelRuntime.stop()
+        }
+        controlChannelRuntime = nil
+
         connection?.cancel()
         connection = nil
         readBuffer.removeAll(keepingCapacity: false)
         remoteHost = nil
+        localHost = nil
         audioServerPort = nil
         videoServerPort = nil
+        controlServerPort = nil
         audioPingPayload = nil
         videoPingPayload = nil
         controlConnectData = nil
@@ -914,21 +966,28 @@ private actor ShadowClientRTSPInterleavedClient {
         payloadType: Int,
         onVideoPacket: @escaping @Sendable (Data, Bool) async throws -> Void
     ) async throws {
-        let udpConnection = try await makeVideoUDPConnection(host: host, port: port)
+        let localHost = self.localHost
+        let udpConnection = try await makeVideoUDPConnection(
+            host: host,
+            port: port,
+            localHost: localHost
+        )
         logger.notice("RTSP video receive switched to UDP \(String(describing: host), privacy: .public):\(port.rawValue, privacy: .public)")
 
         let pingPayload = useSessionIdentifierV1 ? videoPingPayload : nil
         let rtspLogger = logger
         var audioPingConnection: NWConnection?
         if let audioServerPort {
-            let connection = NWConnection(host: host, port: audioServerPort, using: .udp)
             do {
-                try await waitForReady(connection)
+                let connection = try await makeAudioUDPPingConnection(
+                    host: host,
+                    port: audioServerPort,
+                    localHost: localHost
+                )
                 rtspLogger.notice("RTSP UDP audio ping socket ready on \(audioServerPort.rawValue, privacy: .public)")
                 audioPingConnection = connection
             } catch {
                 rtspLogger.error("RTSP UDP audio ping socket setup failed: \(error.localizedDescription, privacy: .public)")
-                connection.cancel()
             }
         }
         let audioPingPayload = useSessionIdentifierV1 ? self.audioPingPayload : nil
@@ -1045,30 +1104,61 @@ private actor ShadowClientRTSPInterleavedClient {
 
     private func makeVideoUDPConnection(
         host: NWEndpoint.Host,
-        port: NWEndpoint.Port
+        port: NWEndpoint.Port,
+        localHost: NWEndpoint.Host?
     ) async throws -> NWConnection {
-        if let clientPort = NWEndpoint.Port(rawValue: clientPortBase),
-           let anyIPv4 = IPv4Address("0.0.0.0")
+        if let localHost,
+           let clientPort = NWEndpoint.Port(rawValue: clientPortBase)
         {
             let parameters = NWParameters.udp
             parameters.requiredLocalEndpoint = .hostPort(
-                host: .ipv4(anyIPv4),
+                host: localHost,
                 port: clientPort
             )
             let boundConnection = NWConnection(host: host, port: port, using: parameters)
             do {
                 try await waitForReady(boundConnection)
-                logger.notice("RTSP UDP socket bound to local port \(self.clientPortBase, privacy: .public)")
+                logger.notice("RTSP UDP video socket bound to \(String(describing: localHost), privacy: .public):\(self.clientPortBase, privacy: .public)")
                 return boundConnection
             } catch {
-                logger.error("RTSP UDP local bind failed on port \(self.clientPortBase, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                logger.error("RTSP UDP video bind failed on \(String(describing: localHost), privacy: .public):\(self.clientPortBase, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 boundConnection.cancel()
             }
         }
 
         let fallbackConnection = NWConnection(host: host, port: port, using: .udp)
         try await waitForReady(fallbackConnection)
-        logger.notice("RTSP UDP socket using ephemeral local port")
+        logger.notice("RTSP UDP video socket using ephemeral local port")
+        return fallbackConnection
+    }
+
+    private func makeAudioUDPPingConnection(
+        host: NWEndpoint.Host,
+        port: NWEndpoint.Port,
+        localHost: NWEndpoint.Host?
+    ) async throws -> NWConnection {
+        if let localHost,
+           let clientPort = NWEndpoint.Port(rawValue: clientPortBase + 1)
+        {
+            let parameters = NWParameters.udp
+            parameters.requiredLocalEndpoint = .hostPort(
+                host: localHost,
+                port: clientPort
+            )
+            let boundConnection = NWConnection(host: host, port: port, using: parameters)
+            do {
+                try await waitForReady(boundConnection)
+                logger.notice("RTSP UDP audio ping socket bound to \(String(describing: localHost), privacy: .public):\(clientPort.rawValue, privacy: .public)")
+                return boundConnection
+            } catch {
+                logger.error("RTSP UDP audio ping bind failed on \(String(describing: localHost), privacy: .public):\(clientPort.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                boundConnection.cancel()
+            }
+        }
+
+        let fallbackConnection = NWConnection(host: host, port: port, using: .udp)
+        try await waitForReady(fallbackConnection)
+        logger.notice("RTSP UDP audio ping socket using ephemeral local port")
         return fallbackConnection
     }
 
@@ -1512,6 +1602,13 @@ private actor ShadowClientRTSPInterleavedClient {
             return host
         }
 
+        return nil
+    }
+
+    private func resolvedLocalHost(from connection: NWConnection) -> NWEndpoint.Host? {
+        if case let .hostPort(host, _) = connection.currentPath?.localEndpoint {
+            return host
+        }
         return nil
     }
 
