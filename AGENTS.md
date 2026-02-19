@@ -12,6 +12,8 @@ Tuist manifests live at repo root: `Project.swift`, `Tuist.swift`, and `Tuist/Pa
 ## Build, Test, and Development Commands
 - `tuist install`: resolve dependencies.
 - `tuist generate --no-open`: generate `shadow-client.xcworkspace`.
+- `xcodebuild build -workspace shadow-client.xcworkspace -scheme ShadowClientmacOSApp -destination 'platform=macOS'`: primary local build validation.
+- `xcodebuild build -workspace shadow-client.xcworkspace -scheme ShadowClientTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO`: primary fast compile check for app test target.
 - `xcodebuild build -workspace shadow-client.xcworkspace -scheme ShadowClientiOSApp -destination 'generic/platform=iOS Simulator'`: build iOS app.
 - `xcodebuild test -workspace shadow-client.xcworkspace -scheme ShadowClientTests -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2'`: run tests.
 - `xcodebuild clean test -workspace shadow-client.xcworkspace -scheme ShadowClientTests -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2'`: use when module cache/state is stale.
@@ -30,6 +32,7 @@ Propagate recovery diagnostics and session launch plan (HDR/audio/reconfigure fl
 ## Testing Guidelines
 TDD is mandatory: start with a failing test, implement minimally, then refactor.
 Use Swift Testing (`import Testing`, `@Test`, `#expect`) for authored tests, and do not add new `XCTestCase`-based tests.
+Default local validation order is macOS-first (`ShadowClientmacOSApp` build + `ShadowClientTests` compile build + `Modules` swift tests). iOS simulator test runs are secondary and executed when macOS-first validation is green or when iOS-specific behavior is touched.
 Keep coverage for low-latency gates, telemetry normalization, HDR/audio/settings behavior, native controller mapping profiles, and controller feedback contracts.
 Keep coverage for controller feedback presentation state and USB-first DualSense requirements.
 Use `StreamingSessionSettingsMapper` + `AdaptiveSessionLaunchRuntime` + `GameControllerInputAdapter`/`GameControllerFeedbackRuntime` for telemetry-driven launch and USB-first feedback input plans.
