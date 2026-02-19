@@ -683,10 +683,19 @@ private actor ShadowClientRTSPInterleavedClient {
             )
         }
 
+        var didStartSunshineControl = false
         if controlServerPort != nil {
-            logger.debug("RTSP control path negotiated; running legacy first-frame compatibility probe")
+            await ensureSunshineControlChannelStarted(fallbackHost: remoteHost ?? .init(host))
+            didStartSunshineControl = hasStartedControlChannelBootstrap
+            if didStartSunshineControl {
+                logger.debug("RTSP control path negotiated; Sunshine control bootstrap ready")
+            } else {
+                logger.debug("RTSP control path negotiated; Sunshine bootstrap unavailable, trying legacy first-frame compatibility probe")
+            }
         }
-        await attemptLegacyFirstFrameBootstrap(host: remoteHost ?? .init(host))
+        if !didStartSunshineControl {
+            await attemptLegacyFirstFrameBootstrap(host: remoteHost ?? .init(host))
+        }
         return track
     }
 
