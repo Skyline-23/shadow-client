@@ -182,5 +182,19 @@ let project = Project(
                 .external(name: "Testing"),
             ]
         ),
+        .target(
+            name: "ShadowClientmacOSUITests",
+            destinations: .macOS,
+            product: .uiTests,
+            bundleId: "com.skyline23.shadow-client.macos.uitests",
+            deploymentTargets: .macOS("14.0"),
+            infoPlist: .default,
+            buildableFolders: [
+                "Projects/App/macOSUITests/Sources",
+            ],
+            dependencies: [
+                .target(name: "ShadowClientmacOSApp"),
+            ]
+        ),
     ]
 )
