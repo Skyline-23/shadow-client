@@ -65,6 +65,11 @@ Use subagents in parallel for non-trivial work with disjoint ownership, then mer
 - Use `xcodebuildmcp --style minimal ...` for CLI calls to avoid known next-step rendering failures in normal style.
 - When duplicate labels exist (for example two `Refresh` buttons), do not tap by label. Use `snapshot-ui` coordinates and tap by `-x/-y`.
 
+### macOS Runtime Validation (Required)
+- Default validation target is macOS. Use `xcodebuildmcp --style minimal macos build-and-run` for launch and `xcodebuildmcp --style minimal macos stop` for cleanup.
+- `xcodebuildmcp` UI tap tools are simulator-only (`--simulator-id` required). For macOS click automation, use AX/CGEvent scripts from CLI and attach before/after screenshots plus RTSP/control log snippets.
+- If the desktop is on lock screen, do not continue blind retries. Unlock first, then rerun click/log capture sequence.
+
 ### Realtime Streaming Integration Notes
 - Treat Sunshine `DESCRIBE` codec metadata as advisory; actual selected codec is finalized by RTSP `ANNOUNCE` (`x-nv-vqos[0].bitStreamFormat`) and launch plan policy.
 - For H264/H265 Moonlight NV RTP packets, use depacketizer tail strategy `.passthroughForAnnexBCodecs` (do not enforce `lastPacketPayloadLength` truncation).
