@@ -1,6 +1,11 @@
 import Foundation
 
 public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
+    public enum TailTruncationStrategy: Sendable {
+        case trimUsingLastPacketLength
+        case passthroughForAnnexBCodecs
+    }
+
     private static let nvVideoPacketHeaderSize = 16
     private static let streamPacketIndexMask: UInt32 = 0x00FF_FFFF
     private static let flagContainsPicData: UInt8 = 0x01
@@ -28,8 +33,16 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
     private var nextFrameIndex: UInt32?
     private var lastPacketInStream: UInt32?
     private var lastPacketPayloadLength: UInt16 = 0
+    private var tailTruncationStrategy: TailTruncationStrategy
 
-    public init() {}
+    public init(tailTruncationStrategy: TailTruncationStrategy = .trimUsingLastPacketLength) {
+        self.tailTruncationStrategy = tailTruncationStrategy
+    }
+
+    public mutating func configureTailTruncationStrategy(_ strategy: TailTruncationStrategy) {
+        tailTruncationStrategy = strategy
+        lastPacketPayloadLength = 0
+    }
 
     public mutating func reset() {
         currentFrame.removeAll(keepingCapacity: false)
@@ -94,9 +107,12 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
             if frameHeaderSize > 0 {
                 packetPayload.removeFirst(frameHeaderSize)
             }
+            if tailTruncationStrategy == .passthroughForAnnexBCodecs {
+                packetPayload = trimLeadingBytesUntilAnnexBStartCode(packetPayload)
+            }
         }
 
-        if lastPacket {
+        if lastPacket && tailTruncationStrategy == .trimUsingLastPacketLength {
             guard let truncatedPayload = truncateLastPacketPayload(
                 packetPayload,
                 frameHeaderSize: frameHeaderSize
@@ -224,7 +240,12 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         guard frameHeaderSize <= payload.count else {
             return nil
         }
-        let lastPayloadLength = readUInt16LE(payload, at: 4)
+        let lastPayloadLength: UInt16
+        if tailTruncationStrategy == .trimUsingLastPacketLength {
+            lastPayloadLength = readUInt16LE(payload, at: 4)
+        } else {
+            lastPayloadLength = 0
+        }
         return FirstPacketHeader(
             frameHeaderSize: frameHeaderSize,
             lastPacketPayloadLength: lastPayloadLength
@@ -256,6 +277,9 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
             return 0
         }
 
+        if payload.count >= 12 {
+            return 12
+        }
         return payload.count >= 8 ? 8 : 0
     }
 
@@ -283,6 +307,42 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
             (UInt32(data[offset + 1]) << 8) |
             (UInt32(data[offset + 2]) << 16) |
             (UInt32(data[offset + 3]) << 24)
+    }
+
+    private func trimLeadingBytesUntilAnnexBStartCode(_ payload: Data) -> Data {
+        guard !payload.isEmpty else {
+            return payload
+        }
+
+        if hasAnnexBStartCode(in: payload, at: payload.startIndex) {
+            return payload
+        }
+
+        let searchLimit = max(payload.startIndex, min(payload.endIndex - 3, 64))
+        var index = payload.startIndex + 1
+        while index <= searchLimit {
+            if hasAnnexBStartCode(in: payload, at: index) {
+                return Data(payload[index...])
+            }
+            index += 1
+        }
+        return payload
+    }
+
+    private func hasAnnexBStartCode(in payload: Data, at index: Int) -> Bool {
+        guard index + 2 < payload.endIndex else {
+            return false
+        }
+        if payload[index] == 0 && payload[index + 1] == 0 && payload[index + 2] == 1 {
+            return true
+        }
+        guard index + 3 < payload.endIndex else {
+            return false
+        }
+        return payload[index] == 0 &&
+            payload[index + 1] == 0 &&
+            payload[index + 2] == 0 &&
+            payload[index + 3] == 1
     }
 
     private func isBefore24(_ lhs: UInt32, _ rhs: UInt32) -> Bool {

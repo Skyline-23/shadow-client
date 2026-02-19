@@ -2,6 +2,7 @@ import CoreVideo
 import Foundation
 import Network
 import os
+import VideoToolbox
 
 public enum ShadowClientRealtimeSessionRuntimeError: Error, Equatable, Sendable {
     case invalidSessionURL
@@ -56,9 +57,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         videoConfiguration: ShadowClientRemoteSessionVideoConfiguration
     ) async throws {
         try await disconnect()
+        let resolvedVideoConfiguration = Self.resolveRuntimeVideoConfiguration(videoConfiguration)
         await decoder.setPreferredOutputDimensions(
-            width: videoConfiguration.width,
-            height: videoConfiguration.height
+            width: resolvedVideoConfiguration.width,
+            height: resolvedVideoConfiguration.height
         )
 
         await MainActor.run {
@@ -76,9 +78,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         )
         let track = try await client.start(
             url: url,
-            videoConfiguration: videoConfiguration
+            videoConfiguration: resolvedVideoConfiguration
         )
 
+        moonlightNVDepacketizer.configureTailTruncationStrategy(
+            Self.depacketizerTailTruncationStrategy(for: track.codec)
+        )
         moonlightNVDepacketizer.reset()
         await MainActor.run {
             surfaceContext.transition(to: .waitingForFirstFrame)
@@ -166,6 +171,54 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 surfaceContext.frameStore.update(pixelBuffer: sendableFrame.value)
                 surfaceContext.transition(to: .rendering)
             }
+        }
+    }
+
+    private static func resolveRuntimeVideoConfiguration(
+        _ configuration: ShadowClientRemoteSessionVideoConfiguration
+    ) -> ShadowClientRemoteSessionVideoConfiguration {
+        let resolvedCodecPreference = resolveCodecPreference(
+            from: configuration.preferredCodec
+        )
+        return .init(
+            width: configuration.width,
+            height: configuration.height,
+            preferredCodec: resolvedCodecPreference
+        )
+    }
+
+    private static func resolveCodecPreference(
+        from preferredCodec: ShadowClientVideoCodecPreference
+    ) -> ShadowClientVideoCodecPreference {
+        let supportsAV1: Bool
+        if #available(iOS 17.0, macOS 14.0, tvOS 17.0, *) {
+            supportsAV1 = VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1)
+        } else {
+            supportsAV1 = false
+        }
+
+        let nonAV1Fallback: ShadowClientVideoCodecPreference =
+            VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC) ? .h265 : .h264
+
+        switch preferredCodec {
+        case .auto:
+            return supportsAV1 ? .auto : nonAV1Fallback
+        case .av1:
+            return supportsAV1 ? .av1 : nonAV1Fallback
+        case .h265, .h264:
+            return preferredCodec
+        }
+    }
+
+    private static func depacketizerTailTruncationStrategy(
+        for codec: ShadowClientVideoCodec
+    ) -> ShadowClientMoonlightNVRTPDepacketizer.TailTruncationStrategy {
+        switch codec {
+        case .h264, .h265:
+            // H264/H265 tolerate trailing zero padding and Sunshine doesn't guarantee valid lastPayloadLength.
+            return .passthroughForAnnexBCodecs
+        case .av1:
+            return .trimUsingLastPacketLength
         }
     }
 }
@@ -305,30 +358,45 @@ private actor ShadowClientRTSPInterleavedClient {
         let sdp = String(data: describe.body, encoding: .utf8) ?? ""
         logger.notice("RTSP DESCRIBE parsed body bytes \(describe.body.count, privacy: .public), characters \(sdp.count, privacy: .public)")
         let contentBase = describe.headers["content-base"] ?? describe.headers["content-location"]
-        let track: ShadowClientRTSPVideoTrackDescriptor
+        let parsedTrack: ShadowClientRTSPVideoTrackDescriptor
         if sdp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            track = fallbackVideoTrackDescriptor(
+            parsedTrack = fallbackVideoTrackDescriptor(
                 sessionURL: normalizedURL.absoluteString,
                 describeSDP: nil,
                 videoConfiguration: videoConfiguration
             )
-            logger.notice("RTSP DESCRIBE returned empty SDP; using fallback video track \(track.controlURL, privacy: .public)")
+            logger.notice("RTSP DESCRIBE returned empty SDP; using fallback video track \(parsedTrack.controlURL, privacy: .public)")
         } else {
             do {
-                track = try ShadowClientRTSPSessionDescriptionParser.parseVideoTrack(
+                parsedTrack = try ShadowClientRTSPSessionDescriptionParser.parseVideoTrack(
                     sdp: sdp,
                     contentBase: contentBase,
                     fallbackSessionURL: normalizedURL.absoluteString
                 )
             } catch {
-                track = fallbackVideoTrackDescriptor(
+                parsedTrack = fallbackVideoTrackDescriptor(
                     sessionURL: normalizedURL.absoluteString,
                     describeSDP: sdp,
                     videoConfiguration: videoConfiguration
                 )
-                logger.notice("RTSP track parse failed (\(error.localizedDescription, privacy: .public)); using fallback video track \(track.controlURL, privacy: .public)")
+                logger.notice("RTSP track parse failed (\(error.localizedDescription, privacy: .public)); using fallback video track \(parsedTrack.controlURL, privacy: .public)")
             }
         }
+        let announceCodec = preferredAnnounceCodec(
+            preferredCodec: videoConfiguration.preferredCodec,
+            describedCodec: parsedTrack.codec
+        )
+        if announceCodec != parsedTrack.codec {
+            logger.notice(
+                "RTSP overriding described codec \(String(describing: parsedTrack.codec), privacy: .public) with preferred codec \(String(describing: announceCodec), privacy: .public)"
+            )
+        }
+        let track = ShadowClientRTSPVideoTrackDescriptor(
+            codec: announceCodec,
+            rtpPayloadType: parsedTrack.rtpPayloadType,
+            controlURL: parsedTrack.controlURL,
+            parameterSets: announceCodec == parsedTrack.codec ? parsedTrack.parameterSets : []
+        )
 
         let setupTransportHeader = "unicast;X-GS-ClientPort=\(clientPortBase)-\(clientPortBase + 1)"
         let setupURLCandidates = videoControlURLCandidates(
@@ -566,6 +634,22 @@ private actor ShadowClientRTSPInterleavedClient {
 
         await startSunshineControlChannelIfNeeded(host: host)
         return track
+    }
+
+    private func preferredAnnounceCodec(
+        preferredCodec: ShadowClientVideoCodecPreference,
+        describedCodec: ShadowClientVideoCodec
+    ) -> ShadowClientVideoCodec {
+        switch preferredCodec {
+        case .auto:
+            return describedCodec
+        case .av1:
+            return .av1
+        case .h265:
+            return .h265
+        case .h264:
+            return .h264
+        }
     }
 
     private func reconnect(

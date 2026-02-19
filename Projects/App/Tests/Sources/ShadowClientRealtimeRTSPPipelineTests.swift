@@ -214,6 +214,62 @@ func av1DepacketizerReassemblesSofEofPacketsUsingLastPayloadLength() {
     #expect(frame == Data([0xAA, 0xBB, 0xCC, 0xDD, 0xEE]))
 }
 
+@Test("Moonlight NV depacketizer passthrough strategy ignores invalid lastPayloadLength for H264/H265")
+func moonlightNvDepacketizerPassthroughIgnoresInvalidLastPayloadLength() {
+    var depacketizer = ShadowClientMoonlightNVRTPDepacketizer(
+        tailTruncationStrategy: .passthroughForAnnexBCodecs
+    )
+    let frameIndex: UInt32 = 29
+    let firstPayload: [UInt8] = [0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1F]
+    let eofPayload: [UInt8] = [0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x21, 0x00, 0x00]
+
+    let sofPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 220,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF,
+        payloadBytes: firstPayload,
+        includeFrameHeaderWithLastPayloadLength: 4
+    )
+    let eofPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 221,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagEOF,
+        payloadBytes: eofPayload
+    )
+
+    #expect(depacketizer.ingest(payload: sofPacket, marker: false) == nil)
+    let frame = depacketizer.ingest(payload: eofPacket, marker: true)
+
+    #expect(frame == Data(firstPayload + eofPayload))
+}
+
+@Test("Moonlight NV depacketizer trim strategy drops invalid lastPayloadLength frames")
+func moonlightNvDepacketizerTrimDropsInvalidLastPayloadLength() {
+    var depacketizer = ShadowClientMoonlightNVRTPDepacketizer(
+        tailTruncationStrategy: .trimUsingLastPacketLength
+    )
+    let frameIndex: UInt32 = 30
+
+    let sofPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 240,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF,
+        payloadBytes: [0x11, 0x22],
+        includeFrameHeaderWithLastPayloadLength: 4
+    )
+    let eofPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 241,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagEOF,
+        payloadBytes: [0x33, 0x44, 0x55]
+    )
+
+    #expect(depacketizer.ingest(payload: sofPacket, marker: false) == nil)
+    let frame = depacketizer.ingest(payload: eofPacket, marker: true)
+
+    #expect(frame == nil)
+}
+
 @Test("AV1 depacketizer drops discontinuous streamPacketIndex sequence")
 func av1DepacketizerDropsCorruptPacketSequence() {
     var depacketizer = ShadowClientAV1RTPDepacketizer()
