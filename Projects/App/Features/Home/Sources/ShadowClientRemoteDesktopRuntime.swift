@@ -1,6 +1,5 @@
 import Combine
 import Foundation
-import Network
 
 public enum ShadowClientRemoteHostPairStatus: String, Equatable, Sendable {
     case paired
@@ -325,14 +324,13 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
     public let presentationMode: ShadowClientRemoteSessionPresentationMode = .embeddedPlayer
     public let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext
 
-    private let timeout: Duration
     private let sessionRuntime: ShadowClientRealtimeRTSPSessionRuntime
 
     public init(
         timeout: Duration = ShadowClientGameStreamNetworkDefaults.defaultSessionConnectTimeout,
         sessionRuntime: ShadowClientRealtimeRTSPSessionRuntime = .init()
     ) {
-        self.timeout = timeout
+        _ = timeout
         self.sessionRuntime = sessionRuntime
         self.sessionSurfaceContext = sessionRuntime.surfaceContext
     }
@@ -343,211 +341,16 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
         appTitle: String,
         videoConfiguration: ShadowClientRemoteSessionVideoConfiguration
     ) async throws {
-        let endpoint = try Self.parseEndpoint(from: sessionURL)
-        let fallbackHost = Self.normalizedFallbackHost(host)
-        let candidates = Self.connectionCandidates(
-            endpoint: endpoint,
-            fallbackHost: fallbackHost
-        )
-
-        var capturedRuntimeError: Error?
-        for candidate in candidates {
-            let isReady = try await Self.probeEndpoint(
-                host: candidate.host,
-                port: candidate.port,
-                timeout: timeout
-            )
-            if isReady {
-                do {
-                    let routedURL = Self.rewriteHost(
-                        for: sessionURL,
-                        host: candidate.host
-                    )
-                    try await sessionRuntime.connect(
-                        sessionURL: routedURL,
-                        host: host,
-                        appTitle: appTitle,
-                        videoConfiguration: videoConfiguration
-                    )
-                    return
-                } catch {
-                    capturedRuntimeError = error
-                }
-            }
-        }
-
-        if let capturedRuntimeError {
-            throw ShadowClientGameStreamError.requestFailed(
-                capturedRuntimeError.localizedDescription
-            )
-        }
-
-        throw ShadowClientGameStreamError.requestFailed(
-            "Could not connect to remote session endpoint."
+        try await sessionRuntime.connect(
+            sessionURL: sessionURL,
+            host: host,
+            appTitle: appTitle,
+            videoConfiguration: videoConfiguration
         )
     }
 
     public func disconnect() async {
         try? await sessionRuntime.disconnect()
-    }
-
-    private static func parseEndpoint(
-        from sessionURL: String
-    ) throws -> (host: String, port: NWEndpoint.Port) {
-        let trimmed = sessionURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw ShadowClientGameStreamError.invalidURL
-        }
-
-        let candidate = ShadowClientRTSPProtocolProfile.withRTSPSchemeIfMissing(trimmed)
-        guard let url = URL(string: candidate),
-              let host = url.host
-        else {
-            throw ShadowClientGameStreamError.invalidURL
-        }
-
-        let portValue = url.port ?? ShadowClientRTSPProtocolProfile.defaultPort
-        guard (ShadowClientGameStreamNetworkDefaults.minimumPort...ShadowClientGameStreamNetworkDefaults.maximumPort).contains(portValue) else {
-            throw ShadowClientGameStreamError.invalidURL
-        }
-        guard let port = NWEndpoint.Port(rawValue: UInt16(portValue)) else {
-            throw ShadowClientGameStreamError.invalidURL
-        }
-
-        return (host: host, port: port)
-    }
-
-    private static func normalizedFallbackHost(_ rawHost: String) -> String? {
-        let trimmed = rawHost.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return nil
-        }
-
-        let candidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(trimmed)
-        guard let parsed = URL(string: candidate), let host = parsed.host, !host.isEmpty else {
-            return nil
-        }
-        return host
-    }
-
-    private static func connectionCandidates(
-        endpoint: (host: String, port: NWEndpoint.Port),
-        fallbackHost: String?
-    ) -> [(host: String, port: NWEndpoint.Port)] {
-        var candidates: [(host: String, port: NWEndpoint.Port)] = [endpoint]
-        guard let fallbackHost, fallbackHost.caseInsensitiveCompare(endpoint.host) != .orderedSame else {
-            return candidates
-        }
-
-        candidates.append((host: fallbackHost, port: endpoint.port))
-        return candidates
-    }
-
-    private static func probeEndpoint(
-        host: String,
-        port: NWEndpoint.Port,
-        timeout: Duration
-    ) async throws -> Bool {
-        let connection = NWConnection(
-            host: NWEndpoint.Host(host),
-            port: port,
-            using: .tcp
-        )
-        let queue = DispatchQueue(
-            label: "com.skyline23.shadowclient.video-session.\(host).\(port.rawValue)"
-        )
-
-        let firstOutcome = await withTaskGroup(
-            of: Result<Bool, Error>.self,
-            returning: Result<Bool, Error>.self
-        ) { group in
-            group.addTask {
-                .success(await Self.awaitConnectionReady(connection, queue: queue))
-            }
-            group.addTask {
-                do {
-                    try await Task.sleep(for: timeout)
-                    connection.cancel()
-                    return .success(false)
-                } catch {
-                    return .failure(error)
-                }
-            }
-
-            let firstResult = await group.next() ?? .success(false)
-            group.cancelAll()
-            return firstResult
-        }
-
-        return try firstOutcome.get()
-    }
-
-    private static func awaitConnectionReady(
-        _ connection: NWConnection,
-        queue: DispatchQueue
-    ) async -> Bool {
-        await withCheckedContinuation { continuation in
-            final class ResumeGate: @unchecked Sendable {
-                private let lock = NSLock()
-                private let connection: NWConnection
-                private var continuation: CheckedContinuation<Bool, Never>?
-
-                init(
-                    connection: NWConnection,
-                    continuation: CheckedContinuation<Bool, Never>
-                ) {
-                    self.connection = connection
-                    self.continuation = continuation
-                }
-
-                func finish(with result: Bool) {
-                    lock.lock()
-                    guard let continuation else {
-                        lock.unlock()
-                        return
-                    }
-                    self.continuation = nil
-                    lock.unlock()
-
-                    connection.stateUpdateHandler = nil
-                    if result {
-                        connection.cancel()
-                    }
-                    continuation.resume(returning: result)
-                }
-            }
-
-            let gate = ResumeGate(connection: connection, continuation: continuation)
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    gate.finish(with: true)
-                case .failed, .cancelled:
-                    gate.finish(with: false)
-                default:
-                    break
-                }
-            }
-
-            connection.start(queue: queue)
-        }
-    }
-
-    private static func rewriteHost(
-        for sessionURL: String,
-        host: String
-    ) -> String {
-        let trimmed = sessionURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return sessionURL
-        }
-
-        let candidate = ShadowClientRTSPProtocolProfile.withRTSPSchemeIfMissing(trimmed)
-        guard var components = URLComponents(string: candidate) else {
-            return candidate
-        }
-        components.host = host
-        return components.string ?? candidate
     }
 }
 
@@ -794,6 +597,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var appRefreshGeneration: UInt64 = 0
     private var pairGeneration: UInt64 = 0
     private var launchGeneration: UInt64 = 0
+    private var pendingSelectedHostID: String?
 
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
@@ -846,6 +650,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             apps = []
             cachedAppsByHostID = [:]
             selectedHostID = nil
+            pendingSelectedHostID = nil
             hostState = .idle
             appState = .idle
             pairingState = .idle
@@ -893,16 +698,24 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 hostState = .loaded
                 let preferredNormalized = Self.normalizeCandidate(preferredHost)
 
-                if let selectedHostID,
-                   sorted.contains(where: { $0.id == selectedHostID })
+                if let pendingSelectedHostID,
+                   sorted.contains(where: { $0.id == pendingSelectedHostID })
                 {
-                    self.selectedHostID = selectedHostID
-                } else if let preferredNormalized,
-                          let preferred = sorted.first(where: { $0.host.lowercased() == preferredNormalized })
-                {
-                    selectedHostID = preferred.id
+                    self.selectedHostID = pendingSelectedHostID
+                    self.pendingSelectedHostID = nil
                 } else {
-                    selectedHostID = sorted.first?.id
+                    self.pendingSelectedHostID = nil
+                    if let selectedHostID,
+                       sorted.contains(where: { $0.id == selectedHostID })
+                    {
+                        self.selectedHostID = selectedHostID
+                    } else if let preferredNormalized,
+                              let preferred = sorted.first(where: { $0.host.lowercased() == preferredNormalized })
+                    {
+                        selectedHostID = preferred.id
+                    } else {
+                        selectedHostID = sorted.first?.id
+                    }
                 }
 
                 refreshSelectedHostApps()
@@ -1168,10 +981,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     @MainActor
     public func selectHost(_ hostID: String) {
+        pendingSelectedHostID = hostID
         guard hosts.contains(where: { $0.id == hostID }) else {
             return
         }
 
+        pendingSelectedHostID = nil
         selectedHostID = hostID
         refreshSelectedHostApps()
     }

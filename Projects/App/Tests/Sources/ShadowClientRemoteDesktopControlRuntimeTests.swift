@@ -174,6 +174,42 @@ func remoteDesktopRuntimeDoesNotRetryCertificateRequiredFailure() async {
     }
 }
 
+@Test("Remote desktop runtime applies pending host selection after host catalog load")
+@MainActor
+func remoteDesktopRuntimeAppliesPendingHostSelectionAfterCatalogLoad() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "wifi.skyline23.com": .init(
+                host: "wifi.skyline23.com",
+                displayName: "Skyline23-PC",
+                pairStatus: .paired,
+                currentGameID: 881_448_767,
+                serverState: "SUNSHINE_SERVER_BUSY",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-12"
+            ),
+        ],
+        appListByHost: [
+            "wifi.skyline23.com": [
+                .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: FakeControlClient()
+    )
+
+    runtime.selectHost("wifi.skyline23.com")
+    runtime.refreshHosts(candidates: ["wifi.skyline23.com"])
+    await waitForControlHostLoaded(runtime)
+
+    #expect(runtime.selectedHostID == "wifi.skyline23.com")
+    #expect(runtime.selectedHost?.host == "wifi.skyline23.com")
+}
+
 @Test("Remote desktop runtime launches selected app through injected control client")
 @MainActor
 func remoteDesktopRuntimeLaunchesSelectedApp() async {
