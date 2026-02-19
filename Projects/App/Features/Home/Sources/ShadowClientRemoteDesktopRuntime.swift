@@ -681,14 +681,41 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
         let resolvedHTTPSPort = httpsPort ?? defaultHTTPSPort
 
-        let xml = try await requestXML(
-            host: endpoint.host,
-            port: resolvedHTTPSPort,
-            scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
-            command: "applist"
-        )
+        do {
+            let httpsXML = try await requestXML(
+                host: endpoint.host,
+                port: resolvedHTTPSPort,
+                scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
+                command: "applist"
+            )
 
-        return try ShadowClientGameStreamXMLParsers.parseAppList(xml: xml)
+            return try ShadowClientGameStreamXMLParsers.parseAppList(xml: httpsXML)
+        } catch let httpsError as ShadowClientGameStreamError {
+            if Self.isUnauthorizedCertificateError(httpsError) {
+                throw httpsError
+            }
+
+            guard Self.isRecoverableAppListTransportFailure(httpsError) else {
+                throw httpsError
+            }
+
+            do {
+                let httpXML = try await requestXML(
+                    host: endpoint.host,
+                    port: endpoint.port,
+                    scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
+                    command: "applist"
+                )
+
+                return try ShadowClientGameStreamXMLParsers.parseAppList(xml: httpXML)
+            } catch let httpError as ShadowClientGameStreamError {
+                if Self.isAppTransportSecurityBlockedError(httpError) {
+                    throw httpsError
+                }
+
+                throw httpError
+            }
+        }
     }
 
     private static func isUnauthorizedCertificateError(_ error: ShadowClientGameStreamError) -> Bool {
@@ -708,6 +735,17 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return normalized.contains("app transport security") ||
             normalized.contains("insecure http is blocked")
+    }
+
+    private static func isRecoverableAppListTransportFailure(
+        _ error: ShadowClientGameStreamError
+    ) -> Bool {
+        switch error {
+        case .requestFailed, .invalidResponse:
+            return true
+        case .invalidHost, .invalidURL, .malformedXML, .responseRejected:
+            return false
+        }
     }
 
     private static func makeUnauthorizedServerInfo(

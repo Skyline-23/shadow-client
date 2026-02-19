@@ -274,7 +274,7 @@ func metadataClientReturnsUnpairedHostWhenHTTPFallbackIsBlockedByATS() async thr
     )
 }
 
-@Test("Metadata client does not downgrade app list query to HTTP when HTTPS fails")
+@Test("Metadata client does not downgrade app list query to HTTP for unauthorized HTTPS 401 responses")
 func metadataClientKeepsAppListOnHTTPSOnly() async {
     let defaultsSuite = "shadow-client.metadata.applist.https-only.\(UUID().uuidString)"
     guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
@@ -290,7 +290,9 @@ func metadataClientKeepsAppListOnHTTPSOnly() async {
             .init(
                 scheme: "https",
                 command: "applist",
-                result: .failure(.responseRejected(code: 401, message: "The client is not authorized. Certificate verification failed."))
+                result: .success(
+                    #"<root status_code="401" status_message="The client is not authorized. Certificate verification failed."/>"#
+                )
             ),
         ]
     )
@@ -318,6 +320,71 @@ func metadataClientKeepsAppListOnHTTPSOnly() async {
     #expect(
         await transport.calls() == [
             .init(scheme: "https", command: "applist"),
+        ]
+    )
+}
+
+@Test("Metadata client falls back to HTTP app list query for recoverable HTTPS transport failures")
+func metadataClientFallsBackToHTTPAppListOnRecoverableHTTPSTransportFailure() async throws {
+    let defaultsSuite = "shadow-client.metadata.applist.http-fallback.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let transport = ScriptedRequestTransport(
+        script: [
+            .init(
+                scheme: "https",
+                command: "applist",
+                expectedPort: 47984,
+                result: .failure(.requestFailed("The network connection was lost."))
+            ),
+            .init(
+                scheme: "http",
+                command: "applist",
+                expectedPort: 48010,
+                result: .success(
+                    """
+                    <root status_code="200" status_message="OK">
+                      <App>
+                        <AppTitle>Desktop</AppTitle>
+                        <ID>1</ID>
+                        <IsHdrSupported>1</IsHdrSupported>
+                        <IsAppCollectorGame>0</IsAppCollectorGame>
+                      </App>
+                    </root>
+                    """
+                )
+            ),
+        ]
+    )
+
+    let client = NativeGameStreamMetadataClient(
+        identityStore: .init(provider: FailingIdentityProvider(), defaults: defaults),
+        pinnedCertificateStore: .init(defaults: defaults),
+        transport: transport
+    )
+
+    let apps = try await client.fetchAppList(
+        host: "wifi.skyline23.com:48010",
+        httpsPort: 47984
+    )
+
+    #expect(apps == [.init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false)])
+    #expect(
+        await transport.calls() == [
+            .init(scheme: "https", command: "applist"),
+            .init(scheme: "http", command: "applist"),
+        ]
+    )
+    #expect(
+        await transport.callsWithPort() == [
+            .init(scheme: "https", command: "applist", port: 47984),
+            .init(scheme: "http", command: "applist", port: 48010),
         ]
     )
 }
@@ -434,14 +501,34 @@ private actor ScriptedRequestTransport: ShadowClientGameStreamRequestTransportin
         let command: String
     }
 
+    struct CallWithPort: Equatable, Sendable {
+        let scheme: String
+        let command: String
+        let port: Int
+    }
+
     struct ScriptStep: Sendable {
         let scheme: String
         let command: String
+        let expectedPort: Int?
         let result: Result<String, ShadowClientGameStreamError>
+
+        init(
+            scheme: String,
+            command: String,
+            expectedPort: Int? = nil,
+            result: Result<String, ShadowClientGameStreamError>
+        ) {
+            self.scheme = scheme
+            self.command = command
+            self.expectedPort = expectedPort
+            self.result = result
+        }
     }
 
     private var script: [ScriptStep]
     private var recordedCalls: [Call] = []
+    private var recordedCallsWithPort: [CallWithPort] = []
 
     init(script: [ScriptStep]) {
         self.script = script
@@ -458,6 +545,7 @@ private actor ScriptedRequestTransport: ShadowClientGameStreamRequestTransportin
         clientCertificateCredential: URLCredential?
     ) async throws -> String {
         recordedCalls.append(.init(scheme: scheme, command: command))
+        recordedCallsWithPort.append(.init(scheme: scheme, command: command, port: port))
         guard !script.isEmpty else {
             throw ShadowClientGameStreamError.requestFailed("Unexpected request \(scheme)://\(host):\(port)/\(command)")
         }
@@ -468,12 +556,21 @@ private actor ScriptedRequestTransport: ShadowClientGameStreamRequestTransportin
                 "Unexpected request \(scheme)://\(host):\(port)/\(command), expected \(step.scheme)/\(step.command)"
             )
         }
+        if let expectedPort = step.expectedPort, expectedPort != port {
+            throw ShadowClientGameStreamError.requestFailed(
+                "Unexpected request \(scheme)://\(host):\(port)/\(command), expected port \(expectedPort)"
+            )
+        }
 
         return try step.result.get()
     }
 
     func calls() -> [Call] {
         recordedCalls
+    }
+
+    func callsWithPort() -> [CallWithPort] {
+        recordedCallsWithPort
     }
 }
 
