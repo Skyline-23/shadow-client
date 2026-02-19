@@ -14,3 +14,6 @@
 
 # Upstream Qt reference snapshot (do not track in this repo)
 /moonlight-qt-master/
+
+# Local upstream/reference source drops (do not track)
+/external/
