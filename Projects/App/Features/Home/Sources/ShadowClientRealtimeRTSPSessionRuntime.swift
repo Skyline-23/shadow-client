@@ -670,6 +670,7 @@ private actor ShadowClientRTSPInterleavedClient {
             )
         }
 
+        await attemptLegacyFirstFrameBootstrap(host: remoteHost ?? .init(host))
         await startSunshineControlChannelIfNeeded(host: host)
         return track
     }
@@ -1314,6 +1315,26 @@ private actor ShadowClientRTSPInterleavedClient {
         }
     }
 
+    private func attemptLegacyFirstFrameBootstrap(host: NWEndpoint.Host) async {
+        guard let port = NWEndpoint.Port(
+            rawValue: ShadowClientRTSPProtocolProfile.legacyFirstFrameBootstrapPort
+        ) else {
+            return
+        }
+
+        let bootstrapConnection = NWConnection(host: host, port: port, using: .tcp)
+        do {
+            try await waitForReady(
+                bootstrapConnection,
+                timeout: .milliseconds(700)
+            )
+            logger.notice("RTSP legacy first-frame bootstrap connected on \(port.rawValue, privacy: .public)")
+        } catch {
+            logger.debug("RTSP legacy first-frame bootstrap skipped: \(error.localizedDescription, privacy: .public)")
+        }
+        bootstrapConnection.cancel()
+    }
+
     private func sendRequest(
         method: String,
         url: String,
@@ -1704,6 +1725,13 @@ private actor ShadowClientRTSPInterleavedClient {
     }
 
     private func waitForReady(_ connection: NWConnection) async throws {
+        try await waitForReady(connection, timeout: timeout)
+    }
+
+    private func waitForReady(
+        _ connection: NWConnection,
+        timeout: Duration
+    ) async throws {
         let result = await withTaskGroup(
             of: Result<Void, Error>.self,
             returning: Result<Void, Error>.self
@@ -1759,7 +1787,7 @@ private actor ShadowClientRTSPInterleavedClient {
 
             group.addTask {
                 do {
-                    try await Task.sleep(for: self.timeout)
+                    try await Task.sleep(for: timeout)
                     connection.cancel()
                     return .failure(ShadowClientRTSPInterleavedClientError.connectionFailed)
                 } catch {
