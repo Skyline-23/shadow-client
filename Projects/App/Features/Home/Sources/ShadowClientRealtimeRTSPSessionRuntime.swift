@@ -1968,13 +1968,22 @@ private actor ShadowClientRTSPInterleavedClient {
                 minimumIncompleteLength: ShadowClientRealtimeSessionDefaults.minimumTransportReadLength,
                 maximumLength: ShadowClientRealtimeSessionDefaults.maximumTransportReadLength
             ) { content, _, isComplete, error in
+                // Sunshine can close/reset a RTSP TCP socket right after writing a valid
+                // response chunk. In that case Network.framework may deliver `content`
+                // together with a terminal error. Keep the bytes and let response parsing
+                // decide whether the message is complete.
+                if let content, !content.isEmpty {
+                    continuation.resume(returning: content)
+                    return
+                }
+
                 if let error {
                     continuation.resume(throwing: error)
                     return
                 }
 
                 if isComplete {
-                    continuation.resume(returning: content ?? Data())
+                    continuation.resume(returning: Data())
                     return
                 }
 
