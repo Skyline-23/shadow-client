@@ -1036,11 +1036,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         "Host did not return a remote session URL."
                     )
                 }
-                let routedSessionURL = Self.routedSessionURL(
-                    sessionURL,
-                    preferredHost: selectedHost.host
-                )
-
                 let resolvedTitle: String
                 if let launchedAppTitle, !launchedAppTitle.isEmpty {
                     resolvedTitle = launchedAppTitle
@@ -1049,7 +1044,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
 
                 try await sessionConnectionClient.connect(
-                    to: routedSessionURL,
+                    to: sessionURL,
                     host: selectedHost.host,
                     appTitle: resolvedTitle,
                     videoConfiguration: .init(
@@ -1086,14 +1081,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         host: selectedHost.host,
                         appID: appID,
                         appTitle: resolvedTitle,
-                        sessionURL: routedSessionURL
+                        sessionURL: sessionURL
                     )
                     if sessionPresentationMode == .externalRuntime {
                         launchState = .launched(
                             "Remote desktop launched (\(result.verb)): \(resolvedTitle) on \(selectedHost.host)"
                         )
                     } else {
-                        launchState = .launched("Remote session transport connected (\(result.verb)): \(routedSessionURL)")
+                        launchState = .launched("Remote session transport connected (\(result.verb)): \(sessionURL)")
                     }
                 }
             } catch {
@@ -1419,91 +1414,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         return host.lowercased()
-    }
-
-    private static func routedSessionURL(
-        _ sessionURL: String,
-        preferredHost: String
-    ) -> String {
-        let trimmedURL = sessionURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedURL.isEmpty else {
-            return sessionURL
-        }
-
-        let candidate = ShadowClientRTSPProtocolProfile.withRTSPSchemeIfMissing(trimmedURL)
-        guard var components = URLComponents(string: candidate),
-              let returnedHost = components.host,
-              let normalizedPreferredHost = normalizeCandidate(preferredHost)?
-                .split(separator: ":")
-                .first
-                .map(String.init),
-              !normalizedPreferredHost.isEmpty
-        else {
-            return candidate
-        }
-
-        if shouldPreferRequestedHost(
-            returnedHost: returnedHost,
-            requestedHost: normalizedPreferredHost
-        ) {
-            components.host = normalizedPreferredHost
-            return components.string ?? candidate
-        }
-
-        return candidate
-    }
-
-    private static func shouldPreferRequestedHost(
-        returnedHost: String,
-        requestedHost: String
-    ) -> Bool {
-        if returnedHost.caseInsensitiveCompare(requestedHost) == .orderedSame {
-            return false
-        }
-
-        return isPrivateOrLocalHost(returnedHost)
-    }
-
-    private static func isPrivateOrLocalHost(_ host: String) -> Bool {
-        let lower = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if lower == ShadowClientHostClassificationDefaults.localhost ||
-            lower == ShadowClientHostClassificationDefaults.loopbackIPv6 ||
-            lower.hasPrefix(ShadowClientHostClassificationDefaults.linkLocalIPv6Prefix) ||
-            lower.hasPrefix(ShadowClientHostClassificationDefaults.uniqueLocalIPv6PrefixFC) ||
-            lower.hasPrefix(ShadowClientHostClassificationDefaults.uniqueLocalIPv6PrefixFD)
-        {
-            return true
-        }
-
-        let parts = lower.split(separator: ".")
-        guard parts.count == 4,
-              let octet1 = Int(parts[0]),
-              let octet2 = Int(parts[1])
-        else {
-            return false
-        }
-
-        if octet1 == ShadowClientHostClassificationDefaults.privateIPv4ClassA ||
-            octet1 == ShadowClientHostClassificationDefaults.loopbackIPv4ClassA
-        {
-            return true
-        }
-        if octet1 == ShadowClientHostClassificationDefaults.privateIPv4ClassCFirstOctet &&
-            octet2 == ShadowClientHostClassificationDefaults.privateIPv4ClassCSecondOctet
-        {
-            return true
-        }
-        if octet1 == ShadowClientHostClassificationDefaults.privateIPv4ClassBFirstOctet &&
-            ShadowClientHostClassificationDefaults.privateIPv4ClassBSecondOctetRange.contains(octet2)
-        {
-            return true
-        }
-        if octet1 == ShadowClientHostClassificationDefaults.linkLocalIPv4FirstOctet &&
-            octet2 == ShadowClientHostClassificationDefaults.linkLocalIPv4SecondOctet
-        {
-            return true
-        }
-        return false
     }
 
     private static func compareHosts(
