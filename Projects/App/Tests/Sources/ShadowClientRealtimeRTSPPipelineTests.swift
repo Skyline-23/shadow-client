@@ -100,6 +100,29 @@ func rtspSdpParserHandlesDescribeWithoutMediaSection() throws {
     #expect(track.codec == .av1)
 }
 
+@Test("RTSP SDP parser falls back to Sunshine codec hint when m=video payload list is empty")
+func rtspSdpParserHandlesSunshineVideoMediaWithoutPayloadType() throws {
+    let sdp = """
+    v=0
+    o=- 0 0 IN IP4 127.0.0.1
+    s=No Name
+    t=0 0
+    m=video 47998
+    a=control:streamid=video
+    a=x-nv-vqos[0].bitStreamFormat:2
+    """
+
+    let track = try ShadowClientRTSPSessionDescriptionParser.parseVideoTrack(
+        sdp: sdp,
+        contentBase: "rtsp://skyline23-pc.local:48010/",
+        fallbackSessionURL: "rtsp://skyline23-pc.local:48010"
+    )
+
+    #expect(track.codec == .av1)
+    #expect(track.rtpPayloadType == ShadowClientRTSPProtocolProfile.fallbackVideoPayloadType)
+    #expect(track.controlURL == "rtsp://skyline23-pc.local:48010/streamid=video")
+}
+
 @Test("RTSP fallback payload inference prefers codec-specific RTP map")
 func rtspFallbackPayloadInferencePrefersCodecMatch() {
     let sdp = """
@@ -142,6 +165,22 @@ func rtspTransportParserExtractsServerPort() {
     let header = "unicast;server_port=47998-47999;source=192.168.0.12"
     let port = ShadowClientRTSPTransportHeaderParser.parseServerPort(from: header)
     #expect(port == 47_998)
+}
+
+@Test("RTSP host header includes explicit URL port")
+func rtspHostHeaderIncludesExplicitPort() {
+    let header = ShadowClientRTSPProtocolProfile.hostHeaderValue(
+        forRTSPURLString: "rtsp://wifi.skyline23.com:48010/streamid=video"
+    )
+    #expect(header == "wifi.skyline23.com:48010")
+}
+
+@Test("RTSP host header brackets IPv6 literal when URL has explicit port")
+func rtspHostHeaderBracketsIPv6Literal() {
+    let header = ShadowClientRTSPProtocolProfile.hostHeaderValue(
+        forRTSPURLString: "rtsp://[2001:db8::1]:48010/streamid=video"
+    )
+    #expect(header == "[2001:db8::1]:48010")
 }
 
 @Test("RTSP transport parser returns nil when server port is missing")

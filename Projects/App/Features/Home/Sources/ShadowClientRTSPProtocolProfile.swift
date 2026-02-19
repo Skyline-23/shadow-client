@@ -57,6 +57,30 @@ enum ShadowClientRTSPProtocolProfile {
         "\(setupTransportHeaderPrefix)\(clientPortBase)-\(clientPortBase + 1)"
     }
 
+    static func hostHeaderValue(forRTSPURLString urlString: String) -> String? {
+        guard let components = URLComponents(string: urlString),
+              let host = components.host
+        else {
+            return nil
+        }
+
+        let normalizedHost: String
+        if host.contains(":"),
+           !host.hasPrefix("["),
+           !host.hasSuffix("]")
+        {
+            normalizedHost = "[\(host)]"
+        } else {
+            normalizedHost = host
+        }
+
+        guard let port = components.port else {
+            return normalizedHost
+        }
+
+        return "\(normalizedHost):\(port)"
+    }
+
     static func hasAbsoluteRTSPScheme(_ value: String) -> Bool {
         let lowered = value.lowercased()
         return lowered.hasPrefix(rtspSchemePrefix) || lowered.hasPrefix(rtspsSchemePrefix)

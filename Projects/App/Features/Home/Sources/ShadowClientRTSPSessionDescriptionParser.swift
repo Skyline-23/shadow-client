@@ -59,19 +59,18 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             .filter { !$0.isEmpty }
 
         var insideVideoSection = false
-        var hasVideoMediaLine = false
         var advertisedPayloadTypes: [Int] = []
         var controlValue: String?
         var codecByPayloadType: [Int: ShadowClientVideoCodec] = [:]
         var fmtpByPayloadType: [Int: [String: String]] = [:]
         var globalCodecByPayloadType: [Int: ShadowClientVideoCodec] = [:]
         var globalFmtpByPayloadType: [Int: [String: String]] = [:]
+        let sunshineHint = parseSunshineVideoHint(from: normalizedLines)
 
         for line in normalizedLines {
             if line.hasPrefix("m=") {
                 insideVideoSection = line.hasPrefix("m=video")
                 if insideVideoSection {
-                    hasVideoMediaLine = true
                     advertisedPayloadTypes = parsePayloadTypes(fromMediaLine: line)
                 }
                 continue
@@ -113,17 +112,32 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             }
         }
 
-        if !hasVideoMediaLine {
-            if codecByPayloadType.isEmpty {
-                codecByPayloadType = globalCodecByPayloadType
+        if codecByPayloadType.isEmpty {
+            codecByPayloadType = globalCodecByPayloadType
+        }
+        if fmtpByPayloadType.isEmpty {
+            fmtpByPayloadType = globalFmtpByPayloadType
+        }
+
+        if advertisedPayloadTypes.isEmpty {
+            let discoveredPayloadTypes = Set(codecByPayloadType.keys)
+                .union(fmtpByPayloadType.keys)
+            advertisedPayloadTypes = discoveredPayloadTypes.sorted()
+        }
+
+        if advertisedPayloadTypes.isEmpty,
+           let hintedPayloadType = sunshineHint.payloadType
+        {
+            advertisedPayloadTypes = [hintedPayloadType]
+        }
+
+        if let hintedCodec = sunshineHint.codec {
+            let payloadType = sunshineHint.payloadType ?? advertisedPayloadTypes.first ?? ShadowClientRTSPProtocolProfile.fallbackVideoPayloadType
+            if !advertisedPayloadTypes.contains(payloadType) {
+                advertisedPayloadTypes.append(payloadType)
             }
-            if fmtpByPayloadType.isEmpty {
-                fmtpByPayloadType = globalFmtpByPayloadType
-            }
-            if advertisedPayloadTypes.isEmpty {
-                let discoveredPayloadTypes = Set(codecByPayloadType.keys)
-                    .union(fmtpByPayloadType.keys)
-                advertisedPayloadTypes = discoveredPayloadTypes.sorted()
+            if codecByPayloadType[payloadType] == nil {
+                codecByPayloadType[payloadType] = hintedCodec
             }
         }
 
@@ -302,6 +316,57 @@ public enum ShadowClientRTSPSessionDescriptionParser {
         default:
             return nil
         }
+    }
+
+    private static func parseSunshineVideoHint(
+        from lines: [String]
+    ) -> (payloadType: Int?, codec: ShadowClientVideoCodec?) {
+        var payloadType: Int?
+        var codec: ShadowClientVideoCodec?
+
+        for line in lines {
+            let lower = line.lowercased()
+
+            if let value = extractColonSeparatedValue(
+                line: line,
+                key: "a=x-nv-video[0].payloadtype:"
+            ), let parsed = Int(value) {
+                payloadType = parsed
+            }
+
+            if let value = extractColonSeparatedValue(
+                line: line,
+                key: "a=x-nv-vqos[0].bitstreamformat:"
+            ), let parsed = Int(value) {
+                switch parsed {
+                case 0:
+                    codec = .h264
+                case 1:
+                    codec = .h265
+                case 2:
+                    codec = .av1
+                default:
+                    break
+                }
+            }
+
+            if codec == nil, lower.contains("sprop-parameter-sets=aaaau") {
+                codec = .h265
+            }
+        }
+
+        return (payloadType, codec)
+    }
+
+    private static func extractColonSeparatedValue(
+        line: String,
+        key: String
+    ) -> String? {
+        let lower = line.lowercased()
+        guard lower.hasPrefix(key.lowercased()) else {
+            return nil
+        }
+        return String(line.dropFirst(key.count)).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func parseFMTP(_ line: String) -> (payloadType: Int, parameters: [String: String])? {

@@ -321,10 +321,6 @@ private actor ShadowClientRTSPInterleavedClient {
             )
         }
 
-        // Some GameStream/Sunshine builds close RTSP TCP after OPTIONS.
-        // Reconnect before DESCRIBE to avoid reusing half-closed sockets.
-        try await reconnect(host: host, port: port)
-
         let describe: ShadowClientRTSPResponse
         do {
             describe = try await sendDescribeRequest(
@@ -336,9 +332,26 @@ private actor ShadowClientRTSPInterleavedClient {
                 ]
             )
         } catch {
-            throw ShadowClientRTSPInterleavedClientError.requestFailed(
-                "RTSP DESCRIBE failed: \(error.localizedDescription)"
+            logger.notice(
+                "RTSP DESCRIBE retry on fresh TCP connection after failure: \(error.localizedDescription, privacy: .public)"
             )
+            // Some GameStream/Sunshine stacks close the RTSP socket after OPTIONS.
+            // Retry DESCRIBE on a fresh socket before failing the handshake.
+            try await reconnect(host: host, port: port)
+            do {
+                describe = try await sendDescribeRequest(
+                    url: normalizedURL.absoluteString,
+                    headers: [
+                        ShadowClientRTSPRequestDefaults.headerAccept: ShadowClientRTSPRequestDefaults.acceptSDP,
+                        ShadowClientRTSPRequestDefaults.headerIfModifiedSince: ShadowClientRTSPRequestDefaults.ifModifiedSinceEpoch,
+                        ShadowClientRTSPRequestDefaults.headerUserAgent: ShadowClientRTSPRequestDefaults.userAgent,
+                    ]
+                )
+            } catch {
+                throw ShadowClientRTSPInterleavedClientError.requestFailed(
+                    "RTSP DESCRIBE failed: \(error.localizedDescription)"
+                )
+            }
         }
         let sdp = String(data: describe.body, encoding: .utf8) ?? ""
         logger.notice("RTSP DESCRIBE parsed body bytes \(describe.body.count, privacy: .public), characters \(sdp.count, privacy: .public)")
@@ -1260,8 +1273,7 @@ private actor ShadowClientRTSPInterleavedClient {
         )
         try await send(bytes: requestPayload, over: connection)
 
-        let rawResponse = try await readResponseUntilConnectionClose()
-        let response = try parseRTSPResponseFromRawData(rawResponse)
+        let response = try await readResponse()
         logResponse(method: ShadowClientRTSPRequestDefaults.describeMethod, response: response)
 
         guard (200...299).contains(response.statusCode) else {
@@ -1287,8 +1299,8 @@ private actor ShadowClientRTSPInterleavedClient {
         lines.append(
             "\(ShadowClientRTSPRequestDefaults.headerClientVersion): \(ShadowClientRTSPRequestDefaults.clientVersionHeaderValue)"
         )
-        if let host = URL(string: url)?.host {
-            lines.append("\(ShadowClientRTSPRequestDefaults.headerHost): \(host)")
+        if let hostHeader = ShadowClientRTSPProtocolProfile.hostHeaderValue(forRTSPURLString: url) {
+            lines.append("\(ShadowClientRTSPRequestDefaults.headerHost): \(hostHeader)")
         }
         for key in headers.keys.sorted() {
             if let value = headers[key] {
@@ -1304,104 +1316,27 @@ private actor ShadowClientRTSPInterleavedClient {
         return payload
     }
 
-    private func readResponseUntilConnectionClose() async throws -> Data {
-        var response = Data()
-
-        while true {
-            do {
-                let chunk = try await receiveBytes()
-                if chunk.isEmpty {
-                    break
-                }
-                response.append(chunk)
-            } catch {
-                if response.isEmpty {
-                    throw error
-                }
-
-                logger.notice(
-                    "RTSP read terminated after partial response (\(error.localizedDescription, privacy: .public)); proceeding with buffered bytes \(response.count, privacy: .public)"
-                )
-                break
-            }
-        }
-
-        guard !response.isEmpty else {
-            throw ShadowClientRTSPInterleavedClientError.connectionClosed
-        }
-        return response
-    }
-
-    private func parseRTSPResponseFromRawData(_ rawData: Data) throws -> ShadowClientRTSPResponse {
-        let headerTerminatorCRLF = ShadowClientRTSPProtocolProfile.headerTerminatorCRLF
-        let headerTerminatorLF = ShadowClientRTSPProtocolProfile.headerTerminatorLF
-        let headerRange: Range<Int>
-        let bodyStart: Int
-
-        if let range = rawData.range(of: headerTerminatorCRLF) {
-            headerRange = range
-            bodyStart = range.upperBound
-        } else if let range = rawData.range(of: headerTerminatorLF) {
-            headerRange = range
-            bodyStart = range.upperBound
-        } else {
-            throw ShadowClientRTSPInterleavedClientError.invalidResponse
-        }
-
-        let headerData = rawData[..<headerRange.lowerBound]
-        guard let headerText = String(data: headerData, encoding: .utf8) else {
-            throw ShadowClientRTSPInterleavedClientError.invalidResponse
-        }
-
-        let lines = headerText
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        guard let statusLine = lines.first,
-              statusLine.hasPrefix(ShadowClientRTSPRequestDefaults.protocolVersion),
-              let statusCode = Int(statusLine.split(separator: " ").dropFirst().first ?? "")
-        else {
-            throw ShadowClientRTSPInterleavedClientError.invalidResponse
-        }
-
-        var headers: [String: String] = [:]
-        for line in lines.dropFirst() {
-            guard let separator = line.firstIndex(of: ":") else {
-                continue
-            }
-            let key = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines)
-            headers[key] = value
-        }
-
-        let body: Data
-        if let contentLength = Int(
-            headers[ShadowClientRTSPRequestDefaults.responseHeaderContentLength] ?? ""
-        ), contentLength >= 0 {
-            let end = min(rawData.count, bodyStart + contentLength)
-            body = Data(rawData[bodyStart..<end])
-        } else {
-            body = bodyStart <= rawData.count ? Data(rawData[bodyStart...]) : Data()
-        }
-
-        return ShadowClientRTSPResponse(
-            statusCode: statusCode,
-            headers: headers,
-            body: body
-        )
-    }
-
     private func readResponse() async throws -> ShadowClientRTSPResponse {
         while true {
             if let response = parseRTSPResponseIfAvailable() {
                 return response
             }
 
-            let chunk = try await receiveBytes()
-            guard !chunk.isEmpty else {
-                throw ShadowClientRTSPInterleavedClientError.connectionClosed
+            do {
+                let chunk = try await receiveBytes()
+                guard !chunk.isEmpty else {
+                    throw ShadowClientRTSPInterleavedClientError.connectionClosed
+                }
+                readBuffer.append(chunk)
+            } catch {
+                if let response = parseRTSPResponseIfAvailable() {
+                    logger.notice(
+                        "RTSP response completed after transport read error (\(error.localizedDescription, privacy: .public)); using buffered bytes"
+                    )
+                    return response
+                }
+                throw error
             }
-            readBuffer.append(chunk)
         }
     }
 
