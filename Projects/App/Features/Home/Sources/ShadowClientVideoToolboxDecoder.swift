@@ -6,6 +6,7 @@ import VideoToolbox
 
 public enum ShadowClientVideoToolboxDecoderError: Error, Equatable, Sendable {
     case missingParameterSets
+    case missingFrameDimensions
     case unsupportedCodec
     case cannotCreateFormatDescription(OSStatus)
     case cannotCreateDecoder(OSStatus)
@@ -17,7 +18,9 @@ extension ShadowClientVideoToolboxDecoderError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .missingParameterSets:
-            return "Waiting for codec parameter sets (SPS/PPS or VPS/SPS/PPS)."
+            return "Waiting for codec parameter sets (SPS/PPS or VPS/SPS/PPS) before decode."
+        case .missingFrameDimensions:
+            return "Waiting for launch video dimensions before starting decoder."
         case .unsupportedCodec:
             return "Decoder codec is not supported."
         case let .cannotCreateFormatDescription(status):
@@ -53,8 +56,16 @@ public actor ShadowClientVideoToolboxDecoder {
     private var session: VTDecompressionSession?
     private var outputBridge: ShadowClientRealtimeDecoderOutputBridge?
     private var frameIndex: Int64 = 0
+    private var preferredOutputDimensions: CMVideoDimensions?
+    private var decodePresentationTimeScale: CMTimeScale
 
-    public init() {}
+    public init(
+        decodePresentationTimeScale: CMTimeScale = CMTimeScale(
+            ShadowClientVideoDecoderDefaults.defaultDecodePresentationTimeScale
+        )
+    ) {
+        self.decodePresentationTimeScale = Self.normalizedPresentationTimeScale(decodePresentationTimeScale)
+    }
 
     deinit {
         if let session {
@@ -74,6 +85,35 @@ public actor ShadowClientVideoToolboxDecoder {
         frameIndex = 0
     }
 
+    public func setPreferredOutputDimensions(
+        width: Int,
+        height: Int,
+        fps: Int? = nil
+    ) {
+        preferredOutputDimensions = CMVideoDimensions(
+            width: Int32(max(1, width)),
+            height: Int32(max(1, height))
+        )
+        if let fps {
+            setDecodePresentationTimeScale(fps: fps)
+        }
+    }
+
+    public func setDecodePresentationTimeScale(fps: Int) {
+        let boundedFPS = min(max(fps, 1), Int(Int32.max))
+        decodePresentationTimeScale = Self.normalizedPresentationTimeScale(
+            CMTimeScale(boundedFPS)
+        )
+    }
+
+    public func setDecodePresentationTimeScale(_ timescale: CMTimeScale) {
+        decodePresentationTimeScale = Self.normalizedPresentationTimeScale(timescale)
+    }
+
+    public func applyLaunchSettings(_ settings: ShadowClientGameStreamLaunchSettings) {
+        setDecodePresentationTimeScale(fps: settings.fps)
+    }
+
     public func decode(
         accessUnit annexBAccessUnit: Data,
         codec newCodec: ShadowClientVideoCodec,
@@ -85,13 +125,31 @@ public actor ShadowClientVideoToolboxDecoder {
             codec = newCodec
         }
 
-        let nals = splitAnnexB(annexBAccessUnit)
-        let streamParameterSets = extractParameterSets(from: nals, codec: newCodec)
-        if !explicitParameterSets.isEmpty {
-            latestParameterSets = explicitParameterSets
-        }
-        if !streamParameterSets.isEmpty {
-            latestParameterSets = streamParameterSets
+        let samplePayload: Data
+        switch newCodec {
+        case .h264, .h265:
+            var nals = splitAnnexB(annexBAccessUnit)
+            if nals.isEmpty {
+                nals = splitLengthPrefixedNALUnits(annexBAccessUnit)
+            }
+            guard !nals.isEmpty else {
+                return
+            }
+            let streamParameterSets = extractParameterSets(from: nals, codec: newCodec)
+            if !explicitParameterSets.isEmpty {
+                latestParameterSets = explicitParameterSets
+            }
+            if !streamParameterSets.isEmpty {
+                latestParameterSets = streamParameterSets
+            }
+
+            let sampleNals = nals.filter { !isParameterSetNAL($0, codec: newCodec) }
+            guard !sampleNals.isEmpty else {
+                return
+            }
+            samplePayload = makeLengthPrefixedBuffer(from: sampleNals)
+        case .av1:
+            samplePayload = annexBAccessUnit
         }
 
         try ensureDecoderSession(codec: newCodec, onFrame: onFrame)
@@ -99,16 +157,10 @@ public actor ShadowClientVideoToolboxDecoder {
             throw ShadowClientVideoToolboxDecoderError.missingParameterSets
         }
 
-        let sampleNals = nals.filter { !isParameterSetNAL($0, codec: newCodec) }
-        guard !sampleNals.isEmpty else {
-            return
-        }
-
-        let lengthPrefixed = makeLengthPrefixedBuffer(from: sampleNals)
-        let pts = CMTime(value: frameIndex, timescale: 60)
+        let pts = CMTime(value: frameIndex, timescale: decodePresentationTimeScale)
         frameIndex += 1
         let sampleBuffer = try makeSampleBuffer(
-            payload: lengthPrefixed,
+            payload: samplePayload,
             formatDescription: formatDescription,
             presentationTimeStamp: pts
         )
@@ -139,7 +191,7 @@ public actor ShadowClientVideoToolboxDecoder {
         }
 
         let parameterSets = latestParameterSets
-        guard !parameterSets.isEmpty else {
+        guard codec == .av1 || !parameterSets.isEmpty else {
             throw ShadowClientVideoToolboxDecoderError.missingParameterSets
         }
 
@@ -189,6 +241,13 @@ public actor ShadowClientVideoToolboxDecoder {
 
         VTSessionSetProperty(newSession, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         session = newSession
+    }
+
+    private static func normalizedPresentationTimeScale(_ timescale: CMTimeScale) -> CMTimeScale {
+        guard timescale > 0 else {
+            return CMTimeScale(ShadowClientVideoDecoderDefaults.defaultDecodePresentationTimeScale)
+        }
+        return timescale
     }
 
     private func makeFormatDescription(
@@ -242,6 +301,26 @@ public actor ShadowClientVideoToolboxDecoder {
                     }
                 }
             }
+            guard status == noErr, let formatDescription else {
+                throw ShadowClientVideoToolboxDecoderError.cannotCreateFormatDescription(status)
+            }
+            return formatDescription
+        case .av1:
+            guard #available(iOS 17.0, macOS 14.0, tvOS 17.0, *) else {
+                throw ShadowClientVideoToolboxDecoderError.unsupportedCodec
+            }
+            guard let dimensions = preferredOutputDimensions else {
+                throw ShadowClientVideoToolboxDecoderError.missingFrameDimensions
+            }
+            var formatDescription: CMFormatDescription?
+            let status = CMVideoFormatDescriptionCreate(
+                allocator: kCFAllocatorDefault,
+                codecType: kCMVideoCodecType_AV1,
+                width: dimensions.width,
+                height: dimensions.height,
+                extensions: nil,
+                formatDescriptionOut: &formatDescription
+            )
             guard status == noErr, let formatDescription else {
                 throw ShadowClientVideoToolboxDecoderError.cannotCreateFormatDescription(status)
             }
@@ -396,6 +475,34 @@ public actor ShadowClientVideoToolboxDecoder {
         return nals
     }
 
+    private func splitLengthPrefixedNALUnits(_ buffer: Data) -> [Data] {
+        var nals: [Data] = []
+        var index = buffer.startIndex
+
+        while index + 4 <= buffer.endIndex {
+            let length = Int(buffer[index]) << 24 |
+                Int(buffer[index + 1]) << 16 |
+                Int(buffer[index + 2]) << 8 |
+                Int(buffer[index + 3])
+            index += 4
+
+            guard length > 0 else {
+                return []
+            }
+            let nalEnd = index + length
+            guard nalEnd <= buffer.endIndex else {
+                return []
+            }
+            nals.append(Data(buffer[index..<nalEnd]))
+            index = nalEnd
+        }
+
+        guard index == buffer.endIndex else {
+            return []
+        }
+        return nals
+    }
+
     private func extractParameterSets(
         from nals: [Data],
         codec: ShadowClientVideoCodec
@@ -440,6 +547,8 @@ public actor ShadowClientVideoToolboxDecoder {
                 return [vps, sps, pps]
             }
             return []
+        case .av1:
+            return []
         }
     }
 
@@ -458,6 +567,8 @@ public actor ShadowClientVideoToolboxDecoder {
             }
             let type = (nal[0] >> 1) & 0x3F
             return type == 32 || type == 33 || type == 34
+        case .av1:
+            return false
         }
     }
 

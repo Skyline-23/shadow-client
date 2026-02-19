@@ -6,43 +6,20 @@ public enum ShadowClientStreamingResolutionPreset: String, CaseIterable, Sendabl
     case p1440 = "2560x1440"
     case p2160 = "3840x2160"
 
+    private var metadata: ShadowClientStreamingResolutionPresetMetadata {
+        ShadowClientStreamingPresetCatalogs.resolution.metadata(for: self)
+    }
+
     public var width: Int {
-        switch self {
-        case .p720:
-            return 1280
-        case .p1080:
-            return 1920
-        case .p1440:
-            return 2560
-        case .p2160:
-            return 3840
-        }
+        metadata.width
     }
 
     public var height: Int {
-        switch self {
-        case .p720:
-            return 720
-        case .p1080:
-            return 1080
-        case .p1440:
-            return 1440
-        case .p2160:
-            return 2160
-        }
+        metadata.height
     }
 
     public var label: String {
-        switch self {
-        case .p720:
-            return "720p"
-        case .p1080:
-            return "1080p"
-        case .p1440:
-            return "1440p"
-        case .p2160:
-            return "4K"
-        }
+        metadata.label
     }
 }
 
@@ -51,6 +28,10 @@ public enum ShadowClientStreamingFrameRatePreset: Int, CaseIterable, Sendable {
     case fps60 = 60
     case fps90 = 90
     case fps120 = 120
+
+    fileprivate var fps: Int {
+        ShadowClientStreamingPresetCatalogs.frameRate.metadata(for: self).fps
+    }
 }
 
 public enum ShadowClientAudioConfiguration: String, CaseIterable, Sendable {
@@ -228,9 +209,9 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         lowLatencyMode: Bool = true,
         preferHDR: Bool = true,
         showDiagnosticsHUD: Bool = true,
-        resolution: ShadowClientStreamingResolutionPreset = .p1080,
-        frameRate: ShadowClientStreamingFrameRatePreset = .fps60,
-        bitrateKbps: Int = 22_000,
+        resolution: ShadowClientStreamingResolutionPreset = ShadowClientAppSettingsDefaults.defaultResolution,
+        frameRate: ShadowClientStreamingFrameRatePreset = ShadowClientAppSettingsDefaults.defaultFrameRate,
+        bitrateKbps: Int = ShadowClientAppSettingsDefaults.defaultBitrateKbps,
         displayMode: ShadowClientDisplayMode = .borderlessFullscreen,
         audioConfiguration: ShadowClientAudioConfiguration = .surround71,
         videoCodec: ShadowClientVideoCodecPreference = .auto,
@@ -262,7 +243,10 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         self.showDiagnosticsHUD = showDiagnosticsHUD
         self.resolution = resolution
         self.frameRate = frameRate
-        self.bitrateKbps = min(max(500, bitrateKbps), 500_000)
+        self.bitrateKbps = min(
+            max(ShadowClientStreamingLaunchBounds.minimumBitrateKbps, bitrateKbps),
+            ShadowClientStreamingLaunchBounds.maximumBitrateKbps
+        )
         self.displayMode = displayMode
         self.audioConfiguration = audioConfiguration
         self.videoCodec = videoCodec
@@ -304,7 +288,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         ShadowClientGameStreamLaunchSettings(
             width: resolution.width,
             height: resolution.height,
-            fps: frameRate.rawValue,
+            fps: frameRate.fps,
             bitrateKbps: bitrateKbps,
             preferredCodec: videoCodec,
             enableHDR: preferHDR && (hostApp?.hdrSupported ?? true),
@@ -326,7 +310,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             "\(preferHDR)",
             "\(showDiagnosticsHUD)",
             resolution.rawValue,
-            "\(frameRate.rawValue)",
+            "\(frameRate.fps)",
             "\(bitrateKbps)",
             audioConfiguration.rawValue,
             videoCodec.rawValue,

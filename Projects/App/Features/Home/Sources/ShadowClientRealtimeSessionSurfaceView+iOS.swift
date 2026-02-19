@@ -36,7 +36,7 @@ struct ShadowClientRealtimeSessionSurfaceRepresentable: UIViewRepresentable {
         view.framebufferOnly = false
         view.isPaused = false
         view.enableSetNeedsDisplay = false
-        view.preferredFramesPerSecond = 60
+        view.preferredFramesPerSecond = ShadowClientStreamingLaunchBounds.defaultFPS
         view.delegate = renderer
         context.coordinator.renderer = renderer
         return view
