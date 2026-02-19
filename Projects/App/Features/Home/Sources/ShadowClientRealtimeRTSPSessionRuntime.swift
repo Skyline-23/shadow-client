@@ -1308,11 +1308,22 @@ private actor ShadowClientRTSPInterleavedClient {
         var response = Data()
 
         while true {
-            let chunk = try await receiveBytes()
-            if chunk.isEmpty {
+            do {
+                let chunk = try await receiveBytes()
+                if chunk.isEmpty {
+                    break
+                }
+                response.append(chunk)
+            } catch {
+                if response.isEmpty {
+                    throw error
+                }
+
+                logger.notice(
+                    "RTSP read terminated after partial response (\(error.localizedDescription, privacy: .public)); proceeding with buffered bytes \(response.count, privacy: .public)"
+                )
                 break
             }
-            response.append(chunk)
         }
 
         guard !response.isEmpty else {
