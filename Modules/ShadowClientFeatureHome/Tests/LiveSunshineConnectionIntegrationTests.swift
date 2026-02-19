@@ -5,21 +5,32 @@ import Testing
 import Darwin
 #endif
 
-@Test("Live Sunshine RTSP OPTIONS/DESCRIBE succeeds on wifi host")
-func liveSunshineRTSPOptionsAndDescribeSucceeds() throws {
+@Test("Live Sunshine serverinfo and RTSP probe succeeds on wifi host")
+func liveSunshineRTSPOptionsAndDescribeSucceeds() async throws {
     guard let config = LiveSunshineRTSPIntegrationConfiguration.enabledFromEnvironment() else {
         return
     }
 
+    let serverInfo = await fetchServerInfo(config: config)
+    #expect(serverInfo.statusCode == 200)
+    #expect(!serverInfo.localIP.isEmpty)
+
+    guard serverInfo.pairStatus == "1" else {
+        // Live RTSP setup requires a paired identity context.
+        return
+    }
+
+    let rtspHost = serverInfo.localIP
+
     let optionsRequest = """
-    OPTIONS rtsp://\(config.host):\(config.rtspPort)/ RTSP/1.0\r
+    OPTIONS rtsp://\(rtspHost):\(config.rtspPort)/ RTSP/1.0\r
     CSeq: 1\r
     User-Agent: ShadowClientIntegrationTests/1.0\r
     \r
     """
 
     let optionsResponse = try sendRequestWithRetry(
-        host: config.host,
+        host: rtspHost,
         port: config.rtspPort,
         timeout: config.timeout,
         request: optionsRequest,
@@ -28,7 +39,7 @@ func liveSunshineRTSPOptionsAndDescribeSucceeds() throws {
     #expect(optionsResponse.statusCode == 200)
 
     let describeRequest = """
-    DESCRIBE rtsp://\(config.host):\(config.rtspPort)/ RTSP/1.0\r
+    DESCRIBE rtsp://\(rtspHost):\(config.rtspPort)/ RTSP/1.0\r
     CSeq: 2\r
     Accept: application/sdp\r
     User-Agent: ShadowClientIntegrationTests/1.0\r
@@ -36,7 +47,7 @@ func liveSunshineRTSPOptionsAndDescribeSucceeds() throws {
     """
 
     let describeResponse = try sendRequestWithRetry(
-        host: config.host,
+        host: rtspHost,
         port: config.rtspPort,
         timeout: config.timeout,
         request: describeRequest,
@@ -52,6 +63,7 @@ func liveSunshineRTSPOptionsAndDescribeSucceeds() throws {
 private struct LiveSunshineRTSPIntegrationConfiguration: Sendable {
     let host: String
     let rtspPort: Int
+    let externalHTTPPort: Int
     let timeout: TimeInterval
     let retries: Int
 
@@ -64,6 +76,7 @@ private struct LiveSunshineRTSPIntegrationConfiguration: Sendable {
         return .init(
             host: stringValue(environment["SHADOWCLIENT_LIVE_HOST"], fallback: "wifi.skyline23.com"),
             rtspPort: intValue(environment["SHADOWCLIENT_LIVE_RTSP_PORT"], fallback: 48010),
+            externalHTTPPort: intValue(environment["SHADOWCLIENT_LIVE_HTTP_PORT"], fallback: 47989),
             timeout: doubleValue(environment["SHADOWCLIENT_LIVE_RTSP_TIMEOUT_SECONDS"], fallback: 4.0),
             retries: intValue(environment["SHADOWCLIENT_LIVE_RTSP_RETRIES"], fallback: 2)
         )
@@ -110,6 +123,39 @@ private struct RTSPResponse {
     let statusCode: Int
     let headers: [String: String]
     let body: Data
+}
+
+private struct LiveServerInfoProbeResult: Sendable {
+    let statusCode: Int
+    let localIP: String
+    let pairStatus: String
+}
+
+private func fetchServerInfo(config: LiveSunshineRTSPIntegrationConfiguration) async -> LiveServerInfoProbeResult {
+    guard var components = URLComponents(string: "http://\(config.host):\(config.externalHTTPPort)/serverinfo") else {
+        return .init(statusCode: -1, localIP: "", pairStatus: "")
+    }
+    components.queryItems = [
+        .init(name: "uniqueid", value: "0123456789ABCDEF"),
+        .init(name: "uuid", value: UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()),
+    ]
+    guard let url = components.url else {
+        return .init(statusCode: -1, localIP: "", pairStatus: "")
+    }
+
+    var request = URLRequest(url: url)
+    request.timeoutInterval = config.timeout
+
+    do {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let xml = String(decoding: data, as: UTF8.self)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        let localIP = xml.value(forTag: "LocalIP")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let pairStatus = xml.value(forTag: "PairStatus")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return .init(statusCode: statusCode, localIP: localIP, pairStatus: pairStatus)
+    } catch {
+        return .init(statusCode: -1, localIP: "", pairStatus: "")
+    }
 }
 
 private enum RTSPProbeError: Error, LocalizedError {
@@ -332,4 +378,16 @@ private func contentLength(from headerText: String) -> Int? {
         return Int(value)
     }
     return nil
+}
+
+private extension String {
+    func value(forTag tag: String) -> String? {
+        guard
+            let startRange = range(of: "<\(tag)>"),
+            let endRange = range(of: "</\(tag)>", range: startRange.upperBound..<endIndex)
+        else {
+            return nil
+        }
+        return String(self[startRange.upperBound..<endRange.lowerBound])
+    }
 }
