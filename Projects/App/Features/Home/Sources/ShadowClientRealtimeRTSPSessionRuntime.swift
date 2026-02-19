@@ -275,6 +275,7 @@ private actor ShadowClientRTSPInterleavedClient {
     private var controlConnectData: UInt32?
     private var controlChannelRuntime: ShadowClientSunshineControlChannelRuntime?
     private var controlChannelMode: ShadowClientSunshineControlChannelMode = .plaintext
+    private var hasStartedControlChannelBootstrap = false
     private var useSessionIdentifierV1 = false
     private var remoteInputKey: Data?
     private var negotiatedClientPortBase: UInt16 = ShadowClientRTSPProtocolProfile.clientPortBase
@@ -289,6 +290,7 @@ private actor ShadowClientRTSPInterleavedClient {
         remoteInputKey: Data?
     ) async throws -> ShadowClientRTSPVideoTrackDescriptor {
         self.remoteInputKey = remoteInputKey
+        hasStartedControlChannelBootstrap = false
         let normalizedURL = normalizeRTSPURL(url)
         guard let host = normalizedURL.host else {
             throw ShadowClientRTSPInterleavedClientError.invalidURL
@@ -685,7 +687,6 @@ private actor ShadowClientRTSPInterleavedClient {
             logger.debug("RTSP control path negotiated; running legacy first-frame compatibility probe")
         }
         await attemptLegacyFirstFrameBootstrap(host: remoteHost ?? .init(host))
-        await startSunshineControlChannelIfNeeded(host: host)
         return track
     }
 
@@ -966,15 +967,26 @@ private actor ShadowClientRTSPInterleavedClient {
         return ShadowClientSunshineHandshakeProfile.encryptionDisabled
     }
 
-    private func startSunshineControlChannelIfNeeded(host: String) async {
-        guard let controlServerPort else {
-            logger.notice("RTSP control bootstrap skipped (no negotiated control server port)")
+    private func ensureSunshineControlChannelStarted(
+        fallbackHost: NWEndpoint.Host
+    ) async {
+        guard !hasStartedControlChannelBootstrap else {
             return
         }
+        let started = await startSunshineControlChannelIfNeeded(
+            host: String(describing: fallbackHost)
+        )
+        hasStartedControlChannelBootstrap = started
+    }
 
-        if let controlChannelRuntime {
-            await controlChannelRuntime.stop()
-            self.controlChannelRuntime = nil
+    private func startSunshineControlChannelIfNeeded(host: String) async -> Bool {
+        guard let controlServerPort else {
+            logger.notice("RTSP control bootstrap skipped (no negotiated control server port)")
+            return true
+        }
+
+        if controlChannelRuntime != nil {
+            return true
         }
 
         let controlHost = remoteHost ?? .init(host)
@@ -988,9 +1000,11 @@ private actor ShadowClientRTSPInterleavedClient {
                 mode: controlChannelMode
             )
             controlChannelRuntime = runtime
+            return true
         } catch {
             logger.error("RTSP control bootstrap failed: \(error.localizedDescription, privacy: .public)")
             await runtime.stop()
+            return false
         }
     }
 
@@ -999,6 +1013,7 @@ private actor ShadowClientRTSPInterleavedClient {
             await controlChannelRuntime.stop()
         }
         controlChannelRuntime = nil
+        hasStartedControlChannelBootstrap = false
 
         connection?.cancel()
         connection = nil
@@ -1047,6 +1062,9 @@ private actor ShadowClientRTSPInterleavedClient {
 
                 packetCount += 1
                 if packetCount == 1 {
+                    await ensureSunshineControlChannelStarted(
+                        fallbackHost: remoteHost ?? .init("127.0.0.1")
+                    )
                     logger.notice(
                         "First RTP video packet received: payloadType=\(packet.payloadType, privacy: .public), marker=\(packet.marker, privacy: .public), payloadBytes=\(packet.payload.count, privacy: .public)"
                     )
@@ -1255,6 +1273,7 @@ private actor ShadowClientRTSPInterleavedClient {
 
             packetCount += 1
             if packetCount == 1 {
+                await ensureSunshineControlChannelStarted(fallbackHost: host)
                 logger.notice(
                     "First RTP video packet received: payloadType=\(packet.payloadType, privacy: .public), marker=\(packet.marker, privacy: .public), payloadBytes=\(packet.payload.count, privacy: .public)"
                 )
