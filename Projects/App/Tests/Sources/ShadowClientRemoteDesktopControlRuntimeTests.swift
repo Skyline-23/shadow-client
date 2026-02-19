@@ -272,9 +272,9 @@ func remoteDesktopRuntimeConnectsVideoSessionBeforeLaunchSuccess() async {
     }
 }
 
-@Test("Remote desktop runtime rewrites private session URL host to selected host route")
+@Test("Remote desktop runtime preserves host-provided session URL without app-side host rewrite")
 @MainActor
-func remoteDesktopRuntimeRewritesPrivateSessionURLHostForReachability() async {
+func remoteDesktopRuntimePreservesHostProvidedSessionURL() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
             "wifi.skyline23.com": .init(
@@ -314,8 +314,8 @@ func remoteDesktopRuntimeRewritesPrivateSessionURLHostForReachability() async {
     )
     await waitForLaunchState(runtime)
 
-    #expect(await sessionConnector.connectCalls() == ["rtsp://wifi.skyline23.com:48010"])
-    #expect(runtime.activeSession?.sessionURL == "rtsp://wifi.skyline23.com:48010")
+    #expect(await sessionConnector.connectCalls() == ["rtsp://192.168.0.52:48010"])
+    #expect(runtime.activeSession?.sessionURL == "rtsp://192.168.0.52:48010")
     if case .launched = runtime.launchState {
         #expect(true)
     } else {
