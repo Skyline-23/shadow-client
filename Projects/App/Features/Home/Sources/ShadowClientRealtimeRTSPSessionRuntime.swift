@@ -1,4 +1,5 @@
 import CoreVideo
+import Darwin
 import Foundation
 import Network
 import os
@@ -1070,7 +1071,7 @@ private actor ShadowClientRTSPInterleavedClient {
         onVideoPacket: @escaping @Sendable (Data, Bool) async throws -> Void
     ) async throws {
         let localHost = self.localHost
-        let udpConnection = try await makeVideoUDPConnection(
+        let udpSocket = try makeVideoUDPSocket(
             host: host,
             port: port,
             localHost: localHost
@@ -1101,7 +1102,7 @@ private actor ShadowClientRTSPInterleavedClient {
                 negotiatedPayload: pingPayload
             )
             for initialVideoPing in initialVideoPings {
-                try await Self.send(bytes: initialVideoPing, over: udpConnection)
+                try udpSocket.send(initialVideoPing)
             }
             rtspLogger.notice("RTSP UDP video initial ping sent (variants=\(initialVideoPings.count, privacy: .public), bytes=\(initialVideoPings.first?.count ?? 0, privacy: .public))")
         } catch {
@@ -1123,7 +1124,7 @@ private actor ShadowClientRTSPInterleavedClient {
             }
         }
 
-        let sendableVideoConnection = ShadowClientSendableNWConnection(connection: udpConnection)
+        let sendableVideoSocket = udpSocket
         let sendableAudioConnection = audioPingConnection.map {
             ShadowClientSendableNWConnection(connection: $0)
         }
@@ -1140,7 +1141,7 @@ private actor ShadowClientRTSPInterleavedClient {
                         negotiatedPayload: pingPayload
                     )
                     for pingPacket in pingPackets {
-                        try await Self.send(bytes: pingPacket, over: sendableVideoConnection.connection)
+                        try sendableVideoSocket.send(pingPacket)
                     }
                     if loggedPingCount < 3 {
                         rtspLogger.notice("RTSP UDP video ping sent (sequence=\(sequence, privacy: .public), variants=\(pingPackets.count, privacy: .public), bytes=\(pingPackets.first?.count ?? 0, privacy: .public))")
@@ -1183,7 +1184,7 @@ private actor ShadowClientRTSPInterleavedClient {
             audioPingTask.cancel()
             audioPingConnection?.cancel()
             prePlayAudioPingConnection = nil
-            udpConnection.cancel()
+            udpSocket.close()
         }
 
         var effectivePayloadType = payloadType
@@ -1191,7 +1192,11 @@ private actor ShadowClientRTSPInterleavedClient {
         var packetCount = 0
 
         while !Task.isCancelled {
-            let datagram = try await receiveDatagram(over: udpConnection)
+            guard let datagram = try udpSocket.receive(
+                maximumLength: ShadowClientRealtimeSessionDefaults.maximumTransportReadLength
+            ) else {
+                continue
+            }
             guard !datagram.isEmpty else {
                 continue
             }
@@ -1223,35 +1228,19 @@ private actor ShadowClientRTSPInterleavedClient {
         }
     }
 
-    private func makeVideoUDPConnection(
+    private func makeVideoUDPSocket(
         host: NWEndpoint.Host,
         port: NWEndpoint.Port,
         localHost: NWEndpoint.Host?
-    ) async throws -> NWConnection {
-        if let localHost,
-           let clientPort = NWEndpoint.Port(rawValue: negotiatedClientPortBase)
-        {
-            let parameters = NWParameters.udp
-            parameters.allowLocalEndpointReuse = true
-            parameters.requiredLocalEndpoint = .hostPort(
-                host: localHost,
-                port: clientPort
-            )
-            let boundConnection = NWConnection(host: host, port: port, using: parameters)
-            do {
-                try await waitForReady(boundConnection)
-                logger.notice("RTSP UDP video socket bound to \(String(describing: localHost), privacy: .public):\(self.negotiatedClientPortBase, privacy: .public)")
-                return boundConnection
-            } catch {
-                logger.error("RTSP UDP video bind failed on \(String(describing: localHost), privacy: .public):\(self.negotiatedClientPortBase, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                boundConnection.cancel()
-            }
-        }
-
-        let fallbackConnection = NWConnection(host: host, port: port, using: .udp)
-        try await waitForReady(fallbackConnection)
-        logger.notice("RTSP UDP video socket using ephemeral local port")
-        return fallbackConnection
+    ) throws -> ShadowClientUDPDatagramSocket {
+        let socket = try ShadowClientUDPDatagramSocket(
+            localHost: localHost,
+            localPort: nil,
+            remoteHost: host,
+            remotePort: port.rawValue
+        )
+        logger.notice("RTSP UDP video socket bound \(socket.localEndpointDescription(), privacy: .public)")
+        return socket
     }
 
     private func makeAudioUDPPingConnection(
@@ -1259,30 +1248,37 @@ private actor ShadowClientRTSPInterleavedClient {
         port: NWEndpoint.Port,
         localHost: NWEndpoint.Host?
     ) async throws -> NWConnection {
-        if let localHost,
-           let clientPort = NWEndpoint.Port(rawValue: negotiatedClientPortBase + 1)
-        {
+        let connection: NWConnection
+        if let localHost {
             let parameters = NWParameters.udp
-            parameters.allowLocalEndpointReuse = true
             parameters.requiredLocalEndpoint = .hostPort(
                 host: localHost,
-                port: clientPort
+                port: .any
             )
-            let boundConnection = NWConnection(host: host, port: port, using: parameters)
-            do {
-                try await waitForReady(boundConnection)
-                logger.notice("RTSP UDP audio ping socket bound to \(String(describing: localHost), privacy: .public):\(clientPort.rawValue, privacy: .public)")
-                return boundConnection
-            } catch {
-                logger.error("RTSP UDP audio ping bind failed on \(String(describing: localHost), privacy: .public):\(clientPort.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                boundConnection.cancel()
-            }
+            connection = NWConnection(host: host, port: port, using: parameters)
+        } else {
+            connection = NWConnection(host: host, port: port, using: .udp)
         }
 
-        let fallbackConnection = NWConnection(host: host, port: port, using: .udp)
-        try await waitForReady(fallbackConnection)
-        logger.notice("RTSP UDP audio ping socket using ephemeral local port")
-        return fallbackConnection
+        try await waitForReady(connection)
+        if let local = resolvedLocalHost(from: connection),
+           let localPort = resolvedLocalPort(from: connection)
+        {
+            logger.notice("RTSP UDP audio ping socket bound to \(String(describing: local), privacy: .public):\(localPort, privacy: .public)")
+        } else {
+            logger.notice("RTSP UDP audio ping socket ready")
+        }
+        return connection
+    }
+
+    private func resolvedLocalPort(from connection: NWConnection) -> UInt16? {
+        guard let endpoint = connection.currentPath?.localEndpoint ?? connection.currentPath?.remoteEndpoint else {
+            return nil
+        }
+        guard case let .hostPort(_, port) = endpoint else {
+            return nil
+        }
+        return port.rawValue
     }
 
     private func prepareAudioPingBeforePlay(host: NWEndpoint.Host) async {
@@ -1863,23 +1859,218 @@ private actor ShadowClientRTSPInterleavedClient {
         }
     }
 
-    private func receiveDatagram(over connection: NWConnection) async throws -> Data {
-        try await Self.receiveDatagram(over: connection)
+}
+
+private enum ShadowClientUDPDatagramSocketError: Error {
+    case unsupportedAddress(String)
+    case socketFailure(String)
+}
+
+private final class ShadowClientUDPDatagramSocket: @unchecked Sendable {
+    private let descriptor: Int32
+    private var remoteAddress: sockaddr_in
+    private let addressLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+    private let closeLock = NSLock()
+    private var isClosed = false
+
+    init(
+        localHost: NWEndpoint.Host?,
+        localPort: UInt16?,
+        remoteHost: NWEndpoint.Host,
+        remotePort: UInt16
+    ) throws {
+        guard let remoteAddress = Self.makeIPv4Address(from: remoteHost, port: remotePort) else {
+            throw ShadowClientUDPDatagramSocketError.unsupportedAddress(
+                "Unsupported remote UDP endpoint: \(String(describing: remoteHost)):\(remotePort)"
+            )
+        }
+        self.remoteAddress = remoteAddress
+
+        descriptor = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        guard descriptor >= 0 else {
+            throw ShadowClientUDPDatagramSocketError.socketFailure(
+                "socket() failed: \(String(cString: strerror(errno)))"
+            )
+        }
+
+        var receiveTimeout = timeval(tv_sec: 0, tv_usec: 250_000)
+        _ = setsockopt(
+            descriptor,
+            SOL_SOCKET,
+            SO_RCVTIMEO,
+            &receiveTimeout,
+            socklen_t(MemoryLayout<timeval>.size)
+        )
+
+        var localAddress = Self.makeLocalIPv4Address(from: localHost, port: localPort)
+        let bindStatus = withUnsafePointer(to: &localAddress) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                bind(descriptor, sockaddrPointer, addressLength)
+            }
+        }
+        if bindStatus != 0 {
+            let message = "bind() failed: \(String(cString: strerror(errno)))"
+            Darwin.close(descriptor)
+            throw ShadowClientUDPDatagramSocketError.socketFailure(message)
+        }
     }
 
-    private static func receiveDatagram(over connection: NWConnection) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
-            connection.receiveMessage { content, _, _, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
+    deinit {
+        close()
+    }
 
-                continuation.resume(returning: content ?? Data())
+    func send(_ datagram: Data) throws {
+        var remoteAddress = remoteAddress
+        let sentBytes = datagram.withUnsafeBytes { bytes in
+            withUnsafePointer(to: &remoteAddress) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                    sendto(
+                        descriptor,
+                        bytes.baseAddress,
+                        datagram.count,
+                        0,
+                        sockaddrPointer,
+                        addressLength
+                    )
+                }
+            }
+        }
+
+        if sentBytes < 0 {
+            throw ShadowClientUDPDatagramSocketError.socketFailure(
+                "sendto() failed: \(String(cString: strerror(errno)))"
+            )
+        }
+    }
+
+    func receive(maximumLength: Int) throws -> Data? {
+        var buffer = [UInt8](repeating: 0, count: maximumLength)
+        var sourceAddress = sockaddr_storage()
+        var sourceLength = socklen_t(MemoryLayout<sockaddr_storage>.size)
+        let receivedBytes = buffer.withUnsafeMutableBytes { bytes in
+            withUnsafeMutablePointer(to: &sourceAddress) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                    recvfrom(
+                        descriptor,
+                        bytes.baseAddress,
+                        bytes.count,
+                        0,
+                        sockaddrPointer,
+                        &sourceLength
+                    )
+                }
+            }
+        }
+
+        if receivedBytes < 0 {
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                return nil
+            }
+            throw ShadowClientUDPDatagramSocketError.socketFailure(
+                "recvfrom() failed: \(String(cString: strerror(errno)))"
+            )
+        }
+
+        guard receivedBytes > 0 else {
+            return nil
+        }
+        return Data(buffer.prefix(receivedBytes))
+    }
+
+    func localEndpointDescription() -> String {
+        var address = sockaddr_storage()
+        var addressLength = socklen_t(MemoryLayout<sockaddr_storage>.size)
+        let status = withUnsafeMutablePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                getsockname(descriptor, sockaddrPointer, &addressLength)
+            }
+        }
+        guard status == 0 else {
+            return "ephemeral:unknown"
+        }
+
+        guard address.ss_family == sa_family_t(AF_INET) else {
+            return "ephemeral:unknown"
+        }
+
+        return withUnsafePointer(to: &address) { pointer -> String in
+            pointer.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sockaddrInPointer in
+                var ipv4 = sockaddrInPointer.pointee.sin_addr
+                let port = CFSwapInt16BigToHost(sockaddrInPointer.pointee.sin_port)
+                var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                let converted = inet_ntop(
+                    AF_INET,
+                    &ipv4,
+                    &buffer,
+                    socklen_t(INET_ADDRSTRLEN)
+                )
+                guard converted != nil else {
+                    return "0.0.0.0:\(port)"
+                }
+                return "\(String(cString: buffer)):\(port)"
             }
         }
     }
 
+    func close() {
+        closeLock.lock()
+        let shouldClose = !isClosed
+        if shouldClose {
+            isClosed = true
+        }
+        closeLock.unlock()
+
+        if shouldClose {
+            Darwin.close(descriptor)
+        }
+    }
+
+    private static func makeLocalIPv4Address(
+        from host: NWEndpoint.Host?,
+        port: UInt16?
+    ) -> sockaddr_in {
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = CFSwapInt16HostToBig(port ?? 0)
+        if let host, let parsed = parseIPv4Host(host) {
+            address.sin_addr = parsed
+        } else {
+            address.sin_addr = in_addr(s_addr: CFSwapInt32HostToBig(INADDR_ANY))
+        }
+        return address
+    }
+
+    private static func makeIPv4Address(
+        from host: NWEndpoint.Host,
+        port: UInt16
+    ) -> sockaddr_in? {
+        guard let parsed = parseIPv4Host(host) else {
+            return nil
+        }
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = CFSwapInt16HostToBig(port)
+        address.sin_addr = parsed
+        return address
+    }
+
+    private static func parseIPv4Host(_ host: NWEndpoint.Host) -> in_addr? {
+        let hostString = String(describing: host).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !hostString.isEmpty else {
+            return nil
+        }
+
+        var parsed = in_addr()
+        let result = hostString.withCString { cString in
+            inet_pton(AF_INET, cString, &parsed)
+        }
+        guard result == 1 else {
+            return nil
+        }
+        return parsed
+    }
 }
 
 private struct ShadowClientH265RTPDepacketizer: Sendable {
