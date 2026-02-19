@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 enum ShadowClientRTSPProtocolProfile {
     static let rtspSchemePrefix = "rtsp://"
@@ -54,9 +55,14 @@ enum ShadowClientRTSPProtocolProfile {
     ]
 
     static let setupTransportHeaderPrefix = "unicast;X-GS-ClientPort="
+    static let wildcardIPv4HostAddress = "0.0.0.0"
 
     static func setupTransportHeader(clientPortBase: UInt16) -> String {
         "\(setupTransportHeaderPrefix)\(clientPortBase)-\(clientPortBase + 1)"
+    }
+
+    static func localBindHost(from localHost: NWEndpoint.Host?) -> NWEndpoint.Host {
+        localHost ?? NWEndpoint.Host(wildcardIPv4HostAddress)
     }
 
     static func hostHeaderValue(forRTSPURLString urlString: String) -> String? {
