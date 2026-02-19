@@ -232,8 +232,32 @@ public protocol ShadowClientGameStreamMetadataClient: Sendable {
 public protocol ShadowClientRemoteSessionConnectionClient: Sendable {
     var presentationMode: ShadowClientRemoteSessionPresentationMode { get }
     var sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext { get }
-    func connect(to sessionURL: String, host: String, appTitle: String) async throws
+    func connect(
+        to sessionURL: String,
+        host: String,
+        appTitle: String,
+        videoConfiguration: ShadowClientRemoteSessionVideoConfiguration
+    ) async throws
     func disconnect() async
+}
+
+public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
+    public let width: Int
+    public let height: Int
+    public let fps: Int
+    public let preferredCodec: ShadowClientVideoCodecPreference
+
+    public init(
+        width: Int,
+        height: Int,
+        fps: Int = ShadowClientStreamingLaunchBounds.defaultFPS,
+        preferredCodec: ShadowClientVideoCodecPreference = .auto
+    ) {
+        self.width = max(ShadowClientStreamingLaunchBounds.minimumWidth, width)
+        self.height = max(ShadowClientStreamingLaunchBounds.minimumHeight, height)
+        self.fps = max(ShadowClientStreamingLaunchBounds.minimumFPS, fps)
+        self.preferredCodec = preferredCodec
+    }
 }
 
 public enum ShadowClientRemoteSessionPresentationMode: Equatable, Sendable {
@@ -272,7 +296,12 @@ public struct NoopShadowClientRemoteSessionConnectionClient: ShadowClientRemoteS
 
     public init() {}
 
-    public func connect(to sessionURL: String, host: String, appTitle: String) async throws {}
+    public func connect(
+        to sessionURL: String,
+        host: String,
+        appTitle: String,
+        videoConfiguration: ShadowClientRemoteSessionVideoConfiguration
+    ) async throws {}
 
     public func disconnect() async {}
 }
@@ -285,7 +314,7 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
     private let sessionRuntime: ShadowClientRealtimeRTSPSessionRuntime
 
     public init(
-        timeout: Duration = .seconds(10),
+        timeout: Duration = ShadowClientGameStreamNetworkDefaults.defaultSessionConnectTimeout,
         sessionRuntime: ShadowClientRealtimeRTSPSessionRuntime = .init()
     ) {
         self.timeout = timeout
@@ -293,7 +322,12 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
         self.sessionSurfaceContext = sessionRuntime.surfaceContext
     }
 
-    public func connect(to sessionURL: String, host: String, appTitle: String) async throws {
+    public func connect(
+        to sessionURL: String,
+        host: String,
+        appTitle: String,
+        videoConfiguration: ShadowClientRemoteSessionVideoConfiguration
+    ) async throws {
         let endpoint = try Self.parseEndpoint(from: sessionURL)
         let fallbackHost = Self.normalizedFallbackHost(host)
         let candidates = Self.connectionCandidates(
@@ -317,7 +351,8 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
                     try await sessionRuntime.connect(
                         sessionURL: routedURL,
                         host: host,
-                        appTitle: appTitle
+                        appTitle: appTitle,
+                        videoConfiguration: videoConfiguration
                     )
                     return
                 } catch {
@@ -349,15 +384,15 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
             throw ShadowClientGameStreamError.invalidURL
         }
 
-        let candidate = trimmed.contains("://") ? trimmed : "rtsp://\(trimmed)"
+        let candidate = ShadowClientRTSPProtocolProfile.withRTSPSchemeIfMissing(trimmed)
         guard let url = URL(string: candidate),
               let host = url.host
         else {
             throw ShadowClientGameStreamError.invalidURL
         }
 
-        let portValue = url.port ?? 554
-        guard (1...65_535).contains(portValue) else {
+        let portValue = url.port ?? ShadowClientRTSPProtocolProfile.defaultPort
+        guard (ShadowClientGameStreamNetworkDefaults.minimumPort...ShadowClientGameStreamNetworkDefaults.maximumPort).contains(portValue) else {
             throw ShadowClientGameStreamError.invalidURL
         }
         guard let port = NWEndpoint.Port(rawValue: UInt16(portValue)) else {
@@ -373,7 +408,7 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
             return nil
         }
 
-        let candidate = trimmed.contains("://") ? trimmed : "http://\(trimmed)"
+        let candidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(trimmed)
         guard let parsed = URL(string: candidate), let host = parsed.host, !host.isEmpty else {
             return nil
         }
@@ -492,7 +527,7 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
             return sessionURL
         }
 
-        let candidate = trimmed.contains("://") ? trimmed : "rtsp://\(trimmed)"
+        let candidate = ShadowClientRTSPProtocolProfile.withRTSPSchemeIfMissing(trimmed)
         guard var components = URLComponents(string: candidate) else {
             return candidate
         }
@@ -551,8 +586,8 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         identityStore: ShadowClientPairingIdentityStore = .shared,
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore = .shared,
         transport: any ShadowClientGameStreamRequestTransporting = NativeShadowClientGameStreamRequestTransport(),
-        defaultHTTPPort: Int = 47989,
-        defaultHTTPSPort: Int = 47984
+        defaultHTTPPort: Int = ShadowClientGameStreamNetworkDefaults.defaultHTTPPort,
+        defaultHTTPSPort: Int = ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
     ) {
         self.identityStore = identityStore
         self.pinnedCertificateStore = pinnedCertificateStore
@@ -567,7 +602,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             let httpsXML = try await requestXML(
                 host: endpoint.host,
                 port: defaultHTTPSPort,
-                scheme: "https",
+                scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
                 command: "serverinfo"
             )
 
@@ -582,7 +617,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                     let httpXML = try await requestXML(
                         host: endpoint.host,
                         port: endpoint.port,
-                        scheme: "http",
+                        scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
                         command: "serverinfo"
                     )
 
@@ -610,7 +645,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                 let httpXML = try await requestXML(
                     host: endpoint.host,
                     port: endpoint.port,
-                    scheme: "http",
+                    scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
                     command: "serverinfo"
                 )
                 return try ShadowClientGameStreamXMLParsers.parseServerInfo(
@@ -634,7 +669,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         let xml = try await requestXML(
             host: endpoint.host,
             port: resolvedHTTPSPort,
-            scheme: "https",
+            scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
             command: "applist"
         )
 
@@ -669,7 +704,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             displayName: host,
             pairStatus: .notPaired,
             currentGameID: 0,
-            serverState: "SUNSHINE_SERVER_FREE",
+            serverState: ShadowClientGameStreamServerState.free,
             httpsPort: fallbackHTTPSPort,
             appVersion: nil,
             gfeVersion: nil,
@@ -686,7 +721,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         let uniqueID = await identityStore.uniqueID()
         let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: host)
         let clientCertificateCredential: URLCredential?
-        if scheme == "https" {
+        if scheme == ShadowClientGameStreamNetworkDefaults.httpsScheme {
             clientCertificateCredential = try? await identityStore.tlsClientCertificateCredential()
         } else {
             clientCertificateCredential = nil
@@ -709,7 +744,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             throw ShadowClientGameStreamError.invalidHost
         }
 
-        let candidate = normalized.contains("://") ? normalized : "http://\(normalized)"
+        let candidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(normalized)
         guard let url = URL(string: candidate), let parsedHost = url.host else {
             throw ShadowClientGameStreamError.invalidHost
         }
@@ -740,6 +775,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var pairTask: Task<Void, Never>?
     private var launchTask: Task<Void, Never>?
     private var latestHostCandidates: [String] = []
+    private var cachedAppsByHostID: [String: [ShadowClientRemoteAppDescriptor]] = [:]
     private var appRefreshGeneration: UInt64 = 0
     private var pairGeneration: UInt64 = 0
     private var launchGeneration: UInt64 = 0
@@ -793,6 +829,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             refreshAppsTask?.cancel()
             hosts = []
             apps = []
+            cachedAppsByHostID = [:]
             selectedHostID = nil
             hostState = .idle
             appState = .idle
@@ -877,8 +914,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let controlClient = controlClient
         pairTask = Task {
             do {
-                let pairingDeadline = Date().addingTimeInterval(70)
-                let maximumPairAttempts = 4
+                let pairingDeadline = Date().addingTimeInterval(
+                    ShadowClientPairingDefaults.retryDeadlineSeconds
+                )
+                let maximumPairAttempts = ShadowClientPairingDefaults.maximumAttempts
                 var pairAttemptCount = 0
                 while true {
                     pairAttemptCount += 1
@@ -898,7 +937,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         guard shouldRetry else {
                             throw error
                         }
-                        try await Task.sleep(for: .milliseconds(900))
+                        try await Task.sleep(for: ShadowClientPairingDefaults.retryBackoff)
                     }
                 }
 
@@ -997,7 +1036,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 try await sessionConnectionClient.connect(
                     to: routedSessionURL,
                     host: selectedHost.host,
-                    appTitle: resolvedTitle
+                    appTitle: resolvedTitle,
+                    videoConfiguration: .init(
+                        width: settings.width,
+                        height: settings.height,
+                        fps: settings.fps,
+                        preferredCodec: settings.preferredCodec
+                    )
                 )
 
                 if Task.isCancelled {
@@ -1149,6 +1194,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let hostDescriptor = selectedHost
         let host = hostDescriptor.host
         let httpsPort = hostDescriptor.httpsPort
+        let cachedAppsForHost = cachedAppsByHostID[hostDescriptor.id] ?? []
         refreshAppsTask = Task {
             do {
                 let resolved = try await metadataClient.fetchAppList(
@@ -1160,7 +1206,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
                 let resolvedApps: [ShadowClientRemoteAppDescriptor]
                 if sorted.isEmpty {
-                    resolvedApps = Self.synthesizedFallbackApps(for: hostDescriptor)
+                    resolvedApps = Self.synthesizedFallbackApps(
+                        for: hostDescriptor,
+                        cachedApps: cachedAppsForHost
+                    )
                 } else {
                     resolvedApps = sorted
                 }
@@ -1176,11 +1225,20 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
 
                 await MainActor.run {
+                    if !sorted.isEmpty {
+                        cachedAppsByHostID[hostDescriptor.id] = sorted
+                    }
                     apps = resolvedApps
-                    appState = .loaded
+                    appState = resolvedApps.isEmpty
+                        ? .failed("No app metadata loaded yet. Pairing may be required before app list queries.")
+                        : .loaded
                 }
             } catch {
                 let message = error.localizedDescription
+                let fallbackApps = Self.synthesizedFallbackApps(
+                    for: hostDescriptor,
+                    cachedApps: cachedAppsForHost
+                )
                 guard !Task.isCancelled else {
                     await MainActor.run {
                         guard appRefreshGeneration == refreshGeneration, appState == .loading else {
@@ -1192,8 +1250,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
 
                 await MainActor.run {
-                    apps = []
-                    appState = .failed(message)
+                    if fallbackApps.isEmpty {
+                        apps = []
+                        appState = .failed(message)
+                    } else {
+                        apps = fallbackApps
+                        appState = .loaded
+                    }
                 }
             }
         }
@@ -1227,7 +1290,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 pairStatus: .unknown,
                 currentGameID: 0,
                 serverState: "",
-                httpsPort: 47984,
+                httpsPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort,
                 appVersion: nil,
                 gfeVersion: nil,
                 uniqueID: nil,
@@ -1327,7 +1390,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return nil
         }
 
-        let urlCandidate = trimmed.contains("://") ? trimmed : "http://\(trimmed)"
+        let urlCandidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(trimmed)
         guard let parsed = URL(string: urlCandidate), let host = parsed.host else {
             return trimmed.lowercased()
         }
@@ -1348,7 +1411,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return sessionURL
         }
 
-        let candidate = trimmedURL.contains("://") ? trimmedURL : "rtsp://\(trimmedURL)"
+        let candidate = ShadowClientRTSPProtocolProfile.withRTSPSchemeIfMissing(trimmedURL)
         guard var components = URLComponents(string: candidate),
               let returnedHost = components.host,
               let normalizedPreferredHost = normalizeCandidate(preferredHost)?
@@ -1384,7 +1447,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     private static func isPrivateOrLocalHost(_ host: String) -> Bool {
         let lower = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if lower == "localhost" || lower == "::1" || lower.hasPrefix("fe80:") || lower.hasPrefix("fc") || lower.hasPrefix("fd") {
+        if lower == ShadowClientHostClassificationDefaults.localhost ||
+            lower == ShadowClientHostClassificationDefaults.loopbackIPv6 ||
+            lower.hasPrefix(ShadowClientHostClassificationDefaults.linkLocalIPv6Prefix) ||
+            lower.hasPrefix(ShadowClientHostClassificationDefaults.uniqueLocalIPv6PrefixFC) ||
+            lower.hasPrefix(ShadowClientHostClassificationDefaults.uniqueLocalIPv6PrefixFD)
+        {
             return true
         }
 
@@ -1396,16 +1464,24 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return false
         }
 
-        if octet1 == 10 || octet1 == 127 {
+        if octet1 == ShadowClientHostClassificationDefaults.privateIPv4ClassA ||
+            octet1 == ShadowClientHostClassificationDefaults.loopbackIPv4ClassA
+        {
             return true
         }
-        if octet1 == 192 && octet2 == 168 {
+        if octet1 == ShadowClientHostClassificationDefaults.privateIPv4ClassCFirstOctet &&
+            octet2 == ShadowClientHostClassificationDefaults.privateIPv4ClassCSecondOctet
+        {
             return true
         }
-        if octet1 == 172 && (16...31).contains(octet2) {
+        if octet1 == ShadowClientHostClassificationDefaults.privateIPv4ClassBFirstOctet &&
+            ShadowClientHostClassificationDefaults.privateIPv4ClassBSecondOctetRange.contains(octet2)
+        {
             return true
         }
-        if octet1 == 169 && octet2 == 254 {
+        if octet1 == ShadowClientHostClassificationDefaults.linkLocalIPv4FirstOctet &&
+            octet2 == ShadowClientHostClassificationDefaults.linkLocalIPv4SecondOctet
+        {
             return true
         }
         return false
@@ -1436,37 +1512,40 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     private static func synthesizedFallbackApps(
-        for host: ShadowClientRemoteHostDescriptor
+        for host: ShadowClientRemoteHostDescriptor,
+        cachedApps: [ShadowClientRemoteAppDescriptor]
     ) -> [ShadowClientRemoteAppDescriptor] {
         var fallbackApps: [ShadowClientRemoteAppDescriptor] = []
 
-        func appendFallbackApp(_ id: Int, title: String) {
-            guard id > 0 else {
+        func appendFallbackApp(_ app: ShadowClientRemoteAppDescriptor) {
+            guard app.id > 0 else {
                 return
             }
-            guard !fallbackApps.contains(where: { $0.id == id }) else {
+            guard !fallbackApps.contains(where: { $0.id == app.id }) else {
                 return
             }
-
-            fallbackApps.append(
-                ShadowClientRemoteAppDescriptor(
-                    id: id,
-                    title: title,
-                    hdrSupported: true,
-                    isAppCollectorGame: false
-                )
-            )
+            fallbackApps.append(app)
         }
 
         if host.currentGameID > 0 {
-            let title = host.currentGameID == 881_448_767 || host.currentGameID == 1
-                ? "Desktop"
-                : "Current Session (\(host.currentGameID))"
-            appendFallbackApp(host.currentGameID, title: title)
+            if let cachedCurrent = cachedApps.first(where: { $0.id == host.currentGameID }) {
+                appendFallbackApp(cachedCurrent)
+            } else {
+                appendFallbackApp(
+                    ShadowClientRemoteAppDescriptor(
+                        id: host.currentGameID,
+                        title: ShadowClientRemoteAppLabels.currentSession(host.currentGameID),
+                        hdrSupported: false,
+                        isAppCollectorGame: false
+                    )
+                )
+            }
         }
 
-        appendFallbackApp(881_448_767, title: "Desktop")
-        appendFallbackApp(1, title: "Desktop (Legacy)")
+        for app in cachedApps {
+            appendFallbackApp(app)
+        }
+
         return fallbackApps
     }
 }
@@ -1482,8 +1561,12 @@ enum ShadowClientGameStreamXMLParsers {
 
         let displayName = document.values["hostname"]?.first?.nonEmpty ?? host
         let pairStatus = parsePairStatus(document.values["PairStatus"]?.first)
-        let currentGameID = Int(document.values["currentgame"]?.first ?? "") ?? 0
         let serverState = document.values["state"]?.first ?? ""
+        let rawCurrentGameID = Int(document.values["currentgame"]?.first ?? "") ?? 0
+        let currentGameID = normalizeCurrentGameID(
+            rawCurrentGameID,
+            serverState: serverState
+        )
         let httpsPort = Int(document.values["HttpsPort"]?.first ?? "") ?? fallbackHTTPSPort
 
         return ShadowClientGameStreamServerInfo(
@@ -1517,6 +1600,26 @@ enum ShadowClientGameStreamXMLParsers {
         default:
             return .unknown
         }
+    }
+
+    private static func normalizeCurrentGameID(
+        _ currentGameID: Int,
+        serverState: String
+    ) -> Int {
+        guard currentGameID > 0 else {
+            return 0
+        }
+        guard !isIdleServerState(serverState) else {
+            return 0
+        }
+        return currentGameID
+    }
+
+    private static func isIdleServerState(_ serverState: String) -> Bool {
+        let normalized = serverState
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+        return ShadowClientGameStreamServerState.idleStates.contains(normalized)
     }
 
     private static func validateRoot(_ root: ShadowClientXMLRootStatus?) throws {

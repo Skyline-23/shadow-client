@@ -95,10 +95,10 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
     public let quitAppOnHostAfterStreamEnds: Bool
 
     public init(
-        width: Int = 1920,
-        height: Int = 1080,
-        fps: Int = 60,
-        bitrateKbps: Int = 20_000,
+        width: Int = ShadowClientStreamingLaunchBounds.defaultWidth,
+        height: Int = ShadowClientStreamingLaunchBounds.defaultHeight,
+        fps: Int = ShadowClientStreamingLaunchBounds.defaultFPS,
+        bitrateKbps: Int = ShadowClientStreamingLaunchBounds.defaultBitrateKbps,
         preferredCodec: ShadowClientVideoCodecPreference = .auto,
         enableHDR: Bool,
         enableSurroundAudio: Bool,
@@ -111,10 +111,13 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
         optimizeGameSettingsForStreaming: Bool = true,
         quitAppOnHostAfterStreamEnds: Bool = false
     ) {
-        self.width = max(640, width)
-        self.height = max(360, height)
-        self.fps = max(30, fps)
-        self.bitrateKbps = min(max(500, bitrateKbps), 500_000)
+        self.width = max(ShadowClientStreamingLaunchBounds.minimumWidth, width)
+        self.height = max(ShadowClientStreamingLaunchBounds.minimumHeight, height)
+        self.fps = max(ShadowClientStreamingLaunchBounds.minimumFPS, fps)
+        self.bitrateKbps = min(
+            max(ShadowClientStreamingLaunchBounds.minimumBitrateKbps, bitrateKbps),
+            ShadowClientStreamingLaunchBounds.maximumBitrateKbps
+        )
         self.preferredCodec = preferredCodec
         self.enableHDR = enableHDR
         self.enableSurroundAudio = enableSurroundAudio
@@ -589,6 +592,11 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         subsystem: "com.skyline23.shadow-client",
         category: "Pairing"
     )
+    private static let launchLogger = Logger(
+        subsystem: "com.skyline23.shadow-client",
+        category: "Launch"
+    )
+    private static let videoCodecSupport = ShadowClientVideoCodecSupport()
 
     private let identityStore: ShadowClientPairingIdentityStore
     private let pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
@@ -601,11 +609,11 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
     public init(
         identityStore: ShadowClientPairingIdentityStore = .shared,
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore = .shared,
-        defaultHTTPPort: Int = 47989,
-        defaultHTTPSPort: Int = 47984,
-        defaultRequestTimeout: TimeInterval = 8,
-        pairingPINEntryTimeout: TimeInterval = 45,
-        pairingStageTimeout: TimeInterval = 15
+        defaultHTTPPort: Int = ShadowClientGameStreamNetworkDefaults.defaultHTTPPort,
+        defaultHTTPSPort: Int = ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort,
+        defaultRequestTimeout: TimeInterval = ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout,
+        pairingPINEntryTimeout: TimeInterval = ShadowClientGameStreamNetworkDefaults.pairingPINEntryTimeout,
+        pairingStageTimeout: TimeInterval = ShadowClientGameStreamNetworkDefaults.pairingStageTimeout
     ) {
         self.identityStore = identityStore
         self.pinnedCertificateStore = pinnedCertificateStore
@@ -643,7 +651,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             stage: "getservercert",
             host: endpoint.host,
             port: endpoint.port,
-            scheme: "http",
+            scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
             parameters: [
                 "devicename": "shadow-client",
                 "updateState": "1",
@@ -684,7 +692,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             stage: "clientchallenge",
             host: endpoint.host,
             port: endpoint.port,
-            scheme: "http",
+            scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
             parameters: [
                 "devicename": "shadow-client",
                 "updateState": "1",
@@ -742,7 +750,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             stage: "serverchallengeresp",
             host: endpoint.host,
             port: endpoint.port,
-            scheme: "http",
+            scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
             parameters: [
                 "devicename": "shadow-client",
                 "updateState": "1",
@@ -800,7 +808,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             stage: "clientpairingsecret",
             host: endpoint.host,
             port: endpoint.port,
-            scheme: "http",
+            scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
             parameters: [
                 "devicename": "shadow-client",
                 "updateState": "1",
@@ -827,7 +835,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                 stage: "pairchallenge",
                 host: endpoint.host,
                 port: resolvedHTTPSPort,
-                scheme: "https",
+                scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
                 parameters: stage5Parameters,
                 uniqueID: uniqueID,
                 pinnedServerCertificateDER: serverCertDER,
@@ -868,7 +876,6 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
 
         let isSurround = settings.enableSurroundAudio && !settings.lowLatencyMode
         let surroundAudioInfo = isSurround ? 393_279 : 131_075
-        let verb = currentGameID == 0 ? "launch" : "resume"
 
         var parameters: [String: String] = [
             "appid": "\(appID)",
@@ -886,7 +893,19 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
 
         parameters["bitrate"] = "\(settings.bitrateKbps)"
 
-        if let codec = settings.preferredCodec.launchParameterValue {
+        let resolvedCodecPreference = Self.resolvedLaunchCodecPreference(
+            from: settings.preferredCodec
+        )
+        let verb = Self.resolvedLaunchVerb(
+            appID: appID,
+            currentGameID: currentGameID,
+            preferredCodec: settings.preferredCodec,
+            resolvedCodecPreference: resolvedCodecPreference
+        )
+        Self.launchLogger.notice(
+            "Launch decision verb=\(verb.rawValue, privacy: .public), appID=\(appID, privacy: .public), currentGameID=\(currentGameID, privacy: .public), preferredCodec=\(settings.preferredCodec.rawValue, privacy: .public), resolvedCodec=\(resolvedCodecPreference.rawValue, privacy: .public)"
+        )
+        if let codec = resolvedCodecPreference.launchParameterValue {
             // Sunshine/GameStream stacks don't fully agree on this key, so send both.
             parameters["videoCodec"] = codec
             parameters["codec"] = codec
@@ -919,47 +938,153 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             parameters["clientHdrCapVersion"] = "0"
             parameters["clientHdrCapSupportedFlagsInUint32"] = "0"
             parameters["clientHdrCapMetaDataId"] = "NV_STATIC_METADATA_TYPE_1"
-            parameters["clientHdrCapDisplayData"] = "0x0x0x0x0x0x0x0x0x0x0"
+            parameters["clientHdrCapDisplayData"] = ShadowClientGameStreamLaunchDefaults.hdrCapabilityPlaceholder
         }
 
-        var capturedError: Error?
-        let attempts: [(scheme: String, port: Int, pinned: Data?, credential: URLCredential?)] = [
-            (scheme: "https", port: httpsPort, pinned: pinnedServerCertificate, credential: tlsClientCredential),
-            (scheme: "http", port: endpoint.port, pinned: nil, credential: nil),
-        ]
+        func requestControlXML(
+            command: ShadowClientGameStreamCommand,
+            parameters: [String: String]
+        ) async throws -> String {
+            try await ShadowClientGameStreamHTTPTransport.requestXML(
+                host: endpoint.host,
+                port: httpsPort,
+                scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
+                command: command.rawValue,
+                parameters: parameters,
+                uniqueID: uniqueID,
+                pinnedServerCertificateDER: pinnedServerCertificate,
+                clientCertificateCredential: tlsClientCredential,
+                timeout: defaultRequestTimeout
+            )
+        }
 
-        for attempt in attempts {
+        let requiresFreshLaunch = verb == .launch && currentGameID > 0
+        if requiresFreshLaunch {
             do {
-                let xml = try await ShadowClientGameStreamHTTPTransport.requestXML(
-                    host: endpoint.host,
-                    port: attempt.port,
-                    scheme: attempt.scheme,
-                    command: verb,
-                    parameters: parameters,
-                    uniqueID: uniqueID,
-                    pinnedServerCertificateDER: attempt.pinned,
-                    clientCertificateCredential: attempt.credential,
-                    timeout: defaultRequestTimeout
+                _ = try await requestControlXML(command: .cancel, parameters: [:])
+                Self.launchLogger.notice(
+                    "Issued cancel before launch to reset active session currentGameID=\(currentGameID, privacy: .public)"
                 )
-
-                let document = try ShadowClientXMLFlatDocumentParser.parse(xml: xml)
-                try Self.validateRootStatus(document.rootStatus)
-                let sessionURL = document.values["sessionUrl0"]?.first
-                return ShadowClientGameStreamLaunchResult(sessionURL: sessionURL, verb: verb)
             } catch {
-                capturedError = error
+                Self.launchLogger.error(
+                    "Cancel before launch failed: \(error.localizedDescription, privacy: .public)"
+                )
             }
         }
 
-        if let capturedError = capturedError as? ShadowClientGameStreamError {
-            throw capturedError
+        func issueLaunchRequest(
+            command: ShadowClientGameStreamCommand
+        ) async throws -> ShadowClientGameStreamLaunchResult {
+            let launchXML = try await requestControlXML(
+                command: command,
+                parameters: parameters
+            )
+            let document = try ShadowClientXMLFlatDocumentParser.parse(xml: launchXML)
+            try Self.validateRootStatus(document.rootStatus)
+            let sessionURL = document.values["sessionUrl0"]?.first
+            return ShadowClientGameStreamLaunchResult(sessionURL: sessionURL, verb: command.rawValue)
         }
 
-        if let capturedError = capturedError {
-            throw ShadowClientGameStreamError.requestFailed(capturedError.localizedDescription)
+        do {
+            return try await issueLaunchRequest(command: verb)
+        } catch {
+            if verb == .resume {
+                Self.launchLogger.notice(
+                    "Resume failed; retrying launch after cancel. reason=\(error.localizedDescription, privacy: .public)"
+                )
+                do {
+                    _ = try await requestControlXML(command: .cancel, parameters: [:])
+                } catch {
+                    Self.launchLogger.error(
+                        "Cancel before resume fallback launch failed: \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+                do {
+                    return try await issueLaunchRequest(command: .launch)
+                } catch {
+                    throw Self.remapLaunchError(error)
+                }
+            }
+            if requiresFreshLaunch,
+               Self.isAppAlreadyRunningResponse(error)
+            {
+                Self.launchLogger.notice(
+                    "Launch reported running app; retrying once after cancel"
+                )
+                do {
+                    _ = try await requestControlXML(command: .cancel, parameters: [:])
+                } catch {
+                    Self.launchLogger.error(
+                        "Retry cancel failed: \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+                do {
+                    return try await issueLaunchRequest(command: verb)
+                } catch {
+                    throw Self.remapLaunchError(error)
+                }
+            }
+            throw Self.remapLaunchError(error)
         }
+    }
 
-        throw ShadowClientGameStreamControlError.launchRejected
+    private static func resolvedLaunchVerb(
+        appID: Int,
+        currentGameID: Int,
+        preferredCodec: ShadowClientVideoCodecPreference,
+        resolvedCodecPreference: ShadowClientVideoCodecPreference
+    ) -> ShadowClientGameStreamCommand {
+        if currentGameID <= 0 {
+            return .launch
+        }
+        if appID != currentGameID {
+            return .launch
+        }
+        if didDowngradeCodecPreference(
+            requested: preferredCodec,
+            resolved: resolvedCodecPreference
+        ) {
+            return .launch
+        }
+        return .resume
+    }
+
+    private static func didDowngradeCodecPreference(
+        requested: ShadowClientVideoCodecPreference,
+        resolved: ShadowClientVideoCodecPreference
+    ) -> Bool {
+        switch requested {
+        case .av1:
+            return resolved != .av1
+        case .auto:
+            return resolved != .auto
+        case .h265, .h264:
+            return false
+        }
+    }
+
+    private static func isAppAlreadyRunningResponse(_ error: Error) -> Bool {
+        guard case let ShadowClientGameStreamError.responseRejected(code, message) = error else {
+            return false
+        }
+        guard code == 400 else {
+            return false
+        }
+        let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.contains("already running")
+    }
+
+    private static func remapLaunchError(_ error: Error) -> Error {
+        if let streamError = error as? ShadowClientGameStreamError {
+            return streamError
+        }
+        return ShadowClientGameStreamError.requestFailed(error.localizedDescription)
+    }
+
+    private static func resolvedLaunchCodecPreference(
+        from preferredCodec: ShadowClientVideoCodecPreference
+    ) -> ShadowClientVideoCodecPreference {
+        videoCodecSupport.resolvePreferredCodec(preferredCodec)
     }
 
     private func parsePairResponseXML(_ xml: String) throws -> ShadowClientXMLFlatDocument {
@@ -998,7 +1123,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                 host: host,
                 port: port,
                 scheme: scheme,
-                command: "pair",
+                command: ShadowClientGameStreamCommand.pair.rawValue,
                 parameters: parameters,
                 uniqueID: uniqueID,
                 pinnedServerCertificateDER: pinnedServerCertificateDER,
@@ -1028,8 +1153,8 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         _ = try await ShadowClientGameStreamHTTPTransport.requestXML(
             host: host,
             port: port,
-            scheme: "http",
-            command: "unpair",
+            scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
+            command: ShadowClientGameStreamCommand.unpair.rawValue,
             parameters: [:],
             uniqueID: uniqueID,
             pinnedServerCertificateDER: nil,
@@ -1043,7 +1168,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             throw ShadowClientGameStreamError.invalidHost
         }
 
-        let candidate = normalized.contains("://") ? normalized : "http://\(normalized)"
+        let candidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(normalized)
         guard let url = URL(string: candidate), let parsedHost = url.host else {
             throw ShadowClientGameStreamError.invalidHost
         }
@@ -1251,7 +1376,7 @@ enum ShadowClientGameStreamHTTPTransport {
         uniqueID: String,
         pinnedServerCertificateDER: Data?,
         clientCertificateCredential: URLCredential? = nil,
-        timeout: TimeInterval = 8
+        timeout: TimeInterval = ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
     ) async throws -> String {
         var components = URLComponents()
         components.scheme = scheme
@@ -1277,7 +1402,7 @@ enum ShadowClientGameStreamHTTPTransport {
         request.timeoutInterval = timeout
 
         let session: URLSession
-        if scheme == "https" {
+        if scheme == ShadowClientGameStreamNetworkDefaults.httpsScheme {
             let delegate = ShadowClientServerTrustURLSessionDelegate(
                 pinnedServerCertificateDER: pinnedServerCertificateDER,
                 clientCertificateCredential: clientCertificateCredential

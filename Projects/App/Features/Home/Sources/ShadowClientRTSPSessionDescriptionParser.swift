@@ -3,6 +3,7 @@ import Foundation
 public enum ShadowClientVideoCodec: String, Equatable, Sendable {
     case h264
     case h265
+    case av1
 }
 
 public struct ShadowClientRTSPVideoTrackDescriptor: Equatable, Sendable {
@@ -58,48 +59,86 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             .filter { !$0.isEmpty }
 
         var insideVideoSection = false
-        var payloadType: Int?
+        var hasVideoMediaLine = false
+        var advertisedPayloadTypes: [Int] = []
         var controlValue: String?
         var codecByPayloadType: [Int: ShadowClientVideoCodec] = [:]
         var fmtpByPayloadType: [Int: [String: String]] = [:]
+        var globalCodecByPayloadType: [Int: ShadowClientVideoCodec] = [:]
+        var globalFmtpByPayloadType: [Int: [String: String]] = [:]
 
         for line in normalizedLines {
             if line.hasPrefix("m=") {
                 insideVideoSection = line.hasPrefix("m=video")
                 if insideVideoSection {
-                    payloadType = parsePayloadType(fromMediaLine: line)
+                    hasVideoMediaLine = true
+                    advertisedPayloadTypes = parsePayloadTypes(fromMediaLine: line)
                 }
                 continue
+            }
+
+            if let rtpMapLine = extractAttributeLine(line, prefix: "a=rtpmap:"),
+               let mapping = parseRTPMap(rtpMapLine)
+            {
+                globalCodecByPayloadType[mapping.payloadType] = mapping.codec
+            }
+
+            if let fmtpLine = extractAttributeLine(line, prefix: "a=fmtp:"),
+               let parsed = parseFMTP(fmtpLine)
+            {
+                globalFmtpByPayloadType[parsed.payloadType] = parsed.parameters
             }
 
             guard insideVideoSection else {
                 continue
             }
 
-            if line.hasPrefix("a=control:") {
-                controlValue = String(line.dropFirst("a=control:".count))
+            if let controlLine = extractAttributeLine(line, prefix: "a=control:") {
+                controlValue = String(controlLine.dropFirst("a=control:".count))
                 continue
             }
 
-            if line.hasPrefix("a=rtpmap:"),
-               let mapping = parseRTPMap(line)
+            if let rtpMapLine = extractAttributeLine(line, prefix: "a=rtpmap:"),
+               let mapping = parseRTPMap(rtpMapLine)
             {
                 codecByPayloadType[mapping.payloadType] = mapping.codec
                 continue
             }
 
-            if line.hasPrefix("a=fmtp:"),
-               let parsed = parseFMTP(line)
+            if let fmtpLine = extractAttributeLine(line, prefix: "a=fmtp:"),
+               let parsed = parseFMTP(fmtpLine)
             {
                 fmtpByPayloadType[parsed.payloadType] = parsed.parameters
                 continue
             }
         }
 
-        guard let payloadType else {
+        if !hasVideoMediaLine {
+            if codecByPayloadType.isEmpty {
+                codecByPayloadType = globalCodecByPayloadType
+            }
+            if fmtpByPayloadType.isEmpty {
+                fmtpByPayloadType = globalFmtpByPayloadType
+            }
+            if advertisedPayloadTypes.isEmpty {
+                let discoveredPayloadTypes = Set(codecByPayloadType.keys)
+                    .union(fmtpByPayloadType.keys)
+                advertisedPayloadTypes = discoveredPayloadTypes.sorted()
+            }
+        }
+
+        guard let payloadType = selectPayloadType(
+            advertisedPayloadTypes: advertisedPayloadTypes,
+            codecByPayloadType: codecByPayloadType,
+            fmtpByPayloadType: fmtpByPayloadType
+        ) else {
             throw ShadowClientRTSPSessionDescriptionError.missingPayloadType
         }
-        guard let codec = codecByPayloadType[payloadType] else {
+        guard let codec = inferCodec(
+            for: payloadType,
+            codecByPayloadType: codecByPayloadType,
+            fmtpByPayloadType: fmtpByPayloadType
+        ) else {
             throw ShadowClientRTSPSessionDescriptionError.missingVideoTrack
         }
 
@@ -157,18 +196,92 @@ public enum ShadowClientRTSPSessionDescriptionParser {
         return resolved
     }
 
-    private static func parsePayloadType(fromMediaLine line: String) -> Int? {
-        let parts = line.split(separator: " ")
-        guard parts.count >= 4 else {
-            return nil
-        }
+    static func inferFallbackVideoPayloadType(
+        sdp: String,
+        preferredCodec: ShadowClientVideoCodec?
+    ) -> Int? {
+        let lines = sdp
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
 
-        for token in parts.dropFirst(3) {
-            if let value = Int(token) {
-                return value
+        var advertisedPayloadTypes: [Int] = []
+        var codecByPayloadType: [Int: ShadowClientVideoCodec] = [:]
+        var fmtpByPayloadType: [Int: [String: String]] = [:]
+
+        for line in lines {
+            if line.hasPrefix("m=video") {
+                for payloadType in parsePayloadTypes(fromMediaLine: line) where !advertisedPayloadTypes.contains(payloadType) {
+                    advertisedPayloadTypes.append(payloadType)
+                }
+                continue
+            }
+
+            if line.hasPrefix("a=rtpmap:"),
+               let mapping = parseRTPMap(line)
+            {
+                codecByPayloadType[mapping.payloadType] = mapping.codec
+                continue
+            }
+
+            if line.hasPrefix("a=fmtp:"),
+               let parsed = parseFMTP(line)
+            {
+                fmtpByPayloadType[parsed.payloadType] = parsed.parameters
+                continue
             }
         }
-        return nil
+
+        var candidates: [Int] = []
+
+        func appendCandidate(_ payloadType: Int) {
+            if !candidates.contains(payloadType) {
+                candidates.append(payloadType)
+            }
+        }
+
+        for payloadType in advertisedPayloadTypes {
+            appendCandidate(payloadType)
+        }
+        for payloadType in codecByPayloadType.keys.sorted() {
+            appendCandidate(payloadType)
+        }
+        for payloadType in fmtpByPayloadType.keys.sorted() {
+            appendCandidate(payloadType)
+        }
+
+        if let preferredCodec {
+            for candidate in candidates {
+                if inferCodec(
+                    for: candidate,
+                    codecByPayloadType: codecByPayloadType,
+                    fmtpByPayloadType: fmtpByPayloadType
+                ) == preferredCodec {
+                    return candidate
+                }
+            }
+        }
+
+        return selectPayloadType(
+            advertisedPayloadTypes: advertisedPayloadTypes,
+            codecByPayloadType: codecByPayloadType,
+            fmtpByPayloadType: fmtpByPayloadType
+        )
+    }
+
+    private static func parsePayloadTypes(fromMediaLine line: String) -> [Int] {
+        let parts = line.split(separator: " ")
+        guard parts.count >= 4 else {
+            return []
+        }
+
+        var payloadTypes: [Int] = []
+        for token in parts.dropFirst(3) {
+            if let value = Int(token), !payloadTypes.contains(value) {
+                payloadTypes.append(value)
+            }
+        }
+        return payloadTypes
     }
 
     private static func parseRTPMap(_ line: String) -> (payloadType: Int, codec: ShadowClientVideoCodec)? {
@@ -184,6 +297,8 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             return (payloadType, .h264)
         case "h265", "hevc":
             return (payloadType, .h265)
+        case "av1":
+            return (payloadType, .av1)
         default:
             return nil
         }
@@ -232,7 +347,53 @@ public enum ShadowClientRTSPSessionDescriptionParser {
                 }
                 return Data(base64Encoded: value.trimmingCharacters(in: .whitespacesAndNewlines))
             }
+        case .av1:
+            return []
         }
+    }
+
+    private static func selectPayloadType(
+        advertisedPayloadTypes: [Int],
+        codecByPayloadType: [Int: ShadowClientVideoCodec],
+        fmtpByPayloadType: [Int: [String: String]]
+    ) -> Int? {
+        var candidates: [Int] = []
+        candidates.append(contentsOf: advertisedPayloadTypes)
+        candidates.append(contentsOf: codecByPayloadType.keys.sorted())
+        candidates.append(contentsOf: fmtpByPayloadType.keys.sorted())
+
+        for candidate in candidates {
+            if inferCodec(
+                for: candidate,
+                codecByPayloadType: codecByPayloadType,
+                fmtpByPayloadType: fmtpByPayloadType
+            ) != nil {
+                return candidate
+            }
+        }
+        return candidates.first
+    }
+
+    private static func inferCodec(
+        for payloadType: Int,
+        codecByPayloadType: [Int: ShadowClientVideoCodec],
+        fmtpByPayloadType: [Int: [String: String]]
+    ) -> ShadowClientVideoCodec? {
+        if let mapped = codecByPayloadType[payloadType] {
+            return mapped
+        }
+
+        let fmtp = fmtpByPayloadType[payloadType] ?? [:]
+        if fmtp["sprop-vps"] != nil {
+            return .h265
+        }
+        if fmtp["sprop-parameter-sets"] != nil {
+            return .h264
+        }
+        if fmtp["profile"] != nil || fmtp["level-idx"] != nil {
+            return .av1
+        }
+        return nil
     }
 
     private static func resolveControlURL(
@@ -241,7 +402,7 @@ public enum ShadowClientRTSPSessionDescriptionParser {
         fallbackSessionURL: String
     ) throws -> String {
         let trimmedControl = controlValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if trimmedControl.hasPrefix("rtsp://") || trimmedControl.hasPrefix("rtsps://") {
+        if ShadowClientRTSPProtocolProfile.hasAbsoluteRTSPScheme(trimmedControl) {
             return trimmedControl
         }
 
@@ -290,5 +451,13 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             return base + controlPath
         }
         return base + "/" + controlPath
+    }
+
+    private static func extractAttributeLine(_ line: String, prefix: String) -> String? {
+        let lower = line.lowercased()
+        guard let range = lower.range(of: prefix.lowercased()) else {
+            return nil
+        }
+        return String(line[range.lowerBound...])
     }
 }

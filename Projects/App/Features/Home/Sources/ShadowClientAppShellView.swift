@@ -18,9 +18,11 @@ public struct ShadowClientAppShellView: View {
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferHDR) private var preferHDR = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.showDiagnosticsHUD) private var showDiagnosticsHUD = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.connectionHost) private var connectionHost = ""
-    @AppStorage(ShadowClientAppSettings.StorageKeys.resolution) private var resolutionRawValue = ShadowClientStreamingResolutionPreset.p1080.rawValue
-    @AppStorage(ShadowClientAppSettings.StorageKeys.frameRate) private var frameRateRawValue = ShadowClientStreamingFrameRatePreset.fps60.rawValue
-    @AppStorage(ShadowClientAppSettings.StorageKeys.bitrateKbps) private var bitrateKbps = 22_000
+    @AppStorage(ShadowClientAppSettings.StorageKeys.resolution) private var resolutionRawValue =
+        ShadowClientAppSettingsDefaults.defaultResolution.rawValue
+    @AppStorage(ShadowClientAppSettings.StorageKeys.frameRate) private var frameRateRawValue =
+        ShadowClientAppSettingsDefaults.defaultFrameRate.rawValue
+    @AppStorage(ShadowClientAppSettings.StorageKeys.bitrateKbps) private var bitrateKbps = ShadowClientAppSettingsDefaults.defaultBitrateKbps
     @AppStorage(ShadowClientAppSettings.StorageKeys.displayMode) private var displayModeRawValue = ShadowClientDisplayMode.borderlessFullscreen.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.audioConfiguration) private var audioConfigurationRawValue = ShadowClientAudioConfiguration.surround71.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.videoCodec) private var videoCodecRawValue = ShadowClientVideoCodecPreference.auto.rawValue
@@ -104,8 +106,8 @@ public struct ShadowClientAppShellView: View {
             refreshRemoteDesktopCatalog()
         }
         .onChange(of: unlockBitrateLimit, initial: false) { _, unlocked in
-            if !unlocked && bitrateKbps > 150_000 {
-                bitrateKbps = 150_000
+            if !unlocked && bitrateKbps > ShadowClientAppSettingsDefaults.maximumBitrateWhenLocked {
+                bitrateKbps = ShadowClientAppSettingsDefaults.maximumBitrateWhenLocked
             }
         }
         .onDisappear {
@@ -152,12 +154,18 @@ public struct ShadowClientAppShellView: View {
     }
 
     private var selectedResolution: ShadowClientStreamingResolutionPreset {
-        get { ShadowClientStreamingResolutionPreset(rawValue: resolutionRawValue) ?? .p1080 }
+        get {
+            ShadowClientStreamingResolutionPreset(rawValue: resolutionRawValue) ??
+                ShadowClientAppSettingsDefaults.defaultResolution
+        }
         nonmutating set { resolutionRawValue = newValue.rawValue }
     }
 
     private var selectedFrameRate: ShadowClientStreamingFrameRatePreset {
-        get { ShadowClientStreamingFrameRatePreset(rawValue: frameRateRawValue) ?? .fps60 }
+        get {
+            ShadowClientStreamingFrameRatePreset(rawValue: frameRateRawValue) ??
+                ShadowClientAppSettingsDefaults.defaultFrameRate
+        }
         nonmutating set { frameRateRawValue = newValue.rawValue }
     }
 
@@ -362,8 +370,8 @@ public struct ShadowClientAppShellView: View {
                                 }
                                 Slider(
                                     value: bitrateSliderBinding,
-                                    in: 500...maxBitrateKbps,
-                                    step: 500
+                                    in: Double(ShadowClientStreamingLaunchBounds.minimumBitrateKbps)...maxBitrateKbps,
+                                    step: Double(ShadowClientAppSettingsDefaults.bitrateStepKbps)
                                 )
                                 .tint(.mint)
                             }
@@ -1414,14 +1422,20 @@ public struct ShadowClientAppShellView: View {
     }
 
     private var maxBitrateKbps: Double {
-        unlockBitrateLimit ? 500_000 : 150_000
+        unlockBitrateLimit
+            ? Double(ShadowClientAppSettingsDefaults.maximumBitrateWhenUnlocked)
+            : Double(ShadowClientAppSettingsDefaults.maximumBitrateWhenLocked)
     }
 
     private var bitrateSliderBinding: Binding<Double> {
         Binding(
             get: { Double(bitrateKbps) },
             set: { newValue in
-                let clamped = min(max(500, Int(newValue.rounded() / 500) * 500), Int(maxBitrateKbps))
+                let rounded = Int(newValue.rounded() / Double(ShadowClientAppSettingsDefaults.bitrateStepKbps)) * ShadowClientAppSettingsDefaults.bitrateStepKbps
+                let clamped = min(
+                    max(ShadowClientStreamingLaunchBounds.minimumBitrateKbps, rounded),
+                    Int(maxBitrateKbps)
+                )
                 bitrateKbps = clamped
             }
         )
@@ -1598,7 +1612,7 @@ public struct ShadowClientAppShellView: View {
 
         remoteDesktopRuntime.refreshSelectedHostApps()
 
-        for _ in 0..<25 {
+        for _ in 0..<ShadowClientUIRuntimeDefaults.appListPollingAttempts {
             if case .loaded = remoteDesktopRuntime.appState {
                 if let preferred = preferredLaunchApp(from: remoteDesktopRuntime.apps) {
                     launchRemoteApp(preferred)
@@ -1613,7 +1627,7 @@ public struct ShadowClientAppShellView: View {
                 return
             }
 
-            try? await Task.sleep(for: .milliseconds(200))
+            try? await Task.sleep(for: ShadowClientUIRuntimeDefaults.pollingInterval)
         }
 
         if let preferred = preferredLaunchApp(from: remoteDesktopRuntime.apps) {
@@ -1625,8 +1639,8 @@ public struct ShadowClientAppShellView: View {
     }
 
     private func preferredLaunchApp(from apps: [ShadowClientRemoteAppDescriptor]) -> ShadowClientRemoteAppDescriptor? {
-        if let desktop = apps.first(where: { $0.title.localizedCaseInsensitiveContains("desktop") }) {
-            return desktop
+        if let nonCollector = apps.first(where: { !$0.isAppCollectorGame }) {
+            return nonCollector
         }
         return apps.first
     }
@@ -1655,29 +1669,35 @@ public struct ShadowClientAppShellView: View {
         }
 
         let settings = currentSettings.launchSettings(hostApp: nil)
+        let fallbackApp = preferredLaunchApp(from: remoteDesktopRuntime.apps) ?? {
+            guard selectedHost.currentGameID > 0 else {
+                return nil
+            }
+            return ShadowClientRemoteAppDescriptor(
+                id: selectedHost.currentGameID,
+                title: ShadowClientRemoteAppLabels.currentSession(selectedHost.currentGameID),
+                hdrSupported: false,
+                isAppCollectorGame: false
+            )
+        }()
+        guard let fallbackApp else {
+            return
+        }
 
         remoteDesktopRuntime.launchSelectedApp(
-            appID: 881_448_767,
-            appTitle: "Desktop",
+            appID: fallbackApp.id,
+            appTitle: fallbackApp.title,
             settings: settings
         )
 
-        for _ in 0..<15 {
+        for _ in 0..<ShadowClientUIRuntimeDefaults.launchStatePollingAttempts {
             if case .launched = remoteDesktopRuntime.launchState {
                 return
             }
             if case .failed = remoteDesktopRuntime.launchState {
                 break
             }
-            try? await Task.sleep(for: .milliseconds(200))
-        }
-
-        if case .failed = remoteDesktopRuntime.launchState {
-            remoteDesktopRuntime.launchSelectedApp(
-                appID: 1,
-                appTitle: "Desktop",
-                settings: settings
-            )
+            try? await Task.sleep(for: ShadowClientUIRuntimeDefaults.pollingInterval)
         }
     }
 

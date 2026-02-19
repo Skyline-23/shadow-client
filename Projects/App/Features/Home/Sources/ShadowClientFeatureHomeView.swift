@@ -63,15 +63,15 @@ public extension ShadowClientRemoteDesktopDependencies {
     static func live(
         identityStore: ShadowClientPairingIdentityStore = .shared,
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore = .shared,
-        defaultHTTPPort: Int = 47989,
-        defaultHTTPSPort: Int = 47984
+        defaultHTTPPort: Int = ShadowClientGameStreamNetworkDefaults.defaultHTTPPort,
+        defaultHTTPSPort: Int = ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
     ) -> Self {
         live(
             identityStore: identityStore,
             pinnedCertificateStore: pinnedCertificateStore,
             defaultHTTPPort: defaultHTTPPort,
             defaultHTTPSPort: defaultHTTPSPort,
-            sessionConnectTimeout: .seconds(10)
+            sessionConnectTimeout: ShadowClientGameStreamNetworkDefaults.defaultSessionConnectTimeout
         )
     }
 
@@ -607,7 +607,7 @@ public struct ShadowClientFeatureHomeView: View {
                     telemetryIngressActivity = activity
                 }
 
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(for: ShadowClientUIRuntimeDefaults.streamOutputHeartbeatInterval)
             }
         }
     }

@@ -34,6 +34,48 @@ func gameStreamParserMapsServerInfoXML() throws {
     #expect(info.uniqueID == "HOST-123")
 }
 
+@Test("GameStream parser normalizes stale currentgame when server state is free")
+func gameStreamParserNormalizesStaleCurrentGameInFreeState() throws {
+    let xml = """
+    <root status_code="200" status_message="OK">
+      <hostname>Skyline23-PC</hostname>
+      <PairStatus>1</PairStatus>
+      <currentgame>881448767</currentgame>
+      <state>SUNSHINE_SERVER_FREE</state>
+      <HttpsPort>47984</HttpsPort>
+    </root>
+    """
+
+    let info = try ShadowClientGameStreamXMLParsers.parseServerInfo(
+        xml: xml,
+        host: "192.168.0.10",
+        fallbackHTTPSPort: 47984
+    )
+
+    #expect(info.currentGameID == 0)
+}
+
+@Test("GameStream parser preserves currentgame when server state is busy")
+func gameStreamParserPreservesCurrentGameInBusyState() throws {
+    let xml = """
+    <root status_code="200" status_message="OK">
+      <hostname>Skyline23-PC</hostname>
+      <PairStatus>1</PairStatus>
+      <currentgame>881448767</currentgame>
+      <state>SUNSHINE_SERVER_BUSY</state>
+      <HttpsPort>47984</HttpsPort>
+    </root>
+    """
+
+    let info = try ShadowClientGameStreamXMLParsers.parseServerInfo(
+        xml: xml,
+        host: "192.168.0.10",
+        fallbackHTTPSPort: 47984
+    )
+
+    #expect(info.currentGameID == 881_448_767)
+}
+
 @Test("GameStream parser rejects non-200 root status")
 func gameStreamParserRejectsRejectedResponseXML() {
     let xml = """
@@ -342,7 +384,7 @@ func remoteDesktopRuntimeRefreshesHostsAndLoadsApps() async {
     }
 }
 
-@Test("Remote desktop runtime synthesizes desktop fallback apps when paired host app list is empty")
+@Test("Remote desktop runtime synthesizes current session fallback app when paired host app list is empty")
 @MainActor
 func remoteDesktopRuntimeSynthesizesFallbackAppsForEmptyCatalog() async {
     let client = FakeGameStreamMetadataClient(
@@ -375,8 +417,9 @@ func remoteDesktopRuntimeSynthesizesFallbackAppsForEmptyCatalog() async {
 
     #expect(runtime.hostState == .loaded)
     #expect(runtime.appState == .loaded)
-    #expect(runtime.apps.contains(where: { $0.id == 881_448_767 }))
-    #expect(runtime.apps.contains(where: { $0.id == 1 }))
+    #expect(runtime.apps.count == 1)
+    #expect(runtime.apps.first?.id == 881_448_767)
+    #expect(runtime.apps.first?.title == "Current Session (881448767)")
 }
 
 private struct FailingIdentityProvider: ShadowClientPairingIdentityProviding {

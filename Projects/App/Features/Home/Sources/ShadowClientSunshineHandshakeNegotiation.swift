@@ -1,10 +1,6 @@
 import Foundation
 
 struct ShadowClientSunshineHandshakeNegotiation: Sendable {
-    private static let moonlightFeatureFlagFECStatus: UInt32 = 0x01
-    private static let moonlightFeatureFlagSessionIDV1: UInt32 = 0x02
-    private static let sunshineEncryptionControlV2: UInt32 = 0x01
-
     let audioPingPayload: Data?
     let videoPingPayload: Data?
     let controlConnectData: UInt32?
@@ -19,9 +15,9 @@ struct ShadowClientSunshineHandshakeNegotiation: Sendable {
     }
 
     var moonlightFeatureFlags: UInt32 {
-        var flags = Self.moonlightFeatureFlagFECStatus
+        var flags = ShadowClientSunshineHandshakeProfile.moonlightFeatureFlagFECStatus
         if supportsSessionIdentifierV1 {
-            flags |= Self.moonlightFeatureFlagSessionIDV1
+            flags |= ShadowClientSunshineHandshakeProfile.moonlightFeatureFlagSessionIDV1
         }
         return flags
     }
@@ -30,6 +26,6 @@ struct ShadowClientSunshineHandshakeNegotiation: Sendable {
         guard supportsSessionIdentifierV1 else {
             return 0
         }
-        return encryptionRequestedFlags & Self.sunshineEncryptionControlV2
+        return encryptionRequestedFlags & ShadowClientSunshineHandshakeProfile.sunshineEncryptionControlV2
     }
 }

@@ -21,7 +21,7 @@ actor ShadowClientSunshineControlChannelRuntime {
     private var outgoingReliableSequenceNumber: UInt16 = 0
     private var connectID: UInt32 = 0
 
-    init(connectTimeout: Duration = .seconds(2)) {
+    init(connectTimeout: Duration = ShadowClientSunshineControlChannelDefaults.connectTimeout) {
         self.connectTimeout = connectTimeout
     }
 
@@ -51,7 +51,7 @@ actor ShadowClientSunshineControlChannelRuntime {
 
             let verify = try await waitForVerifyConnect(over: connection, expectedConnectID: connectID)
             outgoingPeerID = verify.outgoingPeerID
-            outgoingSessionID = verify.outgoingSessionID & 0x03
+            outgoingSessionID = verify.outgoingSessionID & ShadowClientSunshineENetProtocolProfile.sessionValueMask
 
             try await acknowledge(
                 commandChannelID: verify.commandChannelID,

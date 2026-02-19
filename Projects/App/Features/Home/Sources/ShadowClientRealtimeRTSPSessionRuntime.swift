@@ -2,7 +2,6 @@ import CoreVideo
 import Foundation
 import Network
 import os
-import VideoToolbox
 
 public enum ShadowClientRealtimeSessionRuntimeError: Error, Equatable, Sendable {
     case invalidSessionURL
@@ -32,6 +31,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private let decoder: ShadowClientVideoToolboxDecoder
     private let connectTimeout: Duration
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RealtimeSession")
+    private let videoCodecSupport = ShadowClientVideoCodecSupport()
     private var rtspClient: ShadowClientRTSPInterleavedClient?
     private var streamTask: Task<Void, Never>?
     private var moonlightNVDepacketizer = ShadowClientMoonlightNVRTPDepacketizer()
@@ -39,7 +39,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     public init(
         surfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init(),
         decoder: ShadowClientVideoToolboxDecoder = .init(),
-        connectTimeout: Duration = .seconds(8)
+        connectTimeout: Duration = ShadowClientRealtimeSessionDefaults.defaultConnectTimeout
     ) {
         self.surfaceContext = surfaceContext
         self.decoder = decoder
@@ -57,10 +57,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         videoConfiguration: ShadowClientRemoteSessionVideoConfiguration
     ) async throws {
         try await disconnect()
-        let resolvedVideoConfiguration = Self.resolveRuntimeVideoConfiguration(videoConfiguration)
+        let resolvedVideoConfiguration = resolveRuntimeVideoConfiguration(videoConfiguration)
         await decoder.setPreferredOutputDimensions(
             width: resolvedVideoConfiguration.width,
-            height: resolvedVideoConfiguration.height
+            height: resolvedVideoConfiguration.height,
+            fps: resolvedVideoConfiguration.fps
         )
 
         await MainActor.run {
@@ -174,40 +175,16 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
     }
 
-    private static func resolveRuntimeVideoConfiguration(
+    private func resolveRuntimeVideoConfiguration(
         _ configuration: ShadowClientRemoteSessionVideoConfiguration
     ) -> ShadowClientRemoteSessionVideoConfiguration {
-        let resolvedCodecPreference = resolveCodecPreference(
-            from: configuration.preferredCodec
-        )
+        let resolvedCodecPreference = videoCodecSupport.resolvePreferredCodec(configuration.preferredCodec)
         return .init(
             width: configuration.width,
             height: configuration.height,
+            fps: configuration.fps,
             preferredCodec: resolvedCodecPreference
         )
-    }
-
-    private static func resolveCodecPreference(
-        from preferredCodec: ShadowClientVideoCodecPreference
-    ) -> ShadowClientVideoCodecPreference {
-        let supportsAV1: Bool
-        if #available(iOS 17.0, macOS 14.0, tvOS 17.0, *) {
-            supportsAV1 = VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1)
-        } else {
-            supportsAV1 = false
-        }
-
-        let nonAV1Fallback: ShadowClientVideoCodecPreference =
-            VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC) ? .h265 : .h264
-
-        switch preferredCodec {
-        case .auto:
-            return supportsAV1 ? .auto : nonAV1Fallback
-        case .av1:
-            return supportsAV1 ? .av1 : nonAV1Fallback
-        case .h265, .h264:
-            return preferredCodec
-        }
     }
 
     private static func depacketizerTailTruncationStrategy(
@@ -268,7 +245,7 @@ private struct ShadowClientRTPPacket {
 
 private actor ShadowClientRTSPInterleavedClient {
     private let timeout: Duration
-    private let clientPortBase: UInt16 = 50_000
+    private let clientPortBase: UInt16 = ShadowClientRTSPProtocolProfile.clientPortBase
     private let queue = DispatchQueue(label: "com.skyline23.shadowclient.rtsp.connection")
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RTSP")
     private var connection: NWConnection?
@@ -299,7 +276,7 @@ private actor ShadowClientRTSPInterleavedClient {
             throw ShadowClientRTSPInterleavedClientError.invalidURL
         }
         remoteHost = .init(host)
-        let portValue = normalizedURL.port ?? 554
+        let portValue = normalizedURL.port ?? ShadowClientRTSPProtocolProfile.defaultPort
         guard let port = NWEndpoint.Port(rawValue: UInt16(portValue)) else {
             throw ShadowClientRTSPInterleavedClientError.invalidURL
         }
@@ -324,10 +301,10 @@ private actor ShadowClientRTSPInterleavedClient {
 
         do {
             _ = try await sendRequest(
-                method: "OPTIONS",
+                method: ShadowClientRTSPRequestDefaults.optionsMethod,
                 url: normalizedURL.absoluteString,
                 headers: [
-                    "User-Agent": "ShadowClient/1.0",
+                    ShadowClientRTSPRequestDefaults.headerUserAgent: ShadowClientRTSPRequestDefaults.userAgent,
                 ]
             )
         } catch {
@@ -345,9 +322,9 @@ private actor ShadowClientRTSPInterleavedClient {
             describe = try await sendDescribeRequest(
                 url: normalizedURL.absoluteString,
                 headers: [
-                    "Accept": "application/sdp",
-                    "If-Modified-Since": "Thu, 01 Jan 1970 00:00:00 GMT",
-                    "User-Agent": "ShadowClient/1.0",
+                    ShadowClientRTSPRequestDefaults.headerAccept: ShadowClientRTSPRequestDefaults.acceptSDP,
+                    ShadowClientRTSPRequestDefaults.headerIfModifiedSince: ShadowClientRTSPRequestDefaults.ifModifiedSinceEpoch,
+                    ShadowClientRTSPRequestDefaults.headerUserAgent: ShadowClientRTSPRequestDefaults.userAgent,
                 ]
             )
         } catch {
@@ -357,7 +334,9 @@ private actor ShadowClientRTSPInterleavedClient {
         }
         let sdp = String(data: describe.body, encoding: .utf8) ?? ""
         logger.notice("RTSP DESCRIBE parsed body bytes \(describe.body.count, privacy: .public), characters \(sdp.count, privacy: .public)")
-        let contentBase = describe.headers["content-base"] ?? describe.headers["content-location"]
+        let contentBase =
+            describe.headers[ShadowClientRTSPRequestDefaults.responseHeaderContentBase] ??
+            describe.headers[ShadowClientRTSPRequestDefaults.responseHeaderContentLocation]
         let parsedTrack: ShadowClientRTSPVideoTrackDescriptor
         if sdp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             parsedTrack = fallbackVideoTrackDescriptor(
@@ -398,7 +377,9 @@ private actor ShadowClientRTSPInterleavedClient {
             parameterSets: announceCodec == parsedTrack.codec ? parsedTrack.parameterSets : []
         )
 
-        let setupTransportHeader = "unicast;X-GS-ClientPort=\(clientPortBase)-\(clientPortBase + 1)"
+        let setupTransportHeader = ShadowClientRTSPProtocolProfile.setupTransportHeader(
+            clientPortBase: clientPortBase
+        )
         let setupURLCandidates = videoControlURLCandidates(
             primary: track.controlURL,
             sessionURL: normalizedURL.absoluteString
@@ -415,32 +396,34 @@ private actor ShadowClientRTSPInterleavedClient {
         if !audioSetupCandidates.isEmpty {
             for controlURL in audioSetupCandidates {
                 var headers: [String: String] = [
-                    "Transport": setupTransportHeader,
-                    "If-Modified-Since": "Thu, 01 Jan 1970 00:00:00 GMT",
-                    "User-Agent": "ShadowClient/1.0",
+                    ShadowClientRTSPRequestDefaults.headerTransport: setupTransportHeader,
+                    ShadowClientRTSPRequestDefaults.headerIfModifiedSince: ShadowClientRTSPRequestDefaults.ifModifiedSinceEpoch,
+                    ShadowClientRTSPRequestDefaults.headerUserAgent: ShadowClientRTSPRequestDefaults.userAgent,
                 ]
                 if let sessionHeader {
-                    headers["Session"] = sessionHeader
+                    headers[ShadowClientRTSPRequestDefaults.headerSession] = sessionHeader
                 }
 
                 do {
                     try await reconnect(host: host, port: port)
                     let response = try await sendRequest(
-                        method: "SETUP",
+                        method: ShadowClientRTSPRequestDefaults.setupMethod,
                         url: controlURL,
                         headers: headers
                     )
-                    if sessionHeader == nil, let session = response.headers["session"] {
+                    if sessionHeader == nil,
+                       let session = response.headers[ShadowClientRTSPRequestDefaults.responseHeaderSession]
+                    {
                         sessionHeader = session.split(separator: ";").first.map(String.init)
                     }
-                    if let transport = response.headers["transport"],
+                    if let transport = response.headers[ShadowClientRTSPRequestDefaults.responseHeaderTransport],
                        let parsedPort = ShadowClientRTSPTransportHeaderParser.parseServerPort(from: transport)
                     {
                         audioServerPort = NWEndpoint.Port(rawValue: parsedPort)
                         logger.notice("RTSP negotiated UDP audio server port \(parsedPort, privacy: .public)")
                     }
                     audioPingPayload = ShadowClientRTSPTransportHeaderParser.parseSunshinePingPayload(
-                        from: response.headers["x-ss-ping-payload"]
+                        from: response.headers[ShadowClientRTSPRequestDefaults.responseHeaderPingPayload]
                     )
                     logger.notice("RTSP audio SETUP ok for \(controlURL, privacy: .public)")
                     break
@@ -456,16 +439,16 @@ private actor ShadowClientRTSPInterleavedClient {
         for setupURL in setupURLCandidates {
             do {
                 var headers: [String: String] = [
-                    "Transport": setupTransportHeader,
-                    "If-Modified-Since": "Thu, 01 Jan 1970 00:00:00 GMT",
-                    "User-Agent": "ShadowClient/1.0",
+                    ShadowClientRTSPRequestDefaults.headerTransport: setupTransportHeader,
+                    ShadowClientRTSPRequestDefaults.headerIfModifiedSince: ShadowClientRTSPRequestDefaults.ifModifiedSinceEpoch,
+                    ShadowClientRTSPRequestDefaults.headerUserAgent: ShadowClientRTSPRequestDefaults.userAgent,
                 ]
                 if let sessionHeader {
-                    headers["Session"] = sessionHeader
+                    headers[ShadowClientRTSPRequestDefaults.headerSession] = sessionHeader
                 }
                 try await reconnect(host: host, port: port)
                 let response = try await sendRequest(
-                    method: "SETUP",
+                    method: ShadowClientRTSPRequestDefaults.setupMethod,
                     url: setupURL,
                     headers: headers
                 )
@@ -483,10 +466,10 @@ private actor ShadowClientRTSPInterleavedClient {
                 "RTSP video SETUP failed: \(setupError?.localizedDescription ?? "unknown")"
             )
         }
-        if let session = setup.headers["session"] {
+        if let session = setup.headers[ShadowClientRTSPRequestDefaults.responseHeaderSession] {
             sessionHeader = session.split(separator: ";").first.map(String.init)
         }
-        if let transport = setup.headers["transport"],
+        if let transport = setup.headers[ShadowClientRTSPRequestDefaults.responseHeaderTransport],
            let parsedPort = ShadowClientRTSPTransportHeaderParser.parseServerPort(from: transport)
         {
             videoServerPort = NWEndpoint.Port(rawValue: parsedPort)
@@ -495,7 +478,7 @@ private actor ShadowClientRTSPInterleavedClient {
             videoServerPort = nil
         }
         videoPingPayload = ShadowClientRTSPTransportHeaderParser.parseSunshinePingPayload(
-            from: setup.headers["x-ss-ping-payload"]
+            from: setup.headers[ShadowClientRTSPRequestDefaults.responseHeaderPingPayload]
         )
         logger.notice("RTSP video SETUP ok for payload type \(track.rtpPayloadType, privacy: .public) via \(selectedSetupURL ?? track.controlURL, privacy: .public)")
 
@@ -506,29 +489,29 @@ private actor ShadowClientRTSPInterleavedClient {
         )
         for controlURL in controlSetupCandidates {
             var headers: [String: String] = [
-                "Transport": setupTransportHeader,
-                "If-Modified-Since": "Thu, 01 Jan 1970 00:00:00 GMT",
-                "User-Agent": "ShadowClient/1.0",
+                ShadowClientRTSPRequestDefaults.headerTransport: setupTransportHeader,
+                ShadowClientRTSPRequestDefaults.headerIfModifiedSince: ShadowClientRTSPRequestDefaults.ifModifiedSinceEpoch,
+                ShadowClientRTSPRequestDefaults.headerUserAgent: ShadowClientRTSPRequestDefaults.userAgent,
             ]
             if let sessionHeader {
-                headers["Session"] = sessionHeader
+                headers[ShadowClientRTSPRequestDefaults.headerSession] = sessionHeader
             }
 
             do {
                 try await reconnect(host: host, port: port)
                 let response = try await sendRequest(
-                    method: "SETUP",
+                    method: ShadowClientRTSPRequestDefaults.setupMethod,
                     url: controlURL,
                     headers: headers
                 )
-                if let transport = response.headers["transport"],
+                if let transport = response.headers[ShadowClientRTSPRequestDefaults.responseHeaderTransport],
                    let parsedPort = ShadowClientRTSPTransportHeaderParser.parseServerPort(from: transport)
                 {
                     parsedControlServerPort = NWEndpoint.Port(rawValue: parsedPort)
                     logger.notice("RTSP negotiated UDP control server port \(parsedPort, privacy: .public)")
                 }
                 if let parsed = ShadowClientRTSPTransportHeaderParser.parseSunshineControlConnectData(
-                    from: response.headers["x-ss-connect-data"]
+                    from: response.headers[ShadowClientRTSPRequestDefaults.responseHeaderConnectData]
                 ) {
                     parsedControlConnectData = parsed
                     logger.notice("RTSP control connect data \(parsed, privacy: .public)")
@@ -547,7 +530,7 @@ private actor ShadowClientRTSPInterleavedClient {
             videoPingPayload: videoPingPayload,
             controlConnectData: parsedControlConnectData,
             encryptionRequestedFlags: parseSunshineEncryptionRequestedFlags(from: sdp),
-            prefersSessionIdentifierV1: true
+            prefersSessionIdentifierV1: ShadowClientSunshineSessionDefaults.prefersSessionIdentifierV1
         )
         useSessionIdentifierV1 = handshakeNegotiation.supportsSessionIdentifierV1
         logger.notice(
@@ -558,18 +541,18 @@ private actor ShadowClientRTSPInterleavedClient {
             hostAddress: host,
             videoConfiguration: videoConfiguration,
             codec: track.codec,
-            videoPort: videoServerPort?.rawValue ?? 47_998,
+            videoPort: videoServerPort?.rawValue ?? ShadowClientRealtimeSessionDefaults.fallbackVideoPort,
             moonlightFeatureFlags: handshakeNegotiation.moonlightFeatureFlags,
             encryptionEnabledFlags: handshakeNegotiation.encryptionEnabledFlags
         )
         let announceTargets = announceURLCandidates(sessionURL: normalizedURL.absoluteString)
         var announceHeaders: [String: String] = [
-            "User-Agent": "ShadowClient/1.0",
-            "Content-type": "application/sdp",
-            "Content-length": "\(announcePayload.count)",
+            ShadowClientRTSPRequestDefaults.headerUserAgent: ShadowClientRTSPRequestDefaults.userAgent,
+            ShadowClientRTSPRequestDefaults.headerContentType: ShadowClientRTSPRequestDefaults.acceptSDP,
+            ShadowClientRTSPRequestDefaults.headerContentLength: "\(announcePayload.count)",
         ]
         if let sessionHeader {
-            announceHeaders["Session"] = sessionHeader
+            announceHeaders[ShadowClientRTSPRequestDefaults.headerSession] = sessionHeader
         }
 
         var announceSucceeded = false
@@ -577,7 +560,7 @@ private actor ShadowClientRTSPInterleavedClient {
             do {
                 try await reconnect(host: host, port: port)
                 _ = try await sendRequest(
-                    method: "ANNOUNCE",
+                    method: ShadowClientRTSPRequestDefaults.announceMethod,
                     url: announceTarget,
                     headers: announceHeaders,
                     body: announcePayload
@@ -594,7 +577,7 @@ private actor ShadowClientRTSPInterleavedClient {
         }
 
         let playHeaders: [String: String] = [
-            "User-Agent": "ShadowClient/1.0",
+            ShadowClientRTSPRequestDefaults.headerUserAgent: ShadowClientRTSPRequestDefaults.userAgent,
         ]
         let resolvedPlayHeaders: [String: String]
         if let sessionHeader {
@@ -612,13 +595,13 @@ private actor ShadowClientRTSPInterleavedClient {
             do {
                 try await reconnect(host: host, port: port)
                 _ = try await sendRequest(
-                    method: "PLAY",
+                    method: ShadowClientRTSPRequestDefaults.playMethod,
                     url: playTarget,
                     headers: resolvedPlayHeaders
                 )
                 logger.notice("RTSP PLAY ok for \(playTarget, privacy: .public)")
                 playSucceeded = true
-                if playTarget == "/" {
+                if playTarget == ShadowClientRTSPProtocolProfile.playPaths.first {
                     break
                 }
             } catch {
@@ -725,12 +708,12 @@ private actor ShadowClientRTSPInterleavedClient {
             return .h264
         }
 
-        if sdp.localizedCaseInsensitiveContains("av1/90000") {
+        if sdp.localizedCaseInsensitiveContains(ShadowClientRTSPProtocolProfile.av1ClockRateMarker) {
             return .av1
         }
-        if sdp.localizedCaseInsensitiveContains("h265/90000") ||
-            sdp.localizedCaseInsensitiveContains("hevc/90000") ||
-            sdp.contains("sprop-parameter-sets=AAAAAU")
+        if sdp.localizedCaseInsensitiveContains(ShadowClientRTSPProtocolProfile.h265ClockRateMarker) ||
+            sdp.localizedCaseInsensitiveContains(ShadowClientRTSPProtocolProfile.hevcClockRateMarker) ||
+            sdp.contains(ShadowClientRTSPProtocolProfile.hevcParameterSetMarker)
         {
             return .h265
         }
@@ -742,13 +725,13 @@ private actor ShadowClientRTSPInterleavedClient {
         codec: ShadowClientVideoCodec
     ) -> Int {
         guard let sdp else {
-            return 96
+            return ShadowClientRTSPProtocolProfile.fallbackVideoPayloadType
         }
 
         return ShadowClientRTSPSessionDescriptionParser.inferFallbackVideoPayloadType(
             sdp: sdp,
             preferredCodec: codec
-        ) ?? 96
+        ) ?? ShadowClientRTSPProtocolProfile.fallbackVideoPayloadType
     }
 
     private func videoControlURLCandidates(
@@ -769,19 +752,12 @@ private actor ShadowClientRTSPInterleavedClient {
         }
 
         add(primary)
-        add("streamid=video/0/0")
-        add("streamid=video")
-        add("streamid=0")
+        ShadowClientRTSPProtocolProfile.videoControlPaths.forEach(add)
 
         if let parsedSessionURL = URL(string: sessionURL) {
             let normalizedBaseURL = normalizeRTSPURL(parsedSessionURL)
             var components = URLComponents(url: normalizedBaseURL, resolvingAgainstBaseURL: false)
-            let fallbackPaths = [
-                "/streamid=video/0/0",
-                "/streamid=video",
-                "/streamid=0",
-            ]
-            for path in fallbackPaths {
+            for path in ShadowClientRTSPProtocolProfile.videoControlPaths.map(ShadowClientRTSPProtocolProfile.absolutePath) {
                 components?.path = path
                 add(components?.url?.absoluteString)
             }
@@ -808,17 +784,12 @@ private actor ShadowClientRTSPInterleavedClient {
         }
 
         controlsFromSDP.forEach(add)
-        add("streamid=audio/0/0")
-        add("streamid=audio")
+        ShadowClientRTSPProtocolProfile.audioControlPaths.forEach(add)
 
         if let parsedSessionURL = URL(string: sessionURL) {
             let normalizedBaseURL = normalizeRTSPURL(parsedSessionURL)
             var components = URLComponents(url: normalizedBaseURL, resolvingAgainstBaseURL: false)
-            let fallbackPaths = [
-                "/streamid=audio/0/0",
-                "/streamid=audio",
-            ]
-            for path in fallbackPaths {
+            for path in ShadowClientRTSPProtocolProfile.audioControlPaths.map(ShadowClientRTSPProtocolProfile.absolutePath) {
                 components?.path = path
                 add(components?.url?.absoluteString)
             }
@@ -841,19 +812,12 @@ private actor ShadowClientRTSPInterleavedClient {
             candidates.append(trimmed)
         }
 
-        add("streamid=control/13/0")
-        add("streamid=control/1/0")
-        add("streamid=control")
+        ShadowClientRTSPProtocolProfile.controlStreamPaths.forEach(add)
 
         if let parsedSessionURL = URL(string: sessionURL) {
             let normalizedBaseURL = normalizeRTSPURL(parsedSessionURL)
             var components = URLComponents(url: normalizedBaseURL, resolvingAgainstBaseURL: false)
-            let fallbackPaths = [
-                "/streamid=control/13/0",
-                "/streamid=control/1/0",
-                "/streamid=control",
-            ]
-            for path in fallbackPaths {
+            for path in ShadowClientRTSPProtocolProfile.controlStreamPaths.map(ShadowClientRTSPProtocolProfile.absolutePath) {
                 components?.path = path
                 add(components?.url?.absoluteString)
             }
@@ -876,19 +840,12 @@ private actor ShadowClientRTSPInterleavedClient {
             candidates.append(trimmed)
         }
 
-        add("streamid=control/13/0")
-        add("streamid=video")
-        add("streamid=video/0/0")
+        ShadowClientRTSPProtocolProfile.announcePaths.forEach(add)
 
         if let parsedSessionURL = URL(string: sessionURL) {
             let normalizedBaseURL = normalizeRTSPURL(parsedSessionURL)
             var components = URLComponents(url: normalizedBaseURL, resolvingAgainstBaseURL: false)
-            let fallbackPaths = [
-                "/streamid=control/13/0",
-                "/streamid=video",
-                "/streamid=video/0/0",
-            ]
-            for path in fallbackPaths {
+            for path in ShadowClientRTSPProtocolProfile.announcePaths.map(ShadowClientRTSPProtocolProfile.absolutePath) {
                 components?.path = path
                 add(components?.url?.absoluteString)
             }
@@ -911,9 +868,7 @@ private actor ShadowClientRTSPInterleavedClient {
             candidates.append(trimmed)
         }
 
-        add("/")
-        add("streamid=video")
-        add("streamid=audio")
+        ShadowClientRTSPProtocolProfile.playPaths.forEach(add)
         add(sessionURL)
         return candidates
     }
@@ -926,7 +881,9 @@ private actor ShadowClientRTSPInterleavedClient {
 
         for line in lines {
             let lower = line.lowercased()
-            guard let range = lower.range(of: "x-ss-general.encryptionrequested:") else {
+            guard let range = lower.range(
+                of: ShadowClientSunshineHandshakeProfile.encryptionRequestedAttributePrefix
+            ) else {
                 continue
             }
 
@@ -936,7 +893,7 @@ private actor ShadowClientRTSPInterleavedClient {
             }
         }
 
-        return 0
+        return ShadowClientSunshineHandshakeProfile.encryptionDisabled
     }
 
     private func startSunshineControlChannelIfNeeded(host: String) async {
@@ -1024,7 +981,7 @@ private actor ShadowClientRTSPInterleavedClient {
                 }
 
                 if !hasReceivedVideoPayload,
-                   packet.payloadType != 127
+                   packet.payloadType != ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType
                 {
                     logger.notice(
                         "RTSP payload type mismatch; adopting stream payload type \(packet.payloadType, privacy: .public) (expected \(effectivePayloadType, privacy: .public))"
@@ -1119,7 +1076,7 @@ private actor ShadowClientRTSPInterleavedClient {
                         loggedPingError = true
                     }
                 }
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await Task.sleep(for: ShadowClientRealtimeSessionDefaults.pingInterval)
             }
         }
         let audioPingTask = Task {
@@ -1138,7 +1095,7 @@ private actor ShadowClientRTSPInterleavedClient {
                     rtspLogger.notice("RTSP UDP audio ping sent (sequence=\(sequence, privacy: .public), variants=\(pingPackets.count, privacy: .public), bytes=\(pingPackets.first?.count ?? 0, privacy: .public))")
                     loggedPingCount += 1
                 }
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await Task.sleep(for: ShadowClientRealtimeSessionDefaults.pingInterval)
             }
         }
 
@@ -1174,7 +1131,7 @@ private actor ShadowClientRTSPInterleavedClient {
             }
 
             if !hasReceivedVideoPayload,
-               packet.payloadType != 127
+               packet.payloadType != ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType
             {
                 logger.notice(
                     "RTSP payload type mismatch; adopting stream payload type \(packet.payloadType, privacy: .public) (expected \(effectivePayloadType, privacy: .public))"
@@ -1284,7 +1241,7 @@ private actor ShadowClientRTSPInterleavedClient {
         }
 
         let requestPayload = buildRequestPayload(
-            method: "DESCRIBE",
+            method: ShadowClientRTSPRequestDefaults.describeMethod,
             url: url,
             headers: headers
         )
@@ -1292,7 +1249,7 @@ private actor ShadowClientRTSPInterleavedClient {
 
         let rawResponse = try await readResponseUntilConnectionClose()
         let response = try parseRTSPResponseFromRawData(rawResponse)
-        logResponse(method: "DESCRIBE", response: response)
+        logResponse(method: ShadowClientRTSPRequestDefaults.describeMethod, response: response)
 
         guard (200...299).contains(response.statusCode) else {
             let bodyText = String(data: response.body, encoding: .utf8) ?? ""
@@ -1311,12 +1268,14 @@ private actor ShadowClientRTSPInterleavedClient {
         body: Data = Data()
     ) -> Data {
         var lines: [String] = []
-        lines.append("\(method) \(url) RTSP/1.0")
+        lines.append("\(method) \(url) \(ShadowClientRTSPRequestDefaults.protocolVersion)")
         lines.append("CSeq: \(cseq)")
         cseq += 1
-        lines.append("X-GS-ClientVersion: 14")
+        lines.append(
+            "\(ShadowClientRTSPRequestDefaults.headerClientVersion): \(ShadowClientRTSPRequestDefaults.clientVersionHeaderValue)"
+        )
         if let host = URL(string: url)?.host {
-            lines.append("Host: \(host)")
+            lines.append("\(ShadowClientRTSPRequestDefaults.headerHost): \(host)")
         }
         for key in headers.keys.sorted() {
             if let value = headers[key] {
@@ -1350,8 +1309,8 @@ private actor ShadowClientRTSPInterleavedClient {
     }
 
     private func parseRTSPResponseFromRawData(_ rawData: Data) throws -> ShadowClientRTSPResponse {
-        let headerTerminatorCRLF = Data([0x0D, 0x0A, 0x0D, 0x0A])
-        let headerTerminatorLF = Data([0x0A, 0x0A])
+        let headerTerminatorCRLF = ShadowClientRTSPProtocolProfile.headerTerminatorCRLF
+        let headerTerminatorLF = ShadowClientRTSPProtocolProfile.headerTerminatorLF
         let headerRange: Range<Int>
         let bodyStart: Int
 
@@ -1375,7 +1334,7 @@ private actor ShadowClientRTSPInterleavedClient {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         guard let statusLine = lines.first,
-              statusLine.hasPrefix("RTSP/1.0"),
+              statusLine.hasPrefix(ShadowClientRTSPRequestDefaults.protocolVersion),
               let statusCode = Int(statusLine.split(separator: " ").dropFirst().first ?? "")
         else {
             throw ShadowClientRTSPInterleavedClientError.invalidResponse
@@ -1392,7 +1351,9 @@ private actor ShadowClientRTSPInterleavedClient {
         }
 
         let body: Data
-        if let contentLength = Int(headers["content-length"] ?? ""), contentLength >= 0 {
+        if let contentLength = Int(
+            headers[ShadowClientRTSPRequestDefaults.responseHeaderContentLength] ?? ""
+        ), contentLength >= 0 {
             let end = min(rawData.count, bodyStart + contentLength)
             body = Data(rawData[bodyStart..<end])
         } else {
@@ -1421,8 +1382,8 @@ private actor ShadowClientRTSPInterleavedClient {
     }
 
     private func parseRTSPResponseIfAvailable() -> ShadowClientRTSPResponse? {
-        let headerTerminatorCRLF = Data([0x0D, 0x0A, 0x0D, 0x0A])
-        let headerTerminatorLF = Data([0x0A, 0x0A])
+        let headerTerminatorCRLF = ShadowClientRTSPProtocolProfile.headerTerminatorCRLF
+        let headerTerminatorLF = ShadowClientRTSPProtocolProfile.headerTerminatorLF
         let headerRange: Range<Int>
         let bodyStart: Int
         if let range = readBuffer.range(of: headerTerminatorCRLF) {
@@ -1443,7 +1404,7 @@ private actor ShadowClientRTSPInterleavedClient {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         guard let statusLine = lines.first,
-              statusLine.hasPrefix("RTSP/1.0"),
+              statusLine.hasPrefix(ShadowClientRTSPRequestDefaults.protocolVersion),
               let statusCode = Int(statusLine.split(separator: " ").dropFirst().first ?? "")
         else {
             return nil
@@ -1459,7 +1420,9 @@ private actor ShadowClientRTSPInterleavedClient {
             headers[key] = value
         }
 
-        if let contentLength = Int(headers["content-length"] ?? "") {
+        if let contentLength = Int(
+            headers[ShadowClientRTSPRequestDefaults.responseHeaderContentLength] ?? ""
+        ) {
             let bodyEnd = bodyStart + contentLength
             guard readBuffer.count >= bodyEnd else {
                 return nil
@@ -1474,8 +1437,8 @@ private actor ShadowClientRTSPInterleavedClient {
             )
         }
 
-        let contentType = headers["content-type"]?.lowercased() ?? ""
-        if contentType.contains("application/sdp") {
+        let contentType = headers[ShadowClientRTSPRequestDefaults.responseHeaderContentType]?.lowercased() ?? ""
+        if contentType.contains(ShadowClientRTSPRequestDefaults.acceptSDP) {
             guard readBuffer.count > bodyStart else {
                 return nil
             }
@@ -1507,9 +1470,12 @@ private actor ShadowClientRTSPInterleavedClient {
             "RTSP \(method, privacy: .public) <- status \(response.statusCode, privacy: .public), body \(response.body.count, privacy: .public) bytes, headers [\(sortedHeaders, privacy: .public)]"
         )
 
-        guard method == "DESCRIBE",
+        guard method == ShadowClientRTSPRequestDefaults.describeMethod,
               !response.body.isEmpty,
-              let preview = String(data: response.body.prefix(512), encoding: .utf8)
+              let preview = String(
+                  data: response.body.prefix(ShadowClientRealtimeSessionDefaults.describeResponsePreviewByteCount),
+                  encoding: .utf8
+              )
         else {
             return
         }
@@ -1522,27 +1488,27 @@ private actor ShadowClientRTSPInterleavedClient {
             return nil
         }
 
-        if first != 0x24 {
+        if first != ShadowClientRTSPProtocolProfile.interleavedFrameMagicByte {
             return nil
         }
 
-        guard readBuffer.count >= 4 else {
+        guard readBuffer.count >= ShadowClientRTSPProtocolProfile.interleavedHeaderLength else {
             return nil
         }
 
         let frameLength = Int(readBuffer[2]) << 8 | Int(readBuffer[3])
-        let packetEnd = 4 + frameLength
+        let packetEnd = ShadowClientRTSPProtocolProfile.interleavedHeaderLength + frameLength
         guard readBuffer.count >= packetEnd else {
             return nil
         }
 
         let channel = Int(readBuffer[1])
-        let payload = readBuffer[4..<packetEnd]
+        let payload = readBuffer[ShadowClientRTSPProtocolProfile.interleavedHeaderLength..<packetEnd]
         readBuffer.removeSubrange(0..<packetEnd)
 
         // Odd interleaved channels carry RTCP/control packets.
         // Skip them before RTP parsing to keep decode state clean.
-        if channel % 2 == 1 {
+        if channel % 2 == ShadowClientRTSPProtocolProfile.rtcpChannelParityRemainder {
             return ShadowClientRTPPacket(
                 isRTP: false,
                 channel: channel,
@@ -1559,22 +1525,22 @@ private actor ShadowClientRTSPInterleavedClient {
         _ payload: Data,
         channel: Int
     ) throws -> ShadowClientRTPPacket {
-        guard payload.count >= 12 else {
+        guard payload.count >= ShadowClientRTSPProtocolProfile.rtpMinimumHeaderLength else {
             throw ShadowClientRTSPInterleavedClientError.invalidResponse
         }
 
-        let version = payload[0] >> 6
-        guard version == 2 else {
+        let version = payload[0] >> ShadowClientRTSPProtocolProfile.rtpVersionShift
+        guard version == ShadowClientRTSPProtocolProfile.rtpVersion else {
             throw ShadowClientRTSPInterleavedClientError.invalidResponse
         }
 
-        let hasPadding = (payload[0] & 0x20) != 0
-        let hasExtension = (payload[0] & 0x10) != 0
-        let csrcCount = Int(payload[0] & 0x0F)
-        let marker = (payload[1] & 0x80) != 0
-        let payloadType = Int(payload[1] & 0x7F)
+        let hasPadding = (payload[0] & ShadowClientRTSPProtocolProfile.rtpPaddingMask) != 0
+        let hasExtension = (payload[0] & ShadowClientRTSPProtocolProfile.rtpExtensionMask) != 0
+        let csrcCount = Int(payload[0] & ShadowClientRTSPProtocolProfile.rtpCSRCCountMask)
+        let marker = (payload[1] & ShadowClientRTSPProtocolProfile.rtpMarkerMask) != 0
+        let payloadType = Int(payload[1] & ShadowClientRTSPProtocolProfile.rtpPayloadTypeMask)
 
-        var headerLength = 12 + csrcCount * 4
+        var headerLength = ShadowClientRTSPProtocolProfile.rtpMinimumHeaderLength + csrcCount * 4
         guard payload.count >= headerLength else {
             throw ShadowClientRTSPInterleavedClientError.invalidResponse
         }
@@ -1718,7 +1684,10 @@ private actor ShadowClientRTSPInterleavedClient {
         }
 
         return try await withCheckedThrowingContinuation { continuation in
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { content, _, isComplete, error in
+            connection.receive(
+                minimumIncompleteLength: ShadowClientRealtimeSessionDefaults.minimumTransportReadLength,
+                maximumLength: ShadowClientRealtimeSessionDefaults.maximumTransportReadLength
+            ) { content, _, isComplete, error in
                 if let error {
                     continuation.resume(throwing: error)
                     return
@@ -1767,7 +1736,7 @@ private actor ShadowClientRTSPInterleavedClient {
             return [payloadThenSequence, sequenceThenPayload]
         }
 
-        return [Data([0x50, 0x49, 0x4E, 0x47])] // "PING"
+        return [Data(ShadowClientRealtimeSessionDefaults.defaultPingASCII.utf8)]
     }
 }
 

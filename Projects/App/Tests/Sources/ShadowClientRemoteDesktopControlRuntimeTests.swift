@@ -771,7 +771,12 @@ private actor FakeSessionConnectionClient: ShadowClientRemoteSessionConnectionCl
         self.simulatedFailure = simulatedFailure
     }
 
-    func connect(to sessionURL: String, host: String, appTitle: String) async throws {
+    func connect(
+        to sessionURL: String,
+        host: String,
+        appTitle: String,
+        videoConfiguration: ShadowClientRemoteSessionVideoConfiguration
+    ) async throws {
         recordedConnectCalls.append(sessionURL)
 
         if let simulatedFailure {
@@ -799,7 +804,12 @@ private actor BlockingFirstSessionConnectionClient: ShadowClientRemoteSessionCon
     private var recordedConnectCalls: [String] = []
     private var disconnectCallCount = 0
 
-    func connect(to sessionURL: String, host: String, appTitle: String) async throws {
+    func connect(
+        to sessionURL: String,
+        host: String,
+        appTitle: String,
+        videoConfiguration: ShadowClientRemoteSessionVideoConfiguration
+    ) async throws {
         recordedConnectCalls.append(sessionURL)
 
         if recordedConnectCalls.count == 1 {

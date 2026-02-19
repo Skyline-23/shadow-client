@@ -159,12 +159,12 @@ public actor NativeHostProbeConnectionClient: ShadowClientConnectionClient {
 }
 
 public enum NativeTCPHostProbe {
-    public static let defaultServicePorts: [Int] = [47984, 47989, 48010]
+    public static let defaultServicePorts: [Int] = ShadowClientGameStreamNetworkDefaults.defaultServicePorts
 
     public static func probe(
         host: String,
         ports: [Int] = defaultServicePorts,
-        timeout: Duration = .seconds(1)
+        timeout: Duration = ShadowClientHostProbeDefaults.tcpPortTimeout
     ) async throws -> ShadowClientHostProbeResult {
         let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedHost.isEmpty else {
@@ -172,7 +172,7 @@ public enum NativeTCPHostProbe {
         }
 
         let normalizedPorts = Array(Set(ports.compactMap { port -> Int? in
-            guard (1...Int(UInt16.max)).contains(port) else {
+            guard (ShadowClientGameStreamNetworkDefaults.minimumPort...ShadowClientGameStreamNetworkDefaults.maximumPort).contains(port) else {
                 return nil
             }
             return port
@@ -316,15 +316,30 @@ public actor SimulatedShadowClientConnectionClient: ShadowClientConnectionClient
 
             while !Task.isCancelled {
                 let timestampMs = Int(Date().timeIntervalSince1970 * 1_000)
-                let renderedFrames = 1_000 + (sampleIndex * 4)
-                let unstableWindow = sampleIndex % 20
-                let isUnstable = unstableWindow < 3
-                let droppedFrames = isUnstable ? 20 : 3
-                let networkDroppedFrames = isUnstable ? 14 : 2
+                let renderedFrames =
+                    ShadowClientTelemetrySimulationDefaults.baseRenderedFrames +
+                    (sampleIndex * ShadowClientTelemetrySimulationDefaults.renderedFrameIncrement)
+                let unstableWindow = sampleIndex % ShadowClientTelemetrySimulationDefaults.instabilityCycleLength
+                let isUnstable = unstableWindow < ShadowClientTelemetrySimulationDefaults.unstableSampleCount
+                let droppedFrames = isUnstable
+                    ? ShadowClientTelemetrySimulationDefaults.unstableDroppedFrames
+                    : ShadowClientTelemetrySimulationDefaults.stableDroppedFrames
+                let networkDroppedFrames = isUnstable
+                    ? ShadowClientTelemetrySimulationDefaults.unstableNetworkDroppedFrames
+                    : ShadowClientTelemetrySimulationDefaults.stableNetworkDroppedFrames
                 let pacerDroppedFrames = droppedFrames - networkDroppedFrames
-                let jitterMs = isUnstable ? 72.0 : 8.0 + Double(sampleIndex % 5)
-                let packetLossPercent = isUnstable ? 2.4 : 0.3
-                let avSyncOffsetMs = isUnstable ? 55.0 : 11.0
+                let jitterMs = isUnstable
+                    ? ShadowClientTelemetrySimulationDefaults.unstableJitterMs
+                    : ShadowClientTelemetrySimulationDefaults.stableJitterBaseMs +
+                        Double(
+                            sampleIndex % ShadowClientTelemetrySimulationDefaults.stableJitterVarianceCycle
+                        )
+                let packetLossPercent = isUnstable
+                    ? ShadowClientTelemetrySimulationDefaults.unstablePacketLossPercent
+                    : ShadowClientTelemetrySimulationDefaults.stablePacketLossPercent
+                let avSyncOffsetMs = isUnstable
+                    ? ShadowClientTelemetrySimulationDefaults.unstableAVSyncOffsetMs
+                    : ShadowClientTelemetrySimulationDefaults.stableAVSyncOffsetMs
 
                 let snapshot = StreamingTelemetrySnapshot(
                     stats: .init(
@@ -346,7 +361,7 @@ public actor SimulatedShadowClientConnectionClient: ShadowClientConnectionClient
                 await bridge.ingest(snapshot: snapshot)
                 sampleIndex += 1
 
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await Task.sleep(for: ShadowClientTelemetrySimulationDefaults.sampleInterval)
             }
         }
     }
