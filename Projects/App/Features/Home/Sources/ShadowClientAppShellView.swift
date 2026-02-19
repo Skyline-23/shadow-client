@@ -76,10 +76,12 @@ public struct ShadowClientAppShellView: View {
                     homeTab
                     settingsTab
                 }
+                .accessibilityIdentifier("shadow.root.tabview")
             } else {
                 remoteSessionFlowView
                     .ignoresSafeArea()
                     .transition(.opacity)
+                    .accessibilityIdentifier("shadow.root.remote-session")
             }
         }
         .tint(accentColor)
@@ -245,6 +247,7 @@ public struct ShadowClientAppShellView: View {
             }
             .scrollContentBackground(.hidden)
         }
+        .accessibilityIdentifier("shadow.tab.home")
         .tabItem { Label("Home", systemImage: "house.fill") }
         .tag(AppTab.home)
     }
@@ -772,6 +775,7 @@ public struct ShadowClientAppShellView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("shadow.tab.settings")
         .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
         .tag(AppTab.settings)
     }
@@ -848,11 +852,18 @@ public struct ShadowClientAppShellView: View {
                 Label(remoteDesktopRuntime.pairingState.label, systemImage: "number.square")
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(pairingStateColor)
+                    .accessibilityIdentifier("shadow.home.hosts.pairing-state")
+                    .accessibilityLabel("Host Pairing State")
+                    .accessibilityValue(remoteDesktopRuntime.pairingState.label)
                 Spacer(minLength: 0)
             }
 
             remoteDesktopAppListSection
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("shadow.home.hosts.card")
+        .accessibilityLabel("Remote Desktop Hosts")
+        .accessibilityValue(remoteDesktopHostsAccessibilityValue)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(panelSurface(cornerRadius: 14))
@@ -860,6 +871,7 @@ public struct ShadowClientAppShellView: View {
 
     private func remoteDesktopHostRow(_ host: ShadowClientRemoteHostDescriptor) -> some View {
         let isSelected = remoteDesktopRuntime.selectedHostID == host.id
+        let hostIdentifier = sanitizedIdentifier(host.id)
 
         return settingsRow {
             VStack(alignment: .leading, spacing: 10) {
@@ -905,8 +917,9 @@ public struct ShadowClientAppShellView: View {
                             connectionHost = host.host
                             remoteDesktopRuntime.selectHost(host.id)
                         }
-                        .accessibilityIdentifier("shadow.home.host.\(host.id).use")
+                        .accessibilityIdentifier("shadow.home.host.\(hostIdentifier).use")
                         .accessibilityLabel("Use \(host.displayName)")
+                        .accessibilityHint("Marks \(host.displayName) as the preferred host without opening a connection")
                         .buttonStyle(.bordered)
                         .frame(maxWidth: .infinity)
 
@@ -914,8 +927,9 @@ public struct ShadowClientAppShellView: View {
                             connectionHost = host.host
                             connectToHost(autoLaunchAfterConnect: true, preferredHostID: host.id)
                         }
-                        .accessibilityIdentifier("shadow.home.host.\(host.id).connect")
+                        .accessibilityIdentifier("shadow.home.host.\(hostIdentifier).connect")
                         .accessibilityLabel("Connect to \(host.displayName)")
+                        .accessibilityHint("Connects to the selected host and prepares a remote session")
                         .buttonStyle(.borderedProminent)
                         .disabled(!canInitiateSessionConnection || !host.isReachable)
                         .frame(maxWidth: .infinity)
@@ -925,8 +939,9 @@ public struct ShadowClientAppShellView: View {
                         Button("Select") {
                             remoteDesktopRuntime.selectHost(host.id)
                         }
-                        .accessibilityIdentifier("shadow.home.host.\(host.id).select")
+                        .accessibilityIdentifier("shadow.home.host.\(hostIdentifier).select")
                         .accessibilityLabel("Select \(host.displayName)")
+                        .accessibilityHint("Highlights \(host.displayName) in the host list for quick actions")
                         .buttonStyle(.bordered)
                     }
                 } else {
@@ -935,30 +950,37 @@ public struct ShadowClientAppShellView: View {
                             connectionHost = host.host
                             remoteDesktopRuntime.selectHost(host.id)
                         }
-                        .accessibilityIdentifier("shadow.home.host.\(host.id).use")
+                        .accessibilityIdentifier("shadow.home.host.\(hostIdentifier).use")
                         .accessibilityLabel("Use \(host.displayName)")
+                        .accessibilityHint("Marks \(host.displayName) as the preferred host without opening a connection")
                         .buttonStyle(.bordered)
 
                         Button("Connect") {
                             connectionHost = host.host
                             connectToHost(autoLaunchAfterConnect: true, preferredHostID: host.id)
                         }
-                        .accessibilityIdentifier("shadow.home.host.\(host.id).connect")
+                        .accessibilityIdentifier("shadow.home.host.\(hostIdentifier).connect")
                         .accessibilityLabel("Connect to \(host.displayName)")
+                        .accessibilityHint("Connects to the selected host and prepares a remote session")
                         .buttonStyle(.borderedProminent)
                         .disabled(!canInitiateSessionConnection || !host.isReachable)
 
                         Button(isSelected ? "Selected" : "Select") {
                             remoteDesktopRuntime.selectHost(host.id)
                         }
-                        .accessibilityIdentifier("shadow.home.host.\(host.id).select")
+                        .accessibilityIdentifier("shadow.home.host.\(hostIdentifier).select")
                         .accessibilityLabel("Select \(host.displayName)")
+                        .accessibilityHint("Highlights \(host.displayName) in the host list for quick actions")
                         .buttonStyle(.bordered)
                         .disabled(isSelected)
                     }
                 }
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("shadow.home.host.\(hostIdentifier).row")
+        .accessibilityLabel(hostAccessibilityLabel(for: host, isSelected: isSelected))
+        .accessibilityHint("Double tap to reveal connect and select actions for \(host.displayName)")
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(isSelected ? Color.mint.opacity(0.9) : Color.clear, lineWidth: 1.5)
@@ -1027,6 +1049,7 @@ public struct ShadowClientAppShellView: View {
                 }
             } else {
                 ForEach(remoteDesktopRuntime.apps.prefix(8)) { app in
+                    let appIdentifier = sanitizedIdentifier(String(app.id))
                     settingsRow {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(app.title)
@@ -1040,8 +1063,9 @@ public struct ShadowClientAppShellView: View {
                         Button("Launch") {
                             launchRemoteApp(app)
                         }
-                        .accessibilityIdentifier("shadow.home.applist.launch.\(app.id)")
+                        .accessibilityIdentifier("shadow.home.applist.launch.\(appIdentifier)")
                         .accessibilityLabel("Launch \(app.title)")
+                        .accessibilityHint("Launches the selected remote app and enters remote session view")
                         .buttonStyle(.borderedProminent)
                         .disabled(remoteDesktopRuntime.launchState == .launching)
                     }
@@ -1055,6 +1079,34 @@ public struct ShadowClientAppShellView: View {
                 Spacer(minLength: 0)
             }
         }
+        .accessibilityIdentifier("shadow.home.applist.section")
+        .accessibilityLabel("Host App Library")
+        .accessibilityValue(hostAppLibraryAccessibilityValue)
+    }
+
+    private func hostAccessibilityLabel(
+        for host: ShadowClientRemoteHostDescriptor,
+        isSelected: Bool
+    ) -> String {
+        let selectionDetail = isSelected ? " Currently selected." : ""
+        return "\(host.displayName), \(host.statusLabel). Host: \(host.host).\(selectionDetail) \(host.detailLabel)"
+    }
+
+    private func sanitizedIdentifier(_ raw: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let sanitized = raw.lowercased()
+            .components(separatedBy: allowed.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
+        return sanitized.isEmpty ? "unknown" : sanitized
+    }
+
+    private var remoteDesktopHostsAccessibilityValue: String {
+        "\(remoteDesktopRuntime.hosts.count) host(s). Discovery \(remoteDesktopRuntime.hostState.label). Pairing \(remoteDesktopRuntime.pairingState.label)."
+    }
+
+    private var hostAppLibraryAccessibilityValue: String {
+        "\(remoteDesktopRuntime.apps.count) app(s). Catalog \(remoteDesktopRuntime.appState.label). Launch state \(remoteDesktopRuntime.launchState.label)."
     }
 
     private var connectionStatusCard: some View {
@@ -1074,6 +1126,10 @@ public struct ShadowClientAppShellView: View {
 
             Spacer()
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier("shadow.home.connection-status")
+        .accessibilityLabel("Client Connection")
+        .accessibilityValue(connectionStatusText)
         .padding(14)
         .background(panelSurface(cornerRadius: 12))
     }
@@ -1134,6 +1190,8 @@ public struct ShadowClientAppShellView: View {
                     ShadowClientRealtimeSessionSurfaceView(
                         context: sessionSurfaceContext
                     )
+                    .accessibilityIdentifier("shadow.remote.session.surface")
+                    .accessibilityLabel("Remote Session Surface")
 
                     if let overlay = sessionPresentationModel.overlay {
                         playbackOverlayLabel(
@@ -1178,6 +1236,7 @@ public struct ShadowClientAppShellView: View {
                             }
                             .accessibilityIdentifier("shadow.home.session.end")
                             .accessibilityLabel("End Session")
+                            .accessibilityHint("Disconnects the active session and returns to the host list.")
                             .buttonStyle(.borderedProminent)
                         }
                         .padding(.horizontal, 14)
@@ -1196,6 +1255,7 @@ public struct ShadowClientAppShellView: View {
                             Text(sessionPresentationModel.statusText)
                                 .font(.callout.weight(.semibold))
                                 .foregroundStyle(Color.white.opacity(0.90))
+                                .accessibilityIdentifier("shadow.remote.session.status")
 
                             HStack(spacing: 8) {
                                 Label(remoteDesktopRuntime.launchState.label, systemImage: "play.circle.fill")
