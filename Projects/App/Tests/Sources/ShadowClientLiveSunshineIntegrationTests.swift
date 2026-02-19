@@ -228,6 +228,7 @@ private func liveLaunchContext(config: LiveSunshineIntegrationConfiguration) asy
         httpsPort: appListPort,
         appID: app.id,
         currentGameID: serverInfo.currentGameID,
+        forceLaunch: false,
         settings: config.launchSettings()
     )
 

@@ -251,6 +251,7 @@ func remoteDesktopRuntimeLaunchesSelectedApp() async {
     #expect(calls.first?.host == "192.168.0.20")
     #expect(calls.first?.httpsPort == 47984)
     #expect(calls.first?.appID == 1)
+    #expect(calls.first?.forceLaunch == false)
 
     if case .launched = runtime.launchState {
         #expect(true)
@@ -410,6 +411,71 @@ func remoteDesktopRuntimePreservesHostProvidedSessionURL() async {
     }
 }
 
+@Test("Remote desktop runtime retries launch with forceLaunch when resume connect times out")
+@MainActor
+func remoteDesktopRuntimeRetriesForceLaunchAfterResumeConnectTimeout() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "wifi.skyline23.com": .init(
+                host: "wifi.skyline23.com",
+                displayName: "Skyline23-PC",
+                pairStatus: .paired,
+                currentGameID: 881_448_767,
+                serverState: "SUNSHINE_SERVER_BUSY",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-13"
+            ),
+        ],
+        appListByHost: [
+            "wifi.skyline23.com": [
+                .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let resumeSessionURL = "rtsp://192.168.0.52:48010/resume"
+    let forcedLaunchSessionURL = "rtsp://192.168.0.52:48010/launch"
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: forcedLaunchSessionURL, verb: "launch"),
+        simulatedLaunchResults: [
+            .init(sessionURL: resumeSessionURL, verb: "resume"),
+            .init(sessionURL: forcedLaunchSessionURL, verb: "launch"),
+        ]
+    )
+    let sessionConnector = FakeSessionConnectionClient(
+        simulatedFailures: [
+            ShadowClientGameStreamError.requestFailed("RTSP UDP video timeout: no video datagram received"),
+        ]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["wifi.skyline23.com"], preferredHost: "wifi.skyline23.com")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 881_448_767,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+
+    #expect(await sessionConnector.connectCalls() == [resumeSessionURL, forcedLaunchSessionURL])
+    let calls = await control.launchCalls()
+    #expect(calls.count == 2)
+    #expect(calls[0].forceLaunch == false)
+    #expect(calls[1].forceLaunch == true)
+    #expect(runtime.activeSession?.sessionURL == forcedLaunchSessionURL)
+    if case .launched = runtime.launchState {
+        #expect(true)
+    } else {
+        Issue.record("Expected launched state, got \(runtime.launchState)")
+    }
+}
+
 @Test("Remote desktop runtime fails launch when host returns missing video session URL")
 @MainActor
 func remoteDesktopRuntimeFailsLaunchWhenSessionURLIsMissing() async {
@@ -500,6 +566,9 @@ func remoteDesktopRuntimeFailsLaunchWhenVideoSessionConnectionFails() async {
     await waitForLaunchState(runtime)
 
     #expect(await sessionConnector.connectCalls() == ["rtsp://192.168.0.26:48010/session"])
+    let launchCalls = await control.launchCalls()
+    #expect(launchCalls.count == 1)
+    #expect(launchCalls.first?.forceLaunch == false)
     if case let .failed(message) = runtime.launchState {
         #expect(message.localizedCaseInsensitiveContains("could not connect to video session endpoint"))
     } else {
@@ -776,22 +845,26 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
         let httpsPort: Int
         let appID: Int
         let currentGameID: Int
+        let forceLaunch: Bool
         let settings: ShadowClientGameStreamLaunchSettings
     }
 
     private var recordedPairCalls: [PairCall] = []
     private var recordedLaunchCalls: [LaunchCall] = []
     private var simulatedPairFailures: [any Error & Sendable]
-    private let simulatedLaunchResult: ShadowClientGameStreamLaunchResult
+    private var simulatedLaunchResults: [ShadowClientGameStreamLaunchResult]
+    private let defaultLaunchResult: ShadowClientGameStreamLaunchResult
     private let simulatedLaunchFailure: (any Error & Sendable)?
 
     init(
         simulatedPairFailures: [any Error & Sendable] = [],
         simulatedLaunchResult: ShadowClientGameStreamLaunchResult = .init(sessionURL: "rtsp://example/session", verb: "launch"),
+        simulatedLaunchResults: [ShadowClientGameStreamLaunchResult] = [],
         simulatedLaunchFailure: (any Error & Sendable)? = nil
     ) {
         self.simulatedPairFailures = simulatedPairFailures
-        self.simulatedLaunchResult = simulatedLaunchResult
+        self.simulatedLaunchResults = simulatedLaunchResults
+        self.defaultLaunchResult = simulatedLaunchResult
         self.simulatedLaunchFailure = simulatedLaunchFailure
     }
 
@@ -818,6 +891,7 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
         httpsPort: Int,
         appID: Int,
         currentGameID: Int,
+        forceLaunch: Bool,
         settings: ShadowClientGameStreamLaunchSettings
     ) async throws -> ShadowClientGameStreamLaunchResult {
         recordedLaunchCalls.append(
@@ -826,6 +900,7 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
                 httpsPort: httpsPort,
                 appID: appID,
                 currentGameID: currentGameID,
+                forceLaunch: forceLaunch,
                 settings: settings
             )
         )
@@ -834,7 +909,11 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
             throw simulatedLaunchFailure
         }
 
-        return simulatedLaunchResult
+        if !simulatedLaunchResults.isEmpty {
+            return simulatedLaunchResults.removeFirst()
+        }
+
+        return defaultLaunchResult
     }
 
     func pairCalls() -> [PairCall] {
@@ -853,10 +932,16 @@ private actor FakeSessionConnectionClient: ShadowClientRemoteSessionConnectionCl
     private var recordedConnectCalls: [String] = []
     private var recordedVideoConfigurations: [ShadowClientRemoteSessionVideoConfiguration] = []
     private var disconnectCallCount = 0
-    private let simulatedFailure: (any Error & Sendable)?
+    private var simulatedFailures: [any Error & Sendable]
 
-    init(simulatedFailure: (any Error & Sendable)? = nil) {
-        self.simulatedFailure = simulatedFailure
+    init(
+        simulatedFailure: (any Error & Sendable)? = nil,
+        simulatedFailures: [any Error & Sendable] = []
+    ) {
+        self.simulatedFailures = simulatedFailures
+        if let simulatedFailure {
+            self.simulatedFailures.insert(simulatedFailure, at: 0)
+        }
     }
 
     func connect(
@@ -868,8 +953,9 @@ private actor FakeSessionConnectionClient: ShadowClientRemoteSessionConnectionCl
         recordedConnectCalls.append(sessionURL)
         recordedVideoConfigurations.append(videoConfiguration)
 
-        if let simulatedFailure {
-            throw simulatedFailure
+        if !simulatedFailures.isEmpty {
+            let error = simulatedFailures.removeFirst()
+            throw error
         }
     }
 
