@@ -63,7 +63,8 @@ public struct ShadowClientAppShellView: View {
         _remoteDesktopRuntime = ObservedObject(wrappedValue: dependencies.remoteDesktopRuntime)
         _sessionSurfaceContext = ObservedObject(wrappedValue: dependencies.remoteDesktopRuntime.sessionSurfaceContext)
         self.settingsTelemetryRuntime = SettingsDiagnosticsTelemetryRuntime(
-            baseDependencies: dependencies
+            settingsMapper: dependencies.settingsMapper,
+            hostCapabilities: dependencies.hostCapabilities
         )
     }
 

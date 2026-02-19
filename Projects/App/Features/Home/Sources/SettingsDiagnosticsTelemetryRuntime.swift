@@ -1,13 +1,18 @@
 import ShadowClientStreaming
 
 actor SettingsDiagnosticsTelemetryRuntime {
-    private let baseDependencies: ShadowClientFeatureHomeDependencies
+    private let settingsMapper: StreamingSessionSettingsMapper
+    private let hostCapabilities: HostStreamingCapabilities
     private var cachedSettingsIdentityKey: String?
     private var cachedDiagnosticsRuntime: HomeDiagnosticsRuntime?
     private var cachedLastTimestampMs: Int?
 
-    init(baseDependencies: ShadowClientFeatureHomeDependencies) {
-        self.baseDependencies = baseDependencies
+    init(
+        settingsMapper: StreamingSessionSettingsMapper,
+        hostCapabilities: HostStreamingCapabilities
+    ) {
+        self.settingsMapper = settingsMapper
+        self.hostCapabilities = hostCapabilities
     }
 
     func ingest(
@@ -19,8 +24,7 @@ actor SettingsDiagnosticsTelemetryRuntime {
            cachedSettingsIdentityKey == settings.streamingIdentityKey {
             runtime = cachedDiagnosticsRuntime
         } else {
-            let updatedDependencies = baseDependencies.applying(settings: settings)
-            runtime = updatedDependencies.diagnosticsRuntime
+            runtime = makeDiagnosticsRuntime(for: settings)
             cachedDiagnosticsRuntime = runtime
             cachedSettingsIdentityKey = settings.streamingIdentityKey
             cachedLastTimestampMs = nil
@@ -52,6 +56,17 @@ actor SettingsDiagnosticsTelemetryRuntime {
             tick: tick,
             sampleIntervalMs: sampleIntervalMs,
             receivedOutOfOrderSample: receivedOutOfOrderSample
+        )
+    }
+
+    private func makeDiagnosticsRuntime(for settings: ShadowClientAppSettings) -> HomeDiagnosticsRuntime {
+        HomeDiagnosticsRuntime(
+            launchRuntime: AdaptiveSessionLaunchRuntime(
+                telemetryPipeline: .init(initialBufferMs: 40.0),
+                settingsMapper: settingsMapper,
+                sessionPreferences: settings.streamingPreferences,
+                hostCapabilities: hostCapabilities
+            )
         )
     }
 }

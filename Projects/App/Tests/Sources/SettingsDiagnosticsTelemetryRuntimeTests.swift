@@ -5,9 +5,7 @@ import Testing
 @Test("Settings telemetry runtime preserves recovery hold across samples for same settings")
 func settingsTelemetryRuntimePreservesRecoveryHold() async {
     let bridge = MoonlightSessionTelemetryBridge()
-    let runtime = SettingsDiagnosticsTelemetryRuntime(
-        baseDependencies: .live(bridge: bridge)
-    )
+    let runtime = makeRuntime(bridge: bridge)
     let settings = ShadowClientAppSettings()
 
     let unstableModel = await runtime.ingest(
@@ -28,9 +26,7 @@ func settingsTelemetryRuntimePreservesRecoveryHold() async {
 @Test("Settings telemetry runtime resets mapping runtime when settings identity changes")
 func settingsTelemetryRuntimeResetsWhenSettingsChange() async {
     let bridge = MoonlightSessionTelemetryBridge()
-    let runtime = SettingsDiagnosticsTelemetryRuntime(
-        baseDependencies: .live(bridge: bridge)
-    )
+    let runtime = makeRuntime(bridge: bridge)
 
     let surroundPreferred = ShadowClientAppSettings(
         lowLatencyMode: false,
@@ -61,9 +57,7 @@ func settingsTelemetryRuntimeResetsWhenSettingsChange() async {
 @Test("Settings telemetry runtime keeps recovery hold when only HUD visibility changes")
 func settingsTelemetryRuntimeKeepsRecoveryOnHUDToggle() async {
     let bridge = MoonlightSessionTelemetryBridge()
-    let runtime = SettingsDiagnosticsTelemetryRuntime(
-        baseDependencies: .live(bridge: bridge)
-    )
+    let runtime = makeRuntime(bridge: bridge)
 
     let hudShown = ShadowClientAppSettings(showDiagnosticsHUD: true)
     let hudHidden = ShadowClientAppSettings(showDiagnosticsHUD: false)
@@ -85,9 +79,7 @@ func settingsTelemetryRuntimeKeepsRecoveryOnHUDToggle() async {
 @Test("Settings telemetry runtime reports sample interval for sequential samples")
 func settingsTelemetryRuntimeReportsSampleInterval() async {
     let bridge = MoonlightSessionTelemetryBridge()
-    let runtime = SettingsDiagnosticsTelemetryRuntime(
-        baseDependencies: .live(bridge: bridge)
-    )
+    let runtime = makeRuntime(bridge: bridge)
     let settings = ShadowClientAppSettings()
 
     let first = await runtime.ingest(
@@ -106,9 +98,7 @@ func settingsTelemetryRuntimeReportsSampleInterval() async {
 @Test("Settings telemetry runtime clears sample interval when streaming identity changes")
 func settingsTelemetryRuntimeClearsSampleIntervalOnStreamingSettingsChange() async {
     let bridge = MoonlightSessionTelemetryBridge()
-    let runtime = SettingsDiagnosticsTelemetryRuntime(
-        baseDependencies: .live(bridge: bridge)
-    )
+    let runtime = makeRuntime(bridge: bridge)
 
     let defaultSettings = ShadowClientAppSettings()
     let lowLatencyDisabled = ShadowClientAppSettings(lowLatencyMode: false)
@@ -133,9 +123,7 @@ func settingsTelemetryRuntimeClearsSampleIntervalOnStreamingSettingsChange() asy
 @Test("Settings telemetry runtime flags out-of-order samples")
 func settingsTelemetryRuntimeFlagsOutOfOrderSamples() async {
     let bridge = MoonlightSessionTelemetryBridge()
-    let runtime = SettingsDiagnosticsTelemetryRuntime(
-        baseDependencies: .live(bridge: bridge)
-    )
+    let runtime = makeRuntime(bridge: bridge)
     let settings = ShadowClientAppSettings()
 
     _ = await runtime.ingest(
@@ -171,5 +159,15 @@ private func stableSnapshot(timestampMs: Int) -> StreamingTelemetrySnapshot {
         signal: .init(jitterMs: 3.0, packetLossPercent: 0.2),
         timestampMs: timestampMs,
         dropBreakdown: .init(networkDroppedFrames: 2, pacerDroppedFrames: 3)
+    )
+}
+
+private func makeRuntime(
+    bridge: MoonlightSessionTelemetryBridge
+) -> SettingsDiagnosticsTelemetryRuntime {
+    let dependencies = ShadowClientFeatureHomeDependencies.live(bridge: bridge)
+    return SettingsDiagnosticsTelemetryRuntime(
+        settingsMapper: dependencies.settingsMapper,
+        hostCapabilities: dependencies.hostCapabilities
     )
 }
