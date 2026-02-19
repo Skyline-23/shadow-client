@@ -838,20 +838,15 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             do {
                 await sessionConnectionClient.disconnect()
 
-                let result = try await controlClient.launch(
+                let initialLaunchResult = try await controlClient.launch(
                     host: selectedHost.host,
                     httpsPort: selectedHost.httpsPort,
                     appID: appID,
                     currentGameID: selectedHost.currentGameID,
+                    forceLaunch: false,
                     settings: settings
                 )
-                guard let sessionURL = result.sessionURL?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !sessionURL.isEmpty
-                else {
-                    throw ShadowClientGameStreamError.requestFailed(
-                        "Host did not return a remote session URL."
-                    )
-                }
+
                 let resolvedTitle: String
                 if let launchedAppTitle, !launchedAppTitle.isEmpty {
                     resolvedTitle = launchedAppTitle
@@ -859,22 +854,64 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     resolvedTitle = "App \(appID)"
                 }
 
-                try await sessionConnectionClient.connect(
-                    to: sessionURL,
-                    host: selectedHost.host,
-                    appTitle: resolvedTitle,
-                    videoConfiguration: .init(
-                        width: settings.width,
-                        height: settings.height,
-                        fps: settings.fps,
-                        bitrateKbps: settings.bitrateKbps,
-                        preferredCodec: settings.preferredCodec,
-                        enableHDR: settings.enableHDR,
-                        enableSurroundAudio: settings.enableSurroundAudio,
-                        enableYUV444: settings.enableYUV444,
-                        remoteInputKey: result.remoteInputKey
+                var connectedLaunchResult = initialLaunchResult
+                var connectedSessionURL = try Self.validatedSessionURL(from: initialLaunchResult)
+
+                do {
+                    try await sessionConnectionClient.connect(
+                        to: connectedSessionURL,
+                        host: selectedHost.host,
+                        appTitle: resolvedTitle,
+                        videoConfiguration: .init(
+                            width: settings.width,
+                            height: settings.height,
+                            fps: settings.fps,
+                            bitrateKbps: settings.bitrateKbps,
+                            preferredCodec: settings.preferredCodec,
+                            enableHDR: settings.enableHDR,
+                            enableSurroundAudio: settings.enableSurroundAudio,
+                            enableYUV444: settings.enableYUV444,
+                            remoteInputKey: initialLaunchResult.remoteInputKey
+                        )
                     )
-                )
+                } catch {
+                    guard Self.shouldRetryForcedLaunch(
+                        launchVerb: initialLaunchResult.verb,
+                        connectError: error
+                    ) else {
+                        throw error
+                    }
+
+                    let forcedLaunchResult = try await controlClient.launch(
+                        host: selectedHost.host,
+                        httpsPort: selectedHost.httpsPort,
+                        appID: appID,
+                        currentGameID: selectedHost.currentGameID,
+                        forceLaunch: true,
+                        settings: settings
+                    )
+                    let forcedSessionURL = try Self.validatedSessionURL(from: forcedLaunchResult)
+
+                    try await sessionConnectionClient.connect(
+                        to: forcedSessionURL,
+                        host: selectedHost.host,
+                        appTitle: resolvedTitle,
+                        videoConfiguration: .init(
+                            width: settings.width,
+                            height: settings.height,
+                            fps: settings.fps,
+                            bitrateKbps: settings.bitrateKbps,
+                            preferredCodec: settings.preferredCodec,
+                            enableHDR: settings.enableHDR,
+                            enableSurroundAudio: settings.enableSurroundAudio,
+                            enableYUV444: settings.enableYUV444,
+                            remoteInputKey: forcedLaunchResult.remoteInputKey
+                        )
+                    )
+
+                    connectedLaunchResult = forcedLaunchResult
+                    connectedSessionURL = forcedSessionURL
+                }
 
                 if Task.isCancelled {
                     await MainActor.run {
@@ -898,14 +935,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         host: selectedHost.host,
                         appID: appID,
                         appTitle: resolvedTitle,
-                        sessionURL: sessionURL
+                        sessionURL: connectedSessionURL
                     )
                     if sessionPresentationMode == .externalRuntime {
                         launchState = .launched(
-                            "Remote desktop launched (\(result.verb)): \(resolvedTitle) on \(selectedHost.host)"
+                            "Remote desktop launched (\(connectedLaunchResult.verb)): \(resolvedTitle) on \(selectedHost.host)"
                         )
                     } else {
-                        launchState = .launched("Remote session transport connected (\(result.verb)): \(sessionURL)")
+                        launchState = .launched("Remote session transport connected (\(connectedLaunchResult.verb)): \(connectedSessionURL)")
                     }
                 }
             } catch {
@@ -966,6 +1003,47 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 sessionURL: sessionURL
             )
         }
+    }
+
+    private static func validatedSessionURL(
+        from launchResult: ShadowClientGameStreamLaunchResult
+    ) throws -> String {
+        guard let sessionURL = launchResult.sessionURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !sessionURL.isEmpty
+        else {
+            throw ShadowClientGameStreamError.requestFailed(
+                "Host did not return a remote session URL."
+            )
+        }
+        return sessionURL
+    }
+
+    private static func shouldRetryForcedLaunch(
+        launchVerb: String,
+        connectError: any Error
+    ) -> Bool {
+        guard launchVerb.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "resume" else {
+            return false
+        }
+
+        let normalized = connectError.localizedDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty else {
+            return false
+        }
+
+        let retrySignatures = [
+            "rtsp",
+            "video timeout",
+            "no video datagram",
+            "no message available on stream",
+            "transport connection timed out",
+            "video session endpoint",
+            "rtsp transport connection closed",
+        ]
+
+        return retrySignatures.contains(where: normalized.contains)
     }
 
     @MainActor

@@ -212,8 +212,28 @@ public protocol ShadowClientGameStreamControlClient: Sendable {
         httpsPort: Int,
         appID: Int,
         currentGameID: Int,
+        forceLaunch: Bool,
         settings: ShadowClientGameStreamLaunchSettings
     ) async throws -> ShadowClientGameStreamLaunchResult
+}
+
+public extension ShadowClientGameStreamControlClient {
+    func launch(
+        host: String,
+        httpsPort: Int,
+        appID: Int,
+        currentGameID: Int,
+        settings: ShadowClientGameStreamLaunchSettings
+    ) async throws -> ShadowClientGameStreamLaunchResult {
+        try await launch(
+            host: host,
+            httpsPort: httpsPort,
+            appID: appID,
+            currentGameID: currentGameID,
+            forceLaunch: false,
+            settings: settings
+        )
+    }
 }
 
 public enum ShadowClientGameStreamControlError: Error, Equatable, Sendable {
@@ -891,6 +911,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         httpsPort: Int,
         appID: Int,
         currentGameID: Int,
+        forceLaunch: Bool = false,
         settings: ShadowClientGameStreamLaunchSettings
     ) async throws -> ShadowClientGameStreamLaunchResult {
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
@@ -929,11 +950,12 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let verb = Self.resolvedLaunchVerb(
             appID: appID,
             currentGameID: currentGameID,
+            forceLaunch: forceLaunch,
             preferredCodec: settings.preferredCodec,
             resolvedCodecPreference: resolvedCodecPreference
         )
         Self.launchLogger.notice(
-            "Launch decision verb=\(verb.rawValue, privacy: .public), appID=\(appID, privacy: .public), currentGameID=\(currentGameID, privacy: .public), preferredCodec=\(settings.preferredCodec.rawValue, privacy: .public), resolvedCodec=\(resolvedCodecPreference.rawValue, privacy: .public)"
+            "Launch decision verb=\(verb.rawValue, privacy: .public), appID=\(appID, privacy: .public), currentGameID=\(currentGameID, privacy: .public), forceLaunch=\(forceLaunch, privacy: .public), preferredCodec=\(settings.preferredCodec.rawValue, privacy: .public), resolvedCodec=\(resolvedCodecPreference.rawValue, privacy: .public)"
         )
         if let codec = resolvedCodecPreference.launchParameterValue {
             // Sunshine/GameStream stacks don't fully agree on this key, so send both.
@@ -1072,9 +1094,13 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
     private static func resolvedLaunchVerb(
         appID: Int,
         currentGameID: Int,
+        forceLaunch: Bool,
         preferredCodec: ShadowClientVideoCodecPreference,
         resolvedCodecPreference: ShadowClientVideoCodecPreference
     ) -> ShadowClientGameStreamCommand {
+        if forceLaunch {
+            return .launch
+        }
         if currentGameID <= 0 {
             return .launch
         }
