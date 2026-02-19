@@ -60,3 +60,9 @@ Use subagents in parallel for non-trivial work with disjoint ownership, then mer
 - If `tap` tools are not exposed through function wrappers, use the `xcodebuildmcp` CLI workflow (`ui-automation tap`, `snapshot-ui`, `logging ...`) instead of skipping interaction validation.
 - Use `xcodebuildmcp --style minimal ...` for CLI calls to avoid known next-step rendering failures in normal style.
 - When duplicate labels exist (for example two `Refresh` buttons), do not tap by label. Use `snapshot-ui` coordinates and tap by `-x/-y`.
+
+### Realtime Streaming Integration Notes
+- Treat Sunshine `DESCRIBE` codec metadata as advisory; actual selected codec is finalized by RTSP `ANNOUNCE` (`x-nv-vqos[0].bitStreamFormat`) and launch plan policy.
+- For H264/H265 Moonlight NV RTP packets, use depacketizer tail strategy `.passthroughForAnnexBCodecs` (do not enforce `lastPacketPayloadLength` truncation).
+- Reserve `lastPacketPayloadLength` truncation for AV1/non-AnnexB streams only (`.trimUsingLastPacketLength`).
+- `ShadowClientAppShellView` must observe `sessionSurfaceContext` directly; relying only on `remoteDesktopRuntime` can leave session HUD stuck in `waitingForFirstFrame` even when frames render.
