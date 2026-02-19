@@ -1213,18 +1213,47 @@ private actor ShadowClientRTSPInterleavedClient {
         var effectivePayloadType = payloadType
         var hasReceivedVideoPayload = false
         var packetCount = 0
+        var parseFailureCount = 0
+        var datagramCount = 0
+        let receiveStart = ContinuousClock.now
 
         while !Task.isCancelled {
             guard let datagram = try udpSocket.receive(
                 maximumLength: ShadowClientRealtimeSessionDefaults.maximumTransportReadLength
             ) else {
+                if datagramCount == 0,
+                   receiveStart.duration(to: ContinuousClock.now) >= ShadowClientRealtimeSessionDefaults.initialVideoDatagramTimeout
+                {
+                    throw ShadowClientRTSPInterleavedClientError.requestFailed(
+                        "RTSP UDP video timeout: no video datagram received"
+                    )
+                }
                 continue
             }
             guard !datagram.isEmpty else {
                 continue
             }
 
-            let packet = try parseRTPPacket(datagram, channel: 0)
+            datagramCount += 1
+            if datagramCount == 1 {
+                logger.notice(
+                    "First UDP video datagram received: bytes=\(datagram.count, privacy: .public), preview=\(Self.hexPreview(datagram), privacy: .public)"
+                )
+            }
+
+            let packet: ShadowClientRTPPacket
+            do {
+                packet = try parseRTPPacket(datagram, channel: 0)
+            } catch {
+                parseFailureCount += 1
+                if parseFailureCount <= ShadowClientRealtimeSessionDefaults.udpParseFailureLogLimit {
+                    logger.error(
+                        "RTSP UDP datagram ignored (RTP parse failed #\(parseFailureCount, privacy: .public)): \(error.localizedDescription, privacy: .public), bytes=\(datagram.count, privacy: .public), preview=\(Self.hexPreview(datagram), privacy: .public)"
+                    )
+                }
+                continue
+            }
+
             packetCount += 1
             if packetCount == 1 {
                 logger.notice(
@@ -1249,6 +1278,13 @@ private actor ShadowClientRTSPInterleavedClient {
                 try await onVideoPacket(packet.payload, packet.marker)
             }
         }
+    }
+
+    private static func hexPreview(_ bytes: Data, limit: Int = 24) -> String {
+        let prefix = bytes.prefix(limit)
+            .map { String(format: "%02X", $0) }
+            .joined()
+        return bytes.count > limit ? prefix + "..." : prefix
     }
 
     private func makeVideoUDPSocket(
