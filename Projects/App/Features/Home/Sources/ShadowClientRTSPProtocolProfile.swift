@@ -7,6 +7,7 @@ enum ShadowClientRTSPProtocolProfile {
     static let defaultPort = 554
     static let fallbackVideoPayloadType = 96
     static let clientPortBase: UInt16 = 50_000
+    static let clientPortProbeCount = 16
     static let interleavedFrameMagicByte: UInt8 = 0x24
     static let interleavedHeaderLength = 4
     static let rtpMinimumHeaderLength = 12
