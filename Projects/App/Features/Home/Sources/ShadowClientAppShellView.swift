@@ -289,6 +289,8 @@ public struct ShadowClientAppShellView: View {
                             } label: {
                                 Image(systemName: "arrow.clockwise")
                             }
+                            .accessibilityIdentifier("shadow.settings.connection.refresh-discovery")
+                            .accessibilityLabel("Refresh Discovered Hosts")
                             .buttonStyle(.bordered)
                             .disabled(!autoFindHosts)
                         }
@@ -310,12 +312,16 @@ public struct ShadowClientAppShellView: View {
                             Button("Connect") {
                                 connectToHost()
                             }
+                            .accessibilityIdentifier("shadow.settings.connection.connect")
+                            .accessibilityLabel("Connect to Host")
                             .disabled(!canConnect)
                             .buttonStyle(.borderedProminent)
 
                             Button("Disconnect") {
                                 disconnectFromHost()
                             }
+                            .accessibilityIdentifier("shadow.settings.connection.disconnect")
+                            .accessibilityLabel("Disconnect from Host")
                             .disabled(!canDisconnect)
                             .buttonStyle(.bordered)
 
@@ -787,6 +793,8 @@ public struct ShadowClientAppShellView: View {
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
+                .accessibilityIdentifier("shadow.home.hosts.refresh")
+                .accessibilityLabel("Refresh Remote Desktop Hosts")
                 .buttonStyle(.bordered)
             }
 
@@ -814,6 +822,8 @@ public struct ShadowClientAppShellView: View {
                         Text("Start Pairing")
                     }
                 }
+                .accessibilityIdentifier("shadow.home.hosts.start-pairing")
+                .accessibilityLabel("Start Pairing")
                 .buttonStyle(.borderedProminent)
                 .disabled(remoteDesktopRuntime.selectedHost == nil)
                 Spacer(minLength: 0)
@@ -894,6 +904,8 @@ public struct ShadowClientAppShellView: View {
                             connectionHost = host.host
                             remoteDesktopRuntime.selectHost(host.id)
                         }
+                        .accessibilityIdentifier("shadow.home.host.\(host.id).use")
+                        .accessibilityLabel("Use \(host.displayName)")
                         .buttonStyle(.bordered)
                         .frame(maxWidth: .infinity)
 
@@ -901,6 +913,8 @@ public struct ShadowClientAppShellView: View {
                             connectionHost = host.host
                             connectToHost(autoLaunchAfterConnect: true, preferredHostID: host.id)
                         }
+                        .accessibilityIdentifier("shadow.home.host.\(host.id).connect")
+                        .accessibilityLabel("Connect to \(host.displayName)")
                         .buttonStyle(.borderedProminent)
                         .disabled(!canStartConnection || !host.isReachable)
                         .frame(maxWidth: .infinity)
@@ -910,6 +924,8 @@ public struct ShadowClientAppShellView: View {
                         Button("Select") {
                             remoteDesktopRuntime.selectHost(host.id)
                         }
+                        .accessibilityIdentifier("shadow.home.host.\(host.id).select")
+                        .accessibilityLabel("Select \(host.displayName)")
                         .buttonStyle(.bordered)
                     }
                 } else {
@@ -918,18 +934,24 @@ public struct ShadowClientAppShellView: View {
                             connectionHost = host.host
                             remoteDesktopRuntime.selectHost(host.id)
                         }
+                        .accessibilityIdentifier("shadow.home.host.\(host.id).use")
+                        .accessibilityLabel("Use \(host.displayName)")
                         .buttonStyle(.bordered)
 
                         Button("Connect") {
                             connectionHost = host.host
                             connectToHost(autoLaunchAfterConnect: true, preferredHostID: host.id)
                         }
+                        .accessibilityIdentifier("shadow.home.host.\(host.id).connect")
+                        .accessibilityLabel("Connect to \(host.displayName)")
                         .buttonStyle(.borderedProminent)
                         .disabled(!canStartConnection || !host.isReachable)
 
                         Button(isSelected ? "Selected" : "Select") {
                             remoteDesktopRuntime.selectHost(host.id)
                         }
+                        .accessibilityIdentifier("shadow.home.host.\(host.id).select")
+                        .accessibilityLabel("Select \(host.displayName)")
                         .buttonStyle(.bordered)
                         .disabled(isSelected)
                     }
@@ -956,6 +978,8 @@ public struct ShadowClientAppShellView: View {
                         } label: {
                             Image(systemName: "arrow.clockwise")
                         }
+                        .accessibilityIdentifier("shadow.home.applist.refresh")
+                        .accessibilityLabel("Refresh Host App Library")
                         .buttonStyle(.bordered)
                     }
 
@@ -977,6 +1001,8 @@ public struct ShadowClientAppShellView: View {
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
+                    .accessibilityIdentifier("shadow.home.applist.refresh")
+                    .accessibilityLabel("Refresh Host App Library")
                     .buttonStyle(.bordered)
                 }
             }
@@ -1013,6 +1039,8 @@ public struct ShadowClientAppShellView: View {
                         Button("Launch") {
                             launchRemoteApp(app)
                         }
+                        .accessibilityIdentifier("shadow.home.applist.launch.\(app.id)")
+                        .accessibilityLabel("Launch \(app.title)")
                         .buttonStyle(.borderedProminent)
                         .disabled(remoteDesktopRuntime.launchState == .launching)
                     }
@@ -1147,6 +1175,8 @@ public struct ShadowClientAppShellView: View {
                             Button("End Session") {
                                 remoteDesktopRuntime.clearActiveSession()
                             }
+                            .accessibilityIdentifier("shadow.home.session.end")
+                            .accessibilityLabel("End Session")
                             .buttonStyle(.borderedProminent)
                         }
                         .padding(.horizontal, 14)
