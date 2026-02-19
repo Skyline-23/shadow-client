@@ -135,7 +135,9 @@ public enum ShadowClientSunshineControlChannelDefaults {
 }
 
 public enum ShadowClientSunshineSessionDefaults {
-    public static let prefersSessionIdentifierV1 = true
+    // Prefer address-based ping/session routing for compatibility with hosts
+    // that advertise v1 but fail to start media on payload-only matching.
+    public static let prefersSessionIdentifierV1 = false
     public static let supportsEncryptedControlChannelV2 = true
 }
 
