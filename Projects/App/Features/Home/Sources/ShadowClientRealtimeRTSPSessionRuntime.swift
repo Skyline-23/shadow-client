@@ -269,6 +269,7 @@ private actor ShadowClientRTSPInterleavedClient {
     private var controlServerPort: NWEndpoint.Port?
     private var audioPingPayload: Data?
     private var videoPingPayload: Data?
+    private var prePlayAudioPingConnection: NWConnection?
     private var controlConnectData: UInt32?
     private var controlChannelRuntime: ShadowClientSunshineControlChannelRuntime?
     private var controlChannelMode: ShadowClientSunshineControlChannelMode = .plaintext
@@ -469,6 +470,9 @@ private actor ShadowClientRTSPInterleavedClient {
                 }
             }
         }
+
+        let controlHost = remoteHost ?? .init(host)
+        await prepareAudioPingBeforePlay(host: controlHost)
 
         var setup: ShadowClientRTSPResponse?
         var selectedSetupURL: String?
@@ -991,6 +995,8 @@ private actor ShadowClientRTSPInterleavedClient {
         controlServerPort = nil
         audioPingPayload = nil
         videoPingPayload = nil
+        prePlayAudioPingConnection?.cancel()
+        prePlayAudioPingConnection = nil
         controlConnectData = nil
         controlChannelMode = .plaintext
         useSessionIdentifierV1 = false
@@ -1070,10 +1076,10 @@ private actor ShadowClientRTSPInterleavedClient {
         )
         logger.notice("RTSP video receive switched to UDP \(String(describing: host), privacy: .public):\(port.rawValue, privacy: .public)")
 
-        let pingPayload = useSessionIdentifierV1 ? videoPingPayload : nil
+        let pingPayload = videoPingPayload
         let rtspLogger = logger
-        var audioPingConnection: NWConnection?
-        if let audioServerPort {
+        var audioPingConnection: NWConnection? = prePlayAudioPingConnection
+        if audioPingConnection == nil, let audioServerPort {
             do {
                 let connection = try await makeAudioUDPPingConnection(
                     host: host,
@@ -1086,7 +1092,7 @@ private actor ShadowClientRTSPInterleavedClient {
                 rtspLogger.error("RTSP UDP audio ping socket setup failed: \(error.localizedDescription, privacy: .public)")
             }
         }
-        let audioPingPayload = useSessionIdentifierV1 ? self.audioPingPayload : nil
+        let audioPingPayload = self.audioPingPayload
 
         do {
             let initialVideoPings = ShadowClientSunshinePingPacketCodec.makePingPackets(
@@ -1175,6 +1181,7 @@ private actor ShadowClientRTSPInterleavedClient {
             pingTask.cancel()
             audioPingTask.cancel()
             audioPingConnection?.cancel()
+            prePlayAudioPingConnection = nil
             udpConnection.cancel()
         }
 
@@ -1275,6 +1282,36 @@ private actor ShadowClientRTSPInterleavedClient {
         try await waitForReady(fallbackConnection)
         logger.notice("RTSP UDP audio ping socket using ephemeral local port")
         return fallbackConnection
+    }
+
+    private func prepareAudioPingBeforePlay(host: NWEndpoint.Host) async {
+        guard prePlayAudioPingConnection == nil,
+              let audioServerPort
+        else {
+            return
+        }
+
+        do {
+            let connection = try await makeAudioUDPPingConnection(
+                host: host,
+                port: audioServerPort,
+                localHost: localHost
+            )
+            prePlayAudioPingConnection = connection
+
+            let prePlayPings = ShadowClientSunshinePingPacketCodec.makePingPackets(
+                sequence: 1,
+                negotiatedPayload: audioPingPayload
+            )
+            for packet in prePlayPings {
+                try await Self.send(bytes: packet, over: connection)
+            }
+            logger.notice("RTSP UDP audio pre-PLAY ping sent (variants=\(prePlayPings.count, privacy: .public), bytes=\(prePlayPings.first?.count ?? 0, privacy: .public))")
+        } catch {
+            prePlayAudioPingConnection?.cancel()
+            prePlayAudioPingConnection = nil
+            logger.error("RTSP UDP audio pre-PLAY ping setup failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func sendRequest(

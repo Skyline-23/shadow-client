@@ -130,6 +130,15 @@ func enetControlPayloadCodecUsesLittleEndianType() {
     #expect(payload == Data([0x07, 0x03, 0x00]))
 }
 
+@Test("Sunshine control periodic ping payload follows Moonlight loss-stats format")
+func sunshineControlPeriodicPingPayloadMatchesProfile() {
+    #expect(ShadowClientSunshineControlMessageProfile.periodicPingType == 0x0200)
+    #expect(
+        ShadowClientSunshineControlMessageProfile.periodicPingPayload ==
+            Data([0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+    )
+}
+
 @Test("ENet acknowledge parser reads received reliable sequence from command payload")
 func enetAcknowledgeParserDecodesReceivedSequence() throws {
     var packet = Data()

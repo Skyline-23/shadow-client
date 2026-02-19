@@ -20,6 +20,7 @@ actor ShadowClientSunshineControlChannelRuntime {
 
     private var connection: NWConnection?
     private var receiveTask: Task<Void, Never>?
+    private var periodicPingTask: Task<Void, Never>?
     private var outgoingPeerID: UInt16 = ShadowClientSunshineENetPacketCodec.maximumPeerID
     private var outgoingSessionID: UInt8 = 0
     private var outgoingReliableSequenceNumber: UInt16 = 0
@@ -94,6 +95,12 @@ actor ShadowClientSunshineControlChannelRuntime {
                 }
                 await self.receiveLoop(over: connection)
             }
+            periodicPingTask = Task { [weak self] in
+                guard let self else {
+                    return
+                }
+                await self.periodicPingLoop(over: connection)
+            }
         } catch {
             connection.cancel()
             self.connection = nil
@@ -103,6 +110,8 @@ actor ShadowClientSunshineControlChannelRuntime {
     }
 
     func stop() {
+        periodicPingTask?.cancel()
+        periodicPingTask = nil
         receiveTask?.cancel()
         receiveTask = nil
         connection?.cancel()
@@ -230,6 +239,25 @@ actor ShadowClientSunshineControlChannelRuntime {
         )
     }
 
+    private func sendReliableControlMessageWithoutBlockingForAcknowledge(
+        type: UInt16,
+        payload: Data,
+        over connection: NWConnection
+    ) async throws {
+        let controlPayload = try buildControlPayload(type: type, payload: payload)
+        outgoingReliableSequenceNumber &+= 1
+        let reliableSequenceNumber = outgoingReliableSequenceNumber
+        let packet = ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
+            outgoingPeerID: outgoingPeerID,
+            outgoingSessionID: outgoingSessionID,
+            reliableSequenceNumber: reliableSequenceNumber,
+            channelID: ShadowClientSunshineControlMessageProfile.genericChannelID,
+            sentTime: currentSentTime(),
+            payload: controlPayload
+        )
+        try await Self.send(bytes: packet, over: connection)
+    }
+
     private func buildControlPayload(
         type: UInt16,
         payload: Data
@@ -317,6 +345,25 @@ actor ShadowClientSunshineControlChannelRuntime {
         }
 
         throw ShadowClientSunshineControlChannelError.commandAcknowledgeTimedOut
+    }
+
+    private func periodicPingLoop(over connection: NWConnection) async {
+        var didLogFailure = false
+        while !Task.isCancelled {
+            do {
+                try await sendReliableControlMessageWithoutBlockingForAcknowledge(
+                    type: ShadowClientSunshineControlMessageProfile.periodicPingType,
+                    payload: ShadowClientSunshineControlMessageProfile.periodicPingPayload,
+                    over: connection
+                )
+            } catch {
+                if !didLogFailure {
+                    logger.error("Sunshine control periodic ping failed: \(error.localizedDescription, privacy: .public)")
+                    didLogFailure = true
+                }
+            }
+            try? await Task.sleep(for: ShadowClientSunshineControlMessageProfile.periodicPingInterval)
+        }
     }
 
     private func waitForReady(_ connection: NWConnection) async throws {

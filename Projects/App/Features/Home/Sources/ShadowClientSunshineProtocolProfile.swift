@@ -68,9 +68,12 @@ enum ShadowClientSunshineControlMessageProfile {
     static let startATypeLegacy: UInt16 = 0x0305
     static let startATypeEncryptedV2: UInt16 = 0x0302
     static let startBType: UInt16 = 0x0307
+    static let periodicPingType: UInt16 = 0x0200
 
     static let startAPayload = Data([0x00, 0x00])
     static let startBPayload = Data([0x00])
+    static let periodicPingInterval: Duration = .milliseconds(100)
+    static let periodicPingPayload = Data([0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
 }
 
 enum ShadowClientRTSPAnnounceProfile {
