@@ -1364,8 +1364,8 @@ enum ShadowClientCertificateDERDecoder {
 }
 
 enum ShadowClientGameStreamHTTPTransport {
-    // Keep protocol identifiers aligned with Moonlight compatibility behavior.
-    private static let moonlightCompatibleUniqueID = "0123456789ABCDEF"
+    // Preserve the legacy protocol token expected by Sunshine/GameStream endpoints.
+    private static let shadowClientCompatibleUniqueID = "0123456789ABCDEF"
 
     static func requestXML(
         host: String,
@@ -1390,7 +1390,7 @@ enum ShadowClientGameStreamHTTPTransport {
         let requestUUID = UUID().uuidString
             .replacingOccurrences(of: "-", with: "")
             .lowercased()
-        queryItems.append(.init(name: "uniqueid", value: moonlightCompatibleUniqueID))
+        queryItems.append(.init(name: "uniqueid", value: shadowClientCompatibleUniqueID))
         queryItems.append(.init(name: "uuid", value: requestUUID))
         components.queryItems = queryItems
 
