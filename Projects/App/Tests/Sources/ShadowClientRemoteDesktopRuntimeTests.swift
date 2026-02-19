@@ -207,6 +207,31 @@ func gameStreamParserMapsApplicationAttributeAppListXML() throws {
     #expect(apps[0] == .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false))
 }
 
+@Test("GameStream parser maps Sunshine applist XML without status_message")
+func gameStreamParserMapsSunshineAppListWithoutStatusMessage() throws {
+    let xml = """
+    <?xml version="1.0" encoding="utf-8"?>
+    <root status_code="200">
+      <App>
+        <IsHdrSupported>1</IsHdrSupported>
+        <AppTitle>Desktop</AppTitle>
+        <ID>881448767</ID>
+      </App>
+      <App>
+        <IsHdrSupported>1</IsHdrSupported>
+        <AppTitle>Steam Big Picture</AppTitle>
+        <ID>1093255277</ID>
+      </App>
+    </root>
+    """
+
+    let apps = try ShadowClientGameStreamXMLParsers.parseAppList(xml: xml)
+
+    #expect(apps.count == 2)
+    #expect(apps[0] == .init(id: 881448767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false))
+    #expect(apps[1] == .init(id: 1093255277, title: "Steam Big Picture", hdrSupported: true, isAppCollectorGame: false))
+}
+
 @Test("Metadata client falls back to HTTP when HTTPS serverinfo returns non-200 XML")
 func metadataClientFallsBackToHTTPAfterRejectedHTTPSServerInfo() async throws {
     let defaultsSuite = "shadow-client.metadata.serverinfo.\(UUID().uuidString)"

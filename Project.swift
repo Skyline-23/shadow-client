@@ -161,7 +161,22 @@ let project = Project(
                 "Projects/App/Tests/Sources",
             ],
             dependencies: [
-                .target(name: "ShadowClientiOSApp"),
+                .target(name: "ShadowClientFeatureHome"),
+                .sdk(name: "AppIntents", type: .framework),
+                .external(name: "Testing"),
+            ]
+        ),
+        .target(
+            name: "ShadowClientmacOSTests",
+            destinations: .macOS,
+            product: .unitTests,
+            bundleId: "com.skyline23.shadow-client.macos.tests",
+            deploymentTargets: .macOS("14.0"),
+            infoPlist: .default,
+            buildableFolders: [
+                "Projects/App/Tests/Sources",
+            ],
+            dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
                 .sdk(name: "AppIntents", type: .framework),
                 .external(name: "Testing"),
