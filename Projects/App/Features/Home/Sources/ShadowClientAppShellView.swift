@@ -265,7 +265,7 @@ public struct ShadowClientAppShellView: View {
                             .background(rowSurface(cornerRadius: 10))
                             .onSubmit {
                                 if canConnect {
-                                    connectToHost()
+                                    connectToHost(autoLaunchAfterConnect: true)
                                 }
                             }
 
@@ -311,7 +311,7 @@ public struct ShadowClientAppShellView: View {
 
                         HStack(spacing: 10) {
                             Button("Connect") {
-                                connectToHost()
+                                connectToHost(autoLaunchAfterConnect: true)
                             }
                             .accessibilityIdentifier("shadow.settings.connection.connect")
                             .accessibilityLabel("Connect to Host")
@@ -917,7 +917,7 @@ public struct ShadowClientAppShellView: View {
                         .accessibilityIdentifier("shadow.home.host.\(host.id).connect")
                         .accessibilityLabel("Connect to \(host.displayName)")
                         .buttonStyle(.borderedProminent)
-                        .disabled(!canStartConnection || !host.isReachable)
+                        .disabled(!canInitiateSessionConnection || !host.isReachable)
                         .frame(maxWidth: .infinity)
                     }
 
@@ -946,7 +946,7 @@ public struct ShadowClientAppShellView: View {
                         .accessibilityIdentifier("shadow.home.host.\(host.id).connect")
                         .accessibilityLabel("Connect to \(host.displayName)")
                         .buttonStyle(.borderedProminent)
-                        .disabled(!canStartConnection || !host.isReachable)
+                        .disabled(!canInitiateSessionConnection || !host.isReachable)
 
                         Button(isSelected ? "Selected" : "Select") {
                             remoteDesktopRuntime.selectHost(host.id)
@@ -1424,7 +1424,7 @@ public struct ShadowClientAppShellView: View {
                 connectToDiscoveredHost(discoveredHost)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(!canStartConnection)
+            .disabled(!canInitiateSessionConnection)
         }
     }
 
@@ -1481,14 +1481,14 @@ public struct ShadowClientAppShellView: View {
             return false
         }
 
-        return canStartConnection
+        return canInitiateSessionConnection
     }
 
-    private var canStartConnection: Bool {
+    private var canInitiateSessionConnection: Bool {
         switch connectionState {
-        case .connected, .connecting, .disconnecting:
+        case .connecting, .disconnecting:
             return false
-        case .disconnected, .failed:
+        case .connected, .disconnected, .failed:
             return true
         }
     }
@@ -1613,6 +1613,25 @@ public struct ShadowClientAppShellView: View {
 
         refreshRemoteDesktopCatalog()
 
+        let normalizedTargetHost = host.lowercased()
+        let alreadyConnectedToTarget: Bool = {
+            guard case let .connected(connectedHost) = connectionState else {
+                return false
+            }
+            return connectedHost
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() == normalizedTargetHost
+        }()
+
+        if alreadyConnectedToTarget {
+            if autoLaunchAfterConnect {
+                Task {
+                    await autoLaunchPreferredRemoteApp(preferredHostID: preferredHostID)
+                }
+            }
+            return
+        }
+
         Task {
             let state = await baseDependencies.connectionRuntime.connect(to: host)
             await MainActor.run {
@@ -1632,7 +1651,7 @@ public struct ShadowClientAppShellView: View {
     @MainActor
     private func connectToDiscoveredHost(_ discoveredHost: ShadowClientDiscoveredHost) {
         connectionHost = discoveredHost.host
-        connectToHost()
+        connectToHost(autoLaunchAfterConnect: true)
     }
 
     @MainActor
