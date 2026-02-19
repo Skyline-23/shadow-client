@@ -1770,7 +1770,8 @@ private final class ShadowClientXMLAppListDelegate: NSObject, XMLParserDelegate 
     private(set) var rootStatus: ShadowClientXMLRootStatus?
     private(set) var apps: [ShadowClientRemoteAppDescriptor] = []
 
-    private var currentElement: String?
+    private static let appElementNames: Set<String> = ["app", "game", "application"]
+
     private var textBuffer = ""
 
     private var currentID: Int?
@@ -1785,7 +1786,6 @@ private final class ShadowClientXMLAppListDelegate: NSObject, XMLParserDelegate 
         qualifiedName qName: String?,
         attributes attributeDict: [String: String] = [:]
     ) {
-        currentElement = elementName
         textBuffer = ""
 
         let normalizedElement = Self.normalizedElementName(elementName)
@@ -1794,16 +1794,35 @@ private final class ShadowClientXMLAppListDelegate: NSObject, XMLParserDelegate 
             let code = Int(attributeDict["status_code"] ?? "") ?? -1
             let message = attributeDict["status_message"] ?? ""
             rootStatus = ShadowClientXMLRootStatus(code: code, message: message)
-        } else if normalizedElement == "app" {
+        } else if Self.appElementNames.contains(normalizedElement) {
             currentID = nil
             currentTitle = nil
             currentHDRSupported = false
             currentIsCollector = false
 
-            currentID = parseIntAttribute(attributeDict, keys: ["ID", "id"])
-            currentTitle = parseStringAttribute(attributeDict, keys: ["AppTitle", "apptitle", "title"])
-            currentHDRSupported = parseBoolAttribute(attributeDict, keys: ["IsHdrSupported", "ishdrsupported", "hdr"])
-            currentIsCollector = parseBoolAttribute(attributeDict, keys: ["IsAppCollectorGame", "isappcollectorgame", "collector"])
+            currentID = parseIntAttribute(attributeDict, keys: [
+                "id",
+                "appid",
+                "app_id",
+                "app-id",
+            ])
+            currentTitle = parseStringAttribute(attributeDict, keys: [
+                "apptitle",
+                "title",
+                "name",
+            ])
+            currentHDRSupported = parseBoolAttribute(attributeDict, keys: [
+                "ishdrsupported",
+                "hdr",
+                "is_hdr_supported",
+                "is-hdr-supported",
+            ])
+            currentIsCollector = parseBoolAttribute(attributeDict, keys: [
+                "isappcollectorgame",
+                "collector",
+                "is_app_collector_game",
+                "is-app-collector-game",
+            ])
         }
     }
 
@@ -1817,30 +1836,21 @@ private final class ShadowClientXMLAppListDelegate: NSObject, XMLParserDelegate 
         namespaceURI: String?,
         qualifiedName qName: String?
     ) {
-        defer {
-            currentElement = nil
-            textBuffer = ""
-        }
-
-        guard let currentElement, currentElement == elementName else {
-            return
-        }
-
         let value = textBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedElement = Self.normalizedElementName(elementName)
 
         switch normalizedElement {
-        case "apptitle":
+        case "apptitle", "title", "name":
             currentTitle = value.nonEmpty
-        case "id":
-            if let parsed = Int(value) {
+        case "id", "appid", "app_id", "app-id":
+            if let parsed = Self.parseIntString(value) {
                 currentID = parsed
             }
-        case "ishdrsupported":
+        case "ishdrsupported", "hdr", "is_hdr_supported", "is-hdr-supported":
             currentHDRSupported = Self.parseBoolString(value)
-        case "isappcollectorgame":
+        case "isappcollectorgame", "collector", "is_app_collector_game", "is-app-collector-game":
             currentIsCollector = Self.parseBoolString(value)
-        case "app":
+        case let element where Self.appElementNames.contains(element):
             if let id = currentID,
                let title = currentTitle,
                !title.isEmpty
@@ -1857,14 +1867,20 @@ private final class ShadowClientXMLAppListDelegate: NSObject, XMLParserDelegate 
         default:
             break
         }
+
+        textBuffer = ""
     }
 
     private func parseIntAttribute(
         _ attributes: [String: String],
         keys: [String]
     ) -> Int? {
+        let normalizedAttributes = Self.normalizedAttributes(attributes)
         for key in keys {
-            if let value = attributes[key], let parsed = Int(value.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            let normalizedKey = Self.normalizedAttributeName(key)
+            if let value = normalizedAttributes[normalizedKey],
+               let parsed = Self.parseIntString(value)
+            {
                 return parsed
             }
         }
@@ -1875,8 +1891,12 @@ private final class ShadowClientXMLAppListDelegate: NSObject, XMLParserDelegate 
         _ attributes: [String: String],
         keys: [String]
     ) -> String? {
+        let normalizedAttributes = Self.normalizedAttributes(attributes)
         for key in keys {
-            if let value = attributes[key]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+            let normalizedKey = Self.normalizedAttributeName(key)
+            if let value = normalizedAttributes[normalizedKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !value.isEmpty
+            {
                 return value
             }
         }
@@ -1887,12 +1907,37 @@ private final class ShadowClientXMLAppListDelegate: NSObject, XMLParserDelegate 
         _ attributes: [String: String],
         keys: [String]
     ) -> Bool {
+        let normalizedAttributes = Self.normalizedAttributes(attributes)
         for key in keys {
-            if let value = attributes[key] {
+            let normalizedKey = Self.normalizedAttributeName(key)
+            if let value = normalizedAttributes[normalizedKey] {
                 return Self.parseBoolString(value)
             }
         }
         return false
+    }
+
+    private static func normalizedAttributes(_ attributes: [String: String]) -> [String: String] {
+        attributes.reduce(into: [String: String]()) { result, pair in
+            result[normalizedAttributeName(pair.key)] = pair.value
+        }
+    }
+
+    private static func normalizedAttributeName(_ key: String) -> String {
+        normalizedElementName(key)
+    }
+
+    private static func parseIntString(_ value: String) -> Int? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let parsed = Int(trimmed) {
+            return parsed
+        }
+
+        let normalized = trimmed
+            .replacingOccurrences(of: ",", with: "")
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: " ", with: "")
+        return Int(normalized)
     }
 
     private static func parseBoolString(_ value: String) -> Bool {

@@ -175,6 +175,38 @@ func gameStreamParserMapsNamespacedAppListXML() throws {
     #expect(apps[0] == .init(id: 881448767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false))
 }
 
+@Test("GameStream parser maps applist XML with game/title/appid aliases")
+func gameStreamParserMapsAliasAppListXML() throws {
+    let xml = """
+    <root status_code="200" status_message="OK">
+      <Game>
+        <Title>Desktop</Title>
+        <AppID>881,448,767</AppID>
+        <HDR>true</HDR>
+      </Game>
+    </root>
+    """
+
+    let apps = try ShadowClientGameStreamXMLParsers.parseAppList(xml: xml)
+
+    #expect(apps.count == 1)
+    #expect(apps[0] == .init(id: 881448767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false))
+}
+
+@Test("GameStream parser maps applist XML with application attributes")
+func gameStreamParserMapsApplicationAttributeAppListXML() throws {
+    let xml = """
+    <root status_code="200" status_message="OK">
+      <Application title="Desktop" app-id="1" is-hdr-supported="true" />
+    </root>
+    """
+
+    let apps = try ShadowClientGameStreamXMLParsers.parseAppList(xml: xml)
+
+    #expect(apps.count == 1)
+    #expect(apps[0] == .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false))
+}
+
 @Test("Metadata client falls back to HTTP when HTTPS serverinfo returns non-200 XML")
 func metadataClientFallsBackToHTTPAfterRejectedHTTPSServerInfo() async throws {
     let defaultsSuite = "shadow-client.metadata.serverinfo.\(UUID().uuidString)"
