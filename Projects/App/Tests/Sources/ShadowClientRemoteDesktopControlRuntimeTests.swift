@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import ShadowClientFeatureHome
 
@@ -306,6 +307,56 @@ func remoteDesktopRuntimeConnectsVideoSessionBeforeLaunchSuccess() async {
     } else {
         Issue.record("Expected launched state, got \(runtime.launchState)")
     }
+}
+
+@Test("Remote desktop runtime forwards launch remote input key into session configuration")
+@MainActor
+func remoteDesktopRuntimeForwardsRemoteInputKeyToSessionConfiguration() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.24": .init(
+                host: "192.168.0.24",
+                displayName: "Gaming-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-KEY"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.24": [
+                .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let remoteInputKey = Data(repeating: 0xAB, count: 16)
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(
+            sessionURL: "rtsp://192.168.0.24:48010/session",
+            verb: "launch",
+            remoteInputKey: remoteInputKey
+        )
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.24"], preferredHost: "192.168.0.24")
+    await waitForControlHostLoaded(runtime)
+    runtime.launchSelectedApp(
+        appID: 881_448_767,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+
+    let capturedConfiguration = await sessionConnector.latestVideoConfiguration()
+    #expect(capturedConfiguration?.remoteInputKey == remoteInputKey)
 }
 
 @Test("Remote desktop runtime preserves host-provided session URL without app-side host rewrite")
@@ -800,6 +851,7 @@ private actor FakeSessionConnectionClient: ShadowClientRemoteSessionConnectionCl
     nonisolated let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init()
 
     private var recordedConnectCalls: [String] = []
+    private var recordedVideoConfigurations: [ShadowClientRemoteSessionVideoConfiguration] = []
     private var disconnectCallCount = 0
     private let simulatedFailure: (any Error & Sendable)?
 
@@ -814,6 +866,7 @@ private actor FakeSessionConnectionClient: ShadowClientRemoteSessionConnectionCl
         videoConfiguration: ShadowClientRemoteSessionVideoConfiguration
     ) async throws {
         recordedConnectCalls.append(sessionURL)
+        recordedVideoConfigurations.append(videoConfiguration)
 
         if let simulatedFailure {
             throw simulatedFailure
@@ -830,6 +883,10 @@ private actor FakeSessionConnectionClient: ShadowClientRemoteSessionConnectionCl
 
     func disconnectCalls() -> Int {
         disconnectCallCount
+    }
+
+    func latestVideoConfiguration() -> ShadowClientRemoteSessionVideoConfiguration? {
+        recordedVideoConfigurations.last
     }
 }
 

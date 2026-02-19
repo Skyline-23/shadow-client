@@ -7,10 +7,14 @@ enum ShadowClientSunshineControlChannelError: Error {
     case connectionClosed
     case handshakeTimedOut
     case verifyConnectNotReceived
+    case commandAcknowledgeTimedOut
+    case invalidEncryptedControlKey
+    case encryptedControlEncodingFailed
 }
 
 actor ShadowClientSunshineControlChannelRuntime {
     private let connectTimeout: Duration
+    private let commandAcknowledgeTimeout: Duration
     private let queue = DispatchQueue(label: "com.skyline23.shadowclient.control.enet")
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "ControlChannel")
 
@@ -20,17 +24,36 @@ actor ShadowClientSunshineControlChannelRuntime {
     private var outgoingSessionID: UInt8 = 0
     private var outgoingReliableSequenceNumber: UInt16 = 0
     private var connectID: UInt32 = 0
+    private var controlChannelMode: ShadowClientSunshineControlChannelMode = .plaintext
+    private var controlEncryptionCodec: ShadowClientSunshineControlEncryptionCodec?
+    private var controlEncryptionSequenceNumber: UInt32 = 0
 
-    init(connectTimeout: Duration = ShadowClientSunshineControlChannelDefaults.connectTimeout) {
+    init(
+        connectTimeout: Duration = ShadowClientSunshineControlChannelDefaults.connectTimeout,
+        commandAcknowledgeTimeout: Duration = ShadowClientSunshineControlChannelDefaults.commandAcknowledgeTimeout
+    ) {
         self.connectTimeout = connectTimeout
+        self.commandAcknowledgeTimeout = commandAcknowledgeTimeout
     }
 
     func start(
         host: NWEndpoint.Host,
         port: NWEndpoint.Port,
-        connectData: UInt32?
+        connectData: UInt32?,
+        mode: ShadowClientSunshineControlChannelMode = .plaintext
     ) async throws {
         stop()
+        do {
+            switch mode {
+            case .plaintext:
+                controlEncryptionCodec = nil
+            case let .encryptedV2(key):
+                controlEncryptionCodec = try ShadowClientSunshineControlEncryptionCodec(keyData: key)
+            }
+        } catch {
+            throw ShadowClientSunshineControlChannelError.invalidEncryptedControlKey
+        }
+        controlChannelMode = mode
 
         let connection = NWConnection(host: host, port: port, using: .udp)
         self.connection = connection
@@ -59,6 +82,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                 receivedSentTime: verify.receivedSentTime,
                 over: connection
             )
+            try await sendBootstrapStartMessages(over: connection)
 
             logger.notice(
                 "Sunshine ENet control bootstrap ready on UDP \(port.rawValue, privacy: .public) peer=\(self.outgoingPeerID, privacy: .public)"
@@ -83,6 +107,8 @@ actor ShadowClientSunshineControlChannelRuntime {
         receiveTask = nil
         connection?.cancel()
         connection = nil
+        controlEncryptionCodec = nil
+        controlChannelMode = .plaintext
         resetSessionState()
     }
 
@@ -129,7 +155,8 @@ actor ShadowClientSunshineControlChannelRuntime {
             outgoingReliableSequenceNumber: outgoingReliableSequenceNumber,
             commandChannelID: commandChannelID,
             receivedReliableSequenceNumber: receivedReliableSequenceNumber,
-            receivedSentTime: receivedSentTime
+            receivedSentTime: receivedSentTime,
+            sentTime: currentSentTime()
         )
         try await Self.send(bytes: packet, over: connection)
     }
@@ -138,13 +165,14 @@ actor ShadowClientSunshineControlChannelRuntime {
         while !Task.isCancelled {
             do {
                 let datagram = try await Self.receiveDatagram(over: connection)
-                guard let packet = ShadowClientSunshineENetPacketCodec.parsePacket(datagram),
-                      let sentTime = packet.sentTime
-                else {
+                guard let packet = ShadowClientSunshineENetPacketCodec.parsePacket(datagram) else {
                     continue
                 }
 
                 for command in packet.commands where command.isAcknowledgeRequired {
+                    guard let sentTime = packet.sentTime else {
+                        continue
+                    }
                     try await acknowledge(
                         commandChannelID: command.channelID,
                         receivedReliableSequenceNumber: command.reliableSequenceNumber,
@@ -159,6 +187,136 @@ actor ShadowClientSunshineControlChannelRuntime {
                 break
             }
         }
+    }
+
+    private func sendBootstrapStartMessages(over connection: NWConnection) async throws {
+        try await sendReliableControlMessage(
+            type: controlChannelMode.startAType,
+            payload: controlChannelMode.startAPayload,
+            over: connection
+        )
+
+        try await sendReliableControlMessage(
+            type: controlChannelMode.startBType,
+            payload: controlChannelMode.startBPayload,
+            over: connection
+        )
+    }
+
+    private func sendReliableControlMessage(
+        type: UInt16,
+        payload: Data,
+        over connection: NWConnection
+    ) async throws {
+        let controlPayload = try buildControlPayload(type: type, payload: payload)
+        outgoingReliableSequenceNumber &+= 1
+        let reliableSequenceNumber = outgoingReliableSequenceNumber
+        let controlModeLabel = controlEncryptionCodec == nil ? "plain" : "enc-v2"
+        logger.notice(
+            "Sunshine control send type=\(type, privacy: .public) relSeq=\(reliableSequenceNumber, privacy: .public) payloadBytes=\(controlPayload.count, privacy: .public) mode=\(controlModeLabel, privacy: .public)"
+        )
+        let packet = ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
+            outgoingPeerID: outgoingPeerID,
+            outgoingSessionID: outgoingSessionID,
+            reliableSequenceNumber: reliableSequenceNumber,
+            channelID: ShadowClientSunshineControlMessageProfile.genericChannelID,
+            sentTime: currentSentTime(),
+            payload: controlPayload
+        )
+        try await Self.send(bytes: packet, over: connection)
+        try await waitForAcknowledge(
+            over: connection,
+            expectedReliableSequenceNumber: reliableSequenceNumber
+        )
+    }
+
+    private func buildControlPayload(
+        type: UInt16,
+        payload: Data
+    ) throws -> Data {
+        if let controlEncryptionCodec {
+            do {
+                let encryptedPayload = try controlEncryptionCodec.encryptControlMessage(
+                    type: type,
+                    payload: payload,
+                    sequence: controlEncryptionSequenceNumber
+                )
+                controlEncryptionSequenceNumber &+= 1
+                return encryptedPayload
+            } catch {
+                logger.error("Sunshine encrypted control payload encoding failed: \(error.localizedDescription, privacy: .public)")
+                throw ShadowClientSunshineControlChannelError.encryptedControlEncodingFailed
+            }
+        }
+
+        return ShadowClientSunshineENetPacketCodec.makeControlMessagePayload(
+            type: type,
+            payload: payload
+        )
+    }
+
+    private func waitForAcknowledge(
+        over connection: NWConnection,
+        expectedReliableSequenceNumber: UInt16
+    ) async throws {
+        let timeout = commandAcknowledgeTimeout
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await self.receiveUntilAcknowledge(
+                    over: connection,
+                    expectedReliableSequenceNumber: expectedReliableSequenceNumber
+                )
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw ShadowClientSunshineControlChannelError.commandAcknowledgeTimedOut
+            }
+
+            _ = try await group.next()
+            group.cancelAll()
+        }
+    }
+
+    private func receiveUntilAcknowledge(
+        over connection: NWConnection,
+        expectedReliableSequenceNumber: UInt16
+    ) async throws {
+        while !Task.isCancelled {
+            let datagram = try await Self.receiveDatagram(over: connection)
+            logger.notice(
+                "Sunshine control ACK wait datagram bytes=\(datagram.count, privacy: .public) expectedRelSeq=\(expectedReliableSequenceNumber, privacy: .public)"
+            )
+            guard let packet = ShadowClientSunshineENetPacketCodec.parsePacket(datagram) else {
+                logger.error("Sunshine control ACK wait failed to parse ENet packet")
+                continue
+            }
+
+            for command in packet.commands {
+                logger.notice(
+                    "Sunshine control ACK wait command number=\(command.number, privacy: .public) flags=\(command.flags, privacy: .public) relSeq=\(command.reliableSequenceNumber, privacy: .public) channel=\(command.channelID, privacy: .public)"
+                )
+                if command.isAcknowledgeRequired, let sentTime = packet.sentTime {
+                    try await acknowledge(
+                        commandChannelID: command.channelID,
+                        receivedReliableSequenceNumber: command.reliableSequenceNumber,
+                        receivedSentTime: sentTime,
+                        over: connection
+                    )
+                }
+
+                if let acknowledge = ShadowClientSunshineENetPacketCodec.parseAcknowledge(
+                    from: packet,
+                    command: command
+                ), acknowledge.receivedReliableSequenceNumber == expectedReliableSequenceNumber {
+                    logger.notice(
+                        "Sunshine control ACK matched relSeq=\(acknowledge.receivedReliableSequenceNumber, privacy: .public)"
+                    )
+                    return
+                }
+            }
+        }
+
+        throw ShadowClientSunshineControlChannelError.commandAcknowledgeTimedOut
     }
 
     private func waitForReady(_ connection: NWConnection) async throws {
@@ -236,6 +394,7 @@ actor ShadowClientSunshineControlChannelRuntime {
         outgoingSessionID = 0
         outgoingReliableSequenceNumber = 0
         connectID = 0
+        controlEncryptionSequenceNumber = 0
     }
 
     private func currentSentTime() -> UInt16 {

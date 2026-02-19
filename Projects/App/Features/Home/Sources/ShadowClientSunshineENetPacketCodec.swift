@@ -31,6 +31,13 @@ enum ShadowClientSunshineENetPacketCodec {
         let connectID: UInt32
     }
 
+    struct Acknowledge: Sendable {
+        let commandChannelID: UInt8
+        let commandReliableSequenceNumber: UInt16
+        let receivedReliableSequenceNumber: UInt16
+        let receivedSentTime: UInt16
+    }
+
     static let maximumPeerID: UInt16 = ShadowClientSunshineENetProtocolProfile.maximumPeerID
     static let controlChannelCount: UInt32 = ShadowClientSunshineENetProtocolProfile.controlChannelCount
 
@@ -77,15 +84,20 @@ enum ShadowClientSunshineENetPacketCodec {
         outgoingReliableSequenceNumber: UInt16,
         commandChannelID: UInt8,
         receivedReliableSequenceNumber: UInt16,
-        receivedSentTime: UInt16
+        receivedSentTime: UInt16,
+        sentTime: UInt16
     ) -> Data {
         var packet = Data()
-        packet.reserveCapacity(10)
+        packet.reserveCapacity(12)
 
         let sessionBits = UInt16(outgoingSessionID & ShadowClientSunshineENetProtocolProfile.sessionValueMask) <<
             ShadowClientSunshineENetProtocolProfile.protocolHeaderSessionShift
-        let peerIDWithSession = (outgoingPeerID & maximumPeerID) | sessionBits
+        let peerIDWithSession =
+            (outgoingPeerID & maximumPeerID) |
+            sessionBits |
+            ShadowClientSunshineENetProtocolProfile.protocolHeaderFlagSentTime
         packet.appendUInt16BE(peerIDWithSession)
+        packet.appendUInt16BE(sentTime)
 
         packet.append(ShadowClientSunshineENetProtocolProfile.protocolCommandAcknowledge)
         packet.append(commandChannelID)
@@ -93,6 +105,46 @@ enum ShadowClientSunshineENetPacketCodec {
         packet.appendUInt16BE(receivedReliableSequenceNumber)
         packet.appendUInt16BE(receivedSentTime)
         return packet
+    }
+
+    static func makeSendReliablePacket(
+        outgoingPeerID: UInt16,
+        outgoingSessionID: UInt8,
+        reliableSequenceNumber: UInt16,
+        channelID: UInt8,
+        sentTime: UInt16,
+        payload: Data
+    ) -> Data {
+        precondition(payload.count <= Int(UInt16.max), "ENet reliable payload must fit UInt16 length field")
+        var packet = Data()
+        packet.reserveCapacity(10 + payload.count)
+
+        let sessionBits = UInt16(outgoingSessionID & ShadowClientSunshineENetProtocolProfile.sessionValueMask) <<
+            ShadowClientSunshineENetProtocolProfile.protocolHeaderSessionShift
+        let peerIDWithSession =
+            (outgoingPeerID & maximumPeerID) |
+            sessionBits |
+            ShadowClientSunshineENetProtocolProfile.protocolHeaderFlagSentTime
+        packet.appendUInt16BE(peerIDWithSession)
+        packet.appendUInt16BE(sentTime)
+
+        packet.append(
+            ShadowClientSunshineENetProtocolProfile.protocolCommandSendReliable |
+                ShadowClientSunshineENetProtocolProfile.protocolCommandFlagAcknowledge
+        )
+        packet.append(channelID)
+        packet.appendUInt16BE(reliableSequenceNumber)
+        packet.appendUInt16BE(UInt16(payload.count))
+        packet.append(payload)
+        return packet
+    }
+
+    static func makeControlMessagePayload(type: UInt16, payload: Data) -> Data {
+        var message = Data()
+        message.reserveCapacity(2 + payload.count)
+        message.appendUInt16LE(type)
+        message.append(payload)
+        return message
     }
 
     static func parsePacket(_ data: Data) -> ParsedPacket? {
@@ -195,6 +247,25 @@ enum ShadowClientSunshineENetPacketCodec {
 
         return nil
     }
+
+    static func parseAcknowledge(
+        from packet: ParsedPacket,
+        command: ParsedPacket.Command
+    ) -> Acknowledge? {
+        guard command.number == ShadowClientSunshineENetProtocolProfile.protocolCommandAcknowledge,
+              command.length >= 8
+        else {
+            return nil
+        }
+
+        let base = command.offset
+        return .init(
+            commandChannelID: command.channelID,
+            commandReliableSequenceNumber: command.reliableSequenceNumber,
+            receivedReliableSequenceNumber: packet.rawData.readUInt16BE(at: base + 4),
+            receivedSentTime: packet.rawData.readUInt16BE(at: base + 6)
+        )
+    }
 }
 
 private extension Data {
@@ -209,6 +280,11 @@ private extension Data {
     }
 
     mutating func appendUInt32LE(_ value: UInt32) {
+        var le = value.littleEndian
+        Swift.withUnsafeBytes(of: &le) { append(contentsOf: $0) }
+    }
+
+    mutating func appendUInt16LE(_ value: UInt16) {
         var le = value.littleEndian
         Swift.withUnsafeBytes(of: &le) { append(contentsOf: $0) }
     }

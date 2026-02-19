@@ -249,6 +249,7 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
     public let enableHDR: Bool
     public let enableSurroundAudio: Bool
     public let enableYUV444: Bool
+    public let remoteInputKey: Data?
 
     public init(
         width: Int,
@@ -258,7 +259,8 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
         preferredCodec: ShadowClientVideoCodecPreference = .auto,
         enableHDR: Bool = false,
         enableSurroundAudio: Bool = false,
-        enableYUV444: Bool = false
+        enableYUV444: Bool = false,
+        remoteInputKey: Data? = nil
     ) {
         self.width = max(ShadowClientStreamingLaunchBounds.minimumWidth, width)
         self.height = max(ShadowClientStreamingLaunchBounds.minimumHeight, height)
@@ -271,6 +273,7 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
         self.enableHDR = enableHDR
         self.enableSurroundAudio = enableSurroundAudio
         self.enableYUV444 = enableYUV444
+        self.remoteInputKey = remoteInputKey
     }
 }
 
@@ -868,7 +871,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         preferredCodec: settings.preferredCodec,
                         enableHDR: settings.enableHDR,
                         enableSurroundAudio: settings.enableSurroundAudio,
-                        enableYUV444: settings.enableYUV444
+                        enableYUV444: settings.enableYUV444,
+                        remoteInputKey: result.remoteInputKey
                     )
                 )
 

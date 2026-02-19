@@ -6,6 +6,7 @@ struct ShadowClientSunshineHandshakeNegotiation: Sendable {
     let controlConnectData: UInt32?
     let encryptionRequestedFlags: UInt32
     let prefersSessionIdentifierV1: Bool
+    let supportsEncryptedControlChannelV2: Bool
 
     var supportsSessionIdentifierV1: Bool {
         prefersSessionIdentifierV1 &&
@@ -22,10 +23,16 @@ struct ShadowClientSunshineHandshakeNegotiation: Sendable {
         return flags
     }
 
-    var encryptionEnabledFlags: UInt32 {
-        guard supportsSessionIdentifierV1 else {
-            return 0
+    var controlChannelEncryptionEnabled: Bool {
+        guard supportsSessionIdentifierV1, supportsEncryptedControlChannelV2 else {
+            return false
         }
-        return encryptionRequestedFlags & ShadowClientSunshineHandshakeProfile.sunshineEncryptionControlV2
+        return (encryptionRequestedFlags & ShadowClientSunshineHandshakeProfile.sunshineEncryptionControlV2) != 0
+    }
+
+    var encryptionEnabledFlags: UInt32 {
+        controlChannelEncryptionEnabled
+            ? ShadowClientSunshineHandshakeProfile.sunshineEncryptionControlV2
+            : 0
     }
 }

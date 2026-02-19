@@ -129,10 +129,12 @@ public enum ShadowClientTelemetrySimulationDefaults {
 
 public enum ShadowClientSunshineControlChannelDefaults {
     public static let connectTimeout: Duration = .seconds(2)
+    public static let commandAcknowledgeTimeout: Duration = .seconds(2)
 }
 
 public enum ShadowClientSunshineSessionDefaults {
     public static let prefersSessionIdentifierV1 = true
+    public static let supportsEncryptedControlChannelV2 = true
 }
 
 public enum ShadowClientUIRuntimeDefaults {

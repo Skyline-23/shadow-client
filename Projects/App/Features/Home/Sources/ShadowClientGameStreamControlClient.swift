@@ -135,10 +135,16 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
 public struct ShadowClientGameStreamLaunchResult: Equatable, Sendable {
     public let sessionURL: String?
     public let verb: String
+    public let remoteInputKey: Data?
 
-    public init(sessionURL: String?, verb: String) {
+    public init(
+        sessionURL: String?,
+        verb: String,
+        remoteInputKey: Data? = nil
+    ) {
         self.sessionURL = sessionURL
         self.verb = verb
+        self.remoteInputKey = remoteInputKey
     }
 }
 
@@ -1003,7 +1009,8 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             )
             return try Self.parseLaunchResult(
                 launchXML: launchXML,
-                command: verb
+                command: verb,
+                remoteInputKey: remoteInputKey
             )
         } catch {
             if verb == .resume {
@@ -1024,7 +1031,8 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                     )
                     return try Self.parseLaunchResult(
                         launchXML: launchXML,
-                        command: .launch
+                        command: .launch,
+                        remoteInputKey: remoteInputKey
                     )
                 } catch {
                     throw Self.remapLaunchError(error)
@@ -1050,7 +1058,8 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                     )
                     return try Self.parseLaunchResult(
                         launchXML: launchXML,
-                        command: verb
+                        command: verb,
+                        remoteInputKey: remoteInputKey
                     )
                 } catch {
                     throw Self.remapLaunchError(error)
@@ -1115,14 +1124,16 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
 
     private static func parseLaunchResult(
         launchXML: String,
-        command: ShadowClientGameStreamCommand
+        command: ShadowClientGameStreamCommand,
+        remoteInputKey: Data
     ) throws -> ShadowClientGameStreamLaunchResult {
         let document = try ShadowClientXMLFlatDocumentParser.parse(xml: launchXML)
         try validateRootStatus(document.rootStatus)
         let sessionURL = document.values["sessionUrl0"]?.first
         return ShadowClientGameStreamLaunchResult(
             sessionURL: sessionURL,
-            verb: command.rawValue
+            verb: command.rawValue,
+            remoteInputKey: remoteInputKey
         )
     }
 

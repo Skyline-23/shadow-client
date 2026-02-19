@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import ShadowClientFeatureHome
 
 @Test("ENet connect packet encodes control fields in big-endian order except host-order connectID")
 func enetConnectPacketEncodesFieldsWithHostOrderConnectID() throws {
@@ -92,6 +93,66 @@ func enetAcknowledgePacketGenerationUsesBigEndianOrder() {
     #expect(Array(packet[2...3]) == [0xA1, 0xB2]) // header.reliableSequenceNumber
     #expect(Array(packet[4...5]) == [0xA1, 0xB2]) // acknowledge.receivedReliableSequenceNumber
     #expect(Array(packet[6...7]) == [0xC3, 0xD4]) // acknowledge.receivedSentTime
+}
+
+@Test("ENet send-reliable packet wraps control payload with channel and payload length")
+func enetSendReliablePacketEncodesHeaderAndPayload() {
+    let payload = ShadowClientSunshineENetPacketCodec.makeControlMessagePayload(
+        type: 0x0305,
+        payload: Data([0x00, 0x00])
+    )
+    let packet = ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
+        outgoingPeerID: 0x0123,
+        outgoingSessionID: 0x02,
+        reliableSequenceNumber: 0x3456,
+        channelID: 0x00,
+        sentTime: 0x7788,
+        payload: payload
+    )
+
+    #expect(packet.count == 14)
+    #expect(Array(packet[0...1]) == [0xA1, 0x23]) // peer + session bits + sent-time flag
+    #expect(Array(packet[2...3]) == [0x77, 0x88]) // sent time
+    #expect(packet[4] == 0x86) // SEND_RELIABLE | ACK flag
+    #expect(packet[5] == 0x00) // channel
+    #expect(Array(packet[6...7]) == [0x34, 0x56]) // reliable sequence
+    #expect(Array(packet[8...9]) == [0x00, 0x04]) // payload length
+    #expect(Array(packet[10...13]) == [0x05, 0x03, 0x00, 0x00]) // control payload
+}
+
+@Test("ENet control payload codec stores control packet type as little-endian")
+func enetControlPayloadCodecUsesLittleEndianType() {
+    let payload = ShadowClientSunshineENetPacketCodec.makeControlMessagePayload(
+        type: 0x0307,
+        payload: Data([0x00])
+    )
+
+    #expect(payload == Data([0x07, 0x03, 0x00]))
+}
+
+@Test("ENet acknowledge parser reads received reliable sequence from command payload")
+func enetAcknowledgeParserDecodesReceivedSequence() throws {
+    var packet = Data()
+    packet.append(contentsOf: [0x80, 0x01]) // peer header with sent-time flag
+    packet.append(contentsOf: [0x12, 0x34]) // sent time
+    packet.append(contentsOf: [0x01, 0x00]) // ACK command on generic channel
+    packet.append(contentsOf: [0x00, 0x10]) // command reliable sequence
+    packet.append(contentsOf: [0x00, 0x77]) // received reliable sequence
+    packet.append(contentsOf: [0xAA, 0x55]) // received sent time
+
+    let parsedPacket = try #require(ShadowClientSunshineENetPacketCodec.parsePacket(packet))
+    let command = try #require(parsedPacket.commands.first)
+    let acknowledge = try #require(
+        ShadowClientSunshineENetPacketCodec.parseAcknowledge(
+            from: parsedPacket,
+            command: command
+        )
+    )
+
+    #expect(acknowledge.commandChannelID == 0x00)
+    #expect(acknowledge.commandReliableSequenceNumber == 0x0010)
+    #expect(acknowledge.receivedReliableSequenceNumber == 0x0077)
+    #expect(acknowledge.receivedSentTime == 0xAA55)
 }
 
 private struct ENetConnectPacketFields {

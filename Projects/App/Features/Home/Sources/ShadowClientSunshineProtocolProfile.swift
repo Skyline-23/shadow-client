@@ -62,6 +62,17 @@ enum ShadowClientSunshineHandshakeProfile {
     static let encryptionRequestedAttributePrefix = "x-ss-general.encryptionrequested:"
 }
 
+enum ShadowClientSunshineControlMessageProfile {
+    static let genericChannelID: UInt8 = 0x00
+
+    static let startATypeLegacy: UInt16 = 0x0305
+    static let startATypeEncryptedV2: UInt16 = 0x0302
+    static let startBType: UInt16 = 0x0307
+
+    static let startAPayload = Data([0x00, 0x00])
+    static let startBPayload = Data([0x00])
+}
+
 enum ShadowClientRTSPAnnounceProfile {
     static let fallbackHostAddress = "127.0.0.1"
 
