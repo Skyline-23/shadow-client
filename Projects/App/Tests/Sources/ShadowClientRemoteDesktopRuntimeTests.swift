@@ -324,9 +324,9 @@ func metadataClientKeepsAppListOnHTTPSOnly() async {
     )
 }
 
-@Test("Metadata client falls back to HTTP app list query for recoverable HTTPS transport failures")
-func metadataClientFallsBackToHTTPAppListOnRecoverableHTTPSTransportFailure() async throws {
-    let defaultsSuite = "shadow-client.metadata.applist.http-fallback.\(UUID().uuidString)"
+@Test("Metadata client keeps app list query on HTTPS when transport failure occurs")
+func metadataClientKeepsAppListOnHTTPSWhenTransportFails() async {
+    let defaultsSuite = "shadow-client.metadata.applist.https-transport-only.\(UUID().uuidString)"
     guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
         Issue.record("Expected isolated defaults suite")
         return
@@ -343,23 +343,6 @@ func metadataClientFallsBackToHTTPAppListOnRecoverableHTTPSTransportFailure() as
                 expectedPort: 47984,
                 result: .failure(.requestFailed("The network connection was lost."))
             ),
-            .init(
-                scheme: "http",
-                command: "applist",
-                expectedPort: 48010,
-                result: .success(
-                    """
-                    <root status_code="200" status_message="OK">
-                      <App>
-                        <AppTitle>Desktop</AppTitle>
-                        <ID>1</ID>
-                        <IsHdrSupported>1</IsHdrSupported>
-                        <IsAppCollectorGame>0</IsAppCollectorGame>
-                      </App>
-                    </root>
-                    """
-                )
-            ),
         ]
     )
 
@@ -369,22 +352,26 @@ func metadataClientFallsBackToHTTPAppListOnRecoverableHTTPSTransportFailure() as
         transport: transport
     )
 
-    let apps = try await client.fetchAppList(
-        host: "wifi.skyline23.com:48010",
-        httpsPort: 47984
-    )
+    do {
+        _ = try await client.fetchAppList(
+            host: "wifi.skyline23.com:48010",
+            httpsPort: 47984
+        )
+        Issue.record("Expected HTTPS transport failure")
+    } catch let error as ShadowClientGameStreamError {
+        #expect(error == .requestFailed("The network connection was lost."))
+    } catch {
+        Issue.record("Unexpected error: \(error)")
+    }
 
-    #expect(apps == [.init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false)])
     #expect(
         await transport.calls() == [
             .init(scheme: "https", command: "applist"),
-            .init(scheme: "http", command: "applist"),
         ]
     )
     #expect(
         await transport.callsWithPort() == [
             .init(scheme: "https", command: "applist", port: 47984),
-            .init(scheme: "http", command: "applist", port: 48010),
         ]
     )
 }
