@@ -10,14 +10,7 @@ enum ShadowClientSunshinePingPacketCodec {
             let sequenceBytes = withUnsafeBytes(of: sequence.bigEndian) { Data($0) }
             var payloadThenSequence = negotiatedPayload
             payloadThenSequence.append(sequenceBytes)
-
-            var sequenceThenPayload = sequenceBytes
-            sequenceThenPayload.append(negotiatedPayload)
-
-            if payloadThenSequence == sequenceThenPayload {
-                return [payloadThenSequence]
-            }
-            return [payloadThenSequence, sequenceThenPayload]
+            return [payloadThenSequence]
         }
 
         return [Data(fallbackASCII.utf8)]

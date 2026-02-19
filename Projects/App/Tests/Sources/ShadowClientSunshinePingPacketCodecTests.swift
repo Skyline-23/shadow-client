@@ -10,9 +10,8 @@ func sunshinePingCodecAppendsSequenceAfterPayload() {
         negotiatedPayload: payload
     )
 
-    #expect(packets.count == 2)
+    #expect(packets.count == 1)
     #expect(packets[0] == payload + Data([0x01, 0x02, 0x03, 0x04]))
-    #expect(packets[1] == Data([0x01, 0x02, 0x03, 0x04]) + payload)
 }
 
 @Test("Sunshine ping codec falls back to legacy ASCII ping when payload is absent")
