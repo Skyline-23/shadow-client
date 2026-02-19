@@ -262,6 +262,21 @@ public actor ShadowClientPairingIdentityStore {
         self.defaults = defaults
     }
 
+    public init(
+        provider: any ShadowClientPairingIdentityProviding,
+        defaultsSuiteName: String
+    ) {
+        let suiteDefaults = UserDefaults(suiteName: defaultsSuiteName) ?? .standard
+        self.provider = provider
+        self.defaults = suiteDefaults
+    }
+
+    public init(defaultsSuiteName: String) {
+        let suiteDefaults = UserDefaults(suiteName: defaultsSuiteName) ?? .standard
+        self.provider = ShadowClientUserDefaultsIdentityProvider(defaults: suiteDefaults)
+        self.defaults = suiteDefaults
+    }
+
     public func uniqueID() -> String {
         if let cachedUniqueID {
             return cachedUniqueID
@@ -549,7 +564,10 @@ public actor ShadowClientPairingIdentityStore {
         else {
             return nil
         }
-        return unsafeBitCast(identityRef, to: SecIdentity.self)
+        guard CFGetTypeID(identityRef) == SecIdentityGetTypeID() else {
+            return nil
+        }
+        return unsafeDowncast(identityRef, to: SecIdentity.self)
     }
 }
 
@@ -566,6 +584,12 @@ public actor ShadowClientPinnedHostCertificateStore {
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.cached = defaults.dictionary(forKey: DefaultsKeys.pinnedCertificates) as? [String: String] ?? [:]
+    }
+
+    public init(defaultsSuiteName: String) {
+        let suiteDefaults = UserDefaults(suiteName: defaultsSuiteName) ?? .standard
+        self.defaults = suiteDefaults
+        self.cached = suiteDefaults.dictionary(forKey: DefaultsKeys.pinnedCertificates) as? [String: String] ?? [:]
     }
 
     public func certificateDER(forHost host: String) -> Data? {
@@ -972,21 +996,15 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             }
         }
 
-        func issueLaunchRequest(
-            command: ShadowClientGameStreamCommand
-        ) async throws -> ShadowClientGameStreamLaunchResult {
+        do {
             let launchXML = try await requestControlXML(
-                command: command,
+                command: verb,
                 parameters: parameters
             )
-            let document = try ShadowClientXMLFlatDocumentParser.parse(xml: launchXML)
-            try Self.validateRootStatus(document.rootStatus)
-            let sessionURL = document.values["sessionUrl0"]?.first
-            return ShadowClientGameStreamLaunchResult(sessionURL: sessionURL, verb: command.rawValue)
-        }
-
-        do {
-            return try await issueLaunchRequest(command: verb)
+            return try Self.parseLaunchResult(
+                launchXML: launchXML,
+                command: verb
+            )
         } catch {
             if verb == .resume {
                 Self.launchLogger.notice(
@@ -1000,7 +1018,14 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                     )
                 }
                 do {
-                    return try await issueLaunchRequest(command: .launch)
+                    let launchXML = try await requestControlXML(
+                        command: .launch,
+                        parameters: parameters
+                    )
+                    return try Self.parseLaunchResult(
+                        launchXML: launchXML,
+                        command: .launch
+                    )
                 } catch {
                     throw Self.remapLaunchError(error)
                 }
@@ -1019,7 +1044,14 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                     )
                 }
                 do {
-                    return try await issueLaunchRequest(command: verb)
+                    let launchXML = try await requestControlXML(
+                        command: verb,
+                        parameters: parameters
+                    )
+                    return try Self.parseLaunchResult(
+                        launchXML: launchXML,
+                        command: verb
+                    )
                 } catch {
                     throw Self.remapLaunchError(error)
                 }
@@ -1079,6 +1111,19 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             return streamError
         }
         return ShadowClientGameStreamError.requestFailed(error.localizedDescription)
+    }
+
+    private static func parseLaunchResult(
+        launchXML: String,
+        command: ShadowClientGameStreamCommand
+    ) throws -> ShadowClientGameStreamLaunchResult {
+        let document = try ShadowClientXMLFlatDocumentParser.parse(xml: launchXML)
+        try validateRootStatus(document.rootStatus)
+        let sessionURL = document.values["sessionUrl0"]?.first
+        return ShadowClientGameStreamLaunchResult(
+            sessionURL: sessionURL,
+            verb: command.rawValue
+        )
     }
 
     private static func resolvedLaunchCodecPreference(

@@ -269,8 +269,8 @@ func metadataClientFallsBackToHTTPAfterRejectedHTTPSServerInfo() async throws {
     )
 
     let client = NativeGameStreamMetadataClient(
-        identityStore: .init(provider: FailingIdentityProvider(), defaults: defaults),
-        pinnedCertificateStore: .init(defaults: defaults),
+        identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: .init(defaultsSuiteName: defaultsSuite),
         transport: transport
     )
 
@@ -313,8 +313,8 @@ func metadataClientReturnsUnpairedHostWhenHTTPFallbackIsBlockedByATS() async thr
     )
 
     let client = NativeGameStreamMetadataClient(
-        identityStore: .init(provider: FailingIdentityProvider(), defaults: defaults),
-        pinnedCertificateStore: .init(defaults: defaults),
+        identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: .init(defaultsSuiteName: defaultsSuite),
         transport: transport
     )
 
@@ -355,8 +355,8 @@ func metadataClientKeepsAppListOnHTTPSOnly() async {
     )
 
     let client = NativeGameStreamMetadataClient(
-        identityStore: .init(provider: FailingIdentityProvider(), defaults: defaults),
-        pinnedCertificateStore: .init(defaults: defaults),
+        identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: .init(defaultsSuiteName: defaultsSuite),
         transport: transport
     )
 
@@ -404,8 +404,8 @@ func metadataClientKeepsAppListOnHTTPSWhenTransportFails() async {
     )
 
     let client = NativeGameStreamMetadataClient(
-        identityStore: .init(provider: FailingIdentityProvider(), defaults: defaults),
-        pinnedCertificateStore: .init(defaults: defaults),
+        identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: .init(defaultsSuiteName: defaultsSuite),
         transport: transport
     )
 

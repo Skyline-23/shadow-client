@@ -16,7 +16,7 @@ func certificateDecoderConvertsHexEncodedPEM() async throws {
 
     let store = ShadowClientPairingIdentityStore(
         provider: CertificateDecoderFailingIdentityProvider(),
-        defaults: defaults
+        defaultsSuiteName: suiteName
     )
     let certificatePEM = try await store.clientCertificatePEMData()
     let plainCertHex = hexString(certificatePEM)
@@ -38,7 +38,7 @@ func certificateDecoderKeepsHexEncodedDER() async throws {
 
     let store = ShadowClientPairingIdentityStore(
         provider: CertificateDecoderFailingIdentityProvider(),
-        defaults: defaults
+        defaultsSuiteName: suiteName
     )
     let certificatePEM = try await store.clientCertificatePEMData()
     let der = try parsePEMToDER(certificatePEM)

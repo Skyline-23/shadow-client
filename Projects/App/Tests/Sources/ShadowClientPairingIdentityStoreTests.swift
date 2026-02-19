@@ -15,7 +15,7 @@ func pairingIdentityStoreGeneratesMaterialWhenProviderFails() async throws {
 
     let store = ShadowClientPairingIdentityStore(
         provider: FailingIdentityProvider(),
-        defaults: defaults
+        defaultsSuiteName: suiteName
     )
 
     let certificatePEMData = try await store.clientCertificatePEMData()
@@ -45,7 +45,7 @@ func pairingIdentityStoreCreatesTLSClientCredential() async throws {
 
     let store = ShadowClientPairingIdentityStore(
         provider: FailingIdentityProvider(),
-        defaults: defaults
+        defaultsSuiteName: suiteName
     )
 
     let credential = try await store.tlsClientCertificateCredential()
@@ -67,10 +67,7 @@ func pairingIdentityStoreReplacesInvalidPersistedMaterial() async throws {
     defaults.set("broken-cert", forKey: ShadowClientPairingIdentityDefaultsKeys.certificatePEM)
     defaults.set("broken-key", forKey: ShadowClientPairingIdentityDefaultsKeys.privateKeyPEM)
 
-    let store = ShadowClientPairingIdentityStore(
-        provider: ShadowClientUserDefaultsIdentityProvider(defaults: defaults),
-        defaults: defaults
-    )
+    let store = ShadowClientPairingIdentityStore(defaultsSuiteName: suiteName)
 
     let certificatePEMData = try await store.clientCertificatePEMData()
     #expect(!certificatePEMData.isEmpty)
@@ -104,16 +101,19 @@ func pairingIdentityStoreReplacesMismatchedPersistedMaterial() async throws {
         targetDefaults.removePersistentDomain(forName: targetSuite)
     }
 
-    let sourceMaterialA = try await generatePersistedIdentityMaterial(defaults: sourceDefaultsA)
-    let sourceMaterialB = try await generatePersistedIdentityMaterial(defaults: sourceDefaultsB)
+    let sourceMaterialA = try await generatePersistedIdentityMaterial(
+        suiteName: sourceSuiteA,
+        defaults: sourceDefaultsA
+    )
+    let sourceMaterialB = try await generatePersistedIdentityMaterial(
+        suiteName: sourceSuiteB,
+        defaults: sourceDefaultsB
+    )
 
     targetDefaults.set(sourceMaterialA.certificatePEM, forKey: ShadowClientPairingIdentityDefaultsKeys.certificatePEM)
     targetDefaults.set(sourceMaterialB.privateKeyPEM, forKey: ShadowClientPairingIdentityDefaultsKeys.privateKeyPEM)
 
-    let store = ShadowClientPairingIdentityStore(
-        provider: ShadowClientUserDefaultsIdentityProvider(defaults: targetDefaults),
-        defaults: targetDefaults
-    )
+    let store = ShadowClientPairingIdentityStore(defaultsSuiteName: targetSuite)
 
     _ = try await store.clientCertificatePEMData()
 
@@ -125,10 +125,13 @@ func pairingIdentityStoreReplacesMismatchedPersistedMaterial() async throws {
     #expect(!(replacedCertificate == sourceMaterialA.certificatePEM && replacedPrivateKey == sourceMaterialB.privateKeyPEM))
 }
 
-private func generatePersistedIdentityMaterial(defaults: UserDefaults) async throws -> ShadowClientPairingIdentityMaterial {
+private func generatePersistedIdentityMaterial(
+    suiteName: String,
+    defaults: UserDefaults
+) async throws -> ShadowClientPairingIdentityMaterial {
     let store = ShadowClientPairingIdentityStore(
         provider: FailingIdentityProvider(),
-        defaults: defaults
+        defaultsSuiteName: suiteName
     )
     _ = try await store.clientCertificatePEMData()
 
