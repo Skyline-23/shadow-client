@@ -671,7 +671,11 @@ private actor ShadowClientRTSPInterleavedClient {
             )
         }
 
-        await attemptLegacyFirstFrameBootstrap(host: remoteHost ?? .init(host))
+        if controlServerPort == nil {
+            await attemptLegacyFirstFrameBootstrap(host: remoteHost ?? .init(host))
+        } else {
+            logger.debug("RTSP legacy first-frame bootstrap skipped for Sunshine-compatible control path")
+        }
         await startSunshineControlChannelIfNeeded(host: host)
         return track
     }
@@ -1233,6 +1237,23 @@ private actor ShadowClientRTSPInterleavedClient {
         port: NWEndpoint.Port,
         localHost: NWEndpoint.Host?
     ) throws -> ShadowClientUDPDatagramSocket {
+        if let localHost,
+           negotiatedClientPortBase > 0
+        {
+            do {
+                let boundSocket = try ShadowClientUDPDatagramSocket(
+                    localHost: localHost,
+                    localPort: negotiatedClientPortBase,
+                    remoteHost: host,
+                    remotePort: port.rawValue
+                )
+                logger.notice("RTSP UDP video socket bound to \(String(describing: localHost), privacy: .public):\(self.negotiatedClientPortBase, privacy: .public)")
+                return boundSocket
+            } catch {
+                logger.error("RTSP UDP video bind failed on \(String(describing: localHost), privacy: .public):\(self.negotiatedClientPortBase, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
         let socket = try ShadowClientUDPDatagramSocket(
             localHost: localHost,
             localPort: nil,
@@ -1248,18 +1269,26 @@ private actor ShadowClientRTSPInterleavedClient {
         port: NWEndpoint.Port,
         localHost: NWEndpoint.Host?
     ) async throws -> NWConnection {
-        let connection: NWConnection
-        if let localHost {
+        if let localHost,
+           let clientPort = NWEndpoint.Port(rawValue: negotiatedClientPortBase + 1)
+        {
             let parameters = NWParameters.udp
             parameters.requiredLocalEndpoint = .hostPort(
                 host: localHost,
-                port: .any
+                port: clientPort
             )
-            connection = NWConnection(host: host, port: port, using: parameters)
-        } else {
-            connection = NWConnection(host: host, port: port, using: .udp)
+            let boundConnection = NWConnection(host: host, port: port, using: parameters)
+            do {
+                try await waitForReady(boundConnection)
+                logger.notice("RTSP UDP audio ping socket bound to \(String(describing: localHost), privacy: .public):\(clientPort.rawValue, privacy: .public)")
+                return boundConnection
+            } catch {
+                logger.error("RTSP UDP audio ping bind failed on \(String(describing: localHost), privacy: .public):\(clientPort.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                boundConnection.cancel()
+            }
         }
 
+        let connection = NWConnection(host: host, port: port, using: .udp)
         try await waitForReady(connection)
         if let local = resolvedLocalHost(from: connection),
            let localPort = resolvedLocalPort(from: connection)
