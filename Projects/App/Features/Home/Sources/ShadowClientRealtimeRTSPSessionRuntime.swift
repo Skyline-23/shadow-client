@@ -681,11 +681,10 @@ private actor ShadowClientRTSPInterleavedClient {
             )
         }
 
-        if controlServerPort == nil {
-            await attemptLegacyFirstFrameBootstrap(host: remoteHost ?? .init(host))
-        } else {
-            logger.debug("RTSP legacy first-frame bootstrap skipped for Sunshine-compatible control path")
+        if controlServerPort != nil {
+            logger.debug("RTSP control path negotiated; running legacy first-frame compatibility probe")
         }
+        await attemptLegacyFirstFrameBootstrap(host: remoteHost ?? .init(host))
         await startSunshineControlChannelIfNeeded(host: host)
         return track
     }
