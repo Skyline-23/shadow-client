@@ -43,10 +43,15 @@ private final class ShadowClientRealtimeDecoderOutputBridge: @unchecked Sendable
     }
 
     func emit(_ pixelBuffer: CVPixelBuffer) {
+        let sendablePixelBuffer = ShadowClientDecoderSendablePixelBuffer(value: pixelBuffer)
         Task {
-            await onFrame(pixelBuffer)
+            await onFrame(sendablePixelBuffer.value)
         }
     }
+}
+
+private struct ShadowClientDecoderSendablePixelBuffer: @unchecked Sendable {
+    let value: CVPixelBuffer
 }
 
 public actor ShadowClientVideoToolboxDecoder {
@@ -65,12 +70,6 @@ public actor ShadowClientVideoToolboxDecoder {
         )
     ) {
         self.decodePresentationTimeScale = Self.normalizedPresentationTimeScale(decodePresentationTimeScale)
-    }
-
-    deinit {
-        if let session {
-            VTDecompressionSessionInvalidate(session)
-        }
     }
 
     public func reset() {

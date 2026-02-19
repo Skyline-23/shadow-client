@@ -247,6 +247,10 @@ private struct ShadowClientRTPPacket {
     let payload: Data
 }
 
+private struct ShadowClientSendableNWConnection: @unchecked Sendable {
+    let connection: NWConnection
+}
+
 private actor ShadowClientRTSPInterleavedClient {
     private let timeout: Duration
     private let clientPortBase: UInt16 = ShadowClientRTSPProtocolProfile.clientPortBase
@@ -1059,6 +1063,11 @@ private actor ShadowClientRTSPInterleavedClient {
             }
         }
 
+        let sendableVideoConnection = ShadowClientSendableNWConnection(connection: udpConnection)
+        let sendableAudioConnection = audioPingConnection.map {
+            ShadowClientSendableNWConnection(connection: $0)
+        }
+
         let pingTask = Task {
             var sequence: UInt32 = 1
             var loggedPingCount = 0
@@ -1068,7 +1077,7 @@ private actor ShadowClientRTSPInterleavedClient {
                 do {
                     let pingPackets = Self.makeVideoPingPackets(sequence: sequence, payload: pingPayload)
                     for pingPacket in pingPackets {
-                        try await Self.send(bytes: pingPacket, over: udpConnection)
+                        try await Self.send(bytes: pingPacket, over: sendableVideoConnection.connection)
                     }
                     if loggedPingCount < 3 {
                         rtspLogger.notice("RTSP UDP video ping sent (sequence=\(sequence, privacy: .public), variants=\(pingPackets.count, privacy: .public), bytes=\(pingPackets.first?.count ?? 0, privacy: .public))")
@@ -1084,7 +1093,7 @@ private actor ShadowClientRTSPInterleavedClient {
             }
         }
         let audioPingTask = Task {
-            guard let audioPingConnection else {
+            guard let sendableAudioConnection else {
                 return
             }
             var sequence: UInt32 = 1
@@ -1093,7 +1102,7 @@ private actor ShadowClientRTSPInterleavedClient {
                 sequence &+= 1
                 let pingPackets = Self.makeVideoPingPackets(sequence: sequence, payload: audioPingPayload)
                 for pingPacket in pingPackets {
-                    try? await Self.send(bytes: pingPacket, over: audioPingConnection)
+                    try? await Self.send(bytes: pingPacket, over: sendableAudioConnection.connection)
                 }
                 if loggedPingCount < 2 {
                     rtspLogger.notice("RTSP UDP audio ping sent (sequence=\(sequence, privacy: .public), variants=\(pingPackets.count, privacy: .public), bytes=\(pingPackets.first?.count ?? 0, privacy: .public))")

@@ -179,9 +179,7 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
 
 extension ShadowClientHostDiscoveryRuntime: NetServiceBrowserDelegate {
     public func netServiceBrowserWillSearch(_ browser: NetServiceBrowser) {
-        DispatchQueue.main.async {
-            self.state = .discovering
-        }
+        state = .discovering
     }
 
     public func netServiceBrowser(
@@ -189,9 +187,7 @@ extension ShadowClientHostDiscoveryRuntime: NetServiceBrowserDelegate {
         didNotSearch errorDict: [String: NSNumber]
     ) {
         let code = errorDict[NetService.errorCode]?.intValue ?? -1
-        DispatchQueue.main.async {
-            self.state = .failed("Bonjour discovery error (\(code)).")
-        }
+        state = .failed("Bonjour discovery error (\(code)).")
     }
 
     public func netServiceBrowser(
@@ -199,12 +195,10 @@ extension ShadowClientHostDiscoveryRuntime: NetServiceBrowserDelegate {
         didFind service: NetService,
         moreComing: Bool
     ) {
-        DispatchQueue.main.async {
-            let key = self.serviceKey(for: service)
-            self.services[key] = service
-            service.delegate = self
-            service.resolve(withTimeout: 2.0)
-        }
+        let key = serviceKey(for: service)
+        services[key] = service
+        service.delegate = self
+        service.resolve(withTimeout: 2.0)
     }
 
     public func netServiceBrowser(
@@ -212,46 +206,40 @@ extension ShadowClientHostDiscoveryRuntime: NetServiceBrowserDelegate {
         didRemove service: NetService,
         moreComing: Bool
     ) {
-        DispatchQueue.main.async {
-            let key = self.serviceKey(for: service)
-            self.services[key]?.delegate = nil
-            self.services.removeValue(forKey: key)
-            self.catalog.remove(serviceKey: key)
-            if !moreComing {
-                self.renderHosts()
-            }
+        let key = serviceKey(for: service)
+        services[key]?.delegate = nil
+        services.removeValue(forKey: key)
+        catalog.remove(serviceKey: key)
+        if !moreComing {
+            renderHosts()
         }
     }
 }
 
 extension ShadowClientHostDiscoveryRuntime: NetServiceDelegate {
     public func netServiceDidResolveAddress(_ sender: NetService) {
-        DispatchQueue.main.async {
-            guard let hostName = self.resolvedHostName(from: sender) else {
-                return
-            }
-
-            let serviceType = sender.type
-                .trimmingCharacters(in: CharacterSet(charactersIn: "."))
-            let discoveredHost = ShadowClientDiscoveredHost(
-                name: sender.name,
-                host: hostName,
-                port: sender.port,
-                serviceType: serviceType
-            )
-
-            let key = self.serviceKey(for: sender)
-            self.catalog.upsert(serviceKey: key, host: discoveredHost)
-            self.renderHosts()
+        guard let hostName = resolvedHostName(from: sender) else {
+            return
         }
+
+        let serviceType = sender.type
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        let discoveredHost = ShadowClientDiscoveredHost(
+            name: sender.name,
+            host: hostName,
+            port: sender.port,
+            serviceType: serviceType
+        )
+
+        let key = serviceKey(for: sender)
+        catalog.upsert(serviceKey: key, host: discoveredHost)
+        renderHosts()
     }
 
     public func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
-        DispatchQueue.main.async {
-            let key = self.serviceKey(for: sender)
-            self.services.removeValue(forKey: key)
-            self.catalog.remove(serviceKey: key)
-            self.renderHosts()
-        }
+        let key = serviceKey(for: sender)
+        services.removeValue(forKey: key)
+        catalog.remove(serviceKey: key)
+        renderHosts()
     }
 }
