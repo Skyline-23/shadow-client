@@ -13,7 +13,7 @@ enum ShadowClientRTSPAnnouncePayloadBuilder {
             ? ShadowClientRTSPAnnounceProfile.fallbackHostAddress
             : hostAddress.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let configuredBitrateKbps = ShadowClientRTSPAnnounceDefaults.configuredBitrateKbps
+        let configuredBitrateKbps = videoConfiguration.bitrateKbps
         let adjustedBitrateKbps = max(
             ShadowClientRTSPAnnounceDefaults.minimumBitrateKbps,
             min(
@@ -33,11 +33,12 @@ enum ShadowClientRTSPAnnouncePayloadBuilder {
         let refreshRateX100 = ShadowClientRTSPAnnounceProfile.refreshRateX100(
             for: videoConfiguration.fps
         )
+        let surroundEnabled = videoConfiguration.enableSurroundAudio
 
         let attributes: [(String, String)] = [
             ("x-ml-general.featureFlags", "\(moonlightFeatureFlags)"),
             ("x-ss-general.encryptionEnabled", "\(encryptionEnabledFlags)"),
-            ("x-ss-video[0].chromaSamplingType", ShadowClientRTSPAnnounceProfile.chromaSamplingType),
+            ("x-ss-video[0].chromaSamplingType", ShadowClientRTSPAnnounceProfile.chromaSamplingType(yuv444Enabled: videoConfiguration.enableYUV444)),
             ("x-nv-video[0].clientViewportWd", "\(videoConfiguration.width)"),
             ("x-nv-video[0].clientViewportHt", "\(videoConfiguration.height)"),
             ("x-nv-video[0].maxFPS", "\(videoConfiguration.fps)"),
@@ -63,13 +64,13 @@ enum ShadowClientRTSPAnnouncePayloadBuilder {
             ("x-nv-video[0].videoEncoderSlicesPerFrame", ShadowClientRTSPAnnounceProfile.encoderSlicesPerFrame),
             ("x-nv-clientSupportHevc", hevcSupport),
             ("x-nv-vqos[0].bitStreamFormat", bitStreamFormat),
-            ("x-nv-video[0].dynamicRangeMode", ShadowClientRTSPAnnounceProfile.dynamicRangeMode),
+            ("x-nv-video[0].dynamicRangeMode", ShadowClientRTSPAnnounceProfile.dynamicRangeMode(hdrEnabled: videoConfiguration.enableHDR)),
             ("x-nv-video[0].maxNumReferenceFrames", ShadowClientRTSPAnnounceProfile.maxReferenceFrames),
             ("x-nv-video[0].clientRefreshRateX100", refreshRateX100),
-            ("x-nv-audio.surround.numChannels", ShadowClientRTSPAnnounceProfile.audioNumChannels),
-            ("x-nv-audio.surround.channelMask", ShadowClientRTSPAnnounceProfile.audioChannelMask),
-            ("x-nv-audio.surround.enable", ShadowClientRTSPAnnounceProfile.surroundEnabled),
-            ("x-nv-audio.surround.AudioQuality", ShadowClientRTSPAnnounceProfile.surroundAudioQuality),
+            ("x-nv-audio.surround.numChannels", ShadowClientRTSPAnnounceProfile.audioNumChannels(surroundEnabled: surroundEnabled)),
+            ("x-nv-audio.surround.channelMask", ShadowClientRTSPAnnounceProfile.audioChannelMask(surroundEnabled: surroundEnabled)),
+            ("x-nv-audio.surround.enable", ShadowClientRTSPAnnounceProfile.surroundEnabledValue(surroundEnabled: surroundEnabled)),
+            ("x-nv-audio.surround.AudioQuality", ShadowClientRTSPAnnounceProfile.surroundAudioQuality(surroundEnabled: surroundEnabled)),
             ("x-nv-aqos.packetDuration", ShadowClientRTSPAnnounceProfile.aqosPacketDuration),
             ("x-nv-video[0].encoderCscMode", ShadowClientRTSPAnnounceProfile.encoderCSCMode),
         ]

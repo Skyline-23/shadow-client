@@ -245,18 +245,33 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
     public let width: Int
     public let height: Int
     public let fps: Int
+    public let bitrateKbps: Int
     public let preferredCodec: ShadowClientVideoCodecPreference
+    public let enableHDR: Bool
+    public let enableSurroundAudio: Bool
+    public let enableYUV444: Bool
 
     public init(
         width: Int,
         height: Int,
         fps: Int = ShadowClientStreamingLaunchBounds.defaultFPS,
-        preferredCodec: ShadowClientVideoCodecPreference = .auto
+        bitrateKbps: Int = ShadowClientRTSPAnnounceDefaults.configuredBitrateKbps,
+        preferredCodec: ShadowClientVideoCodecPreference = .auto,
+        enableHDR: Bool = false,
+        enableSurroundAudio: Bool = false,
+        enableYUV444: Bool = false
     ) {
         self.width = max(ShadowClientStreamingLaunchBounds.minimumWidth, width)
         self.height = max(ShadowClientStreamingLaunchBounds.minimumHeight, height)
         self.fps = max(ShadowClientStreamingLaunchBounds.minimumFPS, fps)
+        self.bitrateKbps = min(
+            max(ShadowClientStreamingLaunchBounds.minimumBitrateKbps, bitrateKbps),
+            ShadowClientStreamingLaunchBounds.maximumBitrateKbps
+        )
         self.preferredCodec = preferredCodec
+        self.enableHDR = enableHDR
+        self.enableSurroundAudio = enableSurroundAudio
+        self.enableYUV444 = enableYUV444
     }
 }
 
@@ -1041,7 +1056,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         width: settings.width,
                         height: settings.height,
                         fps: settings.fps,
-                        preferredCodec: settings.preferredCodec
+                        bitrateKbps: settings.bitrateKbps,
+                        preferredCodec: settings.preferredCodec,
+                        enableHDR: settings.enableHDR,
+                        enableSurroundAudio: settings.enableSurroundAudio,
+                        enableYUV444: settings.enableYUV444
                     )
                 )
 

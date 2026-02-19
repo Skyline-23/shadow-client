@@ -183,7 +183,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             width: configuration.width,
             height: configuration.height,
             fps: configuration.fps,
-            preferredCodec: resolvedCodecPreference
+            bitrateKbps: configuration.bitrateKbps,
+            preferredCodec: resolvedCodecPreference,
+            enableHDR: configuration.enableHDR,
+            enableSurroundAudio: configuration.enableSurroundAudio,
+            enableYUV444: configuration.enableYUV444
         )
     }
 

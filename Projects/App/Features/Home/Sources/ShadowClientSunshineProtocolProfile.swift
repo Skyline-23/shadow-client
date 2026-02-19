@@ -79,7 +79,8 @@ enum ShadowClientRTSPAnnounceProfile {
     static let nvFeatureFlagEncryptionControlV2: UInt32 = 0x80
     static let nvFeatureFlagEncryptedAudio: UInt32 = 0x20
 
-    static let chromaSamplingType = "0"
+    static let chromaSamplingType420 = "0"
+    static let chromaSamplingType444 = "1"
     static let packetSize = "1392"
     static let rateControlMode = "4"
     static let timeoutLengthMs = "7000"
@@ -93,12 +94,17 @@ enum ShadowClientRTSPAnnounceProfile {
     static let drcEnabled = "0"
     static let recoveryModeEnabled = "0"
     static let encoderSlicesPerFrame = "1"
-    static let dynamicRangeMode = "0"
+    static let dynamicRangeModeSDR = "0"
+    static let dynamicRangeModeHDR = "1"
     static let maxReferenceFrames = "0"
-    static let audioNumChannels = "2"
-    static let audioChannelMask = "3"
-    static let surroundEnabled = "0"
-    static let surroundAudioQuality = "0"
+    static let stereoAudioNumChannels = "2"
+    static let stereoAudioChannelMask = "3"
+    static let surroundAudioNumChannels = "6"
+    static let surroundAudioChannelMask = "63"
+    static let surroundDisabled = "0"
+    static let surroundEnabled = "1"
+    static let surroundAudioQualityDisabled = "0"
+    static let surroundAudioQualityEnabled = "0"
     static let aqosPacketDuration = "5"
     static let encoderCSCMode = "0"
 
@@ -152,5 +158,29 @@ enum ShadowClientRTSPAnnounceProfile {
     static func refreshRateX100(for fps: Int) -> String {
         let boundedFPS = max(1, fps)
         return String(boundedFPS * 100)
+    }
+
+    static func chromaSamplingType(yuv444Enabled: Bool) -> String {
+        yuv444Enabled ? chromaSamplingType444 : chromaSamplingType420
+    }
+
+    static func dynamicRangeMode(hdrEnabled: Bool) -> String {
+        hdrEnabled ? dynamicRangeModeHDR : dynamicRangeModeSDR
+    }
+
+    static func audioNumChannels(surroundEnabled: Bool) -> String {
+        surroundEnabled ? surroundAudioNumChannels : stereoAudioNumChannels
+    }
+
+    static func audioChannelMask(surroundEnabled: Bool) -> String {
+        surroundEnabled ? surroundAudioChannelMask : stereoAudioChannelMask
+    }
+
+    static func surroundEnabledValue(surroundEnabled: Bool) -> String {
+        surroundEnabled ? self.surroundEnabled : surroundDisabled
+    }
+
+    static func surroundAudioQuality(surroundEnabled: Bool) -> String {
+        surroundEnabled ? surroundAudioQualityEnabled : surroundAudioQualityDisabled
     }
 }
