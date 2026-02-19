@@ -48,6 +48,7 @@ public struct ShadowClientAppShellView: View {
     @AppStorage(ShadowClientAppSettings.StorageKeys.guiDisplayMode) private var guiDisplayModeRawValue = ShadowClientGUIDisplayMode.windowed.rawValue
     @ObservedObject private var hostDiscoveryRuntime: ShadowClientHostDiscoveryRuntime
     @ObservedObject private var remoteDesktopRuntime: ShadowClientRemoteDesktopRuntime
+    @ObservedObject private var sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext
     @State private var connectionState: ShadowClientConnectionState = .disconnected
     @State private var settingsTelemetryCancellable: AnyCancellable?
     @State private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
@@ -58,6 +59,7 @@ public struct ShadowClientAppShellView: View {
         self.baseDependencies = dependencies
         _hostDiscoveryRuntime = ObservedObject(wrappedValue: dependencies.hostDiscoveryRuntime)
         _remoteDesktopRuntime = ObservedObject(wrappedValue: dependencies.remoteDesktopRuntime)
+        _sessionSurfaceContext = ObservedObject(wrappedValue: dependencies.remoteDesktopRuntime.sessionSurfaceContext)
         self.settingsTelemetryRuntime = SettingsDiagnosticsTelemetryRuntime(
             baseDependencies: dependencies
         )
@@ -202,7 +204,7 @@ public struct ShadowClientAppShellView: View {
         ShadowClientRemoteSessionPresentationMapper.make(
             activeSessionEndpoint: activeSessionEndpoint,
             launchState: remoteDesktopRuntime.launchState,
-            renderState: remoteDesktopRuntime.sessionSurfaceContext.renderState
+            renderState: sessionSurfaceContext.renderState
         )
     }
 
@@ -1093,7 +1095,7 @@ public struct ShadowClientAppShellView: View {
 
                 ZStack {
                     ShadowClientRealtimeSessionSurfaceView(
-                        context: remoteDesktopRuntime.sessionSurfaceContext
+                        context: sessionSurfaceContext
                     )
 
                     if let overlay = sessionPresentationModel.overlay {
