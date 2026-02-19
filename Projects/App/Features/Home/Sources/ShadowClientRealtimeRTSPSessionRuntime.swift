@@ -271,6 +271,7 @@ private actor ShadowClientRTSPInterleavedClient {
     private var audioPingPayload: Data?
     private var videoPingPayload: Data?
     private var prePlayAudioPingConnection: NWConnection?
+    private var prePlayVideoUDPSocket: ShadowClientUDPDatagramSocket?
     private var controlConnectData: UInt32?
     private var controlChannelRuntime: ShadowClientSunshineControlChannelRuntime?
     private var controlChannelMode: ShadowClientSunshineControlChannelMode = .plaintext
@@ -364,6 +365,11 @@ private actor ShadowClientRTSPInterleavedClient {
         }
         let sdp = String(data: describe.body, encoding: .utf8) ?? ""
         logger.notice("RTSP DESCRIBE parsed body bytes \(describe.body.count, privacy: .public), characters \(sdp.count, privacy: .public)")
+
+        // Keep one RTSP socket for the SETUP/ANNOUNCE/PLAY sequence, like Moonlight.
+        // Sunshine can acknowledge PLAY on a new socket but still keep UDP routing tied
+        // to the transport state negotiated on the original connection.
+        try await reconnect(host: host, port: port)
         let contentBase =
             describe.headers[ShadowClientRTSPRequestDefaults.responseHeaderContentBase] ??
             describe.headers[ShadowClientRTSPRequestDefaults.responseHeaderContentLocation]
@@ -444,11 +450,12 @@ private actor ShadowClientRTSPInterleavedClient {
                 }
 
                 do {
-                    try await reconnect(host: host, port: port)
-                    let response = try await sendRequest(
+                    let response = try await sendRequestWithReconnectRetry(
                         method: ShadowClientRTSPRequestDefaults.setupMethod,
                         url: controlURL,
-                        headers: headers
+                        headers: headers,
+                        host: host,
+                        port: port
                     )
                     if sessionHeader == nil,
                        let session = response.headers[ShadowClientRTSPRequestDefaults.responseHeaderSession]
@@ -488,11 +495,12 @@ private actor ShadowClientRTSPInterleavedClient {
                 if let sessionHeader {
                     headers[ShadowClientRTSPRequestDefaults.headerSession] = sessionHeader
                 }
-                try await reconnect(host: host, port: port)
-                let response = try await sendRequest(
+                let response = try await sendRequestWithReconnectRetry(
                     method: ShadowClientRTSPRequestDefaults.setupMethod,
                     url: setupURL,
-                    headers: headers
+                    headers: headers,
+                    host: host,
+                    port: port
                 )
                 setup = response
                 selectedSetupURL = setupURL
@@ -523,6 +531,7 @@ private actor ShadowClientRTSPInterleavedClient {
             from: setup.headers[ShadowClientRTSPRequestDefaults.responseHeaderPingPayload]
         )
         logger.notice("RTSP video SETUP ok for payload type \(track.rtpPayloadType, privacy: .public) via \(selectedSetupURL ?? track.controlURL, privacy: .public)")
+        prepareVideoPingBeforePlay(host: controlHost)
 
         var parsedControlConnectData: UInt32?
         var parsedControlServerPort: NWEndpoint.Port?
@@ -540,11 +549,12 @@ private actor ShadowClientRTSPInterleavedClient {
             }
 
             do {
-                try await reconnect(host: host, port: port)
-                let response = try await sendRequest(
+                let response = try await sendRequestWithReconnectRetry(
                     method: ShadowClientRTSPRequestDefaults.setupMethod,
                     url: controlURL,
-                    headers: headers
+                    headers: headers,
+                    host: host,
+                    port: port
                 )
                 if let transport = response.headers[ShadowClientRTSPRequestDefaults.responseHeaderTransport],
                    let parsedPort = ShadowClientRTSPTransportHeaderParser.parseServerPort(from: transport)
@@ -614,12 +624,13 @@ private actor ShadowClientRTSPInterleavedClient {
         var announceSucceeded = false
         for announceTarget in announceTargets {
             do {
-                try await reconnect(host: host, port: port)
-                _ = try await sendRequest(
+                _ = try await sendRequestWithReconnectRetry(
                     method: ShadowClientRTSPRequestDefaults.announceMethod,
                     url: announceTarget,
                     headers: announceHeaders,
-                    body: announcePayload
+                    body: announcePayload,
+                    host: host,
+                    port: port
                 )
                 logger.notice("RTSP ANNOUNCE ok for \(announceTarget, privacy: .public)")
                 announceSucceeded = true
@@ -649,17 +660,16 @@ private actor ShadowClientRTSPInterleavedClient {
         var lastPlayError: Error?
         for playTarget in playTargets {
             do {
-                try await reconnect(host: host, port: port)
-                _ = try await sendRequest(
+                _ = try await sendRequestWithReconnectRetry(
                     method: ShadowClientRTSPRequestDefaults.playMethod,
                     url: playTarget,
-                    headers: resolvedPlayHeaders
+                    headers: resolvedPlayHeaders,
+                    host: host,
+                    port: port
                 )
                 logger.notice("RTSP PLAY ok for \(playTarget, privacy: .public)")
                 playSucceeded = true
-                if playTarget == ShadowClientRTSPProtocolProfile.playPaths.first {
-                    break
-                }
+                break
             } catch {
                 lastPlayError = error
                 logger.error("RTSP PLAY failed for \(playTarget, privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -1003,6 +1013,8 @@ private actor ShadowClientRTSPInterleavedClient {
         videoPingPayload = nil
         prePlayAudioPingConnection?.cancel()
         prePlayAudioPingConnection = nil
+        prePlayVideoUDPSocket?.close()
+        prePlayVideoUDPSocket = nil
         controlConnectData = nil
         controlChannelMode = .plaintext
         useSessionIdentifierV1 = false
@@ -1075,11 +1087,18 @@ private actor ShadowClientRTSPInterleavedClient {
         onVideoPacket: @escaping @Sendable (Data, Bool) async throws -> Void
     ) async throws {
         let localHost = self.localHost
-        let udpSocket = try makeVideoUDPSocket(
-            host: host,
-            port: port,
-            localHost: localHost
-        )
+        let udpSocket: ShadowClientUDPDatagramSocket
+        if let prePlaySocket = prePlayVideoUDPSocket {
+            udpSocket = prePlaySocket
+            prePlayVideoUDPSocket = nil
+            logger.notice("RTSP UDP video socket reused from pre-PLAY bootstrap")
+        } else {
+            udpSocket = try makeVideoUDPSocket(
+                host: host,
+                port: port,
+                localHost: localHost
+            )
+        }
         logger.notice("RTSP video receive switched to UDP \(String(describing: host), privacy: .public):\(port.rawValue, privacy: .public)")
 
         let pingPayload = videoPingPayload
@@ -1337,6 +1356,38 @@ private actor ShadowClientRTSPInterleavedClient {
         }
     }
 
+    private func prepareVideoPingBeforePlay(host: NWEndpoint.Host) {
+        guard prePlayVideoUDPSocket == nil,
+              let videoServerPort
+        else {
+            return
+        }
+
+        do {
+            let socket = try makeVideoUDPSocket(
+                host: host,
+                port: videoServerPort,
+                localHost: localHost
+            )
+            prePlayVideoUDPSocket = socket
+
+            let prePlayPings = ShadowClientSunshinePingPacketCodec.makePingPackets(
+                sequence: 1,
+                negotiatedPayload: videoPingPayload
+            )
+            for packet in prePlayPings {
+                try socket.send(packet)
+            }
+            logger.notice(
+                "RTSP UDP video pre-PLAY ping sent (variants=\(prePlayPings.count, privacy: .public), bytes=\(prePlayPings.first?.count ?? 0, privacy: .public))"
+            )
+        } catch {
+            prePlayVideoUDPSocket?.close()
+            prePlayVideoUDPSocket = nil
+            logger.error("RTSP UDP video pre-PLAY ping setup failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     private func attemptLegacyFirstFrameBootstrap(host: NWEndpoint.Host) async {
         guard let port = NWEndpoint.Port(
             rawValue: ShadowClientRTSPProtocolProfile.legacyFirstFrameBootstrapPort
@@ -1384,6 +1435,54 @@ private actor ShadowClientRTSPInterleavedClient {
             )
         }
         return response
+    }
+
+    private func sendRequestWithReconnectRetry(
+        method: String,
+        url: String,
+        headers: [String: String],
+        body: Data = Data(),
+        host: String,
+        port: NWEndpoint.Port
+    ) async throws -> ShadowClientRTSPResponse {
+        do {
+            return try await sendRequest(
+                method: method,
+                url: url,
+                headers: headers,
+                body: body
+            )
+        } catch {
+            guard shouldRetryAfterReconnect(error) else {
+                throw error
+            }
+
+            logger.notice(
+                "RTSP \(method, privacy: .public) retrying after reconnect due to transport error: \(error.localizedDescription, privacy: .public)"
+            )
+            try await reconnect(host: host, port: port)
+            return try await sendRequest(
+                method: method,
+                url: url,
+                headers: headers,
+                body: body
+            )
+        }
+    }
+
+    private func shouldRetryAfterReconnect(_ error: Error) -> Bool {
+        if let rtspError = error as? ShadowClientRTSPInterleavedClientError {
+            switch rtspError {
+            case .requestFailed:
+                return false
+            case .invalidURL:
+                return false
+            case .connectionFailed, .invalidResponse, .connectionClosed:
+                return true
+            }
+        }
+
+        return true
     }
 
     private func sendDescribeRequest(
@@ -1724,11 +1823,10 @@ private actor ShadowClientRTSPInterleavedClient {
             guard payload.count >= headerLength + 4 else {
                 throw ShadowClientRTSPInterleavedClientError.invalidResponse
             }
-            let extLengthWords = Int(payload[headerLength + 2]) << 8 | Int(payload[headerLength + 3])
-            headerLength += 4 + (extLengthWords * 4)
-            guard payload.count >= headerLength else {
-                throw ShadowClientRTSPInterleavedClientError.invalidResponse
-            }
+            // Moonlight/Sunshine video RTP packets reserve exactly 4 bytes after the
+            // fixed RTP header when the extension bit is set. They don't rely on the
+            // RFC3550 variable-length extension layout here.
+            headerLength += 4
         }
 
         var endIndex = payload.count
