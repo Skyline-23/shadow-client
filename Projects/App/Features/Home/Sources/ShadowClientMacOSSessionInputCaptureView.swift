@@ -1,5 +1,6 @@
 #if os(macOS)
 import AppKit
+import os
 import SwiftUI
 
 struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
@@ -13,6 +14,7 @@ struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
 
     func updateNSView(_ nsView: ShadowClientMacOSInputCaptureNSView, context: Context) {
         nsView.onInputEvent = onInputEvent
+        nsView.requestInputFocusIfNeeded()
     }
 }
 
@@ -21,6 +23,8 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
 
     private var trackingAreaToken: NSTrackingArea?
     private var activeModifierFlags: NSEvent.ModifierFlags = []
+    private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "InputCapture")
+    private var loggedInputKinds = Set<String>()
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -28,9 +32,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         super.viewDidMoveToWindow()
         window?.acceptsMouseMovedEvents = true
         activeModifierFlags = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if let window {
-            window.makeFirstResponder(self)
-        }
+        requestInputFocusIfNeeded()
     }
 
     override func updateTrackingAreas() {
@@ -85,7 +87,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self)
+        requestInputFocusIfNeeded()
         emitPointerMove(from: event)
         emit(.pointerButton(button: .left, isPressed: true))
     }
@@ -96,7 +98,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self)
+        requestInputFocusIfNeeded()
         emitPointerMove(from: event)
         emit(.pointerButton(button: .right, isPressed: true))
     }
@@ -107,7 +109,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     }
 
     override func otherMouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self)
+        requestInputFocusIfNeeded()
         emitPointerMove(from: event)
         let button = event.buttonNumber == 2 ? ShadowClientRemoteMouseButton.middle : .other(Int(event.buttonNumber))
         emit(.pointerButton(button: button, isPressed: true))
@@ -140,8 +142,12 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     }
 
     private func emitPointerMove(from event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        emit(.pointerMoved(x: point.x, y: point.y))
+        let deltaX = event.deltaX
+        let deltaY = -event.deltaY
+        guard deltaX != 0 || deltaY != 0 else {
+            return
+        }
+        emit(.pointerMoved(x: deltaX, y: deltaY))
     }
 
     private func emit(_ event: ShadowClientRemoteInputEvent) {
@@ -149,9 +155,41 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
             return
         }
 
+        logFirstCaptureEventIfNeeded(event)
         Task { @MainActor in
             onInputEvent(event)
         }
+    }
+
+    func requestInputFocusIfNeeded() {
+        guard let window else {
+            return
+        }
+        guard window.firstResponder !== self else {
+            return
+        }
+        window.makeFirstResponder(self)
+    }
+
+    private func logFirstCaptureEventIfNeeded(_ event: ShadowClientRemoteInputEvent) {
+        let kind: String
+        switch event {
+        case .keyDown:
+            kind = "keyDown"
+        case .keyUp:
+            kind = "keyUp"
+        case .pointerMoved:
+            kind = "pointerMoved"
+        case .pointerButton:
+            kind = "pointerButton"
+        case .scroll:
+            kind = "scroll"
+        }
+
+        guard loggedInputKinds.insert(kind).inserted else {
+            return
+        }
+        logger.notice("Input capture emitting \(kind, privacy: .public)")
     }
 
     private func modifierMapping(

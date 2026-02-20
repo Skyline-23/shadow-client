@@ -388,6 +388,8 @@ private actor ShadowClientRTSPInterleavedClient {
     private var useSessionIdentifierV1 = false
     private var remoteInputKey: Data?
     private var negotiatedClientPortBase: UInt16 = ShadowClientRTSPProtocolProfile.clientPortBase
+    private var loggedInputSendKinds = Set<String>()
+    private var loggedInputDropKinds = Set<String>()
 
     init(
         timeout: Duration,
@@ -404,6 +406,8 @@ private actor ShadowClientRTSPInterleavedClient {
     ) async throws -> ShadowClientRTSPVideoTrackDescriptor {
         self.remoteInputKey = remoteInputKey
         hasStartedControlChannelBootstrap = false
+        loggedInputSendKinds.removeAll(keepingCapacity: true)
+        loggedInputDropKinds.removeAll(keepingCapacity: true)
         let normalizedURL = normalizeRTSPURL(url)
         guard let host = normalizedURL.host else {
             throw ShadowClientRTSPInterleavedClientError.invalidURL
@@ -1184,6 +1188,8 @@ private actor ShadowClientRTSPInterleavedClient {
         useSessionIdentifierV1 = false
         remoteInputKey = nil
         negotiatedClientPortBase = defaultClientPortBase
+        loggedInputSendKinds.removeAll(keepingCapacity: false)
+        loggedInputDropKinds.removeAll(keepingCapacity: false)
     }
 
     func sendInput(_ event: ShadowClientRemoteInputEvent) async throws {
@@ -1195,13 +1201,39 @@ private actor ShadowClientRTSPInterleavedClient {
             return
         }
         guard let packet = ShadowClientSunshineInputPacketCodec.encode(event) else {
+            let kind = inputEventKind(event)
+            if loggedInputDropKinds.insert(kind).inserted {
+                logger.notice("Sunshine input dropped during encode for event \(kind, privacy: .public)")
+            }
             return
+        }
+
+        let kind = inputEventKind(event)
+        if loggedInputSendKinds.insert(kind).inserted {
+            logger.notice(
+                "Sunshine input send enabled for event \(kind, privacy: .public) channel=\(packet.channelID, privacy: .public) bytes=\(packet.payload.count, privacy: .public)"
+            )
         }
 
         try await controlChannelRuntime.sendInputPacket(
             packet.payload,
             channelID: packet.channelID
         )
+    }
+
+    private func inputEventKind(_ event: ShadowClientRemoteInputEvent) -> String {
+        switch event {
+        case .keyDown:
+            return "keyDown"
+        case .keyUp:
+            return "keyUp"
+        case .pointerMoved:
+            return "pointerMoved"
+        case .pointerButton:
+            return "pointerButton"
+        case .scroll:
+            return "scroll"
+        }
     }
 
     func receiveInterleavedVideoPackets(
