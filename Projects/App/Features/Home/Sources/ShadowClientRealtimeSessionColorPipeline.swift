@@ -18,9 +18,27 @@ enum ShadowClientRealtimeSessionColorPipeline {
     private static let defaultHDRDisplayColorSpace = CGColorSpace(name: CGColorSpace.extendedLinearITUR_2020)
         ?? CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)
         ?? defaultSDRColorSpace
+    static let hdrToSdrToneMapSourceHeadroom: Float = 6.0
+    static let hdrToSdrToneMapTargetHeadroom: Float = 1.0
 
     static var defaultDisplayColorSpace: CGColorSpace {
         defaultSDRColorSpace
+    }
+
+    static func shouldAttachExplicitSourceColorSpace(for pixelBuffer: CVPixelBuffer) -> Bool {
+        switch CVPixelBufferGetPixelFormatType(pixelBuffer) {
+        case kCVPixelFormatType_32BGRA,
+             kCVPixelFormatType_32RGBA,
+             kCVPixelFormatType_64RGBAHalf,
+             kCVPixelFormatType_128RGBAFloat,
+             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+             kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
+             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
+            return true
+        default:
+            return false
+        }
     }
 
     static func configuration(for pixelBuffer: CVPixelBuffer?) -> ShadowClientRealtimeSessionColorConfiguration {

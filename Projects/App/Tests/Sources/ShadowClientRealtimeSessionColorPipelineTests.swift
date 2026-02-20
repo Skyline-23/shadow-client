@@ -124,6 +124,26 @@ func colorPipelineKeepsSDRForBT20208BitWithoutTransferMetadata() throws {
     #expect(configuration.pixelFormat == .bgra8Unorm)
 }
 
+@Test("Color pipeline attaches explicit source color space for 10-bit YUV surfaces")
+func colorPipelineAttachesExplicitSourceColorSpaceForTenBitYUV() throws {
+    let pixelBuffer = try makePixelBuffer(pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+    #expect(
+        ShadowClientRealtimeSessionColorPipeline.shouldAttachExplicitSourceColorSpace(
+            for: pixelBuffer
+        )
+    )
+}
+
+@Test("Color pipeline keeps explicit source color space disabled for unsupported formats")
+func colorPipelineSkipsExplicitSourceColorSpaceForUnsupportedFormat() throws {
+    let pixelBuffer = try makePixelBuffer(pixelFormat: kCVPixelFormatType_OneComponent8)
+    #expect(
+        !ShadowClientRealtimeSessionColorPipeline.shouldAttachExplicitSourceColorSpace(
+            for: pixelBuffer
+        )
+    )
+}
+
 private func makePixelBuffer(pixelFormat: OSType) throws -> CVPixelBuffer {
     var pixelBuffer: CVPixelBuffer?
     let attributes: [CFString: Any] = [

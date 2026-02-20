@@ -93,17 +93,26 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             )
 
             var sourceOptions: [CIImageOption: Any] = [:]
-            if shouldUseExplicitRenderColorSpace(for: pixelBuffer) {
+            if ShadowClientRealtimeSessionColorPipeline.shouldAttachExplicitSourceColorSpace(for: pixelBuffer) {
                 sourceOptions[.colorSpace] = colorConfiguration.renderColorSpace
             }
-            if shouldToneMapHDRToSDR, #available(iOS 18.0, tvOS 18.0, *) {
-                sourceOptions[.toneMapHDRtoSDR] = true
+            if shouldToneMapHDRToSDR {
+                if #available(iOS 18.0, tvOS 18.0, *) {
+                    sourceOptions[.toneMapHDRtoSDR] = true
+                }
             }
 
-            let sourceImage = CIImage(
+            var sourceImage = CIImage(
                 cvPixelBuffer: pixelBuffer,
                 options: sourceOptions
             )
+            if shouldToneMapHDRToSDR {
+                if #available(iOS 18.0, tvOS 18.0, *) {
+                    // Handled via CIImageOption.toneMapHDRtoSDR.
+                } else {
+                    sourceImage = toneMapHDRToSDRSoftwareFallback(sourceImage)
+                }
+            }
             let outputColorSpace = shouldToneMapHDRToSDR
                 ? ShadowClientRealtimeSessionColorPipeline.defaultDisplayColorSpace
                 : colorConfiguration.displayColorSpace
@@ -173,16 +182,21 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         return screen.currentEDRHeadroom > 1.01
     }
 
-    private func shouldUseExplicitRenderColorSpace(for pixelBuffer: CVPixelBuffer) -> Bool {
-        switch CVPixelBufferGetPixelFormatType(pixelBuffer) {
-        case kCVPixelFormatType_32BGRA,
-             kCVPixelFormatType_32RGBA,
-             kCVPixelFormatType_64RGBAHalf,
-             kCVPixelFormatType_128RGBAFloat:
-            return true
-        default:
-            return false
+    private func toneMapHDRToSDRSoftwareFallback(_ image: CIImage) -> CIImage {
+        guard let filter = CIFilter(name: "CIToneMapHeadroom") else {
+            return image
         }
+
+        filter.setValue(image, forKey: kCIInputImageKey)
+        filter.setValue(
+            ShadowClientRealtimeSessionColorPipeline.hdrToSdrToneMapSourceHeadroom,
+            forKey: "inputSourceHeadroom"
+        )
+        filter.setValue(
+            ShadowClientRealtimeSessionColorPipeline.hdrToSdrToneMapTargetHeadroom,
+            forKey: "inputTargetHeadroom"
+        )
+        return filter.outputImage ?? image
     }
 }
 #endif
