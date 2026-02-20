@@ -138,6 +138,12 @@ public struct ShadowClientAppShellView: View {
                 maxSamples: ShadowClientUIRuntimeDefaults.diagnosticsHUDSampleHistoryLimit
             )
         }
+        .onChange(of: sessionSurfaceContext.controlRoundTripMs, initial: false) { _, newRoundTripMs in
+            guard remoteDesktopRuntime.activeSession != nil else {
+                return
+            }
+            sessionDiagnosticsHistory.appendControlRoundTripMs(newRoundTripMs)
+        }
         .onDisappear {
             stopSettingsTelemetrySubscription()
             stopHostDiscovery()
@@ -1451,10 +1457,23 @@ public struct ShadowClientAppShellView: View {
 
             HStack(spacing: 10) {
                 diagnosticsStatChip(label: "Buffer", value: "\(model.targetBufferMs) ms")
+                diagnosticsStatChip(
+                    label: "Ping",
+                    value: diagnosticsLatestValue(
+                        samples: sessionDiagnosticsHistory.controlRoundTripMsSamples,
+                        unit: "ms"
+                    )
+                )
                 diagnosticsStatChip(label: "Jitter", value: "\(model.jitterMs) ms")
                 diagnosticsStatChip(label: "Drop", value: String(format: "%.1f%%", model.frameDropPercent))
             }
 
+            diagnosticsSparklineRow(
+                title: "Ping Spike",
+                samples: sessionDiagnosticsHistory.controlRoundTripMsSamples,
+                color: .mint,
+                unit: "ms"
+            )
             diagnosticsSparklineRow(
                 title: "Jitter Spike",
                 samples: sessionDiagnosticsHistory.jitterMsSamples,
@@ -1976,6 +1995,7 @@ public struct ShadowClientAppShellView: View {
 
 struct ShadowClientSessionDiagnosticsHistory {
     let maxSamples: Int
+    private(set) var controlRoundTripMsSamples: [Double] = []
     private(set) var jitterMsSamples: [Double] = []
     private(set) var frameDropPercentSamples: [Double] = []
     private(set) var packetLossPercentSamples: [Double] = []
@@ -1999,6 +2019,18 @@ struct ShadowClientSessionDiagnosticsHistory {
             if packetLossPercentSamples.count > sampleLimit {
                 packetLossPercentSamples.removeFirst(packetLossPercentSamples.count - sampleLimit)
             }
+        }
+    }
+
+    mutating func appendControlRoundTripMs(_ roundTripMs: Int?) {
+        guard let roundTripMs else {
+            return
+        }
+
+        let sampleLimit = max(maxSamples, 1)
+        controlRoundTripMsSamples.append(max(0, Double(roundTripMs)))
+        if controlRoundTripMsSamples.count > sampleLimit {
+            controlRoundTripMsSamples.removeFirst(controlRoundTripMsSamples.count - sampleLimit)
         }
     }
 }

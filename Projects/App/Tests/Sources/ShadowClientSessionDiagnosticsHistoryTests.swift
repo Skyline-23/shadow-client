@@ -17,6 +17,19 @@ func sessionDiagnosticsHistoryCapsAndClampsValues() {
     #expect(history.packetLossPercentSamples == [0.0, 4.0, 5.0])
 }
 
+@Test("Session diagnostics history tracks ping samples and keeps latest window")
+func sessionDiagnosticsHistoryTracksPingSamples() {
+    var history = ShadowClientSessionDiagnosticsHistory(maxSamples: 3)
+
+    history.appendControlRoundTripMs(12)
+    history.appendControlRoundTripMs(-5)
+    history.appendControlRoundTripMs(nil)
+    history.appendControlRoundTripMs(24)
+    history.appendControlRoundTripMs(31)
+
+    #expect(history.controlRoundTripMsSamples == [0.0, 24.0, 31.0])
+}
+
 @Test("Session diagnostics history ignores non-finite metrics independently")
 func sessionDiagnosticsHistorySkipsNonFiniteMetricsIndependently() {
     var history = ShadowClientSessionDiagnosticsHistory(maxSamples: 4)
