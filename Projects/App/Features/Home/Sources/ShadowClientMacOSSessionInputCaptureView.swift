@@ -1,5 +1,6 @@
 #if os(macOS)
 import AppKit
+import CoreGraphics
 import os
 import SwiftUI
 
@@ -28,6 +29,9 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "InputCapture")
     private var loggedInputKinds = Set<String>()
     private var loggedFocusFailure = false
+    private var isPointerCaptureActive = false
+    private var isCursorHidden = false
+    private var isMouseCursorAssociationDisabled = false
 
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { true }
@@ -41,6 +45,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         if observedWindow != newWindow {
             NotificationCenter.default.removeObserver(self)
             observedWindow = nil
+            deactivatePointerCaptureIfNeeded()
         }
     }
 
@@ -61,6 +66,18 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
             self,
             selector: #selector(applicationDidBecomeActive(_:)),
             name: NSApplication.didBecomeActiveNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidResignKey(_:)),
+            name: NSWindow.didResignKeyNotification,
+            object: window
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(applicationWillResignActive(_:)),
+            name: NSApplication.willResignActiveNotification,
             object: nil
         )
         activeModifierFlags = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -185,7 +202,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
 
     private func emitPointerMove(from event: NSEvent) {
         let deltaX = event.deltaX
-        let deltaY = -event.deltaY
+        let deltaY = event.deltaY
         guard deltaX != 0 || deltaY != 0 else {
             return
         }
@@ -215,6 +232,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
             loggedFocusFailure = true
             logger.notice("Input capture failed to become first responder")
         }
+        activatePointerCaptureIfNeeded()
     }
 
     @objc
@@ -226,9 +244,23 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     }
 
     @objc
+    private func windowDidResignKey(_ notification: Notification) {
+        guard notification.object as? NSWindow === window else {
+            return
+        }
+        deactivatePointerCaptureIfNeeded()
+    }
+
+    @objc
     private func applicationDidBecomeActive(_ notification: Notification) {
         _ = notification
         requestInputFocusIfNeeded()
+    }
+
+    @objc
+    private func applicationWillResignActive(_ notification: Notification) {
+        _ = notification
+        deactivatePointerCaptureIfNeeded()
     }
 
     private func logFirstCaptureEventIfNeeded(_ event: ShadowClientRemoteInputEvent) {
@@ -269,6 +301,46 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         default:
             return nil
         }
+    }
+
+    private func activatePointerCaptureIfNeeded() {
+        guard !isPointerCaptureActive,
+              window?.isKeyWindow == true,
+              NSApp.isActive
+        else {
+            return
+        }
+
+        let associationError = CGAssociateMouseAndMouseCursorPosition(0)
+        if associationError == .success {
+            isMouseCursorAssociationDisabled = true
+        } else {
+            logger.debug(
+                "Input capture failed to disable mouse-cursor association: \(associationError.rawValue, privacy: .public)"
+            )
+        }
+
+        if !isCursorHidden {
+            NSCursor.hide()
+            isCursorHidden = true
+        }
+        isPointerCaptureActive = true
+    }
+
+    private func deactivatePointerCaptureIfNeeded() {
+        guard isPointerCaptureActive else {
+            return
+        }
+
+        if isMouseCursorAssociationDisabled {
+            _ = CGAssociateMouseAndMouseCursorPosition(1)
+            isMouseCursorAssociationDisabled = false
+        }
+        if isCursorHidden {
+            NSCursor.unhide()
+            isCursorHidden = false
+        }
+        isPointerCaptureActive = false
     }
 }
 #endif
