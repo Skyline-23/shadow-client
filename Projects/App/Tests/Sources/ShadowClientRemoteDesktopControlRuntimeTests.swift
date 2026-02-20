@@ -1092,9 +1092,9 @@ func remoteDesktopRuntimeForwardsCapturedInputEventsToActiveSessionInputClient()
     #expect(calls.allSatisfy { $0.sessionURL == "rtsp://192.168.0.28:48010/session" })
 }
 
-@Test("Remote desktop runtime ignores input when active session has no session URL")
+@Test("Remote desktop runtime forwards input in session flow using normalized RTSP URL")
 @MainActor
-func remoteDesktopRuntimeIgnoresInputWhenActiveSessionHasNoSessionURL() async {
+func remoteDesktopRuntimeForwardsInputInSessionFlowWithNormalizedURL() async {
     let sessionInput = FakeSessionInputClient()
     let runtimeWithInput = ShadowClientRemoteDesktopRuntime(
         metadataClient: FakeControlTestMetadataClient(serverInfoByHost: [:], appListByHost: [:]),
@@ -1104,9 +1104,12 @@ func remoteDesktopRuntimeIgnoresInputWhenActiveSessionHasNoSessionURL() async {
 
     runtimeWithInput.openSessionFlow(host: "192.168.0.29", appTitle: "Remote Desktop")
     runtimeWithInput.sendInput(.keyDown(keyCode: 13, characters: "w"))
-    try? await Task.sleep(for: .milliseconds(80))
+    await waitForSessionInputCalls(sessionInput, expectedCount: 1)
 
-    #expect(await sessionInput.inputCalls().isEmpty)
+    let calls = await sessionInput.inputCalls()
+    #expect(calls.count == 1)
+    #expect(calls[0].host == "192.168.0.29")
+    #expect(calls[0].sessionURL == "rtsp://192.168.0.29")
 }
 
 @Test("Remote desktop runtime disconnects session transport when clearing active session")

@@ -621,6 +621,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var pairGeneration: UInt64 = 0
     private var launchGeneration: UInt64 = 0
     private var pendingSelectedHostID: String?
+    private var lastKnownSessionURL: String?
 
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
@@ -848,6 +849,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         launchState = .launching
         activeSession = nil
+        lastKnownSessionURL = nil
         launchTask?.cancel()
         launchGeneration &+= 1
         let currentLaunchGeneration = launchGeneration
@@ -932,6 +934,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         }
                         launchState = .idle
                         activeSession = nil
+                        lastKnownSessionURL = nil
                     }
                     return
                 }
@@ -947,6 +950,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         appTitle: resolvedTitle,
                         sessionURL: connectedSessionURL
                     )
+                    lastKnownSessionURL = Self.normalizedSessionURL(connectedSessionURL)
                     if sessionPresentationMode == .externalRuntime {
                         launchState = .launched(
                             "Remote desktop launched (\(connectedLaunchResult.verb)): \(resolvedTitle) on \(selectedHost.host)"
@@ -965,6 +969,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         }
                         launchState = .idle
                         activeSession = nil
+                        lastKnownSessionURL = nil
                     }
                     return
                 }
@@ -980,6 +985,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         )
                     )
                     activeSession = nil
+                    lastKnownSessionURL = nil
                 }
             }
         }
@@ -992,6 +998,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         launchGeneration &+= 1
 
         activeSession = nil
+        lastKnownSessionURL = nil
         launchState = .idle
 
         let sessionConnectionClient = sessionConnectionClient
@@ -1002,13 +1009,20 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     @MainActor
     public func sendInput(_ event: ShadowClientRemoteInputEvent) {
-        guard let activeSession,
-              let sessionURL = activeSession.sessionURL?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !sessionURL.isEmpty
-        else {
+        guard let activeSession else {
             return
         }
 
+        let resolvedSessionURL = Self.normalizedSessionURL(activeSession.sessionURL)
+            ?? lastKnownSessionURL
+            ?? Self.normalizedSessionURL(
+                ShadowClientRTSPProtocolProfile.withRTSPSchemeIfMissing(activeSession.host)
+            )
+        guard let sessionURL = resolvedSessionURL else {
+            return
+        }
+
+        lastKnownSessionURL = sessionURL
         let host = activeSession.host
         let sessionInputClient = sessionInputClient
         Task {
@@ -1022,6 +1036,15 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 logger.debug("Remote input send failed: \(error.localizedDescription, privacy: .public)")
             }
         }
+    }
+
+    private static func normalizedSessionURL(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty
+        else {
+            return nil
+        }
+        return trimmed
     }
 
     private static func validatedSessionURL(
@@ -1338,12 +1361,17 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return
         }
 
+        let sessionURL = Self.normalizedSessionURL(
+            ShadowClientRTSPProtocolProfile.withRTSPSchemeIfMissing(normalizedHost)
+        )
+
         activeSession = ShadowClientActiveRemoteSession(
             host: normalizedHost,
             appID: 0,
             appTitle: appTitle,
-            sessionURL: nil
+            sessionURL: sessionURL
         )
+        lastKnownSessionURL = sessionURL
     }
 
     @MainActor
