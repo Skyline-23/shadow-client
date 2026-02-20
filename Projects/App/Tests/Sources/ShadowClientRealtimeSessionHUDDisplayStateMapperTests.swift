@@ -8,7 +8,8 @@ func realtimeSessionHUDMapperHidesWhenDisabled() {
     let model = ShadowClientRealtimeSessionHUDDisplayStateMapper.make(
         showDiagnosticsHUD: false,
         diagnosticsModel: makeDiagnosticsModel(),
-        controlRoundTripMs: 18
+        controlRoundTripMs: 18,
+        renderState: .rendering
     )
 
     #expect(model == nil)
@@ -20,7 +21,8 @@ func realtimeSessionHUDMapperPrefersTelemetryModel() {
     let model = ShadowClientRealtimeSessionHUDDisplayStateMapper.make(
         showDiagnosticsHUD: true,
         diagnosticsModel: diagnosticsModel,
-        controlRoundTripMs: 18
+        controlRoundTripMs: 18,
+        renderState: .rendering
     )
 
     #expect(model == .telemetry(diagnosticsModel))
@@ -31,10 +33,45 @@ func realtimeSessionHUDMapperEmitsBootstrapState() {
     let model = ShadowClientRealtimeSessionHUDDisplayStateMapper.make(
         showDiagnosticsHUD: true,
         diagnosticsModel: nil,
-        controlRoundTripMs: -7
+        controlRoundTripMs: -7,
+        renderState: .waitingForFirstFrame
     )
 
     #expect(model == .waitingForTelemetry(controlRoundTripMs: 0))
+}
+
+@Test("Realtime session HUD mapper prioritizes disconnected state")
+func realtimeSessionHUDMapperPrioritizesDisconnectedState() {
+    let model = ShadowClientRealtimeSessionHUDDisplayStateMapper.make(
+        showDiagnosticsHUD: true,
+        diagnosticsModel: makeDiagnosticsModel(),
+        controlRoundTripMs: 12,
+        renderState: .disconnected("Connection reset by peer")
+    )
+
+    #expect(
+        model == .connectionIssue(
+            title: "Session Disconnected",
+            message: "Connection reset by peer"
+        )
+    )
+}
+
+@Test("Realtime session HUD mapper prioritizes decoder failure state")
+func realtimeSessionHUDMapperPrioritizesDecoderFailureState() {
+    let model = ShadowClientRealtimeSessionHUDDisplayStateMapper.make(
+        showDiagnosticsHUD: true,
+        diagnosticsModel: makeDiagnosticsModel(),
+        controlRoundTripMs: 12,
+        renderState: .failed("Could not create hardware decoder session")
+    )
+
+    #expect(
+        model == .connectionIssue(
+            title: "Session Error",
+            message: "Could not create hardware decoder session"
+        )
+    )
 }
 
 private func makeDiagnosticsModel() -> SettingsDiagnosticsHUDModel {

@@ -90,6 +90,15 @@ public enum ShadowClientRemoteSessionPresentationMapper {
                     overlay: nil,
                     launchTone: .launched
                 )
+            case let .disconnected(message):
+                return .init(
+                    statusText: "Remote session disconnected: \(message)",
+                    overlay: .init(
+                        title: "Remote session disconnected. Reconnect to resume input/output.",
+                        symbol: "wifi.slash"
+                    ),
+                    launchTone: .failed
+                )
             case let .failed(message):
                 return .init(
                     statusText: "Native decoder failed: \(message)",

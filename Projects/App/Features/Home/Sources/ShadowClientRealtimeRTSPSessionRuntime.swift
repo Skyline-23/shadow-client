@@ -125,10 +125,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     )
                 }
             } catch {
+                if Task.isCancelled {
+                    return
+                }
                 logger.error("Realtime stream task failed: \(error.localizedDescription, privacy: .public)")
                 let surfaceContext = self.surfaceContext
+                let nextState = Self.renderState(forStreamError: error)
                 await MainActor.run {
-                    surfaceContext.transition(to: .failed(error.localizedDescription))
+                    surfaceContext.transition(to: nextState)
                 }
             }
         }
@@ -244,6 +248,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             switch state {
             case .rendering:
                 return
+            case let .disconnected(message):
+                throw ShadowClientRealtimeSessionRuntimeError.transportFailure(message)
             case let .failed(message):
                 throw ShadowClientRealtimeSessionRuntimeError.transportFailure(message)
             case .idle, .connecting, .waitingForFirstFrame:
@@ -312,6 +318,45 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         case .av1:
             return .trimUsingLastPacketLength
         }
+    }
+
+    private static func renderState(forStreamError error: Error) -> ShadowClientRealtimeSessionSurfaceContext.RenderState {
+        let normalizedMessage = error.localizedDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = normalizedMessage.isEmpty ? "RTSP transport connection closed." : normalizedMessage
+
+        if isConnectionTerminationError(error, message: fallback) {
+            return .disconnected(fallback)
+        }
+
+        return .failed(fallback)
+    }
+
+    private static func isConnectionTerminationError(_ error: Error, message: String) -> Bool {
+        if let rtspError = error as? ShadowClientRTSPInterleavedClientError {
+            switch rtspError {
+            case .connectionClosed, .connectionFailed:
+                return true
+            case .invalidURL, .requestFailed, .invalidResponse:
+                break
+            }
+        }
+
+        let normalized = message.lowercased()
+        let terminationSignatures = [
+            "connection reset by peer",
+            "connection closed",
+            "connection timed out",
+            "no message available on stream",
+            "broken pipe",
+            "network is down",
+            "no route to host",
+            "not connected",
+            "network connection was lost",
+            "software caused connection abort",
+            "transport connection closed",
+        ]
+        return terminationSignatures.contains(where: normalized.contains)
     }
 }
 
@@ -1233,6 +1278,10 @@ private actor ShadowClientRTSPInterleavedClient {
             return "pointerButton"
         case .scroll:
             return "scroll"
+        case .gamepadState:
+            return "gamepadState"
+        case .gamepadArrival:
+            return "gamepadArrival"
         }
     }
 

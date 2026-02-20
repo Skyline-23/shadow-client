@@ -27,6 +27,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         case connecting
         case waitingForFirstFrame
         case rendering
+        case disconnected(String)
         case failed(String)
     }
 

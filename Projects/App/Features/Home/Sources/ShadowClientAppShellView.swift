@@ -60,6 +60,7 @@ public struct ShadowClientAppShellView: View {
     @State private var sessionControlsVisible = true
     @State private var launchFailureAlertMessage = ""
     @State private var isLaunchFailureAlertPresented = false
+    @State private var gamepadInputRuntime = ShadowClientGamepadInputPassthroughRuntime()
 
     public init(platformName: String, dependencies: ShadowClientFeatureHomeDependencies) {
         self.platformName = platformName
@@ -143,7 +144,31 @@ public struct ShadowClientAppShellView: View {
             }
             sessionDiagnosticsHistory.appendControlRoundTripMs(newRoundTripMs)
         }
+        .onChange(of: sessionSurfaceContext.renderState, initial: false) { _, newRenderState in
+            switch newRenderState {
+            case .disconnected, .failed:
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    sessionControlsVisible = true
+                }
+            case .idle, .connecting, .waitingForFirstFrame, .rendering:
+                break
+            }
+        }
+        .onChange(of: remoteDesktopRuntime.activeSession != nil, initial: true) { _, isActive in
+            gamepadInputRuntime.setSessionActive(isActive)
+        }
+        .onChange(of: gamepadInputConfiguration, initial: true) { _, configuration in
+            gamepadInputRuntime.updateConfiguration(configuration)
+        }
+        .onAppear {
+            gamepadInputRuntime.start { event in
+                remoteDesktopRuntime.sendInput(event)
+            }
+            gamepadInputRuntime.updateConfiguration(gamepadInputConfiguration)
+            gamepadInputRuntime.setSessionActive(remoteDesktopRuntime.activeSession != nil)
+        }
         .onDisappear {
+            gamepadInputRuntime.stop()
             stopSettingsTelemetrySubscription()
             stopHostDiscovery()
         }
@@ -191,6 +216,14 @@ public struct ShadowClientAppShellView: View {
             autoFindHosts: autoFindHosts,
             language: selectedLanguage,
             guiDisplayMode: selectedGUIDisplayMode
+        )
+    }
+
+    private var gamepadInputConfiguration: ShadowClientGamepadInputPassthroughRuntime.Configuration {
+        .init(
+            swapABXYButtons: swapABXYButtons,
+            forceGamepadOneAlwaysConnected: forceGamepadOneAlwaysConnected,
+            processInputInBackground: processGamepadInputInBackground
         )
     }
 
@@ -1233,7 +1266,8 @@ public struct ShadowClientAppShellView: View {
                     if let overlay = sessionPresentationModel.overlay {
                         playbackOverlayLabel(
                             overlay.title,
-                            symbol: overlay.symbol
+                            symbol: overlay.symbol,
+                            tone: sessionPresentationModel.launchTone
                         )
                         .padding(.horizontal, 20)
                     }
@@ -1351,6 +1385,11 @@ public struct ShadowClientAppShellView: View {
                                 realtimeSessionDiagnosticsHUD(model)
                             case let .waitingForTelemetry(controlRoundTripMs):
                                 realtimeSessionBootstrapDiagnosticsHUD(controlRoundTripMs: controlRoundTripMs)
+                            case let .connectionIssue(title, message):
+                                realtimeSessionConnectionIssueHUD(
+                                    title: title,
+                                    message: message
+                                )
                             }
                         }
                         Spacer(minLength: 0)
@@ -1426,7 +1465,8 @@ public struct ShadowClientAppShellView: View {
         ShadowClientRealtimeSessionHUDDisplayStateMapper.make(
             showDiagnosticsHUD: showDiagnosticsHUD,
             diagnosticsModel: settingsDiagnosticsModel,
-            controlRoundTripMs: sessionSurfaceContext.controlRoundTripMs
+            controlRoundTripMs: sessionSurfaceContext.controlRoundTripMs,
+            renderState: sessionSurfaceContext.renderState
         )
     }
 
@@ -1467,13 +1507,39 @@ public struct ShadowClientAppShellView: View {
             )
     }
 
-    private func playbackOverlayLabel(_ title: String, symbol: String) -> some View {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(Color.black.opacity(0.45))
+    private func playbackOverlayLabel(
+        _ title: String,
+        symbol: String,
+        tone: ShadowClientRemoteSessionLaunchTone
+    ) -> some View {
+        let backgroundOpacity: Double
+        let strokeOpacity: Double
+        let textColor: Color
+        switch tone {
+        case .failed:
+            backgroundOpacity = 0.66
+            strokeOpacity = 0.78
+            textColor = Color.red.opacity(0.95)
+        case .launching:
+            backgroundOpacity = 0.56
+            strokeOpacity = 0.42
+            textColor = Color.orange.opacity(0.95)
+        case .idle, .launched:
+            backgroundOpacity = 0.45
+            strokeOpacity = 0.18
+            textColor = Color.white.opacity(0.88)
+        }
+
+        return RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(Color.black.opacity(backgroundOpacity))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(textColor.opacity(strokeOpacity), lineWidth: 1)
+            )
             .overlay {
                 Label(title, systemImage: symbol)
                     .font(.callout.weight(.semibold))
-                    .foregroundStyle(Color.white.opacity(0.85))
+                    .foregroundStyle(textColor)
             }
     }
 
@@ -1593,6 +1659,36 @@ public struct ShadowClientAppShellView: View {
                     color: .mint,
                     unit: "ms"
                 )
+            }
+        }
+    }
+
+    private func realtimeSessionConnectionIssueHUD(
+        title: String,
+        message: String
+    ) -> some View {
+        realtimeSessionHUDCard {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "wifi.slash")
+                        .foregroundStyle(Color.red.opacity(0.95))
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.95))
+                    Spacer(minLength: 8)
+                    Text("OFFLINE")
+                        .font(.caption2.monospaced().weight(.semibold))
+                        .foregroundStyle(Color.red.opacity(0.95))
+                }
+
+                Text(message)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(Color.white.opacity(0.82))
+                    .lineLimit(3)
+
+                Text("Remote input is paused until stream reconnects.")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.red.opacity(0.90))
             }
         }
     }
