@@ -196,6 +196,31 @@ func sunshinePingPayloadParserAcceptsAsciiPayload() {
     #expect(payload == Data("3727B184C4E23026".utf8))
 }
 
+@Test("Sunshine ping packet codec emits strict v2 packet when negotiated payload exists")
+func sunshinePingPacketCodecEmitsStrictV2Packet() {
+    let negotiatedPayload = Data("A1B2C3D4E5F60708".utf8)
+    let packets = ShadowClientSunshinePingPacketCodec.makePingPackets(
+        sequence: 7,
+        negotiatedPayload: negotiatedPayload
+    )
+
+    #expect(packets.count == 1)
+    #expect(packets[0].count == 20)
+    #expect(Data(packets[0].prefix(16)) == negotiatedPayload)
+    #expect(Data(packets[0].suffix(4)) == Data([0x00, 0x00, 0x00, 0x07]))
+}
+
+@Test("Sunshine ping packet codec emits legacy ASCII ping when negotiated payload is unavailable")
+func sunshinePingPacketCodecEmitsLegacyAsciiFallback() {
+    let packets = ShadowClientSunshinePingPacketCodec.makePingPackets(
+        sequence: 42,
+        negotiatedPayload: nil
+    )
+
+    #expect(packets.count == 1)
+    #expect(packets[0] == Data("PING".utf8))
+}
+
 @Test("H264 depacketizer emits access unit for single NAL packet on marker")
 func h264DepacketizerSingleNal() {
     var depacketizer = ShadowClientH264RTPDepacketizer()

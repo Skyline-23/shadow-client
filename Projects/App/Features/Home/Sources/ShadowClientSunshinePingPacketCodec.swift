@@ -12,10 +12,9 @@ enum ShadowClientSunshinePingPacketCodec {
             let sequenceBytes = withUnsafeBytes(of: sequence.bigEndian) { Data($0) }
             var payloadThenSequence = negotiatedPayload
             payloadThenSequence.append(sequenceBytes)
-            // Send both Sunshine v2 and legacy ping variants for host compatibility.
-            // Sunshine accepts payload-matching pings, while some stacks still rely
-            // on receiving the fixed ASCII probe during startup.
-            return [payloadThenSequence, legacyPacket]
+            // Moonlight/Sunshine v2 ping format:
+            // [16-byte payload token][big-endian sequence].
+            return [payloadThenSequence]
         }
 
         return [legacyPacket]
