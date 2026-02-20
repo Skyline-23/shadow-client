@@ -18,6 +18,7 @@ struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
     }
 }
 
+@MainActor
 final class ShadowClientMacOSInputCaptureNSView: NSView {
     var onInputEvent: (@MainActor (ShadowClientRemoteInputEvent) -> Void)?
 
@@ -197,9 +198,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         }
 
         logFirstCaptureEventIfNeeded(event)
-        Task { @MainActor in
-            onInputEvent(event)
-        }
+        onInputEvent(event)
     }
 
     func requestInputFocusIfNeeded() {
