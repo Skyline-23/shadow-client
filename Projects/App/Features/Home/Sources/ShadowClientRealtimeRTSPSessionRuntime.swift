@@ -65,6 +65,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             height: resolvedVideoConfiguration.height,
             fps: resolvedVideoConfiguration.fps
         )
+        await decoder.configureAV1Fallback(
+            hdrEnabled: resolvedVideoConfiguration.enableHDR,
+            yuv444Enabled: resolvedVideoConfiguration.enableYUV444
+        )
 
         await MainActor.run {
             sessionSurfaceContext.reset()

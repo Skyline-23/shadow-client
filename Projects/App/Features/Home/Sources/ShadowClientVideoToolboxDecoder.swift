@@ -60,12 +60,15 @@ private struct ShadowClientDecoderSendablePixelBuffer: @unchecked Sendable {
 public actor ShadowClientVideoToolboxDecoder {
     private var codec: ShadowClientVideoCodec?
     private var latestParameterSets: [Data] = []
+    private var configuredParameterSets: [Data] = []
     private var formatDescription: CMFormatDescription?
     private var session: VTDecompressionSession?
     private var outputBridge: ShadowClientRealtimeDecoderOutputBridge?
     private var frameIndex: Int64 = 0
     private var preferredOutputDimensions: CMVideoDimensions?
     private var decodePresentationTimeScale: CMTimeScale
+    private var av1FallbackHDR = false
+    private var av1FallbackYUV444 = false
 
     public init(
         decodePresentationTimeScale: CMTimeScale = CMTimeScale(
@@ -76,15 +79,9 @@ public actor ShadowClientVideoToolboxDecoder {
     }
 
     public func reset() {
-        if let session {
-            VTDecompressionSessionInvalidate(session)
-        }
-        session = nil
-        formatDescription = nil
+        invalidateDecoderSessionForReconfiguration()
         latestParameterSets = []
         codec = nil
-        outputBridge = nil
-        frameIndex = 0
     }
 
     public func setPreferredOutputDimensions(
@@ -114,6 +111,18 @@ public actor ShadowClientVideoToolboxDecoder {
 
     public func applyLaunchSettings(_ settings: ShadowClientGameStreamLaunchSettings) {
         setDecodePresentationTimeScale(fps: settings.fps)
+        configureAV1Fallback(
+            hdrEnabled: settings.enableHDR,
+            yuv444Enabled: settings.enableYUV444
+        )
+    }
+
+    public func configureAV1Fallback(
+        hdrEnabled: Bool,
+        yuv444Enabled: Bool
+    ) {
+        av1FallbackHDR = hdrEnabled
+        av1FallbackYUV444 = yuv444Enabled
     }
 
     public func decode(
@@ -151,6 +160,33 @@ public actor ShadowClientVideoToolboxDecoder {
             }
             samplePayload = makeLengthPrefixedBuffer(from: sampleNals)
         case .av1:
+            var discoveredAV1CodecConfiguration = firstAV1CodecConfiguration(from: explicitParameterSets)
+            if discoveredAV1CodecConfiguration == nil {
+                discoveredAV1CodecConfiguration = ShadowClientAV1CodecConfigurationBuilder.build(
+                    fromAccessUnit: annexBAccessUnit
+                )
+            }
+
+            if let discoveredAV1CodecConfiguration {
+                if latestParameterSets != [discoveredAV1CodecConfiguration] {
+                    latestParameterSets = [discoveredAV1CodecConfiguration]
+                }
+            } else if latestParameterSets.isEmpty {
+                latestParameterSets = [
+                    ShadowClientAV1CodecConfigurationBuilder.fallbackCodecConfigurationRecord(
+                        hdrEnabled: av1FallbackHDR,
+                        yuv444Enabled: av1FallbackYUV444
+                    ),
+                ]
+            }
+
+            guard !latestParameterSets.isEmpty else {
+                return
+            }
+
+            if session != nil, configuredParameterSets != latestParameterSets {
+                invalidateDecoderSessionForReconfiguration()
+            }
             samplePayload = annexBAccessUnit
         }
 
@@ -246,6 +282,18 @@ public actor ShadowClientVideoToolboxDecoder {
 
         VTSessionSetProperty(newSession, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         session = newSession
+        configuredParameterSets = parameterSets
+    }
+
+    private func invalidateDecoderSessionForReconfiguration() {
+        if let session {
+            VTDecompressionSessionInvalidate(session)
+        }
+        session = nil
+        formatDescription = nil
+        outputBridge = nil
+        configuredParameterSets = []
+        frameIndex = 0
     }
 
     private static func normalizedPresentationTimeScale(_ timescale: CMTimeScale) -> CMTimeScale {
