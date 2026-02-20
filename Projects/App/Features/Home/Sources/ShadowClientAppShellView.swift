@@ -54,6 +54,9 @@ public struct ShadowClientAppShellView: View {
     @State private var connectionState: ShadowClientConnectionState = .disconnected
     @State private var settingsTelemetryCancellable: AnyCancellable?
     @State private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
+    @State private var sessionDiagnosticsHistory = ShadowClientSessionDiagnosticsHistory(
+        maxSamples: ShadowClientUIRuntimeDefaults.diagnosticsHUDSampleHistoryLimit
+    )
     @State private var sessionControlsVisible = true
     @State private var launchFailureAlertMessage = ""
     @State private var isLaunchFailureAlertPresented = false
@@ -126,6 +129,14 @@ public struct ShadowClientAppShellView: View {
             }
             launchFailureAlertMessage = trimmed
             isLaunchFailureAlertPresented = true
+        }
+        .onChange(of: remoteDesktopRuntime.activeSession != nil, initial: false) { _, isActive in
+            guard !isActive else {
+                return
+            }
+            sessionDiagnosticsHistory = .init(
+                maxSamples: ShadowClientUIRuntimeDefaults.diagnosticsHUDSampleHistoryLimit
+            )
         }
         .onDisappear {
             stopSettingsTelemetrySubscription()
@@ -1302,6 +1313,19 @@ public struct ShadowClientAppShellView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
+
+                if showDiagnosticsHUD, let settingsDiagnosticsModel {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            realtimeSessionDiagnosticsHUD(settingsDiagnosticsModel)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.top, sessionControlsVisible ? 72 : 12)
+                    .padding(.horizontal, 12)
+                    .allowsHitTesting(false)
+                }
             }
             .onAppear {
                 sessionControlsVisible = true
@@ -1409,6 +1433,106 @@ public struct ShadowClientAppShellView: View {
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(Color.white.opacity(0.85))
             }
+    }
+
+    private func realtimeSessionDiagnosticsHUD(_ model: SettingsDiagnosticsHUDModel) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "waveform.path.ecg.rectangle")
+                    .foregroundStyle(toneColor(for: model.tone))
+                Text("Realtime HUD")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.9))
+                Spacer(minLength: 8)
+                Text(model.tone.rawValue.uppercased())
+                    .font(.caption2.monospaced().weight(.semibold))
+                    .foregroundStyle(toneColor(for: model.tone))
+            }
+
+            HStack(spacing: 10) {
+                diagnosticsStatChip(label: "Buffer", value: "\(model.targetBufferMs) ms")
+                diagnosticsStatChip(label: "Jitter", value: "\(model.jitterMs) ms")
+                diagnosticsStatChip(label: "Drop", value: String(format: "%.1f%%", model.frameDropPercent))
+            }
+
+            diagnosticsSparklineRow(
+                title: "Jitter Spike",
+                samples: sessionDiagnosticsHistory.jitterMsSamples,
+                color: .orange,
+                unit: "ms"
+            )
+            diagnosticsSparklineRow(
+                title: "Frame Drop",
+                samples: sessionDiagnosticsHistory.frameDropPercentSamples,
+                color: .red,
+                unit: "%"
+            )
+            diagnosticsSparklineRow(
+                title: "Packet Loss",
+                samples: sessionDiagnosticsHistory.packetLossPercentSamples,
+                color: .yellow,
+                unit: "%"
+            )
+        }
+        .padding(10)
+        .frame(width: isCompactLayout ? 220 : 280, alignment: .leading)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.16), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.24), radius: 12, x: 0, y: 6)
+    }
+
+    private func diagnosticsSparklineRow(
+        title: String,
+        samples: [Double],
+        color: Color,
+        unit: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.85))
+                Spacer(minLength: 6)
+                Text(diagnosticsLatestValue(samples: samples, unit: unit))
+                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(color.opacity(0.9))
+            }
+
+            ShadowClientDiagnosticsSparkline(samples: samples, color: color)
+                .frame(height: 20)
+        }
+    }
+
+    private func diagnosticsLatestValue(samples: [Double], unit: String) -> String {
+        guard let latest = samples.last else {
+            return "--"
+        }
+
+        if unit == "ms" {
+            return "\(Int(latest.rounded())) \(unit)"
+        }
+        return "\(String(format: "%.1f", latest))\(unit)"
+    }
+
+    private func diagnosticsStatChip(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(Color.white.opacity(0.72))
+            Text(value)
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(Color.white.opacity(0.92))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.black.opacity(0.22))
+        )
     }
 
     private func settingsSection<Content: View>(
@@ -1635,6 +1759,9 @@ public struct ShadowClientAppShellView: View {
 
                 await MainActor.run {
                     settingsDiagnosticsModel = model
+                    if remoteDesktopRuntime.activeSession != nil {
+                        sessionDiagnosticsHistory.append(model)
+                    }
                 }
             }
         }
@@ -1838,8 +1965,86 @@ public struct ShadowClientAppShellView: View {
             await MainActor.run {
                 connectionState = state
                 settingsDiagnosticsModel = nil
+                sessionDiagnosticsHistory = .init(
+                    maxSamples: ShadowClientUIRuntimeDefaults.diagnosticsHUDSampleHistoryLimit
+                )
                 refreshRemoteDesktopCatalog()
             }
         }
+    }
+}
+
+struct ShadowClientSessionDiagnosticsHistory {
+    let maxSamples: Int
+    private(set) var jitterMsSamples: [Double] = []
+    private(set) var frameDropPercentSamples: [Double] = []
+    private(set) var packetLossPercentSamples: [Double] = []
+
+    mutating func append(_ model: SettingsDiagnosticsHUDModel) {
+        let sampleLimit = max(maxSamples, 1)
+        let jitter = max(0, Double(model.jitterMs))
+        jitterMsSamples.append(jitter)
+        if jitterMsSamples.count > sampleLimit {
+            jitterMsSamples.removeFirst(jitterMsSamples.count - sampleLimit)
+        }
+
+        if model.frameDropPercent.isFinite {
+            frameDropPercentSamples.append(max(0, model.frameDropPercent))
+            if frameDropPercentSamples.count > sampleLimit {
+                frameDropPercentSamples.removeFirst(frameDropPercentSamples.count - sampleLimit)
+            }
+        }
+        if model.packetLossPercent.isFinite {
+            packetLossPercentSamples.append(max(0, model.packetLossPercent))
+            if packetLossPercentSamples.count > sampleLimit {
+                packetLossPercentSamples.removeFirst(packetLossPercentSamples.count - sampleLimit)
+            }
+        }
+    }
+}
+
+private struct ShadowClientDiagnosticsSparkline: View {
+    let samples: [Double]
+    let color: Color
+
+    var body: some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            let graphPath = sparklinePath(for: size)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Color.black.opacity(0.24))
+
+                if !graphPath.isEmpty {
+                    graphPath
+                        .stroke(color.opacity(0.92), lineWidth: 1.6)
+                }
+            }
+        }
+    }
+
+    private func sparklinePath(for size: CGSize) -> Path {
+        guard samples.count >= 2 else {
+            return Path()
+        }
+
+        let maximum = samples.max() ?? 0
+        let minimum = samples.min() ?? 0
+        let range = max(maximum - minimum, 1)
+        let stepX = size.width / CGFloat(max(samples.count - 1, 1))
+
+        var path = Path()
+        for (index, sample) in samples.enumerated() {
+            let x = CGFloat(index) * stepX
+            let normalized = (sample - minimum) / range
+            let y = size.height - (CGFloat(normalized) * size.height)
+            if index == 0 {
+                path.move(to: CGPoint(x: x, y: y))
+            } else {
+                path.addLine(to: CGPoint(x: x, y: y))
+            }
+        }
+        return path
     }
 }

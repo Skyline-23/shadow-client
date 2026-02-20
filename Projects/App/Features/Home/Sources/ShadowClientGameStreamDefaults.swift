@@ -144,6 +144,7 @@ public enum ShadowClientUIRuntimeDefaults {
     public static let launchStatePollingAttempts = 15
     public static let pollingInterval: Duration = .milliseconds(200)
     public static let streamOutputHeartbeatInterval: Duration = .seconds(1)
+    public static let diagnosticsHUDSampleHistoryLimit = 48
 }
 
 public enum ShadowClientHostClassificationDefaults {
