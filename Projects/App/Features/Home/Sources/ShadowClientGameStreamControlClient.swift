@@ -945,7 +945,9 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         parameters["bitrate"] = "\(settings.bitrateKbps)"
 
         let resolvedCodecPreference = Self.resolvedLaunchCodecPreference(
-            from: settings.preferredCodec
+            from: settings.preferredCodec,
+            enableHDR: settings.enableHDR,
+            enableYUV444: settings.enableYUV444
         )
         let verb = Self.resolvedLaunchVerb(
             appID: appID,
@@ -1164,9 +1166,15 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
     }
 
     private static func resolvedLaunchCodecPreference(
-        from preferredCodec: ShadowClientVideoCodecPreference
+        from preferredCodec: ShadowClientVideoCodecPreference,
+        enableHDR: Bool,
+        enableYUV444: Bool
     ) -> ShadowClientVideoCodecPreference {
-        videoCodecSupport.resolvePreferredCodec(preferredCodec)
+        videoCodecSupport.resolvePreferredCodec(
+            preferredCodec,
+            enableHDR: enableHDR,
+            enableYUV444: enableYUV444
+        )
     }
 
     private func parsePairResponseXML(_ xml: String) throws -> ShadowClientXMLFlatDocument {

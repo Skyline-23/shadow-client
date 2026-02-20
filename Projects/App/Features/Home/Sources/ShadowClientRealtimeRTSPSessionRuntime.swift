@@ -189,7 +189,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private func resolveRuntimeVideoConfiguration(
         _ configuration: ShadowClientRemoteSessionVideoConfiguration
     ) -> ShadowClientRemoteSessionVideoConfiguration {
-        let resolvedCodecPreference = videoCodecSupport.resolvePreferredCodec(configuration.preferredCodec)
+        let resolvedCodecPreference = videoCodecSupport.resolvePreferredCodec(
+            configuration.preferredCodec,
+            enableHDR: configuration.enableHDR,
+            enableYUV444: configuration.enableYUV444
+        )
         return .init(
             width: configuration.width,
             height: configuration.height,
