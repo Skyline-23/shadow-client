@@ -23,14 +23,45 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
 
     private var trackingAreaToken: NSTrackingArea?
     private var activeModifierFlags: NSEvent.ModifierFlags = []
+    private weak var observedWindow: NSWindow?
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "InputCapture")
     private var loggedInputKinds = Set<String>()
+    private var loggedFocusFailure = false
 
     override var acceptsFirstResponder: Bool { true }
+    override var canBecomeKeyView: Bool { true }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        if observedWindow != newWindow {
+            NotificationCenter.default.removeObserver(self)
+            observedWindow = nil
+        }
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        window?.acceptsMouseMovedEvents = true
+        guard let window else {
+            return
+        }
+        window.acceptsMouseMovedEvents = true
+        observedWindow = window
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidBecomeKey(_:)),
+            name: NSWindow.didBecomeKeyNotification,
+            object: window
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(applicationDidBecomeActive(_:)),
+            name: NSApplication.didBecomeActiveNotification,
+            object: nil
+        )
         activeModifierFlags = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
         requestInputFocusIfNeeded()
     }
@@ -69,6 +100,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
             return super.performKeyEquivalent(with: event)
         }
 
+        requestInputFocusIfNeeded()
         emit(.keyDown(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers))
         return true
     }
@@ -174,10 +206,30 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         guard let window else {
             return
         }
+        if !window.isKeyWindow {
+            window.makeKey()
+        }
         guard window.firstResponder !== self else {
             return
         }
-        window.makeFirstResponder(self)
+        if !window.makeFirstResponder(self), !loggedFocusFailure {
+            loggedFocusFailure = true
+            logger.notice("Input capture failed to become first responder")
+        }
+    }
+
+    @objc
+    private func windowDidBecomeKey(_ notification: Notification) {
+        guard notification.object as? NSWindow === window else {
+            return
+        }
+        requestInputFocusIfNeeded()
+    }
+
+    @objc
+    private func applicationDidBecomeActive(_ notification: Notification) {
+        _ = notification
+        requestInputFocusIfNeeded()
     }
 
     private func logFirstCaptureEventIfNeeded(_ event: ShadowClientRemoteInputEvent) {
