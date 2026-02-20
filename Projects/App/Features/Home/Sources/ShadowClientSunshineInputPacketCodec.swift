@@ -14,6 +14,7 @@ enum ShadowClientSunshineInputPacketCodec {
     private enum PacketMagic {
         static let keyDown: UInt32 = 0x0000_0003
         static let keyUp: UInt32 = 0x0000_0004
+        static let mouseMoveRelative: UInt32 = 0x0000_0007
         static let mouseButtonDown: UInt32 = 0x0000_0008
         static let mouseButtonUp: UInt32 = 0x0000_0009
         static let scroll: UInt32 = 0x0000_000A
@@ -66,8 +67,19 @@ enum ShadowClientSunshineInputPacketCodec {
                     button: mappedButton
                 )
             )
-        case .pointerMoved:
-            return nil
+        case let .pointerMoved(x, y):
+            let deltaX = normalizedMouseDelta(x)
+            let deltaY = normalizedMouseDelta(y)
+            guard deltaX != 0 || deltaY != 0 else {
+                return nil
+            }
+            return .init(
+                channelID: Channel.mouse,
+                payload: makeRelativeMouseMovePacket(
+                    deltaX: deltaX,
+                    deltaY: deltaY
+                )
+            )
         case let .scroll(_, deltaY):
             let scrollAmount = normalizedScrollAmount(deltaY)
             guard scrollAmount != 0 else {
@@ -109,6 +121,19 @@ enum ShadowClientSunshineInputPacketCodec {
         return packet
     }
 
+    private static func makeRelativeMouseMovePacket(
+        deltaX: Int16,
+        deltaY: Int16
+    ) -> Data {
+        var packet = Data()
+        packet.reserveCapacity(12)
+        appendUInt32BE(8, to: &packet) // sizeof(NV_REL_MOUSE_MOVE_PACKET) - sizeof(size field)
+        appendUInt32LE(PacketMagic.mouseMoveRelative, to: &packet)
+        appendInt16BE(deltaX, to: &packet)
+        appendInt16BE(deltaY, to: &packet)
+        return packet
+    }
+
     private static func makeScrollPacket(scrollAmount: Int16) -> Data {
         var packet = Data()
         packet.reserveCapacity(14)
@@ -130,6 +155,18 @@ enum ShadowClientSunshineInputPacketCodec {
             return delta > 0 ? 120 : -120
         }
         return Int16(clamping: scaled)
+    }
+
+    private static func normalizedMouseDelta(_ delta: Double) -> Int16 {
+        if delta == 0 {
+            return 0
+        }
+
+        let rounded = Int(delta.rounded())
+        if rounded == 0 {
+            return delta > 0 ? 1 : -1
+        }
+        return Int16(clamping: rounded)
     }
 
     private static func mouseButtonValue(_ button: ShadowClientRemoteMouseButton) -> UInt8? {

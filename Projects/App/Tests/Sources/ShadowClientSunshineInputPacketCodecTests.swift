@@ -60,6 +60,36 @@ func sunshineInputCodecEncodesMouseButtonPacket() {
     #expect(payload[8] == 0x01)
 }
 
+@Test("Sunshine input codec encodes relative mouse move packet")
+func sunshineInputCodecEncodesRelativeMouseMovePacket() {
+    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+        .pointerMoved(x: 2.4, y: -3.2)
+    )
+
+    #expect(encoded != nil)
+    #expect(encoded?.channelID == 0x03)
+
+    guard let payload = encoded?.payload else {
+        Issue.record("Expected relative mouse move payload")
+        return
+    }
+
+    #expect(payload.count == 12)
+    #expect(readUInt32BE(payload, at: 0) == 8)
+    #expect(readUInt32LE(payload, at: 4) == 0x0000_0007)
+    #expect(readInt16BE(payload, at: 8) == 2)
+    #expect(readInt16BE(payload, at: 10) == -3)
+}
+
+@Test("Sunshine input codec drops zero-delta relative mouse move packet")
+func sunshineInputCodecDropsZeroDeltaRelativeMouseMovePacket() {
+    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+        .pointerMoved(x: 0, y: 0)
+    )
+
+    #expect(encoded == nil)
+}
+
 @Test("Sunshine input codec encodes vertical scroll packet")
 func sunshineInputCodecEncodesScrollPacket() {
     let encoded = ShadowClientSunshineInputPacketCodec.encode(
