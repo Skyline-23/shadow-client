@@ -30,7 +30,6 @@ public struct ShadowClientVideoCodecSupport: Sendable {
         enableYUV444: Bool = false
     ) -> ShadowClientVideoCodecPreference {
         let av1Supported = hardwareDecoderSupport(kCMVideoCodecType_AV1) &&
-            !enableHDR &&
             !enableYUV444
         let nonAV1Fallback: ShadowClientVideoCodecPreference = hardwareDecoderSupport(kCMVideoCodecType_HEVC) ? .h265 : .h264
 

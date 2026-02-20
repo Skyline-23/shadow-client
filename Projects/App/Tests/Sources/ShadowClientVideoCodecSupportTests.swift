@@ -41,14 +41,14 @@ func videoCodecSupportKeepsExplicitSelections() {
     #expect(support.resolvePreferredCodec(.h265) == .h265)
 }
 
-@Test("Codec support avoids AV1 when HDR is enabled")
-func videoCodecSupportAvoidsAV1WhenHDREnabled() {
+@Test("Codec support keeps AV1 when HDR is enabled and AV1 hardware decode is available")
+func videoCodecSupportKeepsAV1WhenHDREnabled() {
     let support = ShadowClientVideoCodecSupport { codecType in
         codecType == kCMVideoCodecType_AV1 || codecType == kCMVideoCodecType_HEVC
     }
 
-    #expect(support.resolvePreferredCodec(.auto, enableHDR: true) == .h265)
-    #expect(support.resolvePreferredCodec(.av1, enableHDR: true) == .h265)
+    #expect(support.resolvePreferredCodec(.auto, enableHDR: true) == .auto)
+    #expect(support.resolvePreferredCodec(.av1, enableHDR: true) == .av1)
 }
 
 @Test("Codec support avoids AV1 when YUV444 is enabled")
