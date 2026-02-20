@@ -64,11 +64,14 @@ enum ShadowClientSunshineHandshakeProfile {
 
 enum ShadowClientSunshineControlMessageProfile {
     static let genericChannelID: UInt8 = 0x00
+    static let keyboardChannelID: UInt8 = 0x02
+    static let mouseChannelID: UInt8 = 0x03
 
     static let startATypeLegacy: UInt16 = 0x0305
     static let startATypeEncryptedV2: UInt16 = 0x0302
     static let startBType: UInt16 = 0x0307
     static let periodicPingType: UInt16 = 0x0200
+    static let inputDataType: UInt16 = 0x0206
 
     static let startAPayload = Data([0x00, 0x00])
     static let startBPayload = Data([0x00])

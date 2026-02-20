@@ -1,0 +1,104 @@
+import Foundation
+import Testing
+@testable import ShadowClientFeatureHome
+
+@Test("Sunshine input codec encodes keyboard keyDown packet")
+func sunshineInputCodecEncodesKeyboardKeyDownPacket() {
+    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+        .keyDown(keyCode: 13, characters: "w")
+    )
+
+    #expect(encoded != nil)
+    #expect(encoded?.channelID == 0x02)
+
+    guard let payload = encoded?.payload else {
+        Issue.record("Expected keyboard payload")
+        return
+    }
+
+    #expect(payload.count == 14)
+    #expect(readUInt32BE(payload, at: 0) == 10)
+    #expect(readUInt32LE(payload, at: 4) == 0x0000_0003)
+    #expect(payload[8] == 0)
+    #expect(readUInt16LE(payload, at: 9) == 0x57)
+    #expect(payload[11] == 0)
+    #expect(readUInt16LE(payload, at: 12) == 0)
+}
+
+@Test("Sunshine input codec encodes mouse button packet")
+func sunshineInputCodecEncodesMouseButtonPacket() {
+    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+        .pointerButton(button: .left, isPressed: true)
+    )
+
+    #expect(encoded != nil)
+    #expect(encoded?.channelID == 0x03)
+
+    guard let payload = encoded?.payload else {
+        Issue.record("Expected mouse button payload")
+        return
+    }
+
+    #expect(payload.count == 9)
+    #expect(readUInt32BE(payload, at: 0) == 5)
+    #expect(readUInt32LE(payload, at: 4) == 0x0000_0008)
+    #expect(payload[8] == 0x01)
+}
+
+@Test("Sunshine input codec encodes vertical scroll packet")
+func sunshineInputCodecEncodesScrollPacket() {
+    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+        .scroll(deltaX: 0, deltaY: 1)
+    )
+
+    #expect(encoded != nil)
+    #expect(encoded?.channelID == 0x03)
+
+    guard let payload = encoded?.payload else {
+        Issue.record("Expected scroll payload")
+        return
+    }
+
+    #expect(payload.count == 14)
+    #expect(readUInt32BE(payload, at: 0) == 10)
+    #expect(readUInt32LE(payload, at: 4) == 0x0000_000A)
+    #expect(readInt16BE(payload, at: 8) == 120)
+    #expect(readInt16BE(payload, at: 10) == 120)
+}
+
+@Test("Sunshine input codec drops unknown key event")
+func sunshineInputCodecDropsUnknownKeyEvent() {
+    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+        .keyDown(keyCode: 0x0A0A, characters: nil)
+    )
+
+    #expect(encoded == nil)
+}
+
+private func readUInt16LE(_ data: Data, at offset: Int) -> UInt16 {
+    let b0 = UInt16(data[offset])
+    let b1 = UInt16(data[offset + 1]) << 8
+    return b0 | b1
+}
+
+private func readUInt32LE(_ data: Data, at offset: Int) -> UInt32 {
+    let b0 = UInt32(data[offset])
+    let b1 = UInt32(data[offset + 1]) << 8
+    let b2 = UInt32(data[offset + 2]) << 16
+    let b3 = UInt32(data[offset + 3]) << 24
+    return b0 | b1 | b2 | b3
+}
+
+private func readUInt32BE(_ data: Data, at offset: Int) -> UInt32 {
+    let b0 = UInt32(data[offset]) << 24
+    let b1 = UInt32(data[offset + 1]) << 16
+    let b2 = UInt32(data[offset + 2]) << 8
+    let b3 = UInt32(data[offset + 3])
+    return b0 | b1 | b2 | b3
+}
+
+private func readInt16BE(_ data: Data, at offset: Int) -> Int16 {
+    let upper = UInt16(data[offset]) << 8
+    let lower = UInt16(data[offset + 1])
+    return Int16(bitPattern: upper | lower)
+}

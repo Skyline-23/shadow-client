@@ -136,6 +136,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
     }
 
+    public func sendInput(_ event: ShadowClientRemoteInputEvent) async throws {
+        guard let rtspClient else {
+            return
+        }
+        try await rtspClient.sendInput(event)
+    }
+
     private func consumeRTPPayload(
         codec: ShadowClientVideoCodec,
         payload: Data,
@@ -360,9 +367,23 @@ private actor ShadowClientRTSPInterleavedClient {
                 ]
             )
         } catch {
-            throw ShadowClientRTSPInterleavedClientError.requestFailed(
-                "RTSP OPTIONS failed: \(error.localizedDescription)"
+            logger.notice(
+                "RTSP OPTIONS retry on fresh TCP connection after failure: \(error.localizedDescription, privacy: .public)"
             )
+            try await reconnect(host: host, port: port)
+            do {
+                _ = try await sendRequest(
+                    method: ShadowClientRTSPRequestDefaults.optionsMethod,
+                    url: normalizedURL.absoluteString,
+                    headers: [
+                        ShadowClientRTSPRequestDefaults.headerUserAgent: ShadowClientRTSPRequestDefaults.userAgent,
+                    ]
+                )
+            } catch {
+                throw ShadowClientRTSPInterleavedClientError.requestFailed(
+                    "RTSP OPTIONS failed: \(error.localizedDescription)"
+                )
+            }
         }
 
         let describe: ShadowClientRTSPResponse
@@ -505,6 +526,13 @@ private actor ShadowClientRTSPInterleavedClient {
                     audioPingPayload = ShadowClientRTSPTransportHeaderParser.parseSunshinePingPayload(
                         from: response.headers[ShadowClientRTSPRequestDefaults.responseHeaderPingPayload]
                     )
+                    if let audioPingPayload,
+                       let token = String(data: audioPingPayload, encoding: .utf8)
+                    {
+                        logger.notice("RTSP audio ping payload token \(token, privacy: .public)")
+                    } else {
+                        logger.notice("RTSP audio ping payload token unavailable; legacy ping fallback only")
+                    }
                     logger.notice("RTSP audio SETUP ok for \(controlURL, privacy: .public)")
                     break
                 } catch {
@@ -563,6 +591,13 @@ private actor ShadowClientRTSPInterleavedClient {
         videoPingPayload = ShadowClientRTSPTransportHeaderParser.parseSunshinePingPayload(
             from: setup.headers[ShadowClientRTSPRequestDefaults.responseHeaderPingPayload]
         )
+        if let videoPingPayload,
+           let token = String(data: videoPingPayload, encoding: .utf8)
+        {
+            logger.notice("RTSP video ping payload token \(token, privacy: .public)")
+        } else {
+            logger.notice("RTSP video ping payload token unavailable; legacy ping fallback only")
+        }
         logger.notice("RTSP video SETUP ok for payload type \(track.rtpPayloadType, privacy: .public) via \(selectedSetupURL ?? track.controlURL, privacy: .public)")
         prepareVideoPingBeforePlay(host: controlHost)
 
@@ -1075,6 +1110,24 @@ private actor ShadowClientRTSPInterleavedClient {
         negotiatedClientPortBase = defaultClientPortBase
     }
 
+    func sendInput(_ event: ShadowClientRemoteInputEvent) async throws {
+        await ensureSunshineControlChannelStarted(
+            fallbackHost: remoteHost ?? .init("127.0.0.1")
+        )
+
+        guard let controlChannelRuntime else {
+            return
+        }
+        guard let packet = ShadowClientSunshineInputPacketCodec.encode(event) else {
+            return
+        }
+
+        try await controlChannelRuntime.sendInputPacket(
+            packet.payload,
+            channelID: packet.channelID
+        )
+    }
+
     func receiveInterleavedVideoPackets(
         payloadType: Int,
         onVideoPacket: @escaping @Sendable (Data, Bool) async throws -> Void
@@ -1183,7 +1236,8 @@ private actor ShadowClientRTSPInterleavedClient {
                 let connection = try await makeAudioUDPPingConnection(
                     host: host,
                     port: audioServerPort,
-                    localHost: localHost
+                    localHost: localHost,
+                    preferredLocalPort: negotiatedAudioPingPort()
                 )
                 rtspLogger.notice("RTSP UDP audio ping socket ready on \(audioServerPort.rawValue, privacy: .public)")
                 audioPingConnection = connection
@@ -1346,41 +1400,103 @@ private actor ShadowClientRTSPInterleavedClient {
         port: NWEndpoint.Port,
         localHost: NWEndpoint.Host?
     ) throws -> ShadowClientUDPDatagramSocket {
-        // Moonlight sends X-GS-ClientPort in RTSP but actually pings/sends media on
-        // sockets bound with local port 0 (ephemeral). Align to that behavior to avoid
-        // local fixed-port collisions and host-side peer mismatch edge cases.
-        let socket = try ShadowClientUDPDatagramSocket(
-            localHost: localHost,
-            localPort: nil,
-            remoteHost: host,
-            remotePort: port.rawValue
-        )
-        logger.notice("RTSP UDP video socket bound \(socket.localEndpointDescription(), privacy: .public)")
-        return socket
+        let preferredLocalPort = negotiatedVideoPingPort()
+        do {
+            let socket = try ShadowClientUDPDatagramSocket(
+                localHost: localHost,
+                localPort: preferredLocalPort,
+                remoteHost: host,
+                remotePort: port.rawValue
+            )
+            logger.notice(
+                "RTSP UDP video socket bound \(socket.localEndpointDescription(), privacy: .public) (preferred-client-port \(preferredLocalPort, privacy: .public))"
+            )
+            return socket
+        } catch {
+            logger.error(
+                "RTSP UDP video bind on preferred client port \(preferredLocalPort, privacy: .public) failed: \(error.localizedDescription, privacy: .public); retrying with ephemeral port"
+            )
+            let socket = try ShadowClientUDPDatagramSocket(
+                localHost: localHost,
+                localPort: nil,
+                remoteHost: host,
+                remotePort: port.rawValue
+            )
+            logger.notice("RTSP UDP video socket bound \(socket.localEndpointDescription(), privacy: .public) (ephemeral-fallback)")
+            return socket
+        }
     }
 
     private func makeAudioUDPPingConnection(
         host: NWEndpoint.Host,
         port: NWEndpoint.Port,
-        localHost: NWEndpoint.Host?
+        localHost: NWEndpoint.Host?,
+        preferredLocalPort: UInt16?
     ) async throws -> NWConnection {
-        let parameters = NWParameters.udp
-        if let localHost {
-            parameters.requiredLocalEndpoint = .hostPort(
-                host: localHost,
-                port: .any
+        func makeParameters(localPort: UInt16?) -> NWParameters {
+            let parameters = NWParameters.udp
+            if let localHost {
+                let endpointPort: NWEndpoint.Port
+                if let localPort, let resolved = NWEndpoint.Port(rawValue: localPort) {
+                    endpointPort = resolved
+                } else {
+                    endpointPort = .any
+                }
+                parameters.requiredLocalEndpoint = .hostPort(
+                    host: localHost,
+                    port: endpointPort
+                )
+            }
+            return parameters
+        }
+
+        let primary = NWConnection(
+            host: host,
+            port: port,
+            using: makeParameters(localPort: preferredLocalPort)
+        )
+        do {
+            try await waitForReady(primary)
+            if let local = resolvedLocalHost(from: primary),
+               let localPort = resolvedLocalPort(from: primary)
+            {
+                logger.notice("RTSP UDP audio ping socket bound to \(String(describing: local), privacy: .public):\(localPort, privacy: .public)")
+            } else {
+                logger.notice("RTSP UDP audio ping socket ready")
+            }
+            return primary
+        } catch {
+            primary.cancel()
+            guard preferredLocalPort != nil else {
+                throw error
+            }
+
+            logger.error(
+                "RTSP UDP audio bind on preferred client port \(preferredLocalPort ?? 0, privacy: .public) failed: \(error.localizedDescription, privacy: .public); retrying with ephemeral port"
             )
+            let fallback = NWConnection(
+                host: host,
+                port: port,
+                using: makeParameters(localPort: nil)
+            )
+            try await waitForReady(fallback)
+            if let local = resolvedLocalHost(from: fallback),
+               let localPort = resolvedLocalPort(from: fallback)
+            {
+                logger.notice("RTSP UDP audio ping socket bound to \(String(describing: local), privacy: .public):\(localPort, privacy: .public)")
+            } else {
+                logger.notice("RTSP UDP audio ping socket ready")
+            }
+            return fallback
         }
-        let connection = NWConnection(host: host, port: port, using: parameters)
-        try await waitForReady(connection)
-        if let local = resolvedLocalHost(from: connection),
-           let localPort = resolvedLocalPort(from: connection)
-        {
-            logger.notice("RTSP UDP audio ping socket bound to \(String(describing: local), privacy: .public):\(localPort, privacy: .public)")
-        } else {
-            logger.notice("RTSP UDP audio ping socket ready")
-        }
-        return connection
+    }
+
+    private func negotiatedVideoPingPort() -> UInt16 {
+        negotiatedClientPortBase
+    }
+
+    private func negotiatedAudioPingPort() -> UInt16 {
+        negotiatedClientPortBase &+ 1
     }
 
     private func resolvedLocalPort(from connection: NWConnection) -> UInt16? {

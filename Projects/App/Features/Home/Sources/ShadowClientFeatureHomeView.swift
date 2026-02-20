@@ -82,7 +82,8 @@ public extension ShadowClientRemoteDesktopDependencies {
         defaultHTTPSPort: Int,
         sessionConnectTimeout: Duration
     ) -> Self {
-        .init(
+        let sessionRuntime = ShadowClientRealtimeRTSPSessionRuntime()
+        return .init(
             metadataClient: NativeGameStreamMetadataClient(
                 identityStore: identityStore,
                 pinnedCertificateStore: pinnedCertificateStore,
@@ -96,9 +97,12 @@ public extension ShadowClientRemoteDesktopDependencies {
                 defaultHTTPSPort: defaultHTTPSPort
             ),
             sessionConnectionClient: NativeShadowClientRemoteSessionConnectionClient(
-                timeout: sessionConnectTimeout
+                timeout: sessionConnectTimeout,
+                sessionRuntime: sessionRuntime
             ),
-            sessionInputClient: NoopShadowClientRemoteSessionInputClient(),
+            sessionInputClient: NativeShadowClientRemoteSessionInputClient(
+                sessionRuntime: sessionRuntime
+            ),
             pinProvider: ShadowClientRandomPairingPINProvider()
         )
     }

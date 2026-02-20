@@ -121,6 +121,25 @@ actor ShadowClientSunshineControlChannelRuntime {
         resetSessionState()
     }
 
+    func sendInputPacket(_ payload: Data, channelID: UInt8) async throws {
+        guard let connection else {
+            throw ShadowClientSunshineControlChannelError.connectionClosed
+        }
+        guard case .encryptedV2 = controlChannelMode else {
+            // Sunshine expects input packets to be tunneled through encrypted control payloads
+            // when control protocol type 13 is negotiated.
+            logger.debug("Sunshine input packet skipped because control channel is not encrypted-v2")
+            return
+        }
+
+        try await sendReliableControlMessage(
+            type: ShadowClientSunshineControlMessageProfile.inputDataType,
+            payload: payload,
+            channelID: channelID,
+            over: connection
+        )
+    }
+
     private func waitForVerifyConnect(
         over connection: NWConnection,
         expectedConnectID: UInt32
@@ -215,6 +234,7 @@ actor ShadowClientSunshineControlChannelRuntime {
     private func sendReliableControlMessage(
         type: UInt16,
         payload: Data,
+        channelID: UInt8 = ShadowClientSunshineControlMessageProfile.genericChannelID,
         over connection: NWConnection
     ) async throws {
         let controlPayload = try buildControlPayload(type: type, payload: payload)
@@ -228,7 +248,7 @@ actor ShadowClientSunshineControlChannelRuntime {
             outgoingPeerID: outgoingPeerID,
             outgoingSessionID: outgoingSessionID,
             reliableSequenceNumber: reliableSequenceNumber,
-            channelID: ShadowClientSunshineControlMessageProfile.genericChannelID,
+            channelID: channelID,
             sentTime: currentSentTime(),
             payload: controlPayload
         )
@@ -242,6 +262,7 @@ actor ShadowClientSunshineControlChannelRuntime {
     private func sendReliableControlMessageWithoutBlockingForAcknowledge(
         type: UInt16,
         payload: Data,
+        channelID: UInt8 = ShadowClientSunshineControlMessageProfile.genericChannelID,
         over connection: NWConnection
     ) async throws {
         let controlPayload = try buildControlPayload(type: type, payload: payload)
@@ -251,7 +272,7 @@ actor ShadowClientSunshineControlChannelRuntime {
             outgoingPeerID: outgoingPeerID,
             outgoingSessionID: outgoingSessionID,
             reliableSequenceNumber: reliableSequenceNumber,
-            channelID: ShadowClientSunshineControlMessageProfile.genericChannelID,
+            channelID: channelID,
             sentTime: currentSentTime(),
             payload: controlPayload
         )

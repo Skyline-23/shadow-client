@@ -307,6 +307,24 @@ public struct NoopShadowClientRemoteSessionInputClient: ShadowClientRemoteSessio
     public func send(event: ShadowClientRemoteInputEvent, host: String, sessionURL: String) async throws {}
 }
 
+public struct NativeShadowClientRemoteSessionInputClient: ShadowClientRemoteSessionInputClient {
+    private let sessionRuntime: ShadowClientRealtimeRTSPSessionRuntime
+
+    public init(
+        sessionRuntime: ShadowClientRealtimeRTSPSessionRuntime = .init()
+    ) {
+        self.sessionRuntime = sessionRuntime
+    }
+
+    public func send(
+        event: ShadowClientRemoteInputEvent,
+        host _: String,
+        sessionURL _: String
+    ) async throws {
+        try await sessionRuntime.sendInput(event)
+    }
+}
+
 public struct NoopShadowClientRemoteSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
     public let presentationMode: ShadowClientRemoteSessionPresentationMode = .embeddedPlayer
     public let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init()
@@ -858,21 +876,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 var connectedSessionURL = try Self.validatedSessionURL(from: initialLaunchResult)
 
                 do {
-                    try await sessionConnectionClient.connect(
-                        to: connectedSessionURL,
+                    try await Self.connectWithCodecFallback(
+                        sessionConnectionClient: sessionConnectionClient,
+                        sessionURL: connectedSessionURL,
                         host: selectedHost.host,
                         appTitle: resolvedTitle,
-                        videoConfiguration: .init(
-                            width: settings.width,
-                            height: settings.height,
-                            fps: settings.fps,
-                            bitrateKbps: settings.bitrateKbps,
-                            preferredCodec: settings.preferredCodec,
-                            enableHDR: settings.enableHDR,
-                            enableSurroundAudio: settings.enableSurroundAudio,
-                            enableYUV444: settings.enableYUV444,
-                            remoteInputKey: initialLaunchResult.remoteInputKey
-                        )
+                        settings: settings,
+                        remoteInputKey: initialLaunchResult.remoteInputKey
                     )
                 } catch {
                     guard Self.shouldRetryForcedLaunch(
@@ -884,31 +894,27 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
                     await sessionConnectionClient.disconnect()
 
+                    let forcedLaunchSettings = Self.forcedLaunchSettings(
+                        from: settings,
+                        connectError: error
+                    )
                     let forcedLaunchResult = try await controlClient.launch(
                         host: selectedHost.host,
                         httpsPort: selectedHost.httpsPort,
                         appID: appID,
                         currentGameID: selectedHost.currentGameID,
                         forceLaunch: true,
-                        settings: settings
+                        settings: forcedLaunchSettings
                     )
                     let forcedSessionURL = try Self.validatedSessionURL(from: forcedLaunchResult)
 
-                    try await sessionConnectionClient.connect(
-                        to: forcedSessionURL,
+                    try await Self.connectWithCodecFallback(
+                        sessionConnectionClient: sessionConnectionClient,
+                        sessionURL: forcedSessionURL,
                         host: selectedHost.host,
                         appTitle: resolvedTitle,
-                        videoConfiguration: .init(
-                            width: settings.width,
-                            height: settings.height,
-                            fps: settings.fps,
-                            bitrateKbps: settings.bitrateKbps,
-                            preferredCodec: settings.preferredCodec,
-                            enableHDR: settings.enableHDR,
-                            enableSurroundAudio: settings.enableSurroundAudio,
-                            enableYUV444: settings.enableYUV444,
-                            remoteInputKey: forcedLaunchResult.remoteInputKey
-                        )
+                        settings: forcedLaunchSettings,
+                        remoteInputKey: forcedLaunchResult.remoteInputKey
                     )
 
                     connectedLaunchResult = forcedLaunchResult
@@ -965,7 +971,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     guard self.launchGeneration == currentLaunchGeneration else {
                         return
                     }
-                    launchState = .failed(error.localizedDescription)
+                    launchState = .failed(
+                        Self.userFacingLaunchFailureMessage(
+                            error,
+                            settings: settings
+                        )
+                    )
                     activeSession = nil
                 }
             }
@@ -1024,6 +1035,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         launchVerb: String,
         connectError: any Error
     ) -> Bool {
+        if shouldRetryCodecFallback(connectError: connectError) {
+            return true
+        }
+
         guard launchVerb.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "resume" else {
             return false
         }
@@ -1044,9 +1059,215 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             "video session endpoint",
             "rtsp transport connection closed",
             "first frame",
+            "could not create hardware decoder session",
+            "cannot create decoder",
+            "hardware decode failed",
+            "decoder codec is not supported",
+            "osstatus -8971",
         ]
 
         return retrySignatures.contains(where: normalized.contains)
+    }
+
+    private static func connectWithCodecFallback(
+        sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient,
+        sessionURL: String,
+        host: String,
+        appTitle: String,
+        settings: ShadowClientGameStreamLaunchSettings,
+        remoteInputKey: Data?
+    ) async throws {
+        let codecCandidates = codecFallbackCandidates(for: settings.preferredCodec)
+        var firstCodecFallbackError: (any Error)?
+
+        for (index, codecCandidate) in codecCandidates.enumerated() {
+            do {
+                try await sessionConnectionClient.connect(
+                    to: sessionURL,
+                    host: host,
+                    appTitle: appTitle,
+                    videoConfiguration: sessionVideoConfiguration(
+                        from: settings,
+                        preferredCodec: codecCandidate,
+                        remoteInputKey: remoteInputKey
+                    )
+                )
+                return
+            } catch {
+                let hasNextCandidate = index + 1 < codecCandidates.count
+                let isCodecFallbackError = shouldRetryCodecFallback(connectError: error)
+
+                if isCodecFallbackError, firstCodecFallbackError == nil {
+                    firstCodecFallbackError = error
+                }
+
+                if hasNextCandidate, isCodecFallbackError {
+                    await sessionConnectionClient.disconnect()
+                    continue
+                }
+
+                if let firstCodecFallbackError, !isCodecFallbackError {
+                    // Preserve the root decoder incompatibility signal instead of
+                    // masking it with follow-up transport resets from the same session.
+                    throw firstCodecFallbackError
+                }
+
+                guard hasNextCandidate, isCodecFallbackError else {
+                    throw error
+                }
+                await sessionConnectionClient.disconnect()
+            }
+        }
+
+        if let firstCodecFallbackError {
+            throw firstCodecFallbackError
+        }
+
+        throw ShadowClientGameStreamError.requestFailed("Could not connect to remote session.")
+    }
+
+    private static func forcedLaunchSettings(
+        from settings: ShadowClientGameStreamLaunchSettings,
+        connectError: any Error
+    ) -> ShadowClientGameStreamLaunchSettings {
+        guard shouldRetryCodecFallback(connectError: connectError),
+              let downgradedCodec = codecFallbackCandidates(for: settings.preferredCodec).dropFirst().first
+        else {
+            return settings
+        }
+
+        return launchSettings(settings, preferredCodec: downgradedCodec)
+    }
+
+    private static func shouldRetryCodecFallback(connectError: any Error) -> Bool {
+        let normalized = connectError.localizedDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty else {
+            return false
+        }
+
+        let codecFallbackSignatures = [
+            "could not create hardware decoder session",
+            "cannot create decoder",
+            "hardware decode failed",
+            "decoder codec is not supported",
+            "av1 decode failed",
+            "osstatus -8971",
+            "vtvideo decoderselection",
+            "vt-ds",
+        ]
+
+        return codecFallbackSignatures.contains(where: normalized.contains)
+    }
+
+    private static func userFacingLaunchFailureMessage(
+        _ error: any Error,
+        settings: ShadowClientGameStreamLaunchSettings
+    ) -> String {
+        let base = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = base.lowercased()
+        var hints: [String] = []
+
+        if shouldRetryCodecFallback(connectError: error),
+           settings.preferredCodec == .av1 || settings.preferredCodec == .auto || normalized.contains("av1")
+        {
+            hints.append(
+                "AV1 VideoToolbox decoder session failed. Apple Silicon can support AV1, but this stream profile may be unsupported (for example HDR 10-bit or 4:4:4). Try HEVC/H.264 or disable HDR."
+            )
+        }
+
+        if settings.enableYUV444,
+           isLikelyYUV444CompatibilityFailure(normalizedError: normalized)
+        {
+            hints.append(
+                "YUV 4:4:4 appears unsupported on the host encoder. Disable \"Enable YUV 4:4:4 (Experimental)\" and retry."
+            )
+        }
+
+        guard !hints.isEmpty else {
+            return base
+        }
+
+        let resolvedBase = base.isEmpty ? "Remote session launch failed." : base
+        return ([resolvedBase] + hints).joined(separator: "\n")
+    }
+
+    private static func isLikelyYUV444CompatibilityFailure(normalizedError: String) -> Bool {
+        let directSignatures = [
+            "yuv444",
+            "yuv 4:4:4",
+            "chroma sampling type",
+            "gpu doesn't support yuv444 encode",
+        ]
+        if directSignatures.contains(where: normalizedError.contains) {
+            return true
+        }
+
+        let indirectTransportSignatures = [
+            "rtsp udp video timeout",
+            "no video datagram",
+            "video session endpoint",
+            "rtsp setup failed",
+            "rtsp transport connection closed",
+            "first frame",
+            "transport connection timed out",
+        ]
+        return indirectTransportSignatures.contains(where: normalizedError.contains)
+    }
+
+    private static func codecFallbackCandidates(
+        for preferredCodec: ShadowClientVideoCodecPreference
+    ) -> [ShadowClientVideoCodecPreference] {
+        switch preferredCodec {
+        case .auto, .av1:
+            return [preferredCodec, .h265, .h264]
+        case .h265:
+            return [.h265, .h264]
+        case .h264:
+            return [.h264]
+        }
+    }
+
+    private static func launchSettings(
+        _ settings: ShadowClientGameStreamLaunchSettings,
+        preferredCodec: ShadowClientVideoCodecPreference
+    ) -> ShadowClientGameStreamLaunchSettings {
+        .init(
+            width: settings.width,
+            height: settings.height,
+            fps: settings.fps,
+            bitrateKbps: settings.bitrateKbps,
+            preferredCodec: preferredCodec,
+            enableHDR: settings.enableHDR,
+            enableSurroundAudio: settings.enableSurroundAudio,
+            lowLatencyMode: settings.lowLatencyMode,
+            enableVSync: settings.enableVSync,
+            enableFramePacing: settings.enableFramePacing,
+            enableYUV444: settings.enableYUV444,
+            unlockBitrateLimit: settings.unlockBitrateLimit,
+            forceHardwareDecoding: settings.forceHardwareDecoding,
+            optimizeGameSettingsForStreaming: settings.optimizeGameSettingsForStreaming,
+            quitAppOnHostAfterStreamEnds: settings.quitAppOnHostAfterStreamEnds
+        )
+    }
+
+    private static func sessionVideoConfiguration(
+        from settings: ShadowClientGameStreamLaunchSettings,
+        preferredCodec: ShadowClientVideoCodecPreference,
+        remoteInputKey: Data?
+    ) -> ShadowClientRemoteSessionVideoConfiguration {
+        .init(
+            width: settings.width,
+            height: settings.height,
+            fps: settings.fps,
+            bitrateKbps: settings.bitrateKbps,
+            preferredCodec: preferredCodec,
+            enableHDR: settings.enableHDR,
+            enableSurroundAudio: settings.enableSurroundAudio,
+            enableYUV444: settings.enableYUV444,
+            remoteInputKey: remoteInputKey
+        )
     }
 
     @MainActor
