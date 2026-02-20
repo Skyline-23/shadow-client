@@ -69,6 +69,7 @@ public actor ShadowClientVideoToolboxDecoder {
     private var decodePresentationTimeScale: CMTimeScale
     private var av1FallbackHDR = false
     private var av1FallbackYUV444 = false
+    private var av1CodecConfigurationOrigin: ShadowClientAV1CodecConfigurationOrigin?
 
     public init(
         decodePresentationTimeScale: CMTimeScale = CMTimeScale(
@@ -81,6 +82,7 @@ public actor ShadowClientVideoToolboxDecoder {
     public func reset() {
         invalidateDecoderSessionForReconfiguration()
         latestParameterSets = []
+        av1CodecConfigurationOrigin = nil
         codec = nil
     }
 
@@ -160,25 +162,22 @@ public actor ShadowClientVideoToolboxDecoder {
             }
             samplePayload = makeLengthPrefixedBuffer(from: sampleNals)
         case .av1:
-            var discoveredAV1CodecConfiguration = firstAV1CodecConfiguration(from: explicitParameterSets)
-            if discoveredAV1CodecConfiguration == nil {
-                discoveredAV1CodecConfiguration = ShadowClientAV1CodecConfigurationBuilder.build(
-                    fromAccessUnit: annexBAccessUnit
-                )
-            }
-
-            if let discoveredAV1CodecConfiguration {
-                if latestParameterSets != [discoveredAV1CodecConfiguration] {
-                    latestParameterSets = [discoveredAV1CodecConfiguration]
-                }
-            } else if latestParameterSets.isEmpty {
-                latestParameterSets = [
-                    ShadowClientAV1CodecConfigurationBuilder.fallbackCodecConfigurationRecord(
-                        hdrEnabled: av1FallbackHDR,
-                        yuv444Enabled: av1FallbackYUV444
-                    ),
-                ]
-            }
+            let discoveredAV1CodecConfiguration = ShadowClientAV1CodecConfigurationBuilder.build(
+                fromAccessUnit: annexBAccessUnit
+            )
+            let fallbackCodecConfiguration = ShadowClientAV1CodecConfigurationBuilder.fallbackCodecConfigurationRecord(
+                hdrEnabled: av1FallbackHDR,
+                yuv444Enabled: av1FallbackYUV444
+            )
+            let av1Configuration = ShadowClientAV1CodecConfigurationPolicy.resolve(
+                currentParameterSets: latestParameterSets,
+                currentOrigin: av1CodecConfigurationOrigin,
+                explicitParameterSets: explicitParameterSets,
+                discoveredConfiguration: discoveredAV1CodecConfiguration,
+                fallbackConfiguration: fallbackCodecConfiguration
+            )
+            latestParameterSets = av1Configuration.parameterSets
+            av1CodecConfigurationOrigin = av1Configuration.origin
 
             guard !latestParameterSets.isEmpty else {
                 return
@@ -236,11 +235,10 @@ public actor ShadowClientVideoToolboxDecoder {
             throw ShadowClientVideoToolboxDecoderError.missingParameterSets
         }
 
-        let description = try makeFormatDescription(
+        let initialDescription = try makeFormatDescription(
             codec: codec,
             parameterSets: parameterSets
         )
-        formatDescription = description
 
         let bridge = ShadowClientRealtimeDecoderOutputBridge(onFrame: onFrame)
         outputBridge = bridge
@@ -267,22 +265,58 @@ public actor ShadowClientVideoToolboxDecoder {
             kCVPixelBufferMetalCompatibilityKey as String: true,
             kCVPixelBufferIOSurfacePropertiesKey as String: [:] as CFDictionary,
         ]
-        var newSession: VTDecompressionSession?
-        let status = VTDecompressionSessionCreate(
-            allocator: kCFAllocatorDefault,
-            formatDescription: description,
-            decoderSpecification: nil,
-            imageBufferAttributes: pixelBufferAttributes as CFDictionary,
-            outputCallback: &callbackRecord,
-            decompressionSessionOut: &newSession
-        )
-        guard status == noErr, let newSession else {
-            throw ShadowClientVideoToolboxDecoderError.cannotCreateDecoder(status)
+        func createDecompressionSession(
+            formatDescription: CMFormatDescription
+        ) -> (OSStatus, VTDecompressionSession?) {
+            var createdSession: VTDecompressionSession?
+            let creationStatus = VTDecompressionSessionCreate(
+                allocator: kCFAllocatorDefault,
+                formatDescription: formatDescription,
+                decoderSpecification: nil,
+                imageBufferAttributes: pixelBufferAttributes as CFDictionary,
+                outputCallback: &callbackRecord,
+                decompressionSessionOut: &createdSession
+            )
+            return (creationStatus, createdSession)
+        }
+
+        var resolvedParameterSets = parameterSets
+        var resolvedDescription = initialDescription
+        var creationResult = createDecompressionSession(formatDescription: resolvedDescription)
+
+        if codec == .av1,
+           creationResult.0 != noErr,
+           av1CodecConfigurationOrigin != .fallback
+        {
+            let fallbackParameterSets = [
+                ShadowClientAV1CodecConfigurationBuilder.fallbackCodecConfigurationRecord(
+                    hdrEnabled: av1FallbackHDR,
+                    yuv444Enabled: av1FallbackYUV444
+                ),
+            ]
+            if resolvedParameterSets != fallbackParameterSets {
+                let fallbackDescription = try makeFormatDescription(
+                    codec: .av1,
+                    parameterSets: fallbackParameterSets
+                )
+                resolvedDescription = fallbackDescription
+                creationResult = createDecompressionSession(formatDescription: fallbackDescription)
+                if creationResult.0 == noErr {
+                    latestParameterSets = fallbackParameterSets
+                    av1CodecConfigurationOrigin = .fallback
+                    resolvedParameterSets = fallbackParameterSets
+                }
+            }
+        }
+
+        guard creationResult.0 == noErr, let newSession = creationResult.1 else {
+            throw ShadowClientVideoToolboxDecoderError.cannotCreateDecoder(creationResult.0)
         }
 
         VTSessionSetProperty(newSession, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
+        formatDescription = resolvedDescription
         session = newSession
-        configuredParameterSets = parameterSets
+        configuredParameterSets = resolvedParameterSets
     }
 
     private func invalidateDecoderSessionForReconfiguration() {
