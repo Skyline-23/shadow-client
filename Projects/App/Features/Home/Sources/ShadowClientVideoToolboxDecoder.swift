@@ -6,6 +6,7 @@ import VideoToolbox
 
 public enum ShadowClientVideoToolboxDecoderError: Error, Equatable, Sendable {
     case missingParameterSets
+    case missingAV1CodecConfiguration
     case missingFrameDimensions
     case unsupportedCodec
     case cannotCreateFormatDescription(OSStatus)
@@ -19,6 +20,8 @@ extension ShadowClientVideoToolboxDecoderError: LocalizedError {
         switch self {
         case .missingParameterSets:
             return "Waiting for codec parameter sets (SPS/PPS or VPS/SPS/PPS) before decode."
+        case .missingAV1CodecConfiguration:
+            return "AV1 codec configuration record (av1C) is missing or invalid."
         case .missingFrameDimensions:
             return "Waiting for launch video dimensions before starting decoder."
         case .unsupportedCodec:
@@ -190,6 +193,9 @@ public actor ShadowClientVideoToolboxDecoder {
         }
 
         let parameterSets = latestParameterSets
+        if codec == .av1, parameterSets.isEmpty {
+            throw ShadowClientVideoToolboxDecoderError.missingAV1CodecConfiguration
+        }
         guard codec == .av1 || !parameterSets.isEmpty else {
             throw ShadowClientVideoToolboxDecoderError.missingParameterSets
         }
@@ -311,13 +317,24 @@ public actor ShadowClientVideoToolboxDecoder {
             guard let dimensions = preferredOutputDimensions else {
                 throw ShadowClientVideoToolboxDecoderError.missingFrameDimensions
             }
+            guard let codecConfiguration = firstAV1CodecConfiguration(from: parameterSets) else {
+                throw ShadowClientVideoToolboxDecoderError.missingAV1CodecConfiguration
+            }
+
+            let sampleDescriptionAtoms: [CFString: Any] = [
+                "av1C" as CFString: codecConfiguration as CFData,
+            ]
+            let extensions: [CFString: Any] = [
+                kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms: sampleDescriptionAtoms as CFDictionary,
+            ]
+
             var formatDescription: CMFormatDescription?
             let status = CMVideoFormatDescriptionCreate(
                 allocator: kCFAllocatorDefault,
                 codecType: kCMVideoCodecType_AV1,
                 width: dimensions.width,
                 height: dimensions.height,
-                extensions: nil,
+                extensions: extensions as CFDictionary,
                 formatDescriptionOut: &formatDescription
             )
             guard status == noErr, let formatDescription else {
@@ -358,6 +375,23 @@ public actor ShadowClientVideoToolboxDecoder {
             ordered.append(parameterSet)
         }
         return ordered
+    }
+
+    private func firstAV1CodecConfiguration(from parameterSets: [Data]) -> Data? {
+        for parameterSet in parameterSets where isLikelyAV1CodecConfigurationRecord(parameterSet) {
+            return parameterSet
+        }
+        return nil
+    }
+
+    private func isLikelyAV1CodecConfigurationRecord(_ value: Data) -> Bool {
+        guard value.count >= 4 else {
+            return false
+        }
+
+        let markerSet = (value[0] & 0x80) != 0
+        let version = value[0] & 0x7F
+        return markerSet && version >= 1
     }
 
     private func makeSampleBuffer(

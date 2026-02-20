@@ -158,7 +158,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 try await decodeFrame(
                     accessUnit: frame,
                     codec: codec,
-                    parameterSets: codec == .av1 ? [] : initialParameterSets
+                    parameterSets: initialParameterSets
                 )
             } catch {
                 logger.error("\(String(describing: codec), privacy: .public) decode failed: \(error.localizedDescription, privacy: .public)")

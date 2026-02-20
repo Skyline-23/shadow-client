@@ -98,6 +98,33 @@ func rtspSdpParserHandlesDescribeWithoutMediaSection() throws {
 
     #expect(track.rtpPayloadType == 98)
     #expect(track.codec == .av1)
+    #expect(track.parameterSets.count == 1)
+    #expect(track.parameterSets[0] == Data([0x00, 0x00, 0x00, 0x01]))
+}
+
+@Test("RTSP SDP parser extracts AV1 codec configuration from fmtp config attribute")
+func rtspSdpParserExtractsAV1CodecConfigurationFromFmtpConfig() throws {
+    let sdp = """
+    v=0
+    o=- 0 0 IN IP4 127.0.0.1
+    s=No Name
+    t=0 0
+    a=control:*
+    m=video 0 RTP/AVP 98
+    a=rtpmap:98 AV1/90000
+    a=fmtp:98 config=gQJABQ==
+    a=control:streamid=video
+    """
+
+    let track = try ShadowClientRTSPSessionDescriptionParser.parseVideoTrack(
+        sdp: sdp,
+        contentBase: "rtsp://skyline23-pc.local:48010/",
+        fallbackSessionURL: "rtsp://skyline23-pc.local:48010"
+    )
+
+    #expect(track.codec == .av1)
+    #expect(track.parameterSets.count == 1)
+    #expect(track.parameterSets[0] == Data([0x81, 0x02, 0x40, 0x05]))
 }
 
 @Test("RTSP SDP parser falls back to Sunshine codec hint when m=video payload list is empty")

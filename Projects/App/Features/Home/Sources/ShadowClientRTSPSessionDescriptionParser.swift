@@ -403,18 +403,50 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             }
             return value
                 .split(separator: ",")
-                .compactMap { Data(base64Encoded: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                .compactMap { decodeBase64Relaxed($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
         case .h265:
             let keys = ["sprop-vps", "sprop-sps", "sprop-pps"]
             return keys.compactMap { key in
                 guard let value = fmtp[key] else {
                     return nil
                 }
-                return Data(base64Encoded: value.trimmingCharacters(in: .whitespacesAndNewlines))
+                return decodeBase64Relaxed(value.trimmingCharacters(in: .whitespacesAndNewlines))
             }
         case .av1:
-            return []
+            let keys = ["config", "sprop-parameter-sets"]
+            var records: [Data] = []
+            for key in keys {
+                guard let value = fmtp[key] else {
+                    continue
+                }
+                for token in value.split(separator: ",") {
+                    guard let record = decodeBase64Relaxed(
+                        token.trimmingCharacters(in: .whitespacesAndNewlines)
+                    ) else {
+                        continue
+                    }
+                    records.append(record)
+                }
+            }
+            return records
         }
+    }
+
+    private static func decodeBase64Relaxed(_ value: String) -> Data? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        if let direct = Data(base64Encoded: trimmed) {
+            return direct
+        }
+
+        let remainder = trimmed.count % 4
+        guard remainder != 0 else {
+            return nil
+        }
+        let padded = trimmed + String(repeating: "=", count: 4 - remainder)
+        return Data(base64Encoded: padded)
     }
 
     private static func selectPayloadType(

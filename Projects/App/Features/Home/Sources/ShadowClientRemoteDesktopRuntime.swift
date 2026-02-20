@@ -1069,6 +1069,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             "cannot create decoder",
             "hardware decode failed",
             "decoder codec is not supported",
+            "av1 codec configuration record",
+            "av1c",
             "osstatus -8971",
         ]
 
@@ -1158,6 +1160,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             "cannot create decoder",
             "hardware decode failed",
             "decoder codec is not supported",
+            "av1 codec configuration record",
+            "av1c",
             "av1 decode failed",
             "osstatus -8971",
             "vtvideo decoderselection",
@@ -1179,7 +1183,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
            settings.preferredCodec == .av1 || settings.preferredCodec == .auto || normalized.contains("av1")
         {
             hints.append(
-                "AV1 VideoToolbox decoder session failed. Apple Silicon can support AV1, but this stream profile may be unsupported (for example HDR 10-bit or 4:4:4). Try HEVC/H.264 or disable HDR."
+                "AV1 decode setup failed (VideoToolbox/av1C configuration). Apple Silicon can support AV1, but some stream profiles are unsupported (for example missing codec config, HDR 10-bit, or 4:4:4). Try HEVC/H.264 or disable HDR/YUV444."
             )
         }
 
