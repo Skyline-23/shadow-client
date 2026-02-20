@@ -64,6 +64,15 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         emit(.keyUp(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers))
     }
 
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.type == .keyDown else {
+            return super.performKeyEquivalent(with: event)
+        }
+
+        emit(.keyDown(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers))
+        return true
+    }
+
     override func flagsChanged(with event: NSEvent) {
         guard let modifier = modifierMapping(for: event.keyCode) else {
             activeModifierFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
