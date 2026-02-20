@@ -125,12 +125,6 @@ actor ShadowClientSunshineControlChannelRuntime {
         guard let connection else {
             throw ShadowClientSunshineControlChannelError.connectionClosed
         }
-        guard case .encryptedV2 = controlChannelMode else {
-            // Sunshine expects input packets to be tunneled through encrypted control payloads
-            // when control protocol type 13 is negotiated.
-            logger.debug("Sunshine input packet skipped because control channel is not encrypted-v2")
-            return
-        }
 
         // Input events are high-frequency and the receive loop is already responsible
         // for processing ACKs. Waiting for ACK here can race with the receive loop and
