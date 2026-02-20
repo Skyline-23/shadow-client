@@ -33,6 +33,7 @@ struct ShadowClientRealtimeSessionSurfaceRepresentable: UIViewRepresentable {
         view.isOpaque = true
         view.backgroundColor = .black
         view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+        view.colorPixelFormat = .bgra8Unorm
         view.framebufferOnly = false
         view.isPaused = false
         view.enableSetNeedsDisplay = false
@@ -55,7 +56,6 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private let frameStore: ShadowClientRealtimeSessionFrameStore
     private let commandQueue: MTLCommandQueue
     private let ciContext: CIContext
-    private let colorSpace = CGColorSpaceCreateDeviceRGB()
 
     init?(
         device: MTLDevice,
@@ -80,7 +80,12 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         }
 
         if let pixelBuffer = frameStore.snapshot() {
-            let sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
+            let colorConfiguration = ShadowClientRealtimeSessionColorPipeline.configuration(for: pixelBuffer)
+            applyColorConfiguration(colorConfiguration, to: view)
+            let sourceImage = CIImage(
+                cvPixelBuffer: pixelBuffer,
+                options: [.colorSpace: colorConfiguration.renderColorSpace]
+            )
             let drawableRect = CGRect(origin: .zero, size: view.drawableSize)
             let sourceRect = sourceImage.extent
             let scale = min(
@@ -105,7 +110,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 to: drawable.texture,
                 commandBuffer: commandBuffer,
                 bounds: drawableRect,
-                colorSpace: colorSpace
+                colorSpace: colorConfiguration.displayColorSpace
             )
         } else if let renderPass = view.currentRenderPassDescriptor,
                   let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPass)
@@ -115,6 +120,21 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
 
         commandBuffer.present(drawable)
         commandBuffer.commit()
+    }
+
+    private func applyColorConfiguration(
+        _ configuration: ShadowClientRealtimeSessionColorConfiguration,
+        to view: MTKView
+    ) {
+        if view.colorPixelFormat != configuration.pixelFormat {
+            view.colorPixelFormat = configuration.pixelFormat
+        }
+
+        if #available(iOS 16.0, tvOS 16.0, *),
+           let metalLayer = view.layer as? CAMetalLayer
+        {
+            metalLayer.wantsExtendedDynamicRangeContent = configuration.prefersExtendedDynamicRange
+        }
     }
 }
 #endif
