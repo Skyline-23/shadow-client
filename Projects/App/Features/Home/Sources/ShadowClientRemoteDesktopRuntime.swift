@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import os
 
 public enum ShadowClientRemoteHostPairStatus: String, Equatable, Sendable {
     case paired
@@ -609,6 +610,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private let sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient
     private let sessionInputClient: any ShadowClientRemoteSessionInputClient
     private let pinProvider: any ShadowClientPairingPINProviding
+    private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RemoteDesktopRuntime")
     private var refreshHostsTask: Task<Void, Never>?
     private var refreshAppsTask: Task<Void, Never>?
     private var pairTask: Task<Void, Never>?
@@ -1010,11 +1012,15 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let host = activeSession.host
         let sessionInputClient = sessionInputClient
         Task {
-            try? await sessionInputClient.send(
-                event: event,
-                host: host,
-                sessionURL: sessionURL
-            )
+            do {
+                try await sessionInputClient.send(
+                    event: event,
+                    host: host,
+                    sessionURL: sessionURL
+                )
+            } catch {
+                logger.debug("Remote input send failed: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 

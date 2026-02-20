@@ -132,7 +132,10 @@ actor ShadowClientSunshineControlChannelRuntime {
             return
         }
 
-        try await sendReliableControlMessage(
+        // Input events are high-frequency and the receive loop is already responsible
+        // for processing ACKs. Waiting for ACK here can race with the receive loop and
+        // cause dropped input when the ACK is consumed by the background receiver first.
+        try await sendReliableControlMessageWithoutBlockingForAcknowledge(
             type: ShadowClientSunshineControlMessageProfile.inputDataType,
             payload: payload,
             channelID: channelID,
