@@ -31,6 +31,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     }
 
     @Published public private(set) var renderState: RenderState = .idle
+    @Published public private(set) var controlRoundTripMs: Int?
 
     public let frameStore: ShadowClientRealtimeSessionFrameStore
 
@@ -41,10 +42,15 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     public func reset() {
         frameStore.update(pixelBuffer: nil)
         renderState = .idle
+        controlRoundTripMs = nil
     }
 
     public func transition(to state: RenderState) {
         renderState = state
+    }
+
+    public func updateControlRoundTripMs(_ milliseconds: Int?) {
+        controlRoundTripMs = milliseconds.map { max(0, $0) }
     }
 }
 

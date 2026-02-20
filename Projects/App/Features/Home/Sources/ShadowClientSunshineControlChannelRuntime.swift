@@ -15,6 +15,7 @@ enum ShadowClientSunshineControlChannelError: Error {
 actor ShadowClientSunshineControlChannelRuntime {
     private let connectTimeout: Duration
     private let commandAcknowledgeTimeout: Duration
+    private let onRoundTripSample: (@Sendable (Double) async -> Void)?
     private let queue = DispatchQueue(label: "com.skyline23.shadowclient.control.enet")
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "ControlChannel")
 
@@ -31,10 +32,12 @@ actor ShadowClientSunshineControlChannelRuntime {
 
     init(
         connectTimeout: Duration = ShadowClientSunshineControlChannelDefaults.connectTimeout,
-        commandAcknowledgeTimeout: Duration = ShadowClientSunshineControlChannelDefaults.commandAcknowledgeTimeout
+        commandAcknowledgeTimeout: Duration = ShadowClientSunshineControlChannelDefaults.commandAcknowledgeTimeout,
+        onRoundTripSample: (@Sendable (Double) async -> Void)? = nil
     ) {
         self.connectTimeout = connectTimeout
         self.commandAcknowledgeTimeout = commandAcknowledgeTimeout
+        self.onRoundTripSample = onRoundTripSample
     }
 
     func start(
@@ -194,7 +197,15 @@ actor ShadowClientSunshineControlChannelRuntime {
                     continue
                 }
 
-                for command in packet.commands where command.isAcknowledgeRequired {
+                for command in packet.commands {
+                    await reportRoundTripSampleIfAvailable(
+                        from: packet,
+                        command: command
+                    )
+
+                    guard command.isAcknowledgeRequired else {
+                        continue
+                    }
                     guard let sentTime = packet.sentTime else {
                         continue
                     }
@@ -338,6 +349,11 @@ actor ShadowClientSunshineControlChannelRuntime {
             }
 
             for command in packet.commands {
+                await reportRoundTripSampleIfAvailable(
+                    from: packet,
+                    command: command
+                )
+
                 logger.notice(
                     "Sunshine control ACK wait command number=\(command.number, privacy: .public) flags=\(command.flags, privacy: .public) relSeq=\(command.reliableSequenceNumber, privacy: .public) channel=\(command.channelID, privacy: .public)"
                 )
@@ -363,6 +379,31 @@ actor ShadowClientSunshineControlChannelRuntime {
         }
 
         throw ShadowClientSunshineControlChannelError.commandAcknowledgeTimedOut
+    }
+
+    private func reportRoundTripSampleIfAvailable(
+        from packet: ShadowClientSunshineENetPacketCodec.ParsedPacket,
+        command: ShadowClientSunshineENetPacketCodec.ParsedPacket.Command
+    ) async {
+        guard let acknowledge = ShadowClientSunshineENetPacketCodec.parseAcknowledge(
+            from: packet,
+            command: command
+        ) else {
+            return
+        }
+
+        let roundTripSampleMs = Self.roundTripMilliseconds(
+            nowSentTime: currentSentTime(),
+            echoedSentTime: acknowledge.receivedSentTime
+        )
+        guard roundTripSampleMs.isFinite,
+              roundTripSampleMs >= 0,
+              roundTripSampleMs <= ShadowClientSunshineControlChannelDefaults.maximumRoundTripSampleMs
+        else {
+            return
+        }
+
+        await onRoundTripSample?(roundTripSampleMs)
     }
 
     private func periodicPingLoop(over connection: NWConnection) async {
@@ -464,6 +505,13 @@ actor ShadowClientSunshineControlChannelRuntime {
 
     private func currentSentTime() -> UInt16 {
         UInt16(truncatingIfNeeded: DispatchTime.now().uptimeNanoseconds / 1_000_000)
+    }
+
+    private static func roundTripMilliseconds(
+        nowSentTime: UInt16,
+        echoedSentTime: UInt16
+    ) -> Double {
+        Double(nowSentTime &- echoedSentTime)
     }
 
     private static func receiveVerifyConnect(

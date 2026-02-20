@@ -132,6 +132,7 @@ public enum ShadowClientTelemetrySimulationDefaults {
 public enum ShadowClientSunshineControlChannelDefaults {
     public static let connectTimeout: Duration = .seconds(2)
     public static let commandAcknowledgeTimeout: Duration = .seconds(2)
+    public static let maximumRoundTripSampleMs = 5_000.0
 }
 
 public enum ShadowClientSunshineSessionDefaults {

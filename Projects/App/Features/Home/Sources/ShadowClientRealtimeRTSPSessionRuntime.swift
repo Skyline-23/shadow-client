@@ -59,6 +59,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     ) async throws {
         try await disconnect()
         let resolvedVideoConfiguration = resolveRuntimeVideoConfiguration(videoConfiguration)
+        let sessionSurfaceContext = self.surfaceContext
         await decoder.setPreferredOutputDimensions(
             width: resolvedVideoConfiguration.width,
             height: resolvedVideoConfiguration.height,
@@ -66,8 +67,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         )
 
         await MainActor.run {
-            surfaceContext.reset()
-            surfaceContext.transition(to: .connecting)
+            sessionSurfaceContext.reset()
+            sessionSurfaceContext.transition(to: .connecting)
         }
 
         let trimmed = sessionURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -76,7 +77,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
 
         let client = ShadowClientRTSPInterleavedClient(
-            timeout: connectTimeout
+            timeout: connectTimeout,
+            onControlRoundTripSample: { [sessionSurfaceContext] roundTripMs in
+                await MainActor.run {
+                    sessionSurfaceContext.updateControlRoundTripMs(
+                        Int(roundTripMs.rounded())
+                    )
+                }
+            }
         )
         let track = try await client.start(
             url: url,
@@ -299,6 +307,7 @@ private struct ShadowClientSendableNWConnection: @unchecked Sendable {
 
 private actor ShadowClientRTSPInterleavedClient {
     private let timeout: Duration
+    private let onControlRoundTripSample: (@Sendable (Double) async -> Void)?
     private let defaultClientPortBase: UInt16 = ShadowClientRTSPProtocolProfile.clientPortBase
     private let queue = DispatchQueue(label: "com.skyline23.shadowclient.rtsp.connection")
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RTSP")
@@ -323,8 +332,12 @@ private actor ShadowClientRTSPInterleavedClient {
     private var remoteInputKey: Data?
     private var negotiatedClientPortBase: UInt16 = ShadowClientRTSPProtocolProfile.clientPortBase
 
-    init(timeout: Duration) {
+    init(
+        timeout: Duration,
+        onControlRoundTripSample: (@Sendable (Double) async -> Void)? = nil
+    ) {
         self.timeout = timeout
+        self.onControlRoundTripSample = onControlRoundTripSample
     }
 
     func start(
@@ -1069,7 +1082,9 @@ private actor ShadowClientRTSPInterleavedClient {
         }
 
         let controlHost = remoteHost ?? .init(host)
-        let runtime = ShadowClientSunshineControlChannelRuntime()
+        let runtime = ShadowClientSunshineControlChannelRuntime(
+            onRoundTripSample: onControlRoundTripSample
+        )
 
         do {
             try await runtime.start(
