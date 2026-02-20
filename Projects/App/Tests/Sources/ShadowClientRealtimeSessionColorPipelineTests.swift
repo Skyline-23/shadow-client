@@ -81,6 +81,37 @@ func colorPipelinePrefersPQTransferOverAttachedColorSpace() throws {
     #expect(configuration.prefersExtendedDynamicRange)
 }
 
+@Test("Color pipeline infers HDR for BT.2020 10-bit frames when transfer metadata is missing")
+func colorPipelineInfersHDRForBT202010BitWithoutTransferMetadata() throws {
+    let pixelBuffer = try makePixelBuffer(pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferColorPrimariesKey,
+        kCVImageBufferColorPrimaries_ITU_R_2020,
+        .shouldPropagate
+    )
+
+    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(for: pixelBuffer)
+    #expect(configuration.prefersExtendedDynamicRange)
+    #expect(configuration.renderColorSpace.name == CGColorSpace.itur_2100_PQ)
+    #expect(configuration.pixelFormat == .rgba16Float)
+}
+
+@Test("Color pipeline keeps SDR when BT.2020 metadata is present without HDR transfer on 8-bit frames")
+func colorPipelineKeepsSDRForBT20208BitWithoutTransferMetadata() throws {
+    let pixelBuffer = try makePixelBuffer(pixelFormat: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferColorPrimariesKey,
+        kCVImageBufferColorPrimaries_ITU_R_2020,
+        .shouldPropagate
+    )
+
+    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(for: pixelBuffer)
+    #expect(!configuration.prefersExtendedDynamicRange)
+    #expect(configuration.pixelFormat == .bgra8Unorm)
+}
+
 private func makePixelBuffer(pixelFormat: OSType) throws -> CVPixelBuffer {
     var pixelBuffer: CVPixelBuffer?
     let attributes: [CFString: Any] = [

@@ -34,11 +34,15 @@ enum ShadowClientRealtimeSessionColorPipeline {
         }
 
         let metadata = colorMetadata(for: pixelBuffer)
-        let prefersExtendedDynamicRange = metadata.isPQ || metadata.isHLG
+        let prefersExtendedDynamicRange = shouldPreferExtendedDynamicRange(
+            for: pixelBuffer,
+            metadata: metadata
+        )
 
         let renderColorSpace = sourceColorSpace(
             for: pixelBuffer,
-            metadata: metadata
+            metadata: metadata,
+            prefersExtendedDynamicRange: prefersExtendedDynamicRange
         )
         let displayColorSpace = prefersExtendedDynamicRange ? defaultHDRDisplayColorSpace : defaultSDRColorSpace
         let pixelFormat: MTLPixelFormat = prefersExtendedDynamicRange ? .rgba16Float : .bgra8Unorm
@@ -53,13 +57,17 @@ enum ShadowClientRealtimeSessionColorPipeline {
 
     private static func sourceColorSpace(
         for pixelBuffer: CVPixelBuffer,
-        metadata: ShadowClientColorMetadata
+        metadata: ShadowClientColorMetadata,
+        prefersExtendedDynamicRange: Bool
     ) -> CGColorSpace {
         if metadata.isPQ {
             return CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? defaultHDRDisplayColorSpace
         }
         if metadata.isHLG {
             return CGColorSpace(name: CGColorSpace.itur_2100_HLG) ?? defaultHDRDisplayColorSpace
+        }
+        if prefersExtendedDynamicRange {
+            return CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? defaultHDRDisplayColorSpace
         }
         if let bufferColorSpace = CVImageBufferGetColorSpace(pixelBuffer)?.takeUnretainedValue() {
             return bufferColorSpace
@@ -85,8 +93,31 @@ enum ShadowClientRealtimeSessionColorPipeline {
         return ShadowClientColorMetadata(
             isPQ: isPQ,
             isHLG: isHLG,
-            isBT2020: isBT2020
+            isBT2020: isBT2020,
+            hasTransferFunction: transferFunction != nil
         )
+    }
+
+    private static func shouldPreferExtendedDynamicRange(
+        for pixelBuffer: CVPixelBuffer,
+        metadata: ShadowClientColorMetadata
+    ) -> Bool {
+        if metadata.isPQ || metadata.isHLG {
+            return true
+        }
+
+        if metadata.hasTransferFunction {
+            return false
+        }
+
+        if !metadata.isBT2020 {
+            return false
+        }
+
+        let pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        return pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange ||
+            pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange ||
+            pixelFormat == kCVPixelFormatType_422YpCbCr10
     }
 
     private static func normalizedAttachmentValue(
@@ -133,4 +164,5 @@ private struct ShadowClientColorMetadata {
     let isPQ: Bool
     let isHLG: Bool
     let isBT2020: Bool
+    let hasTransferFunction: Bool
 }
