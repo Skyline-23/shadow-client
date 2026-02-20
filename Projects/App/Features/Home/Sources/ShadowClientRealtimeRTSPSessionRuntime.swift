@@ -302,9 +302,7 @@ private actor ShadowClientRTSPInterleavedClient {
     private var controlServerPort: NWEndpoint.Port?
     private var audioPingPayload: Data?
     private var videoPingPayload: Data?
-    private var prePlayAudioPingConnection: NWConnection?
     private var prePlayVideoUDPSocket: ShadowClientUDPDatagramSocket?
-    private var prePlayAudioPingWarmupTask: Task<Void, Never>?
     private var prePlayVideoPingWarmupTask: Task<Void, Never>?
     private var controlConnectData: UInt32?
     private var controlChannelRuntime: ShadowClientSunshineControlChannelRuntime?
@@ -567,7 +565,6 @@ private actor ShadowClientRTSPInterleavedClient {
         )
         logger.notice("RTSP video SETUP ok for payload type \(track.rtpPayloadType, privacy: .public) via \(selectedSetupURL ?? track.controlURL, privacy: .public)")
         prepareVideoPingBeforePlay(host: controlHost)
-        await prepareAudioPingBeforePlay(host: controlHost)
 
         var parsedControlConnectData: UInt32?
         var parsedControlServerPort: NWEndpoint.Port?
@@ -1069,8 +1066,6 @@ private actor ShadowClientRTSPInterleavedClient {
         controlServerPort = nil
         audioPingPayload = nil
         videoPingPayload = nil
-        prePlayAudioPingConnection?.cancel()
-        prePlayAudioPingConnection = nil
         prePlayVideoUDPSocket?.close()
         prePlayVideoUDPSocket = nil
         controlConnectData = nil
@@ -1166,7 +1161,7 @@ private actor ShadowClientRTSPInterleavedClient {
 
         let pingPayload = videoPingPayload
         let rtspLogger = logger
-        var audioPingConnection: NWConnection? = prePlayAudioPingConnection
+        var audioPingConnection: NWConnection?
         if audioPingConnection == nil, let audioServerPort {
             do {
                 let connection = try await makeAudioUDPPingConnection(
@@ -1269,7 +1264,6 @@ private actor ShadowClientRTSPInterleavedClient {
             pingTask.cancel()
             audioPingTask.cancel()
             audioPingConnection?.cancel()
-            prePlayAudioPingConnection = nil
             udpSocket.close()
         }
 
@@ -1426,59 +1420,6 @@ private actor ShadowClientRTSPInterleavedClient {
         return port.rawValue
     }
 
-    private func prepareAudioPingBeforePlay(host: NWEndpoint.Host) async {
-        guard prePlayAudioPingConnection == nil,
-              let audioServerPort
-        else {
-            return
-        }
-
-        do {
-            let connection = try await makeAudioUDPPingConnection(
-                host: host,
-                port: audioServerPort,
-                localHost: localHost
-            )
-            prePlayAudioPingConnection = connection
-
-            let prePlayPings = ShadowClientSunshinePingPacketCodec.makePingPackets(
-                sequence: 1,
-                negotiatedPayload: audioPingPayload
-            )
-            for packet in prePlayPings {
-                try await Self.send(bytes: packet, over: connection)
-            }
-            logger.notice("RTSP UDP audio pre-PLAY ping sent (variants=\(prePlayPings.count, privacy: .public), bytes=\(prePlayPings.first?.count ?? 0, privacy: .public))")
-            prePlayAudioPingWarmupTask?.cancel()
-            let payload = audioPingPayload
-            prePlayAudioPingWarmupTask = Task { [logger] in
-                var sequence: UInt32 = 1
-                var loggedSendCount = 0
-                while !Task.isCancelled {
-                    sequence &+= 1
-                    let pingPackets = ShadowClientSunshinePingPacketCodec.makePingPackets(
-                        sequence: sequence,
-                        negotiatedPayload: payload
-                    )
-                    for packet in pingPackets {
-                        try? await Self.send(bytes: packet, over: connection)
-                    }
-                    if loggedSendCount < 2 {
-                        logger.debug("RTSP UDP audio pre-PLAY warmup ping sent (sequence=\(sequence, privacy: .public), variants=\(pingPackets.count, privacy: .public))")
-                        loggedSendCount += 1
-                    }
-                    try? await Task.sleep(for: ShadowClientRealtimeSessionDefaults.pingInterval)
-                }
-            }
-        } catch {
-            prePlayAudioPingWarmupTask?.cancel()
-            prePlayAudioPingWarmupTask = nil
-            prePlayAudioPingConnection?.cancel()
-            prePlayAudioPingConnection = nil
-            logger.error("RTSP UDP audio pre-PLAY ping setup failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
     private func prepareVideoPingBeforePlay(host: NWEndpoint.Host) {
         guard prePlayVideoUDPSocket == nil,
               let videoServerPort
@@ -1535,8 +1476,6 @@ private actor ShadowClientRTSPInterleavedClient {
     }
 
     private func cancelPrePlayPingWarmupTasks() {
-        prePlayAudioPingWarmupTask?.cancel()
-        prePlayAudioPingWarmupTask = nil
         prePlayVideoPingWarmupTask?.cancel()
         prePlayVideoPingWarmupTask = nil
     }
