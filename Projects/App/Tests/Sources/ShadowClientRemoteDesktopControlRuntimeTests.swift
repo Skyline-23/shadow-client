@@ -477,6 +477,153 @@ func remoteDesktopRuntimeRetriesForceLaunchAfterResumeConnectTimeout() async {
     }
 }
 
+@Test("Remote desktop runtime falls back from AV1 to H265 when decoder session creation fails")
+@MainActor
+func remoteDesktopRuntimeFallsBackCodecAfterDecoderCreationFailure() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.32": .init(
+                host: "192.168.0.32",
+                displayName: "AV1-Host",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-AV1"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.32": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let sessionURL = "rtsp://192.168.0.32:48010/session"
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: sessionURL, verb: "launch")
+    )
+    let sessionConnector = FakeSessionConnectionClient(
+        simulatedFailures: [
+            ShadowClientGameStreamError.requestFailed("Could not create hardware decoder session (OSStatus -8971)."),
+        ]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.32"], preferredHost: "192.168.0.32")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(
+            preferredCodec: .av1,
+            enableHDR: true,
+            enableSurroundAudio: true,
+            lowLatencyMode: false
+        )
+    )
+    await waitForLaunchState(runtime)
+
+    #expect(await sessionConnector.connectCalls() == [sessionURL, sessionURL])
+    #expect(await sessionConnector.disconnectCalls() >= 1)
+    let codecHistory = await sessionConnector.videoConfigurations().map(\.preferredCodec)
+    #expect(codecHistory == [.av1, .h265])
+    let launchCalls = await control.launchCalls()
+    #expect(launchCalls.count == 1)
+    #expect(launchCalls[0].forceLaunch == false)
+    if case .launched = runtime.launchState {
+        #expect(true)
+    } else {
+        Issue.record("Expected launched state, got \(runtime.launchState)")
+    }
+}
+
+@Test("Remote desktop runtime downgrades codec for forceLaunch after resume decoder failures")
+@MainActor
+func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterResumeDecoderFailures() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "wifi.skyline23.com": .init(
+                host: "wifi.skyline23.com",
+                displayName: "Skyline23-PC",
+                pairStatus: .paired,
+                currentGameID: 881_448_767,
+                serverState: "SUNSHINE_SERVER_BUSY",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-AV1-RESUME"
+            ),
+        ],
+        appListByHost: [
+            "wifi.skyline23.com": [
+                .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let resumeSessionURL = "rtsp://192.168.0.52:48010/resume"
+    let forcedLaunchSessionURL = "rtsp://192.168.0.52:48010/launch"
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: forcedLaunchSessionURL, verb: "launch"),
+        simulatedLaunchResults: [
+            .init(sessionURL: resumeSessionURL, verb: "resume"),
+            .init(sessionURL: forcedLaunchSessionURL, verb: "launch"),
+        ]
+    )
+    let sessionConnector = FakeSessionConnectionClient(
+        simulatedFailures: [
+            ShadowClientGameStreamError.requestFailed("Could not create hardware decoder session (OSStatus -8971)."),
+            ShadowClientGameStreamError.requestFailed("Could not create hardware decoder session (OSStatus -8971)."),
+            ShadowClientGameStreamError.requestFailed("Could not create hardware decoder session (OSStatus -8971)."),
+        ]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["wifi.skyline23.com"], preferredHost: "wifi.skyline23.com")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 881_448_767,
+        settings: .init(
+            preferredCodec: .av1,
+            enableHDR: true,
+            enableSurroundAudio: true,
+            lowLatencyMode: false
+        )
+    )
+    await waitForLaunchState(runtime, maxAttempts: 200)
+
+    #expect(await sessionConnector.connectCalls() == [
+        resumeSessionURL,
+        resumeSessionURL,
+        resumeSessionURL,
+        forcedLaunchSessionURL,
+    ])
+    let codecHistory = await sessionConnector.videoConfigurations().map(\.preferredCodec)
+    #expect(codecHistory == [.av1, .h265, .h264, .h265])
+    let launchCalls = await control.launchCalls()
+    #expect(launchCalls.count == 2)
+    #expect(launchCalls[0].forceLaunch == false)
+    #expect(launchCalls[1].forceLaunch == true)
+    #expect(launchCalls[0].settings.preferredCodec == .av1)
+    #expect(launchCalls[1].settings.preferredCodec == .h265)
+    #expect(runtime.activeSession?.sessionURL == forcedLaunchSessionURL)
+    if case .launched = runtime.launchState {
+        #expect(true)
+    } else {
+        Issue.record("Expected launched state, got \(runtime.launchState)")
+    }
+}
+
 @Test("Remote desktop runtime fails launch when host returns missing video session URL")
 @MainActor
 func remoteDesktopRuntimeFailsLaunchWhenSessionURLIsMissing() async {
@@ -576,6 +723,126 @@ func remoteDesktopRuntimeFailsLaunchWhenVideoSessionConnectionFails() async {
         Issue.record("Expected failed state, got \(runtime.launchState)")
     }
     #expect(runtime.activeSession == nil)
+}
+
+@Test("Remote desktop runtime appends AV1 compatibility guidance when decoder session creation fails")
+@MainActor
+func remoteDesktopRuntimeAddsAV1CompatibilityGuidanceOnDecoderFailure() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.33": .init(
+                host: "192.168.0.33",
+                displayName: "Decoder-Fail-Host",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-AV1-HINT"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.33": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.33:48010/session", verb: "launch")
+    )
+    let sessionConnector = FakeSessionConnectionClient(
+        simulatedFailures: [
+            ShadowClientGameStreamError.requestFailed("Could not create hardware decoder session (OSStatus -8971)."),
+            ShadowClientGameStreamError.requestFailed("Could not create hardware decoder session (OSStatus -8971)."),
+            ShadowClientGameStreamError.requestFailed("Could not create hardware decoder session (OSStatus -8971)."),
+        ]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.33"], preferredHost: "192.168.0.33")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(
+            preferredCodec: .av1,
+            enableHDR: true,
+            enableSurroundAudio: true,
+            lowLatencyMode: false
+        )
+    )
+    await waitForLaunchState(runtime)
+
+    if case let .failed(message) = runtime.launchState {
+        #expect(message.localizedCaseInsensitiveContains("av1"))
+        #expect(message.localizedCaseInsensitiveContains("videotoolbox"))
+        #expect(message.localizedCaseInsensitiveContains("h.264"))
+    } else {
+        Issue.record("Expected failed state, got \(runtime.launchState)")
+    }
+}
+
+@Test("Remote desktop runtime appends YUV444 guidance when transport fails with YUV444 enabled")
+@MainActor
+func remoteDesktopRuntimeAddsYUV444GuidanceOnTransportFailure() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.34": .init(
+                host: "192.168.0.34",
+                displayName: "YUV444-Fail-Host",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-YUV444-HINT"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.34": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.34:48010/session", verb: "launch")
+    )
+    let sessionConnector = FakeSessionConnectionClient(
+        simulatedFailure: ShadowClientGameStreamError.requestFailed("RTSP UDP video timeout: no video datagram received")
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.34"], preferredHost: "192.168.0.34")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(
+            preferredCodec: .h265,
+            enableHDR: true,
+            enableSurroundAudio: true,
+            lowLatencyMode: false,
+            enableYUV444: true
+        )
+    )
+    await waitForLaunchState(runtime)
+
+    if case let .failed(message) = runtime.launchState {
+        #expect(message.localizedCaseInsensitiveContains("yuv 4:4:4"))
+        #expect(message.localizedCaseInsensitiveContains("disable"))
+    } else {
+        Issue.record("Expected failed state, got \(runtime.launchState)")
+    }
 }
 
 @Test("Remote desktop runtime keeps latest launch state when prior launch is cancelled")
@@ -974,6 +1241,10 @@ private actor FakeSessionConnectionClient: ShadowClientRemoteSessionConnectionCl
 
     func latestVideoConfiguration() -> ShadowClientRemoteSessionVideoConfiguration? {
         recordedVideoConfigurations.last
+    }
+
+    func videoConfigurations() -> [ShadowClientRemoteSessionVideoConfiguration] {
+        recordedVideoConfigurations
     }
 }
 
