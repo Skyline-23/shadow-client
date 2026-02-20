@@ -25,6 +25,21 @@ func sunshineInputCodecEncodesKeyboardKeyDownPacket() {
     #expect(readUInt16LE(payload, at: 12) == 0)
 }
 
+@Test("Sunshine input codec maps mac key code to US virtual key regardless of composed characters")
+func sunshineInputCodecMapsMacKeyCodeIndependentlyOfKeyboardLayoutCharacters() {
+    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+        .keyDown(keyCode: 0x0D, characters: "ㅈ")
+    )
+
+    #expect(encoded != nil)
+    guard let payload = encoded?.payload else {
+        Issue.record("Expected keyboard payload")
+        return
+    }
+
+    #expect(readUInt16LE(payload, at: 9) == 0x57)
+}
+
 @Test("Sunshine input codec encodes mouse button packet")
 func sunshineInputCodecEncodesMouseButtonPacket() {
     let encoded = ShadowClientSunshineInputPacketCodec.encode(

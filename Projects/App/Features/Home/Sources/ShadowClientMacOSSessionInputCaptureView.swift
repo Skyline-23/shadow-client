@@ -20,12 +20,14 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     var onInputEvent: (@MainActor (ShadowClientRemoteInputEvent) -> Void)?
 
     private var trackingAreaToken: NSTrackingArea?
+    private var activeModifierFlags: NSEvent.ModifierFlags = []
 
     override var acceptsFirstResponder: Bool { true }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         window?.acceptsMouseMovedEvents = true
+        activeModifierFlags = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if let window {
             window.makeFirstResponder(self)
         }
@@ -58,6 +60,28 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
 
     override func keyUp(with event: NSEvent) {
         emit(.keyUp(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers))
+    }
+
+    override func flagsChanged(with event: NSEvent) {
+        guard let modifier = modifierMapping(for: event.keyCode) else {
+            activeModifierFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            return
+        }
+
+        let nextFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let wasPressed = activeModifierFlags.contains(modifier.flag)
+        let isPressed = nextFlags.contains(modifier.flag)
+        activeModifierFlags = nextFlags
+
+        guard wasPressed != isPressed else {
+            return
+        }
+
+        if isPressed {
+            emit(.keyDown(keyCode: modifier.keyCode, characters: nil))
+        } else {
+            emit(.keyUp(keyCode: modifier.keyCode, characters: nil))
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -127,6 +151,25 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
 
         Task { @MainActor in
             onInputEvent(event)
+        }
+    }
+
+    private func modifierMapping(
+        for keyCode: UInt16
+    ) -> (flag: NSEvent.ModifierFlags, keyCode: UInt16)? {
+        switch keyCode {
+        case 0x37, 0x36: // Left/Right Command
+            return (.command, keyCode)
+        case 0x38, 0x3C: // Left/Right Shift
+            return (.shift, keyCode)
+        case 0x3B, 0x3E: // Left/Right Control
+            return (.control, keyCode)
+        case 0x3A, 0x3D: // Left/Right Option
+            return (.option, keyCode)
+        case 0x39: // Caps Lock
+            return (.capsLock, keyCode)
+        default:
+            return nil
         }
     }
 }
