@@ -97,6 +97,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         )
         moonlightNVDepacketizer.reset()
         await MainActor.run {
+            surfaceContext.updateActiveVideoCodec(track.codec)
             surfaceContext.transition(to: .waitingForFirstFrame)
         }
 

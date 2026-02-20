@@ -1262,6 +1262,9 @@ public struct ShadowClientAppShellView: View {
                                     .font(.footnote.weight(.semibold))
                                     .foregroundStyle(Color.white.opacity(0.86))
                                     .lineLimit(1)
+                                Text("Codec · \(activeSessionVideoCodecLabel)")
+                                    .font(.caption.monospacedDigit().weight(.semibold))
+                                    .foregroundStyle(Color.white.opacity(0.72))
                             }
 
                             Spacer(minLength: 8)
@@ -1314,6 +1317,10 @@ public struct ShadowClientAppShellView: View {
                                 Label(remoteDesktopRuntime.launchState.label, systemImage: "play.circle.fill")
                                     .font(.footnote.weight(.semibold))
                                     .foregroundStyle(launchStateColor)
+
+                                Label(activeSessionVideoCodecLabel, systemImage: "film.stack.fill")
+                                    .font(.footnote.monospacedDigit().weight(.semibold))
+                                    .foregroundStyle(Color.mint.opacity(0.90))
 
                                 if let sessionURL = activeSession.sessionURL, !sessionURL.isEmpty {
                                     Spacer(minLength: 6)
@@ -1503,6 +1510,7 @@ public struct ShadowClientAppShellView: View {
                 }
 
                 HStack(spacing: 10) {
+                    diagnosticsStatChip(label: "Codec", value: activeSessionVideoCodecLabel)
                     diagnosticsStatChip(label: "Buffer", value: "\(model.targetBufferMs) ms")
                     diagnosticsStatChip(
                         label: "Ping",
@@ -1561,6 +1569,10 @@ public struct ShadowClientAppShellView: View {
                 Text("Telemetry stream pending. Showing connection health baseline.")
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(Color.white.opacity(0.74))
+
+                Text("Codec \(activeSessionVideoCodecLabel)")
+                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(Color.mint.opacity(0.86))
 
                 HStack(spacing: 10) {
                     diagnosticsStatChip(
@@ -1752,10 +1764,28 @@ public struct ShadowClientAppShellView: View {
         }
     }
 
+    private var activeSessionVideoCodecLabel: String {
+        guard let codec = sessionSurfaceContext.activeVideoCodec else {
+            return "Negotiating"
+        }
+        return realtimeSessionVideoCodecLabel(codec)
+    }
+
     private func videoCodecLabel(_ codec: ShadowClientVideoCodecPreference) -> String {
         switch codec {
         case .auto:
             return "Auto"
+        case .av1:
+            return "AV1"
+        case .h265:
+            return "H.265"
+        case .h264:
+            return "H.264"
+        }
+    }
+
+    private func realtimeSessionVideoCodecLabel(_ codec: ShadowClientVideoCodec) -> String {
+        switch codec {
         case .av1:
             return "AV1"
         case .h265:
