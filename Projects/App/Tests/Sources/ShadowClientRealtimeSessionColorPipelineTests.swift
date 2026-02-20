@@ -81,8 +81,8 @@ func colorPipelinePrefersPQTransferOverAttachedColorSpace() throws {
     #expect(configuration.prefersExtendedDynamicRange)
 }
 
-@Test("Color pipeline infers HDR for BT.2020 10-bit frames when transfer metadata is missing")
-func colorPipelineInfersHDRForBT202010BitWithoutTransferMetadata() throws {
+@Test("Color pipeline keeps SDR for BT.2020 10-bit frames when transfer metadata is missing")
+func colorPipelineKeepsSDRForBT202010BitWithoutTransferMetadata() throws {
     let pixelBuffer = try makePixelBuffer(pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
     CVBufferSetAttachment(
         pixelBuffer,
@@ -92,9 +92,21 @@ func colorPipelineInfersHDRForBT202010BitWithoutTransferMetadata() throws {
     )
 
     let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(for: pixelBuffer)
-    #expect(configuration.prefersExtendedDynamicRange)
-    #expect(configuration.renderColorSpace.name == CGColorSpace.itur_2100_PQ)
-    #expect(configuration.pixelFormat == .rgba16Float)
+    #expect(!configuration.prefersExtendedDynamicRange)
+    #expect(configuration.renderColorSpace.name == CGColorSpace.itur_2020)
+    #expect(configuration.pixelFormat == .bgra8Unorm)
+    #expect(
+        attachmentStringValue(
+            forKey: kCVImageBufferTransferFunctionKey,
+            pixelBuffer: pixelBuffer
+        ) == nil
+    )
+    #expect(
+        attachmentStringValue(
+            forKey: kCVImageBufferYCbCrMatrixKey,
+            pixelBuffer: pixelBuffer
+        ) == nil
+    )
 }
 
 @Test("Color pipeline keeps SDR when BT.2020 metadata is present without HDR transfer on 8-bit frames")
@@ -130,6 +142,16 @@ private func makePixelBuffer(pixelFormat: OSType) throws -> CVPixelBuffer {
         throw TestError("Failed to create test pixel buffer.")
     }
     return pixelBuffer
+}
+
+private func attachmentStringValue(
+    forKey key: CFString,
+    pixelBuffer: CVPixelBuffer
+) -> String? {
+    guard let attachment = CVBufferCopyAttachment(pixelBuffer, key, nil) else {
+        return nil
+    }
+    return attachment as? String
 }
 
 private struct TestError: Error {

@@ -15,8 +15,8 @@ enum ShadowClientRealtimeSessionColorPipeline {
         ?? CGColorSpace(name: CGColorSpace.sRGB)
         ?? CGColorSpaceCreateDeviceRGB()
 
-    private static let defaultHDRDisplayColorSpace = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)
-        ?? CGColorSpace(name: CGColorSpace.extendedLinearITUR_2020)
+    private static let defaultHDRDisplayColorSpace = CGColorSpace(name: CGColorSpace.extendedLinearITUR_2020)
+        ?? CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)
         ?? defaultSDRColorSpace
 
     static var defaultDisplayColorSpace: CGColorSpace {
@@ -37,6 +37,11 @@ enum ShadowClientRealtimeSessionColorPipeline {
         let prefersExtendedDynamicRange = shouldPreferExtendedDynamicRange(
             for: pixelBuffer,
             metadata: metadata
+        )
+        applyAttachmentFallbacks(
+            for: pixelBuffer,
+            metadata: metadata,
+            prefersExtendedDynamicRange: prefersExtendedDynamicRange
         )
 
         let renderColorSpace = sourceColorSpace(
@@ -65,9 +70,6 @@ enum ShadowClientRealtimeSessionColorPipeline {
         }
         if metadata.isHLG {
             return CGColorSpace(name: CGColorSpace.itur_2100_HLG) ?? defaultHDRDisplayColorSpace
-        }
-        if prefersExtendedDynamicRange {
-            return CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? defaultHDRDisplayColorSpace
         }
         if let bufferColorSpace = CVImageBufferGetColorSpace(pixelBuffer)?.takeUnretainedValue() {
             return bufferColorSpace
@@ -102,22 +104,52 @@ enum ShadowClientRealtimeSessionColorPipeline {
         for pixelBuffer: CVPixelBuffer,
         metadata: ShadowClientColorMetadata
     ) -> Bool {
-        if metadata.isPQ || metadata.isHLG {
-            return true
+        _ = pixelBuffer
+        return metadata.isPQ || metadata.isHLG
+    }
+
+    private static func applyAttachmentFallbacks(
+        for pixelBuffer: CVPixelBuffer,
+        metadata: ShadowClientColorMetadata,
+        prefersExtendedDynamicRange: Bool
+    ) {
+        if prefersExtendedDynamicRange {
+            if !metadata.isBT2020 {
+                CVBufferSetAttachment(
+                    pixelBuffer,
+                    kCVImageBufferColorPrimariesKey,
+                    kCVImageBufferColorPrimaries_ITU_R_2020,
+                    .shouldPropagate
+                )
+            }
+
+            if !metadata.hasTransferFunction {
+                CVBufferSetAttachment(
+                    pixelBuffer,
+                    kCVImageBufferTransferFunctionKey,
+                    kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
+                    .shouldPropagate
+                )
+            }
+
+            if !hasAttachment(forKey: kCVImageBufferYCbCrMatrixKey, pixelBuffer: pixelBuffer) {
+                CVBufferSetAttachment(
+                    pixelBuffer,
+                    kCVImageBufferYCbCrMatrixKey,
+                    kCVImageBufferYCbCrMatrix_ITU_R_2020,
+                    .shouldPropagate
+                )
+            }
+
         }
 
-        if metadata.hasTransferFunction {
-            return false
-        }
+    }
 
-        if !metadata.isBT2020 {
-            return false
-        }
-
-        let pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
-        return pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange ||
-            pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange ||
-            pixelFormat == kCVPixelFormatType_422YpCbCr10
+    private static func hasAttachment(
+        forKey key: CFString,
+        pixelBuffer: CVPixelBuffer
+    ) -> Bool {
+        CVBufferCopyAttachment(pixelBuffer, key, nil) != nil
     }
 
     private static func normalizedAttachmentValue(

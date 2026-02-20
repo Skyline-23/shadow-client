@@ -3,6 +3,7 @@ import SwiftUI
 #if os(macOS)
 import AppKit
 import CoreImage
+import CoreVideo
 import MetalKit
 
 struct ShadowClientRealtimeSessionSurfaceRepresentable: NSViewRepresentable {
@@ -83,8 +84,31 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
 
         if let pixelBuffer = frameStore.snapshot() {
             let colorConfiguration = ShadowClientRealtimeSessionColorPipeline.configuration(for: pixelBuffer)
-            applyColorConfiguration(colorConfiguration, to: view)
-            let sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
+            let supportsExtendedDynamicRange = supportsExtendedDynamicRangeDisplay(for: view)
+            let shouldToneMapHDRToSDR =
+                colorConfiguration.prefersExtendedDynamicRange && !supportsExtendedDynamicRange
+
+            applyColorConfiguration(
+                colorConfiguration,
+                to: view,
+                supportsExtendedDynamicRange: supportsExtendedDynamicRange
+            )
+
+            var sourceOptions: [CIImageOption: Any] = [:]
+            if shouldUseExplicitRenderColorSpace(for: pixelBuffer) {
+                sourceOptions[.colorSpace] = colorConfiguration.renderColorSpace
+            }
+            if shouldToneMapHDRToSDR, #available(macOS 15.0, *) {
+                sourceOptions[.toneMapHDRtoSDR] = true
+            }
+
+            let sourceImage = CIImage(
+                cvPixelBuffer: pixelBuffer,
+                options: sourceOptions
+            )
+            let outputColorSpace = shouldToneMapHDRToSDR
+                ? ShadowClientRealtimeSessionColorPipeline.defaultDisplayColorSpace
+                : colorConfiguration.displayColorSpace
             let drawableRect = CGRect(origin: .zero, size: view.drawableSize)
             let sourceRect = sourceImage.extent
             let scale = min(
@@ -109,7 +133,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 to: drawable.texture,
                 commandBuffer: commandBuffer,
                 bounds: drawableRect,
-                colorSpace: colorConfiguration.displayColorSpace
+                colorSpace: outputColorSpace
             )
         } else if let renderPass = view.currentRenderPassDescriptor,
                   let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPass)
@@ -123,17 +147,47 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
 
     private func applyColorConfiguration(
         _ configuration: ShadowClientRealtimeSessionColorConfiguration,
-        to view: MTKView
+        to view: MTKView,
+        supportsExtendedDynamicRange: Bool
     ) {
-        if view.colorPixelFormat != configuration.pixelFormat {
-            view.colorPixelFormat = configuration.pixelFormat
+        let shouldRenderExtendedDynamicRange =
+            configuration.prefersExtendedDynamicRange && supportsExtendedDynamicRange
+
+        let targetPixelFormat: MTLPixelFormat = shouldRenderExtendedDynamicRange
+            ? configuration.pixelFormat
+            : .bgra8Unorm
+        if view.colorPixelFormat != targetPixelFormat {
+            view.colorPixelFormat = targetPixelFormat
         }
-        view.colorspace = configuration.displayColorSpace
+        view.colorspace = shouldRenderExtendedDynamicRange
+            ? configuration.displayColorSpace
+            : ShadowClientRealtimeSessionColorPipeline.defaultDisplayColorSpace
 
         if #available(macOS 10.15, *),
            let metalLayer = view.layer as? CAMetalLayer
         {
-            metalLayer.wantsExtendedDynamicRangeContent = configuration.prefersExtendedDynamicRange
+            metalLayer.wantsExtendedDynamicRangeContent = shouldRenderExtendedDynamicRange
+        }
+    }
+
+    private func supportsExtendedDynamicRangeDisplay(for view: MTKView) -> Bool {
+        guard #available(macOS 10.15, *) else {
+            return false
+        }
+        let screen = view.window?.screen ?? NSScreen.main
+        let currentHeadroom = screen?.maximumExtendedDynamicRangeColorComponentValue ?? 1
+        return currentHeadroom > 1.01
+    }
+
+    private func shouldUseExplicitRenderColorSpace(for pixelBuffer: CVPixelBuffer) -> Bool {
+        switch CVPixelBufferGetPixelFormatType(pixelBuffer) {
+        case kCVPixelFormatType_32BGRA,
+             kCVPixelFormatType_32RGBA,
+             kCVPixelFormatType_64RGBAHalf,
+             kCVPixelFormatType_128RGBAFloat:
+            return true
+        default:
+            return false
         }
     }
 }
