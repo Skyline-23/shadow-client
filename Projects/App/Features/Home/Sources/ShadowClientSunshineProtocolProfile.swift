@@ -88,8 +88,11 @@ enum ShadowClientRTSPAnnounceProfile {
 
     static let reliableUDPModeStandard = "1"
     static let reliableUDPModeEncrypted = "13"
+    static let useControlChannelEnabled = "1"
 
-    static let nvFeatureFlagsBase: UInt32 = 0x07
+    // Match Moonlight Gen5 baseline flags so Sunshine parsing stays on the
+    // expected feature path instead of host defaults.
+    static let nvFeatureFlagsBase: UInt32 = 0x87
     static let nvFeatureFlagEncryptionControlV2: UInt32 = 0x80
     static let nvFeatureFlagEncryptedAudio: UInt32 = 0x20
 

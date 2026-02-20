@@ -129,6 +129,59 @@ func rtspAnnouncePayloadMapsSurroundAudio() {
     #expect(stereoAttributes["x-nv-audio.surround.AudioQuality"] == "0")
 }
 
+@Test("RTSP ANNOUNCE payload includes legacy control channel hint for plaintext reliable UDP")
+func rtspAnnouncePayloadIncludesLegacyControlChannelHint() {
+    let payload = ShadowClientRTSPAnnouncePayloadBuilder.build(
+        hostAddress: "192.168.1.10",
+        videoConfiguration: .init(
+            width: 1920,
+            height: 1080,
+            fps: 60,
+            bitrateKbps: 20_000,
+            preferredCodec: .av1,
+            enableHDR: false,
+            enableSurroundAudio: false,
+            enableYUV444: false
+        ),
+        codec: .av1,
+        videoPort: 47_998,
+        moonlightFeatureFlags: 3,
+        encryptionEnabledFlags: 0
+    )
+
+    let attributes = rtspAnnounceAttributes(from: payload)
+
+    #expect(attributes["x-nv-general.useReliableUdp"] == "1")
+    #expect(attributes["x-nv-ri.useControlChannel"] == "1")
+    #expect(attributes["x-nv-general.featureFlags"] == "135")
+}
+
+@Test("RTSP ANNOUNCE payload omits legacy control channel hint for encrypted control-v2 mode")
+func rtspAnnouncePayloadOmitsLegacyControlChannelHintWhenEncryptedControlIsEnabled() {
+    let payload = ShadowClientRTSPAnnouncePayloadBuilder.build(
+        hostAddress: "192.168.1.11",
+        videoConfiguration: .init(
+            width: 1920,
+            height: 1080,
+            fps: 60,
+            bitrateKbps: 20_000,
+            preferredCodec: .h265,
+            enableHDR: false,
+            enableSurroundAudio: false,
+            enableYUV444: false
+        ),
+        codec: .h265,
+        videoPort: 47_998,
+        moonlightFeatureFlags: 3,
+        encryptionEnabledFlags: 0x01
+    )
+
+    let attributes = rtspAnnounceAttributes(from: payload)
+
+    #expect(attributes["x-nv-general.useReliableUdp"] == "13")
+    #expect(attributes["x-nv-ri.useControlChannel"] == nil)
+}
+
 private func rtspAnnounceAttributes(from payload: Data) -> [String: String] {
     guard let text = String(data: payload, encoding: .utf8) else {
         return [:]

@@ -35,7 +35,7 @@ enum ShadowClientRTSPAnnouncePayloadBuilder {
         )
         let surroundEnabled = videoConfiguration.enableSurroundAudio
 
-        let attributes: [(String, String)] = [
+        var attributes: [(String, String)] = [
             ("x-ml-general.featureFlags", "\(moonlightFeatureFlags)"),
             ("x-ss-general.encryptionEnabled", "\(encryptionEnabledFlags)"),
             ("x-ss-video[0].chromaSamplingType", ShadowClientRTSPAnnounceProfile.chromaSamplingType(yuv444Enabled: videoConfiguration.enableYUV444)),
@@ -74,6 +74,11 @@ enum ShadowClientRTSPAnnouncePayloadBuilder {
             ("x-nv-aqos.packetDuration", ShadowClientRTSPAnnounceProfile.aqosPacketDuration),
             ("x-nv-video[0].encoderCscMode", ShadowClientRTSPAnnounceProfile.encoderCSCMode),
         ]
+        if reliableUDPMode == ShadowClientRTSPAnnounceProfile.reliableUDPModeStandard {
+            attributes.append(
+                ("x-nv-ri.useControlChannel", ShadowClientRTSPAnnounceProfile.useControlChannelEnabled)
+            )
+        }
 
         var payload = ""
         payload += "v=\(ShadowClientRTSPAnnounceProfile.sdpVersion)\r\n"

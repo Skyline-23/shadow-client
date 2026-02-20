@@ -58,7 +58,7 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let describeResponsePreviewByteCount = 512
     public static let ignoredRTPControlPayloadType = 127
     public static let defaultPingASCII = "PING"
-    public static let initialVideoDatagramTimeout: Duration = .seconds(5)
+    public static let initialVideoDatagramTimeout: Duration = .seconds(10)
     public static let udpParseFailureLogLimit = 6
     public static let minimumTransportReadLength = 1
     public static let maximumTransportReadLength = 64 * 1_024
@@ -135,9 +135,7 @@ public enum ShadowClientSunshineControlChannelDefaults {
 }
 
 public enum ShadowClientSunshineSessionDefaults {
-    // Prefer address-based ping/session routing for compatibility with hosts
-    // that advertise v1 but fail to start media on payload-only matching.
-    public static let prefersSessionIdentifierV1 = false
+    public static let prefersSessionIdentifierV1 = true
     public static let supportsEncryptedControlChannelV2 = true
 }
 

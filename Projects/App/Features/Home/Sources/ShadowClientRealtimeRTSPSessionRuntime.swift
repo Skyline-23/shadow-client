@@ -1162,19 +1162,7 @@ private actor ShadowClientRTSPInterleavedClient {
         let pingPayload = videoPingPayload
         let rtspLogger = logger
         var audioPingConnection: NWConnection?
-        if audioPingConnection == nil, let audioServerPort {
-            do {
-                let connection = try await makeAudioUDPPingConnection(
-                    host: host,
-                    port: audioServerPort,
-                    localHost: localHost
-                )
-                rtspLogger.notice("RTSP UDP audio ping socket ready on \(audioServerPort.rawValue, privacy: .public)")
-                audioPingConnection = connection
-            } catch {
-                rtspLogger.error("RTSP UDP audio ping socket setup failed: \(error.localizedDescription, privacy: .public)")
-            }
-        }
+        var audioPingTask: Task<Void, Never>?
         let audioPingPayload = self.audioPingPayload
 
         do {
@@ -1190,25 +1178,55 @@ private actor ShadowClientRTSPInterleavedClient {
             rtspLogger.error("RTSP UDP video initial ping failed: \(error.localizedDescription, privacy: .public)")
         }
 
-        if let audioPingConnection {
+        if audioPingConnection == nil, let audioServerPort {
             do {
+                let connection = try await makeAudioUDPPingConnection(
+                    host: host,
+                    port: audioServerPort,
+                    localHost: localHost
+                )
+                rtspLogger.notice("RTSP UDP audio ping socket ready on \(audioServerPort.rawValue, privacy: .public)")
+                audioPingConnection = connection
+
                 let initialAudioPings = ShadowClientSunshinePingPacketCodec.makePingPackets(
                     sequence: 1,
                     negotiatedPayload: audioPingPayload
                 )
                 for initialAudioPing in initialAudioPings {
-                    try await Self.send(bytes: initialAudioPing, over: audioPingConnection)
+                    try await Self.send(bytes: initialAudioPing, over: connection)
                 }
                 rtspLogger.notice("RTSP UDP audio initial ping sent (variants=\(initialAudioPings.count, privacy: .public), bytes=\(initialAudioPings.first?.count ?? 0, privacy: .public))")
+
+                let sendableAudioConnection = ShadowClientSendableNWConnection(connection: connection)
+                audioPingTask = Task {
+                    var sequence: UInt32 = 1
+                    var loggedPingCount = 0
+                    while !Task.isCancelled {
+                        sequence &+= 1
+                        let pingPackets = ShadowClientSunshinePingPacketCodec.makePingPackets(
+                            sequence: sequence,
+                            negotiatedPayload: audioPingPayload
+                        )
+                        for pingPacket in pingPackets {
+                            try? await Self.send(bytes: pingPacket, over: sendableAudioConnection.connection)
+                        }
+                        if loggedPingCount < 2 {
+                            rtspLogger.notice("RTSP UDP audio ping sent (sequence=\(sequence, privacy: .public), variants=\(pingPackets.count, privacy: .public), bytes=\(pingPackets.first?.count ?? 0, privacy: .public))")
+                            loggedPingCount += 1
+                        }
+                        try? await Task.sleep(for: ShadowClientRealtimeSessionDefaults.pingInterval)
+                    }
+                }
             } catch {
-                rtspLogger.error("RTSP UDP audio initial ping failed: \(error.localizedDescription, privacy: .public)")
+                rtspLogger.error("RTSP UDP audio ping socket setup failed: \(error.localizedDescription, privacy: .public)")
+                audioPingConnection?.cancel()
+                audioPingConnection = nil
+                audioPingTask?.cancel()
+                audioPingTask = nil
             }
         }
 
         let sendableVideoSocket = udpSocket
-        let sendableAudioConnection = audioPingConnection.map {
-            ShadowClientSendableNWConnection(connection: $0)
-        }
 
         let pingTask = Task {
             var sequence: UInt32 = 1
@@ -1237,32 +1255,10 @@ private actor ShadowClientRTSPInterleavedClient {
                 try? await Task.sleep(for: ShadowClientRealtimeSessionDefaults.pingInterval)
             }
         }
-        let audioPingTask = Task {
-            guard let sendableAudioConnection else {
-                return
-            }
-            var sequence: UInt32 = 1
-            var loggedPingCount = 0
-            while !Task.isCancelled {
-                sequence &+= 1
-                let pingPackets = ShadowClientSunshinePingPacketCodec.makePingPackets(
-                    sequence: sequence,
-                    negotiatedPayload: audioPingPayload
-                )
-                for pingPacket in pingPackets {
-                    try? await Self.send(bytes: pingPacket, over: sendableAudioConnection.connection)
-                }
-                if loggedPingCount < 2 {
-                    rtspLogger.notice("RTSP UDP audio ping sent (sequence=\(sequence, privacy: .public), variants=\(pingPackets.count, privacy: .public), bytes=\(pingPackets.first?.count ?? 0, privacy: .public))")
-                    loggedPingCount += 1
-                }
-                try? await Task.sleep(for: ShadowClientRealtimeSessionDefaults.pingInterval)
-            }
-        }
 
         defer {
             pingTask.cancel()
-            audioPingTask.cancel()
+            audioPingTask?.cancel()
             audioPingConnection?.cancel()
             udpSocket.close()
         }
@@ -1350,21 +1346,9 @@ private actor ShadowClientRTSPInterleavedClient {
         port: NWEndpoint.Port,
         localHost: NWEndpoint.Host?
     ) throws -> ShadowClientUDPDatagramSocket {
-        if negotiatedClientPortBase > 0 {
-            do {
-                let boundSocket = try ShadowClientUDPDatagramSocket(
-                    localHost: localHost,
-                    localPort: negotiatedClientPortBase,
-                    remoteHost: host,
-                    remotePort: port.rawValue
-                )
-                logger.notice("RTSP UDP video socket bound to \(localHost.map(String.init(describing:)) ?? ShadowClientRTSPProtocolProfile.wildcardIPv4HostAddress, privacy: .public):\(self.negotiatedClientPortBase, privacy: .public)")
-                return boundSocket
-            } catch {
-                logger.error("RTSP UDP video bind failed on \(localHost.map(String.init(describing:)) ?? ShadowClientRTSPProtocolProfile.wildcardIPv4HostAddress, privacy: .public):\(self.negotiatedClientPortBase, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            }
-        }
-
+        // Moonlight sends X-GS-ClientPort in RTSP but actually pings/sends media on
+        // sockets bound with local port 0 (ephemeral). Align to that behavior to avoid
+        // local fixed-port collisions and host-side peer mismatch edge cases.
         let socket = try ShadowClientUDPDatagramSocket(
             localHost: localHost,
             localPort: nil,
@@ -1380,25 +1364,14 @@ private actor ShadowClientRTSPInterleavedClient {
         port: NWEndpoint.Port,
         localHost: NWEndpoint.Host?
     ) async throws -> NWConnection {
-        if let clientPort = NWEndpoint.Port(rawValue: negotiatedClientPortBase + 1) {
-            let bindHost = ShadowClientRTSPProtocolProfile.localBindHost(from: localHost)
-            let parameters = NWParameters.udp
+        let parameters = NWParameters.udp
+        if let localHost {
             parameters.requiredLocalEndpoint = .hostPort(
-                host: bindHost,
-                port: clientPort
+                host: localHost,
+                port: .any
             )
-            let boundConnection = NWConnection(host: host, port: port, using: parameters)
-            do {
-                try await waitForReady(boundConnection)
-                logger.notice("RTSP UDP audio ping socket bound to \(String(describing: bindHost), privacy: .public):\(clientPort.rawValue, privacy: .public)")
-                return boundConnection
-            } catch {
-                logger.error("RTSP UDP audio ping bind failed on \(String(describing: bindHost), privacy: .public):\(clientPort.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                boundConnection.cancel()
-            }
         }
-
-        let connection = NWConnection(host: host, port: port, using: .udp)
+        let connection = NWConnection(host: host, port: port, using: parameters)
         try await waitForReady(connection)
         if let local = resolvedLocalHost(from: connection),
            let localPort = resolvedLocalPort(from: connection)
