@@ -84,7 +84,6 @@ public struct ShadowClientAppShellView: View {
                 .accessibilityIdentifier("shadow.root.tabview")
             } else {
                 remoteSessionFlowView
-                    .ignoresSafeArea()
                     .transition(.opacity)
                     .accessibilityIdentifier("shadow.root.remote-session")
             }
@@ -1220,7 +1219,6 @@ public struct ShadowClientAppShellView: View {
         if let activeSession = remoteDesktopRuntime.activeSession {
             ZStack {
                 Color.black
-                    .ignoresSafeArea()
 
                 ZStack {
                     ShadowClientRealtimeSessionSurfaceView(
@@ -1268,6 +1266,23 @@ public struct ShadowClientAppShellView: View {
 
                             Spacer(minLength: 8)
 
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    showDiagnosticsHUD.toggle()
+                                }
+                            } label: {
+                                Label(
+                                    showDiagnosticsHUD ? "HUD On" : "HUD Off",
+                                    systemImage: showDiagnosticsHUD
+                                        ? "waveform.path.ecg.rectangle.fill"
+                                        : "waveform.path.ecg.rectangle"
+                                )
+                            }
+                            .accessibilityIdentifier("shadow.home.session.hud-toggle")
+                            .accessibilityLabel("Toggle Session HUD")
+                            .accessibilityHint("Shows or hides realtime diagnostics overlay.")
+                            .buttonStyle(.bordered)
+
                             Button("End Session") {
                                 remoteDesktopRuntime.clearActiveSession()
                             }
@@ -1282,6 +1297,7 @@ public struct ShadowClientAppShellView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .padding(.horizontal, 12)
                         .padding(.top, 12)
+                        .safeAreaPadding(.top)
                         .transition(.move(edge: .top).combined(with: .opacity))
                     }
 
@@ -1316,20 +1332,27 @@ public struct ShadowClientAppShellView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .padding(.horizontal, 12)
                         .padding(.bottom, 12)
+                        .safeAreaPadding(.bottom)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
 
-                if showDiagnosticsHUD, let settingsDiagnosticsModel {
+                if let hudDisplayState = realtimeSessionHUDDisplayState {
                     VStack {
                         HStack {
                             Spacer()
-                            realtimeSessionDiagnosticsHUD(settingsDiagnosticsModel)
+                            switch hudDisplayState {
+                            case let .telemetry(model):
+                                realtimeSessionDiagnosticsHUD(model)
+                            case let .waitingForTelemetry(controlRoundTripMs):
+                                realtimeSessionBootstrapDiagnosticsHUD(controlRoundTripMs: controlRoundTripMs)
+                            }
                         }
                         Spacer(minLength: 0)
                     }
                     .padding(.top, sessionControlsVisible ? 72 : 12)
-                    .padding(.horizontal, 12)
+                    .padding(.trailing, 12)
+                    .safeAreaPadding([.top, .trailing])
                     .allowsHitTesting(false)
                 }
             }
@@ -1394,6 +1417,14 @@ public struct ShadowClientAppShellView: View {
         horizontalSizeClass == .compact ? 20 : 28
     }
 
+    private var realtimeSessionHUDDisplayState: ShadowClientRealtimeSessionHUDDisplayState? {
+        ShadowClientRealtimeSessionHUDDisplayStateMapper.make(
+            showDiagnosticsHUD: showDiagnosticsHUD,
+            diagnosticsModel: settingsDiagnosticsModel,
+            controlRoundTripMs: sessionSurfaceContext.controlRoundTripMs
+        )
+    }
+
     private func panelSurface(cornerRadius: CGFloat) -> some View {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             .fill(
@@ -1441,67 +1472,126 @@ public struct ShadowClientAppShellView: View {
             }
     }
 
+    private func realtimeSessionHUDCard<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .padding(10)
+            .frame(width: isCompactLayout ? 220 : 280, alignment: .leading)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.24), radius: 12, x: 0, y: 6)
+    }
+
     private func realtimeSessionDiagnosticsHUD(_ model: SettingsDiagnosticsHUDModel) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "waveform.path.ecg.rectangle")
-                    .foregroundStyle(toneColor(for: model.tone))
-                Text("Realtime HUD")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.white.opacity(0.9))
-                Spacer(minLength: 8)
-                Text(model.tone.rawValue.uppercased())
-                    .font(.caption2.monospaced().weight(.semibold))
-                    .foregroundStyle(toneColor(for: model.tone))
-            }
+        realtimeSessionHUDCard {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform.path.ecg.rectangle")
+                        .foregroundStyle(toneColor(for: model.tone))
+                    Text("Realtime HUD")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.9))
+                    Spacer(minLength: 8)
+                    Text(model.tone.rawValue.uppercased())
+                        .font(.caption2.monospaced().weight(.semibold))
+                        .foregroundStyle(toneColor(for: model.tone))
+                }
 
-            HStack(spacing: 10) {
-                diagnosticsStatChip(label: "Buffer", value: "\(model.targetBufferMs) ms")
-                diagnosticsStatChip(
-                    label: "Ping",
-                    value: diagnosticsLatestValue(
-                        samples: sessionDiagnosticsHistory.controlRoundTripMsSamples,
-                        unit: "ms"
+                HStack(spacing: 10) {
+                    diagnosticsStatChip(label: "Buffer", value: "\(model.targetBufferMs) ms")
+                    diagnosticsStatChip(
+                        label: "Ping",
+                        value: diagnosticsLatestValue(
+                            samples: sessionDiagnosticsHistory.controlRoundTripMsSamples,
+                            unit: "ms"
+                        )
                     )
-                )
-                diagnosticsStatChip(label: "Jitter", value: "\(model.jitterMs) ms")
-                diagnosticsStatChip(label: "Drop", value: String(format: "%.1f%%", model.frameDropPercent))
-            }
+                    diagnosticsStatChip(label: "Jitter", value: "\(model.jitterMs) ms")
+                    diagnosticsStatChip(label: "Drop", value: String(format: "%.1f%%", model.frameDropPercent))
+                }
 
-            diagnosticsSparklineRow(
-                title: "Ping Spike",
-                samples: sessionDiagnosticsHistory.controlRoundTripMsSamples,
-                color: .mint,
-                unit: "ms"
-            )
-            diagnosticsSparklineRow(
-                title: "Jitter Spike",
-                samples: sessionDiagnosticsHistory.jitterMsSamples,
-                color: .orange,
-                unit: "ms"
-            )
-            diagnosticsSparklineRow(
-                title: "Frame Drop",
-                samples: sessionDiagnosticsHistory.frameDropPercentSamples,
-                color: .red,
-                unit: "%"
-            )
-            diagnosticsSparklineRow(
-                title: "Packet Loss",
-                samples: sessionDiagnosticsHistory.packetLossPercentSamples,
-                color: .yellow,
-                unit: "%"
-            )
+                diagnosticsSparklineRow(
+                    title: "Ping Spike",
+                    samples: sessionDiagnosticsHistory.controlRoundTripMsSamples,
+                    color: .mint,
+                    unit: "ms"
+                )
+                diagnosticsSparklineRow(
+                    title: "Jitter Spike",
+                    samples: sessionDiagnosticsHistory.jitterMsSamples,
+                    color: .orange,
+                    unit: "ms"
+                )
+                diagnosticsSparklineRow(
+                    title: "Frame Drop",
+                    samples: sessionDiagnosticsHistory.frameDropPercentSamples,
+                    color: .red,
+                    unit: "%"
+                )
+                diagnosticsSparklineRow(
+                    title: "Packet Loss",
+                    samples: sessionDiagnosticsHistory.packetLossPercentSamples,
+                    color: .yellow,
+                    unit: "%"
+                )
+            }
         }
-        .padding(10)
-        .frame(width: isCompactLayout ? 220 : 280, alignment: .leading)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.white.opacity(0.16), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.24), radius: 12, x: 0, y: 6)
+    }
+
+    private func realtimeSessionBootstrapDiagnosticsHUD(controlRoundTripMs: Int?) -> some View {
+        realtimeSessionHUDCard {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform.path.ecg.rectangle")
+                        .foregroundStyle(Color.white.opacity(0.82))
+                    Text("Realtime HUD")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.9))
+                    Spacer(minLength: 8)
+                    Text("BOOTSTRAP")
+                        .font(.caption2.monospaced().weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.72))
+                }
+
+                Text("Telemetry stream pending. Showing connection health baseline.")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(Color.white.opacity(0.74))
+
+                HStack(spacing: 10) {
+                    diagnosticsStatChip(
+                        label: "Ping",
+                        value: diagnosticsRoundTripValue(controlRoundTripMs)
+                    )
+                    diagnosticsStatChip(
+                        label: "Trend",
+                        value: diagnosticsLatestValue(
+                            samples: sessionDiagnosticsHistory.controlRoundTripMsSamples,
+                            unit: "ms"
+                        )
+                    )
+                    diagnosticsStatChip(label: "Telemetry", value: "Waiting")
+                }
+
+                diagnosticsSparklineRow(
+                    title: "Ping Spike",
+                    samples: sessionDiagnosticsHistory.controlRoundTripMsSamples,
+                    color: .mint,
+                    unit: "ms"
+                )
+            }
+        }
+    }
+
+    private func diagnosticsRoundTripValue(_ roundTripMs: Int?) -> String {
+        guard let roundTripMs else {
+            return "--"
+        }
+        return "\(max(roundTripMs, 0)) ms"
     }
 
     private func diagnosticsSparklineRow(
