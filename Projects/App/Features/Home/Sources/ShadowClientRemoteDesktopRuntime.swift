@@ -882,6 +882,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         throw error
                     }
 
+                    await sessionConnectionClient.disconnect()
+
                     let forcedLaunchResult = try await controlClient.launch(
                         host: selectedHost.host,
                         httpsPort: selectedHost.httpsPort,
@@ -1041,6 +1043,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             "transport connection timed out",
             "video session endpoint",
             "rtsp transport connection closed",
+            "first frame",
         ]
 
         return retrySignatures.contains(where: normalized.contains)

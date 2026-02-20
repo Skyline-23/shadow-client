@@ -464,6 +464,7 @@ func remoteDesktopRuntimeRetriesForceLaunchAfterResumeConnectTimeout() async {
     await waitForLaunchState(runtime)
 
     #expect(await sessionConnector.connectCalls() == [resumeSessionURL, forcedLaunchSessionURL])
+    #expect(await sessionConnector.disconnectCalls() >= 1)
     let calls = await control.launchCalls()
     #expect(calls.count == 2)
     #expect(calls[0].forceLaunch == false)

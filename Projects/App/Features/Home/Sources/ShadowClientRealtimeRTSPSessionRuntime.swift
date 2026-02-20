@@ -117,6 +117,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 }
             }
         }
+
+        try await waitForInitialRenderState(timeout: connectTimeout)
     }
 
     public func disconnect() async throws {
@@ -191,6 +193,36 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             enableSurroundAudio: configuration.enableSurroundAudio,
             enableYUV444: configuration.enableYUV444,
             remoteInputKey: configuration.remoteInputKey
+        )
+    }
+
+    private func waitForInitialRenderState(timeout: Duration) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+
+        while clock.now < deadline {
+            if Task.isCancelled {
+                throw CancellationError()
+            }
+
+            let state = await MainActor.run {
+                surfaceContext.renderState
+            }
+
+            switch state {
+            case .rendering:
+                return
+            case let .failed(message):
+                throw ShadowClientRealtimeSessionRuntimeError.transportFailure(message)
+            case .idle, .connecting, .waitingForFirstFrame:
+                break
+            }
+
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+
+        throw ShadowClientRealtimeSessionRuntimeError.transportFailure(
+            "Timed out waiting for first frame."
         )
     }
 
