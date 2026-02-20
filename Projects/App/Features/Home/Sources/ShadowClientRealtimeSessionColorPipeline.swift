@@ -55,14 +55,14 @@ enum ShadowClientRealtimeSessionColorPipeline {
         for pixelBuffer: CVPixelBuffer,
         metadata: ShadowClientColorMetadata
     ) -> CGColorSpace {
-        if let bufferColorSpace = CVImageBufferGetColorSpace(pixelBuffer)?.takeUnretainedValue() {
-            return bufferColorSpace
-        }
         if metadata.isPQ {
             return CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? defaultHDRDisplayColorSpace
         }
         if metadata.isHLG {
             return CGColorSpace(name: CGColorSpace.itur_2100_HLG) ?? defaultHDRDisplayColorSpace
+        }
+        if let bufferColorSpace = CVImageBufferGetColorSpace(pixelBuffer)?.takeUnretainedValue() {
+            return bufferColorSpace
         }
         if metadata.isBT2020 {
             return CGColorSpace(name: CGColorSpace.itur_2020) ?? defaultSDRColorSpace
