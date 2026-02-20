@@ -55,6 +55,8 @@ public struct ShadowClientAppShellView: View {
     @State private var settingsTelemetryCancellable: AnyCancellable?
     @State private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
     @State private var sessionControlsVisible = true
+    @State private var launchFailureAlertMessage = ""
+    @State private var isLaunchFailureAlertPresented = false
 
     public init(platformName: String, dependencies: ShadowClientFeatureHomeDependencies) {
         self.platformName = platformName
@@ -113,9 +115,26 @@ public struct ShadowClientAppShellView: View {
                 bitrateKbps = ShadowClientAppSettingsDefaults.maximumBitrateWhenLocked
             }
         }
+        .onChange(of: remoteDesktopRuntime.launchState, initial: false) { _, newState in
+            guard case let .failed(message) = newState else {
+                return
+            }
+
+            let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                return
+            }
+            launchFailureAlertMessage = trimmed
+            isLaunchFailureAlertPresented = true
+        }
         .onDisappear {
             stopSettingsTelemetrySubscription()
             stopHostDiscovery()
+        }
+        .alert("Remote Session Launch Failed", isPresented: $isLaunchFailureAlertPresented) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(launchFailureAlertMessage)
         }
         .animation(.easeInOut(duration: 0.2), value: remoteDesktopRuntime.activeSession != nil)
     }
@@ -1205,6 +1224,7 @@ public struct ShadowClientAppShellView: View {
                     ShadowClientMacOSSessionInputCaptureView { event in
                         remoteDesktopRuntime.sendInput(event)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.clear)
 #endif
                 }
