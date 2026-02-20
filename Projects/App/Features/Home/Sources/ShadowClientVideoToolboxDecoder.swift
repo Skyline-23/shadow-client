@@ -261,23 +261,40 @@ public actor ShadowClientVideoToolboxDecoder {
             )
         )
 
-        let pixelBufferAttributes: [String: Any] = [
-            kCVPixelBufferMetalCompatibilityKey as String: true,
-            kCVPixelBufferIOSurfacePropertiesKey as String: [:] as CFDictionary,
-        ]
+        let fallbackPixelBufferAttributes = Self.defaultPixelBufferAttributes
+        let preferredPixelBufferAttributes = pixelBufferAttributes(for: codec)
+        let shouldRetryWithoutPreferredPixelFormat = codec == .av1
+
         func createDecompressionSession(
-            formatDescription: CMFormatDescription
+            formatDescription: CMFormatDescription,
+            imageBufferAttributes: [String: Any]
         ) -> (OSStatus, VTDecompressionSession?) {
             var createdSession: VTDecompressionSession?
             let creationStatus = VTDecompressionSessionCreate(
                 allocator: kCFAllocatorDefault,
                 formatDescription: formatDescription,
                 decoderSpecification: nil,
-                imageBufferAttributes: pixelBufferAttributes as CFDictionary,
+                imageBufferAttributes: imageBufferAttributes as CFDictionary,
                 outputCallback: &callbackRecord,
                 decompressionSessionOut: &createdSession
             )
             return (creationStatus, createdSession)
+        }
+
+        func createDecompressionSession(
+            formatDescription: CMFormatDescription
+        ) -> (OSStatus, VTDecompressionSession?) {
+            let preferredResult = createDecompressionSession(
+                formatDescription: formatDescription,
+                imageBufferAttributes: preferredPixelBufferAttributes
+            )
+            if preferredResult.0 == noErr || !shouldRetryWithoutPreferredPixelFormat {
+                return preferredResult
+            }
+            return createDecompressionSession(
+                formatDescription: formatDescription,
+                imageBufferAttributes: fallbackPixelBufferAttributes
+            )
         }
 
         var resolvedParameterSets = parameterSets
@@ -335,6 +352,26 @@ public actor ShadowClientVideoToolboxDecoder {
             return CMTimeScale(ShadowClientVideoDecoderDefaults.defaultDecodePresentationTimeScale)
         }
         return timescale
+    }
+
+    private static var defaultPixelBufferAttributes: [String: Any] {
+        [
+            kCVPixelBufferMetalCompatibilityKey as String: true,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:] as CFDictionary,
+        ]
+    }
+
+    private func pixelBufferAttributes(for codec: ShadowClientVideoCodec) -> [String: Any] {
+        var attributes = Self.defaultPixelBufferAttributes
+        guard codec == .av1 else {
+            return attributes
+        }
+
+        let pixelFormat: OSType = av1FallbackHDR
+            ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+            : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        attributes[kCVPixelBufferPixelFormatTypeKey as String] = pixelFormat
+        return attributes
     }
 
     private func makeFormatDescription(
@@ -406,9 +443,12 @@ public actor ShadowClientVideoToolboxDecoder {
             let sampleDescriptionAtoms: [CFString: Any] = [
                 "av1C" as CFString: codecConfiguration as CFData,
             ]
-            let extensions: [CFString: Any] = [
+            var extensions: [CFString: Any] = [
                 kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms: sampleDescriptionAtoms as CFDictionary,
             ]
+            for (key, value) in av1FormatColorExtensions() {
+                extensions[key] = value
+            }
 
             var formatDescription: CMFormatDescription?
             let status = CMVideoFormatDescriptionCreate(
@@ -424,6 +464,25 @@ public actor ShadowClientVideoToolboxDecoder {
             }
             return formatDescription
         }
+    }
+
+    private func av1FormatColorExtensions() -> [CFString: Any] {
+        let fullRangeValue: CFBoolean = kCFBooleanFalse
+        if av1FallbackHDR {
+            return [
+                kCVImageBufferColorPrimariesKey: kCVImageBufferColorPrimaries_ITU_R_2020,
+                kCVImageBufferTransferFunctionKey: kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
+                kCVImageBufferYCbCrMatrixKey: kCVImageBufferYCbCrMatrix_ITU_R_2020,
+                kCMFormatDescriptionExtension_FullRangeVideo: fullRangeValue,
+            ]
+        }
+
+        return [
+            kCVImageBufferColorPrimariesKey: kCVImageBufferColorPrimaries_ITU_R_709_2,
+            kCVImageBufferTransferFunctionKey: kCVImageBufferTransferFunction_ITU_R_709_2,
+            kCVImageBufferYCbCrMatrixKey: kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+            kCMFormatDescriptionExtension_FullRangeVideo: fullRangeValue,
+        ]
     }
 
     private func normalizeH264ParameterSets(_ sets: [Data]) -> [Data] {

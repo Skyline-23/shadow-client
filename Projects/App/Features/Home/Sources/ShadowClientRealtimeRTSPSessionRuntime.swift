@@ -36,6 +36,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var rtspClient: ShadowClientRTSPInterleavedClient?
     private var streamTask: Task<Void, Never>?
     private var moonlightNVDepacketizer = ShadowClientMoonlightNVRTPDepacketizer()
+    private var hasLoggedDecodedFrameMetadata = false
 
     public init(
         surfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init(),
@@ -69,6 +70,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             hdrEnabled: resolvedVideoConfiguration.enableHDR,
             yuv444Enabled: resolvedVideoConfiguration.enableYUV444
         )
+        hasLoggedDecodedFrameMetadata = false
 
         await MainActor.run {
             sessionSurfaceContext.reset()
@@ -144,6 +146,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         rtspClient = nil
 
         await decoder.reset()
+        hasLoggedDecodedFrameMetadata = false
         await MainActor.run {
             surfaceContext.reset()
         }
@@ -186,12 +189,17 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         parameterSets: [Data]
     ) async throws {
         let surfaceContext = self.surfaceContext
+        let runtime = self
         try await decoder.decode(
             accessUnit: accessUnit,
             codec: codec,
             parameterSets: parameterSets
         ) { [surfaceContext] pixelBuffer in
             let sendableFrame = ShadowClientSendablePixelBuffer(value: pixelBuffer)
+            await runtime.logDecodedFrameMetadataIfNeeded(
+                codec: codec,
+                pixelBuffer: sendableFrame.value
+            )
             await MainActor.run {
                 surfaceContext.frameStore.update(pixelBuffer: sendableFrame.value)
                 surfaceContext.transition(to: .rendering)
@@ -248,6 +256,50 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         throw ShadowClientRealtimeSessionRuntimeError.transportFailure(
             "Timed out waiting for first frame."
         )
+    }
+
+    private func logDecodedFrameMetadataIfNeeded(
+        codec: ShadowClientVideoCodec,
+        pixelBuffer: CVPixelBuffer
+    ) {
+        guard !hasLoggedDecodedFrameMetadata else {
+            return
+        }
+        hasLoggedDecodedFrameMetadata = true
+
+        let pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        let transfer = attachmentStringValue(
+            forKey: kCVImageBufferTransferFunctionKey,
+            pixelBuffer: pixelBuffer
+        ) ?? "nil"
+        let primaries = attachmentStringValue(
+            forKey: kCVImageBufferColorPrimariesKey,
+            pixelBuffer: pixelBuffer
+        ) ?? "nil"
+        let matrix = attachmentStringValue(
+            forKey: kCVImageBufferYCbCrMatrixKey,
+            pixelBuffer: pixelBuffer
+        ) ?? "nil"
+
+        logger.notice(
+            "Decoded first frame metadata codec=\(String(describing: codec), privacy: .public) pixel-format=0x\(String(pixelFormat, radix: 16), privacy: .public) primaries=\(primaries, privacy: .public) transfer=\(transfer, privacy: .public) matrix=\(matrix, privacy: .public)"
+        )
+    }
+
+    private func attachmentStringValue(
+        forKey key: CFString,
+        pixelBuffer: CVPixelBuffer
+    ) -> String? {
+        guard let attachment = CVBufferCopyAttachment(pixelBuffer, key, nil) else {
+            return nil
+        }
+        if let value = attachment as? String {
+            return value
+        }
+        if CFGetTypeID(attachment) == CFStringGetTypeID() {
+            return attachment as? String
+        }
+        return nil
     }
 
     private static func depacketizerTailTruncationStrategy(
