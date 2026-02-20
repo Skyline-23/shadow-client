@@ -153,6 +153,9 @@ public struct ShadowClientAppShellView: View {
             Text(launchFailureAlertMessage)
         }
         .animation(.easeInOut(duration: 0.2), value: remoteDesktopRuntime.activeSession != nil)
+        .shadowClientRemoteSessionAutoFullscreen(
+            isSessionActive: remoteDesktopRuntime.activeSession != nil
+        )
     }
 
     private var currentSettings: ShadowClientAppSettings {
@@ -1235,21 +1238,16 @@ public struct ShadowClientAppShellView: View {
                         .padding(.horizontal, 20)
                     }
 
-#if os(macOS)
-                    ShadowClientMacOSSessionInputCaptureView { event in
+                    ShadowClientSessionInputInteractionView(
+                        sessionControlsVisible: $sessionControlsVisible
+                    ) { event in
                         remoteDesktopRuntime.sendInput(event)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.clear)
-#endif
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
-                .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        sessionControlsVisible.toggle()
-                    }
-                }
 
                 VStack(spacing: 0) {
                     if sessionControlsVisible {
