@@ -624,6 +624,83 @@ func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterResumeDecoderFailures(
     }
 }
 
+@Test("Remote desktop runtime downgrades codec for forceLaunch after resume first-frame timeout")
+@MainActor
+func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterResumeFirstFrameTimeout() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "wifi.skyline23.com": .init(
+                host: "wifi.skyline23.com",
+                displayName: "Skyline23-PC",
+                pairStatus: .paired,
+                currentGameID: 881_448_767,
+                serverState: "SUNSHINE_SERVER_BUSY",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-AV1-RESUME-TIMEOUT"
+            ),
+        ],
+        appListByHost: [
+            "wifi.skyline23.com": [
+                .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let resumeSessionURL = "rtsp://192.168.0.52:48010/resume"
+    let forcedLaunchSessionURL = "rtsp://192.168.0.52:48010/launch"
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: forcedLaunchSessionURL, verb: "launch"),
+        simulatedLaunchResults: [
+            .init(sessionURL: resumeSessionURL, verb: "resume"),
+            .init(sessionURL: forcedLaunchSessionURL, verb: "launch"),
+        ]
+    )
+    let sessionConnector = FakeSessionConnectionClient(
+        simulatedFailures: [
+            ShadowClientGameStreamError.requestFailed("Timed out waiting for first frame."),
+        ]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["wifi.skyline23.com"], preferredHost: "wifi.skyline23.com")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 881_448_767,
+        settings: .init(
+            preferredCodec: .av1,
+            enableHDR: true,
+            enableSurroundAudio: true,
+            lowLatencyMode: false
+        )
+    )
+    await waitForLaunchState(runtime, maxAttempts: 200)
+
+    #expect(await sessionConnector.connectCalls() == [
+        resumeSessionURL,
+        forcedLaunchSessionURL,
+    ])
+    let codecHistory = await sessionConnector.videoConfigurations().map(\.preferredCodec)
+    #expect(codecHistory == [.av1, .h265])
+    let launchCalls = await control.launchCalls()
+    #expect(launchCalls.count == 2)
+    #expect(launchCalls[0].forceLaunch == false)
+    #expect(launchCalls[1].forceLaunch == true)
+    #expect(launchCalls[0].settings.preferredCodec == .av1)
+    #expect(launchCalls[1].settings.preferredCodec == .h265)
+    #expect(runtime.activeSession?.sessionURL == forcedLaunchSessionURL)
+    if case .launched = runtime.launchState {
+        #expect(true)
+    } else {
+        Issue.record("Expected launched state, got \(runtime.launchState)")
+    }
+}
+
 @Test("Remote desktop runtime fails launch when host returns missing video session URL")
 @MainActor
 func remoteDesktopRuntimeFailsLaunchWhenSessionURLIsMissing() async {
@@ -781,6 +858,64 @@ func remoteDesktopRuntimeAddsAV1CompatibilityGuidanceOnDecoderFailure() async {
     if case let .failed(message) = runtime.launchState {
         #expect(message.localizedCaseInsensitiveContains("av1"))
         #expect(message.localizedCaseInsensitiveContains("videotoolbox"))
+        #expect(message.localizedCaseInsensitiveContains("h.264"))
+    } else {
+        Issue.record("Expected failed state, got \(runtime.launchState)")
+    }
+}
+
+@Test("Remote desktop runtime appends AV1 compatibility guidance when first frame never renders")
+@MainActor
+func remoteDesktopRuntimeAddsAV1CompatibilityGuidanceOnFirstFrameTimeout() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.45": .init(
+                host: "192.168.0.45",
+                displayName: "AV1-Timeout-Host",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-AV1-TIMEOUT-HINT"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.45": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.45:48010/session", verb: "launch")
+    )
+    let sessionConnector = FakeSessionConnectionClient(
+        simulatedFailure: ShadowClientGameStreamError.requestFailed("Timed out waiting for first frame.")
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.45"], preferredHost: "192.168.0.45")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(
+            preferredCodec: .av1,
+            enableHDR: true,
+            enableSurroundAudio: true,
+            lowLatencyMode: false
+        )
+    )
+    await waitForLaunchState(runtime)
+
+    if case let .failed(message) = runtime.launchState {
+        #expect(message.localizedCaseInsensitiveContains("av1"))
+        #expect(message.localizedCaseInsensitiveContains("first frame"))
         #expect(message.localizedCaseInsensitiveContains("h.264"))
     } else {
         Issue.record("Expected failed state, got \(runtime.launchState)")

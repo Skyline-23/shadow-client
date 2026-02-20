@@ -1138,13 +1138,47 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         from settings: ShadowClientGameStreamLaunchSettings,
         connectError: any Error
     ) -> ShadowClientGameStreamLaunchSettings {
-        guard shouldRetryCodecFallback(connectError: connectError),
+        guard shouldDowngradeCodecForRecovery(
+            settings: settings,
+            connectError: connectError
+        ),
               let downgradedCodec = codecFallbackCandidates(for: settings.preferredCodec).dropFirst().first
         else {
             return settings
         }
 
         return launchSettings(settings, preferredCodec: downgradedCodec)
+    }
+
+    private static func shouldDowngradeCodecForRecovery(
+        settings: ShadowClientGameStreamLaunchSettings,
+        connectError: any Error
+    ) -> Bool {
+        if shouldRetryCodecFallback(connectError: connectError) {
+            return true
+        }
+
+        let isAV1Requested = settings.preferredCodec == .av1 || settings.preferredCodec == .auto
+        guard isAV1Requested else {
+            return false
+        }
+
+        let normalized = connectError.localizedDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty else {
+            return false
+        }
+
+        let av1StartupFailureSignatures = [
+            "timed out waiting for first frame",
+            "rtsp udp video timeout",
+            "no video datagram",
+            "connection reset by peer",
+            "rtsp transport connection closed",
+        ]
+
+        return av1StartupFailureSignatures.contains(where: normalized.contains)
     }
 
     private static func shouldRetryCodecFallback(connectError: any Error) -> Bool {
@@ -1185,6 +1219,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             hints.append(
                 "AV1 decode setup failed (VideoToolbox/av1C configuration). Apple Silicon can support AV1, but some stream profiles are unsupported (for example missing codec config, HDR 10-bit, or 4:4:4). Try HEVC/H.264 or disable HDR/YUV444."
             )
+        } else if (settings.preferredCodec == .av1 || settings.preferredCodec == .auto),
+                  isLikelyAV1StartupFailure(normalizedError: normalized)
+        {
+            hints.append(
+                "AV1 stream startup failed before first frame decode. This often means the negotiated AV1 profile is unsupported on this device/OS build. Try HEVC/H.264 or disable HDR/YUV444."
+            )
         }
 
         if settings.enableYUV444,
@@ -1224,6 +1264,17 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             "transport connection timed out",
         ]
         return indirectTransportSignatures.contains(where: normalizedError.contains)
+    }
+
+    private static func isLikelyAV1StartupFailure(normalizedError: String) -> Bool {
+        let signatures = [
+            "timed out waiting for first frame",
+            "rtsp udp video timeout",
+            "no video datagram",
+            "connection reset by peer",
+            "rtsp transport connection closed",
+        ]
+        return signatures.contains(where: normalizedError.contains)
     }
 
     private static func codecFallbackCandidates(
