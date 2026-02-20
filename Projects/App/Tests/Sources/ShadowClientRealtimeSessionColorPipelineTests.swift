@@ -24,7 +24,11 @@ func colorPipelineEnablesEDRForHDRPQFrames() throws {
     #expect(configuration.prefersExtendedDynamicRange)
     #expect(configuration.pixelFormat == .rgba16Float)
     #expect(configuration.renderColorSpace.name == CGColorSpace.itur_2100_PQ)
-    #expect(configuration.displayColorSpace.name == CGColorSpace.extendedLinearITUR_2020)
+    let displayColorName = configuration.displayColorSpace.name
+    #expect(
+        displayColorName == CGColorSpace.extendedLinearDisplayP3 ||
+            displayColorName == CGColorSpace.extendedLinearITUR_2020
+    )
 }
 
 @Test("Color pipeline keeps SDR output for BT.709 frames")

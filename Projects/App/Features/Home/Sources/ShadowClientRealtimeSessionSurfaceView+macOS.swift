@@ -84,10 +84,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         if let pixelBuffer = frameStore.snapshot() {
             let colorConfiguration = ShadowClientRealtimeSessionColorPipeline.configuration(for: pixelBuffer)
             applyColorConfiguration(colorConfiguration, to: view)
-            let sourceImage = CIImage(
-                cvPixelBuffer: pixelBuffer,
-                options: [.colorSpace: colorConfiguration.renderColorSpace]
-            )
+            let sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
             let drawableRect = CGRect(origin: .zero, size: view.drawableSize)
             let sourceRect = sourceImage.extent
             let scale = min(
