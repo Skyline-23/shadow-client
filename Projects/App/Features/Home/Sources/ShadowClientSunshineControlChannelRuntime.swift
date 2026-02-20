@@ -24,7 +24,8 @@ actor ShadowClientSunshineControlChannelRuntime {
     private var periodicPingTask: Task<Void, Never>?
     private var outgoingPeerID: UInt16 = ShadowClientSunshineENetPacketCodec.maximumPeerID
     private var outgoingSessionID: UInt8 = 0
-    private var outgoingReliableSequenceNumber: UInt16 = 0
+    private var controlReliableSequenceNumber: UInt16 = 0
+    private var outgoingReliableSequenceByChannel: [UInt8: UInt16] = [:]
     private var connectID: UInt32 = 0
     private var controlChannelMode: ShadowClientSunshineControlChannelMode = .plaintext
     private var controlEncryptionCodec: ShadowClientSunshineControlEncryptionCodec?
@@ -67,7 +68,7 @@ actor ShadowClientSunshineControlChannelRuntime {
             try await waitForReady(connection)
 
             connectID = UInt32.random(in: .min ... .max)
-            outgoingReliableSequenceNumber = 1
+            controlReliableSequenceNumber = 1
 
             let connectPacket = ShadowClientSunshineENetPacketCodec.makeConnectPacket(
                 connectID: connectID,
@@ -176,11 +177,11 @@ actor ShadowClientSunshineControlChannelRuntime {
         receivedSentTime: UInt16,
         over connection: NWConnection
     ) async throws {
-        outgoingReliableSequenceNumber &+= 1
+        let acknowledgeSequence = nextReliableSequenceNumber(for: commandChannelID)
         let packet = ShadowClientSunshineENetPacketCodec.makeAcknowledgePacket(
             outgoingPeerID: outgoingPeerID,
             outgoingSessionID: outgoingSessionID,
-            outgoingReliableSequenceNumber: outgoingReliableSequenceNumber,
+            outgoingReliableSequenceNumber: acknowledgeSequence,
             commandChannelID: commandChannelID,
             receivedReliableSequenceNumber: receivedReliableSequenceNumber,
             receivedSentTime: receivedSentTime,
@@ -246,8 +247,7 @@ actor ShadowClientSunshineControlChannelRuntime {
         over connection: NWConnection
     ) async throws {
         let controlPayload = try buildControlPayload(type: type, payload: payload)
-        outgoingReliableSequenceNumber &+= 1
-        let reliableSequenceNumber = outgoingReliableSequenceNumber
+        let reliableSequenceNumber = nextReliableSequenceNumber(for: channelID)
         let controlModeLabel = controlEncryptionCodec == nil ? "plain" : "enc-v2"
         logger.notice(
             "Sunshine control send type=\(type, privacy: .public) relSeq=\(reliableSequenceNumber, privacy: .public) payloadBytes=\(controlPayload.count, privacy: .public) mode=\(controlModeLabel, privacy: .public)"
@@ -274,8 +274,7 @@ actor ShadowClientSunshineControlChannelRuntime {
         over connection: NWConnection
     ) async throws {
         let controlPayload = try buildControlPayload(type: type, payload: payload)
-        outgoingReliableSequenceNumber &+= 1
-        let reliableSequenceNumber = outgoingReliableSequenceNumber
+        let reliableSequenceNumber = nextReliableSequenceNumber(for: channelID)
         let packet = ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
             outgoingPeerID: outgoingPeerID,
             outgoingSessionID: outgoingSessionID,
@@ -498,9 +497,22 @@ actor ShadowClientSunshineControlChannelRuntime {
     private func resetSessionState() {
         outgoingPeerID = ShadowClientSunshineENetPacketCodec.maximumPeerID
         outgoingSessionID = 0
-        outgoingReliableSequenceNumber = 0
+        controlReliableSequenceNumber = 0
+        outgoingReliableSequenceByChannel.removeAll(keepingCapacity: false)
         connectID = 0
         controlEncryptionSequenceNumber = 0
+    }
+
+    private func nextReliableSequenceNumber(for channelID: UInt8) -> UInt16 {
+        if channelID == ShadowClientSunshineENetProtocolProfile.wildcardSessionID {
+            controlReliableSequenceNumber &+= 1
+            return controlReliableSequenceNumber
+        }
+
+        var sequence = outgoingReliableSequenceByChannel[channelID] ?? 0
+        sequence &+= 1
+        outgoingReliableSequenceByChannel[channelID] = sequence
+        return sequence
     }
 
     private func currentSentTime() -> UInt16 {
