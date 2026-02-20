@@ -20,7 +20,7 @@ func sunshineInputCodecEncodesKeyboardKeyDownPacket() {
     #expect(readUInt32BE(payload, at: 0) == 10)
     #expect(readUInt32LE(payload, at: 4) == 0x0000_0003)
     #expect(payload[8] == 0)
-    #expect(readUInt16LE(payload, at: 9) == 0x57)
+    #expect(readUInt16LE(payload, at: 9) == 0x8057)
     #expect(payload[11] == 0)
     #expect(readUInt16LE(payload, at: 12) == 0)
 }
@@ -37,7 +37,7 @@ func sunshineInputCodecMapsMacKeyCodeIndependentlyOfKeyboardLayoutCharacters() {
         return
     }
 
-    #expect(readUInt16LE(payload, at: 9) == 0x57)
+    #expect(readUInt16LE(payload, at: 9) == 0x8057)
 }
 
 @Test("Sunshine input codec encodes mouse button packet")

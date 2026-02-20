@@ -39,7 +39,7 @@ enum ShadowClientSunshineInputPacketCodec {
                 channelID: Channel.keyboard,
                 payload: makeKeyboardPacket(
                     magic: PacketMagic.keyDown,
-                    virtualKey: virtualKey
+                    virtualKey: normalizedSunshineKeyboardKeyCode(virtualKey)
                 )
             )
         case let .keyUp(keyCode, characters):
@@ -53,7 +53,7 @@ enum ShadowClientSunshineInputPacketCodec {
                 channelID: Channel.keyboard,
                 payload: makeKeyboardPacket(
                     magic: PacketMagic.keyUp,
-                    virtualKey: virtualKey
+                    virtualKey: normalizedSunshineKeyboardKeyCode(virtualKey)
                 )
             )
         case let .pointerButton(button, isPressed):
@@ -167,6 +167,12 @@ enum ShadowClientSunshineInputPacketCodec {
             return delta > 0 ? 1 : -1
         }
         return Int16(clamping: rounded)
+    }
+
+    private static func normalizedSunshineKeyboardKeyCode(_ virtualKey: UInt16) -> UInt16 {
+        // Moonlight sets the high bit for Sunshine keyboard input to match
+        // the server-side scancode normalization path.
+        0x8000 | virtualKey
     }
 
     private static func mouseButtonValue(_ button: ShadowClientRemoteMouseButton) -> UInt8? {
