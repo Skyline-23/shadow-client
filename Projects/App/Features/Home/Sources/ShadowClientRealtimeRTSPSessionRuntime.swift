@@ -516,7 +516,6 @@ private actor ShadowClientRTSPInterleavedClient {
         }
 
         let controlHost = remoteHost ?? .init(host)
-        await prepareAudioPingBeforePlay(host: controlHost)
 
         var setup: ShadowClientRTSPResponse?
         var selectedSetupURL: String?
@@ -568,6 +567,7 @@ private actor ShadowClientRTSPInterleavedClient {
         )
         logger.notice("RTSP video SETUP ok for payload type \(track.rtpPayloadType, privacy: .public) via \(selectedSetupURL ?? track.controlURL, privacy: .public)")
         prepareVideoPingBeforePlay(host: controlHost)
+        await prepareAudioPingBeforePlay(host: controlHost)
 
         var parsedControlConnectData: UInt32?
         var parsedControlServerPort: NWEndpoint.Port?
