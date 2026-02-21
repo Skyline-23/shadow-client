@@ -750,41 +750,51 @@ private enum ShadowClientRealtimeAudioDecoderFactory {
     static func make(
         for track: ShadowClientRTSPAudioTrackDescriptor
     ) throws -> any ShadowClientRealtimeAudioPacketDecoding {
-        if let customDecoder = try ShadowClientRealtimeCustomAudioDecoderRegistry.makeDecoder(
-            for: track
-        ) {
-            return ShadowClientRealtimeCustomDecoderAdapter(
-                base: customDecoder
-            )
-        }
-
+        let customDecoderAttempt = makeCustomDecoderAttempt(for: track)
         switch track.codec {
         case .opus:
-            if track.channelCount > 2 {
-                throw NSError(
-                    domain: "ShadowClientRealtimeAudioDecoderFactory",
-                    code: 2,
-                    userInfo: [
-                        NSLocalizedDescriptionKey: "No multichannel Opus decoder provider is registered.",
-                    ]
+            do {
+                return try ShadowClientRealtimeOpusAudioDecoder(
+                    sampleRate: track.sampleRate,
+                    channels: track.channelCount
                 )
+            } catch {
+                if let customDecoder = customDecoderAttempt.decoder {
+                    return ShadowClientRealtimeCustomDecoderAdapter(base: customDecoder)
+                }
+                if let customDecoderError = customDecoderAttempt.error {
+                    throw NSError(
+                        domain: "ShadowClientRealtimeAudioDecoderFactory",
+                        code: 2,
+                        userInfo: [
+                            NSLocalizedDescriptionKey:
+                                "Audio decoder bootstrap failed (custom decoder: \(customDecoderError.localizedDescription); system decoder: \(error.localizedDescription)).",
+                        ]
+                    )
+                }
+                throw error
             }
-            return try ShadowClientRealtimeOpusAudioDecoder(
-                sampleRate: track.sampleRate,
-                channels: track.channelCount
-            )
         case .l16:
+            if let customDecoder = customDecoderAttempt.decoder {
+                return ShadowClientRealtimeCustomDecoderAdapter(base: customDecoder)
+            }
             return ShadowClientRealtimeL16AudioDecoder(
                 sampleRate: track.sampleRate,
                 channels: track.channelCount
             )
         case .pcmu:
+            if let customDecoder = customDecoderAttempt.decoder {
+                return ShadowClientRealtimeCustomDecoderAdapter(base: customDecoder)
+            }
             return ShadowClientRealtimeG711AudioDecoder(
                 sampleRate: track.sampleRate,
                 channels: track.channelCount,
                 variant: .uLaw
             )
         case .pcma:
+            if let customDecoder = customDecoderAttempt.decoder {
+                return ShadowClientRealtimeCustomDecoderAdapter(base: customDecoder)
+            }
             return ShadowClientRealtimeG711AudioDecoder(
                 sampleRate: track.sampleRate,
                 channels: track.channelCount,
@@ -798,6 +808,19 @@ private enum ShadowClientRealtimeAudioDecoderFactory {
                     NSLocalizedDescriptionKey: "Unsupported audio codec: \(name)",
                 ]
             )
+        }
+    }
+
+    private static func makeCustomDecoderAttempt(
+        for track: ShadowClientRTSPAudioTrackDescriptor
+    ) -> (decoder: (any ShadowClientRealtimeCustomAudioDecoder)?, error: Error?) {
+        do {
+            let decoder = try ShadowClientRealtimeCustomAudioDecoderRegistry.makeDecoder(
+                for: track
+            )
+            return (decoder, nil)
+        } catch {
+            return (nil, error)
         }
     }
 }

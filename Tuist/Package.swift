@@ -5,7 +5,9 @@ import PackageDescription
     import struct ProjectDescription.PackageSettings
 
     let packageSettings = PackageSettings(
-        productTypes: [:]
+        productTypes: [
+            "YbridOpus": .framework,
+        ]
     )
 #endif
 
@@ -14,5 +16,6 @@ let package = Package(
     dependencies: [
         .package(path: "../Modules"),
         .package(url: "https://github.com/swiftlang/swift-testing.git", exact: "6.0.3"),
+        .package(url: "https://github.com/ybrid/opus-swift.git", exact: "0.8.0"),
     ]
 )

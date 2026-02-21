@@ -46,6 +46,7 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
+                .external(name: "YbridOpus"),
             ]
         ),
         .target(

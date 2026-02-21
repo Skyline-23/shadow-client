@@ -1,7 +1,33 @@
 import AVFoundation
-import Darwin
+import Accelerate
 import Foundation
 import ShadowClientFeatureHome
+
+@_silgen_name("opus_multistream_decoder_create")
+private func shadowClientOpusMultistreamDecoderCreate(
+    _ sampleRate: Int32,
+    _ channels: Int32,
+    _ streamCount: Int32,
+    _ coupledStreamCount: Int32,
+    _ mapping: UnsafePointer<UInt8>?,
+    _ errorCode: UnsafeMutablePointer<Int32>?
+) -> OpaquePointer?
+
+@_silgen_name("opus_multistream_decode_float")
+private func shadowClientOpusMultistreamDecodeFloat(
+    _ decoder: OpaquePointer?,
+    _ data: UnsafePointer<UInt8>?,
+    _ dataLength: Int32,
+    _ pcm: UnsafeMutablePointer<Float>?,
+    _ frameSize: Int32,
+    _ decodeFEC: Int32
+) -> Int32
+
+@_silgen_name("opus_multistream_decoder_destroy")
+private func shadowClientOpusMultistreamDecoderDestroy(_ decoder: OpaquePointer?)
+
+@_silgen_name("opus_strerror")
+private func shadowClientOpusStrError(_ errorCode: Int32) -> UnsafePointer<CChar>?
 
 public enum ShadowClientNativeAudioDecodingPlugin {
     private static let lock = NSLock()
@@ -26,97 +52,6 @@ public enum ShadowClientNativeAudioDecodingPlugin {
                 )
             }
         )
-    }
-}
-
-private enum ShadowClientNativeAudioDecodingError: Error {
-    case libraryUnavailable
-    case missingSymbol(String)
-}
-
-private final class ShadowClientNativeLibOpus: @unchecked Sendable {
-    typealias SurroundDecoderCreateFn = @convention(c) (
-        Int32,
-        Int32,
-        Int32,
-        UnsafeMutablePointer<Int32>?,
-        UnsafeMutablePointer<Int32>?,
-        UnsafeMutablePointer<UInt8>?,
-        UnsafeMutablePointer<Int32>?
-    ) -> OpaquePointer?
-
-    typealias DecodeFloatFn = @convention(c) (
-        OpaquePointer?,
-        UnsafePointer<UInt8>?,
-        Int32,
-        UnsafeMutablePointer<Float>?,
-        Int32,
-        Int32
-    ) -> Int32
-
-    typealias DestroyFn = @convention(c) (OpaquePointer?) -> Void
-    typealias ErrorStringFn = @convention(c) (Int32) -> UnsafePointer<CChar>?
-
-    let handle: UnsafeMutableRawPointer
-    let surroundDecoderCreate: SurroundDecoderCreateFn
-    let decodeFloat: DecodeFloatFn
-    let destroy: DestroyFn
-    let errorString: ErrorStringFn?
-
-    init() throws {
-        guard let handle = Self.loadLibraryHandle() else {
-            throw ShadowClientNativeAudioDecodingError.libraryUnavailable
-        }
-        self.handle = handle
-        surroundDecoderCreate = try Self.loadSymbol(
-            named: "opus_multistream_surround_decoder_create",
-            from: handle
-        )
-        decodeFloat = try Self.loadSymbol(
-            named: "opus_multistream_decode_float",
-            from: handle
-        )
-        destroy = try Self.loadSymbol(
-            named: "opus_multistream_decoder_destroy",
-            from: handle
-        )
-        errorString = try? Self.loadSymbol(
-            named: "opus_strerror",
-            from: handle
-        )
-    }
-
-    deinit {
-        dlclose(handle)
-    }
-
-    static let shared: ShadowClientNativeLibOpus? = {
-        try? ShadowClientNativeLibOpus()
-    }()
-
-    private static func loadLibraryHandle() -> UnsafeMutableRawPointer? {
-        let candidates = [
-            "libopus.dylib",
-            "/opt/homebrew/lib/libopus.dylib",
-            "/opt/homebrew/opt/opus/lib/libopus.dylib",
-            "/usr/local/lib/libopus.dylib",
-        ]
-        for candidate in candidates {
-            if let handle = dlopen(candidate, RTLD_NOW | RTLD_LOCAL) {
-                return handle
-            }
-        }
-        return nil
-    }
-
-    private static func loadSymbol<T>(
-        named name: String,
-        from handle: UnsafeMutableRawPointer
-    ) throws -> T {
-        guard let symbol = dlsym(handle, name) else {
-            throw ShadowClientNativeAudioDecodingError.missingSymbol(name)
-        }
-        return unsafeBitCast(symbol, to: T.self)
     }
 }
 
@@ -184,7 +119,6 @@ private final class ShadowClientNativeOpusMultistreamDecoder: ShadowClientRealti
     let channels: Int
     let outputFormat: AVAudioFormat
 
-    private let libopus: ShadowClientNativeLibOpus
     private let decoder: OpaquePointer
     private let maxFrameSamplesPerChannel: Int32 = 5_760
     private var interleavedScratch: [Float]
@@ -207,28 +141,14 @@ private final class ShadowClientNativeOpusMultistreamDecoder: ShadowClientRealti
         }
         self.outputFormat = outputFormat
 
-        guard let libopus = ShadowClientNativeLibOpus.shared else {
-            throw NSError(
-                domain: "ShadowClientNativeOpusMultistreamDecoder",
-                code: 2,
-                userInfo: [
-                    NSLocalizedDescriptionKey: "libopus is not available for multichannel Opus decoding.",
-                ]
-            )
-        }
-        self.libopus = libopus
-
-        var streamCount: Int32 = 0
-        var coupledStreamCount: Int32 = 0
-        var mapping = [UInt8](repeating: 0, count: max(1, channels))
+        let layout = Self.opusStreamLayout(for: channels)
         var errorCode: Int32 = 0
-        let decoder = mapping.withUnsafeMutableBufferPointer { mappingBuffer in
-            libopus.surroundDecoderCreate(
+        let decoder = layout.mapping.withUnsafeBufferPointer { mappingBuffer in
+            shadowClientOpusMultistreamDecoderCreate(
                 Int32(sampleRate),
                 Int32(channels),
-                1,
-                &streamCount,
-                &coupledStreamCount,
+                Int32(layout.streamCount),
+                Int32(layout.coupledStreamCount),
                 mappingBuffer.baseAddress,
                 &errorCode
             )
@@ -239,7 +159,7 @@ private final class ShadowClientNativeOpusMultistreamDecoder: ShadowClientRealti
                 domain: "ShadowClientNativeOpusMultistreamDecoder",
                 code: 3,
                 userInfo: [
-                    NSLocalizedDescriptionKey: "Could not create multichannel Opus decoder (\(Self.opusErrorDescription(code: errorCode, libopus: libopus))).",
+                    NSLocalizedDescriptionKey: "Could not create multichannel Opus decoder (\(Self.opusErrorDescription(code: errorCode))).",
                 ]
             )
         }
@@ -251,7 +171,7 @@ private final class ShadowClientNativeOpusMultistreamDecoder: ShadowClientRealti
     }
 
     deinit {
-        libopus.destroy(decoder)
+        shadowClientOpusMultistreamDecoderDestroy(decoder)
     }
 
     func decode(payload: Data) throws -> AVAudioPCMBuffer? {
@@ -261,14 +181,16 @@ private final class ShadowClientNativeOpusMultistreamDecoder: ShadowClientRealti
 
         let decodedFrameCount = payload.withUnsafeBytes { payloadBytes in
             let dataPointer = payloadBytes.bindMemory(to: UInt8.self).baseAddress
-            return libopus.decodeFloat(
-                decoder,
-                dataPointer,
-                Int32(payload.count),
-                &interleavedScratch,
-                maxFrameSamplesPerChannel,
-                0
-            )
+            return interleavedScratch.withUnsafeMutableBufferPointer { outputBuffer in
+                shadowClientOpusMultistreamDecodeFloat(
+                    decoder,
+                    dataPointer,
+                    Int32(payload.count),
+                    outputBuffer.baseAddress,
+                    maxFrameSamplesPerChannel,
+                    0
+                )
+            }
         }
 
         if decodedFrameCount < 0 {
@@ -276,7 +198,7 @@ private final class ShadowClientNativeOpusMultistreamDecoder: ShadowClientRealti
                 domain: "ShadowClientNativeOpusMultistreamDecoder",
                 code: 4,
                 userInfo: [
-                    NSLocalizedDescriptionKey: "Multichannel Opus decode failed (\(Self.opusErrorDescription(code: decodedFrameCount, libopus: libopus))).",
+                    NSLocalizedDescriptionKey: "Multichannel Opus decode failed (\(Self.opusErrorDescription(code: decodedFrameCount))).",
                 ]
             )
         }
@@ -293,10 +215,18 @@ private final class ShadowClientNativeOpusMultistreamDecoder: ShadowClientRealti
             return nil
         }
 
-        for frameIndex in 0..<frameCount {
-            let baseIndex = frameIndex * channels
+        interleavedScratch.withUnsafeBufferPointer { sourceBuffer in
+            guard let source = sourceBuffer.baseAddress else {
+                return
+            }
             for channelIndex in 0..<channels {
-                channelData[channelIndex][frameIndex] = interleavedScratch[baseIndex + channelIndex]
+                cblas_scopy(
+                    Int32(frameCount),
+                    source.advanced(by: channelIndex),
+                    Int32(channels),
+                    channelData[channelIndex],
+                    1
+                )
             }
         }
         pcmBuffer.frameLength = AVAudioFrameCount(frameCount)
@@ -304,12 +234,28 @@ private final class ShadowClientNativeOpusMultistreamDecoder: ShadowClientRealti
     }
 
     private static func opusErrorDescription(
-        code: Int32,
-        libopus: ShadowClientNativeLibOpus
+        code: Int32
     ) -> String {
-        guard let errorString = libopus.errorString?(code) else {
+        guard let errorString = shadowClientOpusStrError(code) else {
             return "error code \(code)"
         }
         return String(cString: errorString)
+    }
+
+    private static func opusStreamLayout(
+        for channels: Int
+    ) -> (streamCount: Int, coupledStreamCount: Int, mapping: [UInt8]) {
+        switch channels {
+        case 6:
+            // Standard Opus 5.1 mapping (RFC 7845 / mapping family 1).
+            return (4, 2, [0, 4, 1, 2, 3, 5])
+        case 8:
+            // Standard Opus 7.1 mapping (mapping family 1).
+            return (5, 3, [0, 6, 1, 2, 3, 4, 5, 7])
+        default:
+            let mappedChannels = max(1, channels)
+            let mapping = (0..<mappedChannels).map { UInt8($0 & 0xFF) }
+            return (mappedChannels, 0, mapping)
+        }
     }
 }
