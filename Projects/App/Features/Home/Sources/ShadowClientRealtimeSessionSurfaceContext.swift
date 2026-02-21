@@ -34,6 +34,8 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     @Published public private(set) var renderState: RenderState = .idle
     @Published public private(set) var controlRoundTripMs: Int?
     @Published public private(set) var activeVideoCodec: ShadowClientVideoCodec?
+    @Published public private(set) var estimatedVideoFPS: Double?
+    @Published public private(set) var estimatedVideoBitrateKbps: Int?
 
     public let frameStore: ShadowClientRealtimeSessionFrameStore
 
@@ -46,6 +48,8 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         renderState = .idle
         controlRoundTripMs = nil
         activeVideoCodec = nil
+        estimatedVideoFPS = nil
+        estimatedVideoBitrateKbps = nil
     }
 
     public func transition(to state: RenderState) {
@@ -58,6 +62,23 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
 
     public func updateActiveVideoCodec(_ codec: ShadowClientVideoCodec?) {
         activeVideoCodec = codec
+    }
+
+    public func updateRuntimeVideoStats(
+        fps: Double?,
+        bitrateKbps: Int?
+    ) {
+        if let fps, fps.isFinite, fps >= 0 {
+            estimatedVideoFPS = fps
+        } else {
+            estimatedVideoFPS = nil
+        }
+
+        if let bitrateKbps {
+            estimatedVideoBitrateKbps = max(0, bitrateKbps)
+        } else {
+            estimatedVideoBitrateKbps = nil
+        }
     }
 }
 

@@ -27,6 +27,11 @@ extension ShadowClientRealtimeSessionRuntimeError: LocalizedError {
 }
 
 public actor ShadowClientRealtimeRTSPSessionRuntime {
+    private struct VideoTransportSample: Sendable {
+        let uptimeSeconds: TimeInterval
+        let bytes: Int
+    }
+
     public let surfaceContext: ShadowClientRealtimeSessionSurfaceContext
 
     private let decoder: ShadowClientVideoToolboxDecoder
@@ -37,6 +42,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var streamTask: Task<Void, Never>?
     private var moonlightNVDepacketizer = ShadowClientMoonlightNVRTPDepacketizer()
     private var hasLoggedDecodedFrameMetadata = false
+    private var recentVideoTransportSamples: [VideoTransportSample] = []
+    private var lastVideoStatPublishUptime: TimeInterval = 0
 
     public init(
         surfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init(),
@@ -71,6 +78,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             yuv444Enabled: resolvedVideoConfiguration.enableYUV444
         )
         hasLoggedDecodedFrameMetadata = false
+        recentVideoTransportSamples.removeAll(keepingCapacity: false)
+        lastVideoStatPublishUptime = 0
 
         await MainActor.run {
             sessionSurfaceContext.reset()
@@ -151,6 +160,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
         await decoder.reset()
         hasLoggedDecodedFrameMetadata = false
+        recentVideoTransportSamples.removeAll(keepingCapacity: false)
+        lastVideoStatPublishUptime = 0
         await MainActor.run {
             surfaceContext.reset()
         }
@@ -174,6 +185,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         if let frame = moonlightNVDepacketizer.ingest(payload: payload, marker: marker) {
             logger.notice("Moonlight NV frame assembled for codec \(String(describing: codec), privacy: .public): \(frame.count, privacy: .public) bytes")
+            await updateRuntimeVideoStats(frameBytes: frame.count)
             do {
                 try await decodeFrame(
                     accessUnit: frame,
@@ -230,6 +242,38 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             enableYUV444: configuration.enableYUV444,
             remoteInputKey: configuration.remoteInputKey
         )
+    }
+
+    private func updateRuntimeVideoStats(frameBytes: Int) async {
+        let now = ProcessInfo.processInfo.systemUptime
+        recentVideoTransportSamples.append(
+            .init(uptimeSeconds: now, bytes: max(0, frameBytes))
+        )
+        recentVideoTransportSamples.removeAll {
+            now - $0.uptimeSeconds > 1.0
+        }
+
+        guard let oldest = recentVideoTransportSamples.first else {
+            return
+        }
+
+        let windowDuration = max(now - oldest.uptimeSeconds, 0.001)
+        let totalBytes = recentVideoTransportSamples.reduce(0) { $0 + $1.bytes }
+        let bitrateKbps = Int((Double(totalBytes) * 8.0 / 1_000.0) / windowDuration)
+        let fps = Double(recentVideoTransportSamples.count) / windowDuration
+
+        if now - lastVideoStatPublishUptime < 0.2 {
+            return
+        }
+        lastVideoStatPublishUptime = now
+
+        let sessionSurfaceContext = self.surfaceContext
+        await MainActor.run {
+            sessionSurfaceContext.updateRuntimeVideoStats(
+                fps: fps,
+                bitrateKbps: bitrateKbps
+            )
+        }
     }
 
     private func waitForInitialRenderState(timeout: Duration) async throws {

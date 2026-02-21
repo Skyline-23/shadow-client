@@ -23,6 +23,7 @@ public struct ShadowClientAppShellView: View {
     @AppStorage(ShadowClientAppSettings.StorageKeys.frameRate) private var frameRateRawValue =
         ShadowClientAppSettingsDefaults.defaultFrameRate.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.bitrateKbps) private var bitrateKbps = ShadowClientAppSettingsDefaults.defaultBitrateKbps
+    @AppStorage(ShadowClientAppSettings.StorageKeys.autoBitrate) private var autoBitrate = ShadowClientAppSettingsDefaults.defaultAutoBitrate
     @AppStorage(ShadowClientAppSettings.StorageKeys.displayMode) private var displayModeRawValue = ShadowClientDisplayMode.borderlessFullscreen.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.audioConfiguration) private var audioConfigurationRawValue = ShadowClientAudioConfiguration.surround71.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.videoCodec) private var videoCodecRawValue = ShadowClientVideoCodecPreference.auto.rawValue
@@ -185,6 +186,7 @@ public struct ShadowClientAppShellView: View {
             resolution: selectedResolution,
             frameRate: selectedFrameRate,
             bitrateKbps: bitrateKbps,
+            autoBitrate: autoBitrate,
             displayMode: selectedDisplayMode,
             audioConfiguration: selectedAudioConfiguration,
             videoCodec: selectedVideoCodec,
@@ -434,12 +436,19 @@ public struct ShadowClientAppShellView: View {
 
                         settingsRow {
                             VStack(alignment: .leading, spacing: 8) {
+                                Toggle(isOn: $autoBitrate) {
+                                    Text("Auto bitrate (recommended)")
+                                        .font(.callout.weight(.semibold))
+                                        .foregroundStyle(.white)
+                                }
+                                .tint(.mint)
+
                                 HStack {
                                     Label("Video bitrate", systemImage: "dial.medium")
                                         .font(.callout.weight(.semibold))
                                         .foregroundStyle(.white)
                                     Spacer(minLength: 8)
-                                    Text("\(bitrateKbps) Kbps")
+                                    Text("\(effectiveBitrateKbps) Kbps")
                                         .font(.footnote.monospacedDigit().weight(.bold))
                                         .foregroundStyle(.mint)
                                 }
@@ -449,6 +458,14 @@ public struct ShadowClientAppShellView: View {
                                     step: Double(ShadowClientAppSettingsDefaults.bitrateStepKbps)
                                 )
                                 .tint(.mint)
+                                .disabled(autoBitrate)
+                                .opacity(autoBitrate ? 0.45 : 1.0)
+
+                                if autoBitrate {
+                                    Text("Estimated from resolution, frame rate, codec, HDR, and YUV444.")
+                                        .font(.caption2.weight(.medium))
+                                        .foregroundStyle(Color.white.opacity(0.7))
+                                }
                             }
                         }
 
@@ -517,12 +534,32 @@ public struct ShadowClientAppShellView: View {
                         }
 
                         settingsRow {
-                            Toggle(isOn: $muteHostSpeakersWhileStreaming) {
+                            Toggle(
+                                isOn: Binding(
+                                    get: {
+                                        ShadowClientAudioPlaybackDefaults.supportsClientPlayback
+                                            ? muteHostSpeakersWhileStreaming
+                                            : false
+                                    },
+                                    set: { newValue in
+                                        muteHostSpeakersWhileStreaming = newValue
+                                    }
+                                )
+                            ) {
                                 Text("Mute host PC speakers while streaming")
                                     .font(.callout.weight(.semibold))
                                     .foregroundStyle(.white)
                             }
                             .tint(.mint)
+                            .disabled(!ShadowClientAudioPlaybackDefaults.supportsClientPlayback)
+                        }
+
+                        if !ShadowClientAudioPlaybackDefaults.supportsClientPlayback {
+                            settingsRow {
+                                Text("Client audio playback is not available yet. Audio is currently routed to the host device.")
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(Color.white.opacity(0.72))
+                            }
                         }
 
                         settingsRow {
@@ -1499,7 +1536,8 @@ public struct ShadowClientAppShellView: View {
 
                 HStack(spacing: 10) {
                     diagnosticsStatChip(label: "Codec", value: activeSessionVideoCodecLabel)
-                    diagnosticsStatChip(label: "Buffer", value: "\(model.targetBufferMs) ms")
+                    diagnosticsStatChip(label: "FPS", value: diagnosticsFPSValue())
+                    diagnosticsStatChip(label: "Bitrate", value: diagnosticsBitrateValue())
                     diagnosticsStatChip(
                         label: "Ping",
                         value: diagnosticsLatestValue(
@@ -1507,7 +1545,6 @@ public struct ShadowClientAppShellView: View {
                             unit: "ms"
                         )
                     )
-                    diagnosticsStatChip(label: "Jitter", value: "\(model.jitterMs) ms")
                     diagnosticsStatChip(label: "Drop", value: String(format: "%.1f%%", model.frameDropPercent))
                 }
 
@@ -1568,13 +1605,10 @@ public struct ShadowClientAppShellView: View {
                         value: diagnosticsRoundTripValue(controlRoundTripMs)
                     )
                     diagnosticsStatChip(
-                        label: "Trend",
-                        value: diagnosticsLatestValue(
-                            samples: sessionDiagnosticsHistory.controlRoundTripMsSamples,
-                            unit: "ms"
-                        )
+                        label: "FPS",
+                        value: diagnosticsFPSValue()
                     )
-                    diagnosticsStatChip(label: "Telemetry", value: "Waiting")
+                    diagnosticsStatChip(label: "Bitrate", value: diagnosticsBitrateValue())
                 }
 
                 diagnosticsSparklineRow(
@@ -1622,6 +1656,20 @@ public struct ShadowClientAppShellView: View {
             return "--"
         }
         return "\(max(roundTripMs, 0)) ms"
+    }
+
+    private func diagnosticsFPSValue() -> String {
+        if let estimatedFPS = sessionSurfaceContext.estimatedVideoFPS, estimatedFPS.isFinite {
+            return "\(Int(estimatedFPS.rounded())) fps"
+        }
+        return "\(currentSettings.frameRate.fps) fps"
+    }
+
+    private func diagnosticsBitrateValue() -> String {
+        if let bitrate = sessionSurfaceContext.estimatedVideoBitrateKbps {
+            return "\(max(0, bitrate)) kbps"
+        }
+        return "\(effectiveBitrateKbps) kbps"
     }
 
     private func diagnosticsSparklineRow(
@@ -1817,6 +1865,10 @@ public struct ShadowClientAppShellView: View {
         unlockBitrateLimit
             ? Double(ShadowClientAppSettingsDefaults.maximumBitrateWhenUnlocked)
             : Double(ShadowClientAppSettingsDefaults.maximumBitrateWhenLocked)
+    }
+
+    private var effectiveBitrateKbps: Int {
+        currentSettings.resolvedBitrateKbps
     }
 
     private var bitrateSliderBinding: Binding<Double> {
