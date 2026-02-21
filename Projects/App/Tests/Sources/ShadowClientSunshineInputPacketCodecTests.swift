@@ -120,6 +120,78 @@ func sunshineInputCodecDropsUnknownKeyEvent() {
     #expect(encoded == nil)
 }
 
+@Test("Sunshine input codec encodes multi-controller gamepad packet on gamepad channel")
+func sunshineInputCodecEncodesGamepadStatePacket() {
+    let state = ShadowClientRemoteGamepadState(
+        controllerNumber: 1,
+        activeGamepadMask: 0x0003,
+        buttonFlags: 0x0023_1245,
+        leftTrigger: 0x33,
+        rightTrigger: 0x44,
+        leftStickX: 1234,
+        leftStickY: -2345,
+        rightStickX: 3456,
+        rightStickY: -4567
+    )
+
+    let encoded = ShadowClientSunshineInputPacketCodec.encode(.gamepadState(state))
+
+    #expect(encoded != nil)
+    #expect(encoded?.channelID == 0x11)
+
+    guard let payload = encoded?.payload else {
+        Issue.record("Expected gamepad payload")
+        return
+    }
+
+    #expect(payload.count == 34)
+    #expect(readUInt32BE(payload, at: 0) == 30)
+    #expect(readUInt32LE(payload, at: 4) == 0x0000_000C)
+    #expect(readUInt16LE(payload, at: 8) == 0x001A)
+    #expect(readUInt16LE(payload, at: 10) == 1)
+    #expect(readUInt16LE(payload, at: 12) == 0x0003)
+    #expect(readUInt16LE(payload, at: 14) == 0x0014)
+    #expect(readUInt16LE(payload, at: 16) == 0x1245)
+    #expect(payload[18] == 0x33)
+    #expect(payload[19] == 0x44)
+    #expect(readInt16LE(payload, at: 20) == 1234)
+    #expect(readInt16LE(payload, at: 22) == -2345)
+    #expect(readInt16LE(payload, at: 24) == 3456)
+    #expect(readInt16LE(payload, at: 26) == -4567)
+    #expect(readUInt16LE(payload, at: 28) == 0x009C)
+    #expect(readUInt16LE(payload, at: 30) == 0x0023)
+    #expect(readUInt16LE(payload, at: 32) == 0x0055)
+}
+
+@Test("Sunshine input codec encodes gamepad arrival packet")
+func sunshineInputCodecEncodesGamepadArrivalPacket() {
+    let arrival = ShadowClientRemoteGamepadArrival(
+        controllerNumber: 2,
+        activeGamepadMask: 0x0007,
+        type: 0x02,
+        capabilities: 0x0001,
+        supportedButtonFlags: 0x0001_FF3F
+    )
+
+    let encoded = ShadowClientSunshineInputPacketCodec.encode(.gamepadArrival(arrival))
+
+    #expect(encoded != nil)
+    #expect(encoded?.channelID == 0x12)
+
+    guard let payload = encoded?.payload else {
+        Issue.record("Expected gamepad arrival payload")
+        return
+    }
+
+    #expect(payload.count == 16)
+    #expect(readUInt32BE(payload, at: 0) == 12)
+    #expect(readUInt32LE(payload, at: 4) == 0x5500_0004)
+    #expect(payload[8] == 0x02)
+    #expect(payload[9] == 0x02)
+    #expect(readUInt16LE(payload, at: 10) == 0x0001)
+    #expect(readUInt32LE(payload, at: 12) == 0x0001_FF3F)
+}
+
 private func readUInt16LE(_ data: Data, at offset: Int) -> UInt16 {
     let b0 = UInt16(data[offset])
     let b1 = UInt16(data[offset + 1]) << 8
@@ -145,5 +217,11 @@ private func readUInt32BE(_ data: Data, at offset: Int) -> UInt32 {
 private func readInt16BE(_ data: Data, at offset: Int) -> Int16 {
     let upper = UInt16(data[offset]) << 8
     let lower = UInt16(data[offset + 1])
+    return Int16(bitPattern: upper | lower)
+}
+
+private func readInt16LE(_ data: Data, at offset: Int) -> Int16 {
+    let lower = UInt16(data[offset])
+    let upper = UInt16(data[offset + 1]) << 8
     return Int16(bitPattern: upper | lower)
 }

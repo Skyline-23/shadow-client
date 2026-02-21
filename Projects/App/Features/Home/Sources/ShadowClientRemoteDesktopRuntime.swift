@@ -290,12 +290,70 @@ public enum ShadowClientRemoteMouseButton: Equatable, Sendable {
     case other(Int)
 }
 
+public struct ShadowClientRemoteGamepadState: Equatable, Sendable {
+    public let controllerNumber: UInt8
+    public let activeGamepadMask: UInt16
+    public let buttonFlags: UInt32
+    public let leftTrigger: UInt8
+    public let rightTrigger: UInt8
+    public let leftStickX: Int16
+    public let leftStickY: Int16
+    public let rightStickX: Int16
+    public let rightStickY: Int16
+
+    public init(
+        controllerNumber: UInt8,
+        activeGamepadMask: UInt16,
+        buttonFlags: UInt32,
+        leftTrigger: UInt8,
+        rightTrigger: UInt8,
+        leftStickX: Int16,
+        leftStickY: Int16,
+        rightStickX: Int16,
+        rightStickY: Int16
+    ) {
+        self.controllerNumber = controllerNumber
+        self.activeGamepadMask = activeGamepadMask
+        self.buttonFlags = buttonFlags
+        self.leftTrigger = leftTrigger
+        self.rightTrigger = rightTrigger
+        self.leftStickX = leftStickX
+        self.leftStickY = leftStickY
+        self.rightStickX = rightStickX
+        self.rightStickY = rightStickY
+    }
+}
+
+public struct ShadowClientRemoteGamepadArrival: Equatable, Sendable {
+    public let controllerNumber: UInt8
+    public let activeGamepadMask: UInt16
+    public let type: UInt8
+    public let capabilities: UInt16
+    public let supportedButtonFlags: UInt32
+
+    public init(
+        controllerNumber: UInt8,
+        activeGamepadMask: UInt16,
+        type: UInt8,
+        capabilities: UInt16,
+        supportedButtonFlags: UInt32
+    ) {
+        self.controllerNumber = controllerNumber
+        self.activeGamepadMask = activeGamepadMask
+        self.type = type
+        self.capabilities = capabilities
+        self.supportedButtonFlags = supportedButtonFlags
+    }
+}
+
 public enum ShadowClientRemoteInputEvent: Equatable, Sendable {
     case keyDown(keyCode: UInt16, characters: String?)
     case keyUp(keyCode: UInt16, characters: String?)
     case pointerMoved(x: Double, y: Double)
     case pointerButton(button: ShadowClientRemoteMouseButton, isPressed: Bool)
     case scroll(deltaX: Double, deltaY: Double)
+    case gamepadState(ShadowClientRemoteGamepadState)
+    case gamepadArrival(ShadowClientRemoteGamepadArrival)
 }
 
 public protocol ShadowClientRemoteSessionInputClient: Sendable {
@@ -1317,7 +1375,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         _ settings: ShadowClientGameStreamLaunchSettings,
         preferredCodec: ShadowClientVideoCodecPreference
     ) -> ShadowClientGameStreamLaunchSettings {
-        .init(
+        return .init(
             width: settings.width,
             height: settings.height,
             fps: settings.fps,
@@ -1341,7 +1399,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         preferredCodec: ShadowClientVideoCodecPreference,
         remoteInputKey: Data?
     ) -> ShadowClientRemoteSessionVideoConfiguration {
-        .init(
+        return .init(
             width: settings.width,
             height: settings.height,
             fps: settings.fps,

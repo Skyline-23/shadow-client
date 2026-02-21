@@ -9,6 +9,7 @@ enum ShadowClientSunshineInputPacketCodec {
     private enum Channel {
         static let keyboard: UInt8 = ShadowClientSunshineControlMessageProfile.keyboardChannelID
         static let mouse: UInt8 = ShadowClientSunshineControlMessageProfile.mouseChannelID
+        static let gamepadBase: UInt8 = ShadowClientSunshineControlMessageProfile.gamepadChannelBaseID
     }
 
     private enum PacketMagic {
@@ -18,6 +19,20 @@ enum ShadowClientSunshineInputPacketCodec {
         static let mouseButtonDown: UInt32 = 0x0000_0008
         static let mouseButtonUp: UInt32 = 0x0000_0009
         static let scroll: UInt32 = 0x0000_000A
+        static let multiControllerGen5: UInt32 = 0x0000_000C
+        static let controllerArrival: UInt32 = 0x5500_0004
+    }
+
+    private enum MultiControllerPacket {
+        static let headerB: UInt16 = 0x001A
+        static let midB: UInt16 = 0x0014
+        static let tailA: UInt16 = 0x009C
+        static let tailB: UInt16 = 0x0055
+    }
+
+    private enum ControllerArrivalPacket {
+        static let typePlayStation: UInt8 = 0x02
+        static let capabilityAnalogTriggers: UInt16 = 0x01
     }
 
     private enum MouseButton {
@@ -89,6 +104,16 @@ enum ShadowClientSunshineInputPacketCodec {
                 channelID: Channel.mouse,
                 payload: makeScrollPacket(scrollAmount: scrollAmount)
             )
+        case let .gamepadState(state):
+            return .init(
+                channelID: gamepadChannelID(for: state.controllerNumber),
+                payload: makeMultiControllerPacket(state)
+            )
+        case let .gamepadArrival(arrival):
+            return .init(
+                channelID: gamepadChannelID(for: arrival.controllerNumber),
+                payload: makeControllerArrivalPacket(arrival)
+            )
         }
     }
 
@@ -143,6 +168,59 @@ enum ShadowClientSunshineInputPacketCodec {
         appendInt16BE(scrollAmount, to: &packet)
         appendInt16BE(0, to: &packet)
         return packet
+    }
+
+    private static func makeMultiControllerPacket(_ state: ShadowClientRemoteGamepadState) -> Data {
+        var packet = Data()
+        packet.reserveCapacity(34)
+        appendUInt32BE(30, to: &packet) // sizeof(NV_MULTI_CONTROLLER_PACKET) - sizeof(size field)
+        appendUInt32LE(PacketMagic.multiControllerGen5, to: &packet)
+        appendUInt16LE(MultiControllerPacket.headerB, to: &packet)
+        appendUInt16LE(UInt16(state.controllerNumber), to: &packet)
+        appendUInt16LE(state.activeGamepadMask, to: &packet)
+        appendUInt16LE(MultiControllerPacket.midB, to: &packet)
+        appendUInt16LE(UInt16(truncatingIfNeeded: state.buttonFlags), to: &packet)
+        packet.append(state.leftTrigger)
+        packet.append(state.rightTrigger)
+        appendInt16LE(state.leftStickX, to: &packet)
+        appendInt16LE(state.leftStickY, to: &packet)
+        appendInt16LE(state.rightStickX, to: &packet)
+        appendInt16LE(state.rightStickY, to: &packet)
+        appendUInt16LE(MultiControllerPacket.tailA, to: &packet)
+        appendUInt16LE(UInt16(truncatingIfNeeded: state.buttonFlags >> 16), to: &packet)
+        appendUInt16LE(MultiControllerPacket.tailB, to: &packet)
+        return packet
+    }
+
+    private static func makeControllerArrivalPacket(_ arrival: ShadowClientRemoteGamepadArrival) -> Data {
+        var packet = Data()
+        packet.reserveCapacity(16)
+        appendUInt32BE(12, to: &packet) // sizeof(SS_CONTROLLER_ARRIVAL_PACKET) - sizeof(size field)
+        appendUInt32LE(PacketMagic.controllerArrival, to: &packet)
+        packet.append(arrival.controllerNumber)
+        packet.append(arrival.type)
+        appendUInt16LE(arrival.capabilities, to: &packet)
+        appendUInt32LE(arrival.supportedButtonFlags, to: &packet)
+        return packet
+    }
+
+    static func defaultGamepadArrival(
+        controllerNumber: UInt8,
+        activeGamepadMask: UInt16,
+        supportedButtonFlags: UInt32
+    ) -> ShadowClientRemoteGamepadArrival {
+        ShadowClientRemoteGamepadArrival(
+            controllerNumber: controllerNumber,
+            activeGamepadMask: activeGamepadMask,
+            type: ControllerArrivalPacket.typePlayStation,
+            capabilities: ControllerArrivalPacket.capabilityAnalogTriggers,
+            supportedButtonFlags: supportedButtonFlags
+        )
+    }
+
+    private static func gamepadChannelID(for controllerNumber: UInt8) -> UInt8 {
+        let clampedIndex = min(controllerNumber, 0x0F)
+        return Channel.gamepadBase &+ clampedIndex
     }
 
     private static func normalizedScrollAmount(_ delta: Double) -> Int16 {
@@ -375,6 +453,13 @@ enum ShadowClientSunshineInputPacketCodec {
     private static func appendInt16BE(_ value: Int16, to data: inout Data) {
         var bigEndianValue = value.bigEndian
         withUnsafeBytes(of: &bigEndianValue) {
+            data.append(contentsOf: $0)
+        }
+    }
+
+    private static func appendInt16LE(_ value: Int16, to data: inout Data) {
+        var littleEndianValue = value.littleEndian
+        withUnsafeBytes(of: &littleEndianValue) {
             data.append(contentsOf: $0)
         }
     }
