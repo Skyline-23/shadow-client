@@ -63,6 +63,7 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let udpParseFailureLogLimit = 6
     public static let minimumTransportReadLength = 1
     public static let maximumTransportReadLength = 64 * 1_024
+    public static let videoReceiveQueueCapacity = 512
     public static let videoDecodeQueueCapacity = 12
     public static let videoDecodeQueueDropWindowSeconds: TimeInterval = 1.0
     public static let videoDecodeQueueDropRecoveryThreshold = 18

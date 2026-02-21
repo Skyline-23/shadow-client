@@ -94,7 +94,80 @@ private actor ShadowClientVideoDecodeQueue {
     }
 }
 
+private actor ShadowClientVideoPacketQueue {
+    private let capacity: Int
+    private var bufferedPackets: [ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket?]
+    private var headIndex = 0
+    private var bufferedCount = 0
+    private var waiters: [CheckedContinuation<ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket?, Never>] = []
+    private var closed = false
+
+    init(capacity: Int) {
+        self.capacity = max(4, capacity)
+        self.bufferedPackets = Array(repeating: nil, count: self.capacity)
+    }
+
+    func enqueue(_ packet: ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket) -> Bool {
+        guard !closed else {
+            return false
+        }
+
+        if !waiters.isEmpty {
+            let waiter = waiters.removeFirst()
+            waiter.resume(returning: packet)
+            return false
+        }
+
+        var droppedOldest = false
+        if bufferedCount >= capacity {
+            bufferedPackets[headIndex] = nil
+            headIndex = (headIndex + 1) % capacity
+            bufferedCount -= 1
+            droppedOldest = true
+        }
+        let tailIndex = (headIndex + bufferedCount) % capacity
+        bufferedPackets[tailIndex] = packet
+        bufferedCount += 1
+        return droppedOldest
+    }
+
+    func next() async -> ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket? {
+        if bufferedCount > 0 {
+            let packet = bufferedPackets[headIndex]
+            bufferedPackets[headIndex] = nil
+            headIndex = (headIndex + 1) % capacity
+            bufferedCount -= 1
+            return packet
+        }
+        if closed {
+            return nil
+        }
+        return await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func close() {
+        guard !closed else {
+            return
+        }
+        closed = true
+        bufferedPackets = Array(repeating: nil, count: capacity)
+        headIndex = 0
+        bufferedCount = 0
+        for waiter in waiters {
+            waiter.resume(returning: nil)
+        }
+        waiters.removeAll(keepingCapacity: false)
+    }
+}
+
 public actor ShadowClientRealtimeRTSPSessionRuntime {
+    fileprivate struct VideoTransportPacket: Sendable {
+        let payload: Data
+        let marker: Bool
+    }
+
     fileprivate struct VideoAccessUnit: Sendable {
         let codec: ShadowClientVideoCodec
         let parameterSets: [Data]
@@ -109,8 +182,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private let videoCodecSupport = ShadowClientVideoCodecSupport()
     private var rtspClient: ShadowClientRTSPInterleavedClient?
     private var receiveTask: Task<Void, Never>?
+    private var depacketizeTask: Task<Void, Never>?
     private var decodeTask: Task<Void, Never>?
     private var stallMonitorTask: Task<Void, Never>?
+    private var videoPacketQueue: ShadowClientVideoPacketQueue?
     private var videoDecodeQueue: ShadowClientVideoDecodeQueue?
     private var shadowClientNVDepacketizer = ShadowClientMoonlightNVRTPDepacketizer()
     private var hasLoggedDecodedFrameMetadata = false
@@ -140,6 +215,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var hasRenderedFirstFrame = false
     private var hasPublishedRenderingState = false
     private var frameAssemblyLogCount = 0
+    private var videoPacketQueueDropCount = 0
 
     public init(
         surfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init(),
@@ -153,6 +229,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
     deinit {
         receiveTask?.cancel()
+        depacketizeTask?.cancel()
         decodeTask?.cancel()
         stallMonitorTask?.cancel()
     }
@@ -202,6 +279,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         hasRenderedFirstFrame = false
         hasPublishedRenderingState = false
         frameAssemblyLogCount = 0
+        videoPacketQueueDropCount = 0
 
         await MainActor.run {
             sessionSurfaceContext.reset()
@@ -245,6 +323,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         await transitionSurfaceState(.waitingForFirstFrame)
 
         rtspClient = client
+        let packetQueue = ShadowClientVideoPacketQueue(
+            capacity: ShadowClientRealtimeSessionDefaults.videoReceiveQueueCapacity
+        )
+        videoPacketQueue = packetQueue
         let decodeQueue = ShadowClientVideoDecodeQueue(
             capacity: ShadowClientRealtimeSessionDefaults.videoDecodeQueueCapacity
         )
@@ -253,7 +335,15 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         receiveTask = Task { [weak self] in
             await self?.runReceiveLoop(
                 client: client,
-                track: track
+                payloadType: track.rtpPayloadType,
+                packetQueue: packetQueue
+            )
+        }
+        depacketizeTask = Task { [weak self] in
+            await self?.runDepacketizeLoop(
+                codec: track.codec,
+                parameterSets: track.parameterSets,
+                packetQueue: packetQueue
             )
         }
         decodeTask = Task { [weak self] in
@@ -269,10 +359,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     public func disconnect() async throws {
         receiveTask?.cancel()
         receiveTask = nil
+        depacketizeTask?.cancel()
+        depacketizeTask = nil
         decodeTask?.cancel()
         decodeTask = nil
         stallMonitorTask?.cancel()
         stallMonitorTask = nil
+        await closeVideoPacketQueue()
         await closeVideoDecodeQueue()
 
         if let rtspClient {
@@ -308,6 +401,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         hasRenderedFirstFrame = false
         hasPublishedRenderingState = false
         frameAssemblyLogCount = 0
+        videoPacketQueueDropCount = 0
         await MainActor.run {
             surfaceContext.reset()
         }
@@ -322,18 +416,19 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
     private func runReceiveLoop(
         client: ShadowClientRTSPInterleavedClient,
-        track: ShadowClientRTSPVideoTrackDescriptor
+        payloadType: Int,
+        packetQueue: ShadowClientVideoPacketQueue
     ) async {
         do {
             try await client.receiveInterleavedVideoPackets(
-                payloadType: track.rtpPayloadType
+                payloadType: payloadType
             ) { payload, marker in
-                try await self.consumeRTPPayload(
-                    codec: track.codec,
-                    payload: payload,
-                    marker: marker,
-                    initialParameterSets: track.parameterSets
+                let droppedOldest = await packetQueue.enqueue(
+                    .init(payload: payload, marker: marker)
                 )
+                if droppedOldest {
+                    await self.recordVideoPacketQueueDrop()
+                }
             }
         } catch {
             if Task.isCancelled {
@@ -345,6 +440,41 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         stallMonitorTask?.cancel()
         stallMonitorTask = nil
+        await closeVideoPacketQueue()
+    }
+
+    private func runDepacketizeLoop(
+        codec: ShadowClientVideoCodec,
+        parameterSets: [Data],
+        packetQueue: ShadowClientVideoPacketQueue
+    ) async {
+        while !Task.isCancelled {
+            guard let packet = await packetQueue.next() else {
+                break
+            }
+
+            do {
+                try await consumeRTPPayload(
+                    codec: codec,
+                    payload: packet.payload,
+                    marker: packet.marker,
+                    initialParameterSets: parameterSets
+                )
+            } catch {
+                if Task.isCancelled {
+                    return
+                }
+                logger.error("Realtime depacketizer task failed: \(error.localizedDescription, privacy: .public)")
+                let nextState = Self.renderState(forStreamError: error)
+                await transitionSurfaceState(nextState)
+                receiveTask?.cancel()
+                stallMonitorTask?.cancel()
+                stallMonitorTask = nil
+                await closeVideoDecodeQueue()
+                return
+            }
+        }
+
         await closeVideoDecodeQueue()
     }
 
@@ -391,6 +521,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         return await videoDecodeQueue.next()
     }
 
+    private func closeVideoPacketQueue() async {
+        if let videoPacketQueue {
+            await videoPacketQueue.close()
+        }
+        self.videoPacketQueue = nil
+    }
+
     private func closeVideoDecodeQueue() async {
         if let videoDecodeQueue {
             await videoDecodeQueue.close()
@@ -398,12 +535,24 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         self.videoDecodeQueue = nil
     }
 
+    private func recordVideoPacketQueueDrop() {
+        videoPacketQueueDropCount += 1
+        if videoPacketQueueDropCount == 1 || videoPacketQueueDropCount.isMultiple(of: 120) {
+            logger.notice(
+                "Video receive queue dropped oldest packet due to sustained ingress pressure (count=\(self.videoPacketQueueDropCount, privacy: .public))"
+            )
+        }
+    }
+
     private func failStreamingSession(message: String) async {
         logger.error("\(message, privacy: .public)")
         receiveTask?.cancel()
+        depacketizeTask?.cancel()
+        depacketizeTask = nil
         stallMonitorTask?.cancel()
         stallMonitorTask = nil
         await transitionSurfaceState(.failed(message))
+        await closeVideoPacketQueue()
         await closeVideoDecodeQueue()
     }
 
