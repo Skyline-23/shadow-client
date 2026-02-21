@@ -102,6 +102,58 @@ func rtspSdpParserHandlesDescribeWithoutMediaSection() throws {
     #expect(track.parameterSets[0] == Data([0x00, 0x00, 0x00, 0x01]))
 }
 
+@Test("RTSP SDP parser extracts Opus audio track metadata")
+func rtspSdpParserExtractsOpusAudioTrack() {
+    let sdp = """
+    v=0
+    o=- 0 0 IN IP4 127.0.0.1
+    s=No Name
+    t=0 0
+    m=audio 0 RTP/AVP 97
+    a=rtpmap:97 opus/48000/2
+    a=fmtp:97 sprop-stereo=1;maxplaybackrate=48000
+    a=control:audio/0/0
+    """
+
+    let track = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
+        sdp: sdp,
+        contentBase: "rtsp://skyline23-pc.local:48010/",
+        fallbackSessionURL: "rtsp://skyline23-pc.local:48010/"
+    )
+
+    #expect(track != nil)
+    #expect(track?.codec == .opus)
+    #expect(track?.rtpPayloadType == 97)
+    #expect(track?.sampleRate == 48_000)
+    #expect(track?.channelCount == 2)
+    #expect(track?.controlURL == "rtsp://skyline23-pc.local:48010/audio/0/0")
+}
+
+@Test("RTSP SDP parser infers Opus for Sunshine PT97 surround params without rtpmap")
+func rtspSdpParserInfersSunshineOpusWithoutRtpmap() {
+    let sdp = """
+    v=0
+    o=- 0 0 IN IP4 127.0.0.1
+    s=No Name
+    t=0 0
+    m=audio 0 RTP/AVP 97
+    a=fmtp:97 surround-params=21101
+    a=control:streamid=audio
+    """
+
+    let track = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
+        sdp: sdp,
+        contentBase: "rtsp://skyline23-pc.local:48010/",
+        fallbackSessionURL: "rtsp://skyline23-pc.local:48010/"
+    )
+
+    #expect(track != nil)
+    #expect(track?.codec == .opus)
+    #expect(track?.rtpPayloadType == 97)
+    #expect(track?.sampleRate == 48_000)
+    #expect(track?.channelCount == 2)
+}
+
 @Test("RTSP SDP parser extracts AV1 codec configuration from fmtp config attribute")
 func rtspSdpParserExtractsAV1CodecConfigurationFromFmtpConfig() throws {
     let sdp = """

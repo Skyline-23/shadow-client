@@ -122,7 +122,7 @@ func appSettingsMapToLaunchSettings() {
     #expect(launch.unlockBitrateLimit == true)
     #expect(launch.optimizeGameSettingsForStreaming == true)
     #expect(launch.quitAppOnHostAfterStreamEnds == true)
-    #expect(launch.playAudioOnHost == true)
+    #expect(launch.playAudioOnHost == false)
 }
 
 @Test("Launch settings disable HDR when selected app does not support HDR")

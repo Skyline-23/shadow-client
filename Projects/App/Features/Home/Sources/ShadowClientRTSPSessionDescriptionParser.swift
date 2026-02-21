@@ -25,6 +25,54 @@ public struct ShadowClientRTSPVideoTrackDescriptor: Equatable, Sendable {
     }
 }
 
+public enum ShadowClientAudioCodec: Equatable, Sendable {
+    case opus
+    case pcmu
+    case pcma
+    case l16
+    case unknown(String)
+
+    public var label: String {
+        switch self {
+        case .opus:
+            return "opus"
+        case .pcmu:
+            return "pcmu"
+        case .pcma:
+            return "pcma"
+        case .l16:
+            return "l16"
+        case let .unknown(value):
+            return value
+        }
+    }
+}
+
+public struct ShadowClientRTSPAudioTrackDescriptor: Equatable, Sendable {
+    public let codec: ShadowClientAudioCodec
+    public let rtpPayloadType: Int
+    public let sampleRate: Int
+    public let channelCount: Int
+    public let controlURL: String?
+    public let formatParameters: [String: String]
+
+    public init(
+        codec: ShadowClientAudioCodec,
+        rtpPayloadType: Int,
+        sampleRate: Int,
+        channelCount: Int,
+        controlURL: String?,
+        formatParameters: [String: String]
+    ) {
+        self.codec = codec
+        self.rtpPayloadType = rtpPayloadType
+        self.sampleRate = max(8_000, sampleRate)
+        self.channelCount = max(1, min(8, channelCount))
+        self.controlURL = controlURL
+        self.formatParameters = formatParameters
+    }
+}
+
 public enum ShadowClientRTSPSessionDescriptionError: Error, Equatable, Sendable {
     case missingVideoTrack
     case missingControlURL
@@ -210,6 +258,111 @@ public enum ShadowClientRTSPSessionDescriptionParser {
         return resolved
     }
 
+    public static func parseAudioTrack(
+        sdp: String,
+        contentBase: String?,
+        fallbackSessionURL: String
+    ) -> ShadowClientRTSPAudioTrackDescriptor? {
+        let lines = sdp
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        var insideAudioSection = false
+        var advertisedPayloadTypes: [Int] = []
+        var controlValue: String?
+        var codecByPayloadType: [Int: ShadowClientAudioCodec] = [:]
+        var sampleRateByPayloadType: [Int: Int] = [:]
+        var channelsByPayloadType: [Int: Int] = [:]
+        var fmtpByPayloadType: [Int: [String: String]] = [:]
+
+        for line in lines {
+            if line.hasPrefix("m=") {
+                insideAudioSection = line.hasPrefix("m=audio")
+                if insideAudioSection {
+                    advertisedPayloadTypes = parsePayloadTypes(fromMediaLine: line)
+                }
+                continue
+            }
+
+            guard insideAudioSection else {
+                continue
+            }
+
+            if let controlLine = extractAttributeLine(line, prefix: "a=control:") {
+                controlValue = String(controlLine.dropFirst("a=control:".count))
+                continue
+            }
+
+            if let rtpMapLine = extractAttributeLine(line, prefix: "a=rtpmap:"),
+               let mapping = parseAudioRTPMap(rtpMapLine)
+            {
+                codecByPayloadType[mapping.payloadType] = mapping.codec
+                sampleRateByPayloadType[mapping.payloadType] = mapping.sampleRate
+                channelsByPayloadType[mapping.payloadType] = mapping.channelCount
+                continue
+            }
+
+            if let fmtpLine = extractAttributeLine(line, prefix: "a=fmtp:"),
+               let parsed = parseFMTP(fmtpLine)
+            {
+                fmtpByPayloadType[parsed.payloadType] = parsed.parameters
+                continue
+            }
+        }
+
+        if advertisedPayloadTypes.isEmpty {
+            let discovered = Set(codecByPayloadType.keys)
+                .union(fmtpByPayloadType.keys)
+            advertisedPayloadTypes = discovered.sorted()
+        }
+
+        var candidates = advertisedPayloadTypes
+        for payloadType in codecByPayloadType.keys.sorted() where !candidates.contains(payloadType) {
+            candidates.append(payloadType)
+        }
+
+        guard let payloadType = candidates.first else {
+            return nil
+        }
+        let selectedPayloadType = candidates.first(where: {
+            codecByPayloadType[$0] == .opus
+        }) ?? payloadType
+
+        let codec: ShadowClientAudioCodec
+        if let mappedCodec = codecByPayloadType[selectedPayloadType] {
+            codec = mappedCodec
+        } else if selectedPayloadType == 97 ||
+            fmtpByPayloadType[selectedPayloadType]?["surround-params"] != nil
+        {
+            // Sunshine commonly advertises audio PT=97 with surround-params while omitting rtpmap.
+            codec = .opus
+        } else {
+            codec = .unknown("payload-\(selectedPayloadType)")
+        }
+        let sampleRate = sampleRateByPayloadType[selectedPayloadType] ?? 48_000
+        let channelCount = channelsByPayloadType[selectedPayloadType] ?? 2
+        let resolvedControlURL: String?
+        if let controlValue {
+            resolvedControlURL = try? resolveControlURL(
+                controlValue,
+                contentBase: contentBase,
+                fallbackSessionURL: fallbackSessionURL
+            )
+        } else {
+            resolvedControlURL = nil
+        }
+
+        return ShadowClientRTSPAudioTrackDescriptor(
+            codec: codec,
+            rtpPayloadType: selectedPayloadType,
+            sampleRate: sampleRate,
+            channelCount: channelCount,
+            controlURL: resolvedControlURL,
+            formatParameters: fmtpByPayloadType[selectedPayloadType] ?? [:]
+        )
+    }
+
     static func inferFallbackVideoPayloadType(
         sdp: String,
         preferredCodec: ShadowClientVideoCodec?
@@ -316,6 +469,42 @@ public enum ShadowClientRTSPSessionDescriptionParser {
         default:
             return nil
         }
+    }
+
+    private static func parseAudioRTPMap(
+        _ line: String
+    ) -> (payloadType: Int, codec: ShadowClientAudioCodec, sampleRate: Int, channelCount: Int)? {
+        let body = String(line.dropFirst("a=rtpmap:".count))
+        let parts = body.split(separator: " ", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let payloadType = Int(parts[0]) else {
+            return nil
+        }
+
+        let codecComponents = parts[1]
+            .split(separator: "/")
+            .map { String($0).lowercased() }
+        guard let codecName = codecComponents.first else {
+            return nil
+        }
+
+        let sampleRate = Int(codecComponents.dropFirst().first ?? "") ?? 48_000
+        let channelCount = Int(codecComponents.dropFirst(2).first ?? "") ?? 2
+
+        let codec: ShadowClientAudioCodec
+        switch codecName {
+        case "opus":
+            codec = .opus
+        case "pcmu", "g711u", "ulaw", "mu-law":
+            codec = .pcmu
+        case "pcma", "g711a", "alaw", "a-law":
+            codec = .pcma
+        case "l16", "pcm":
+            codec = .l16
+        default:
+            codec = .unknown(codecName)
+        }
+
+        return (payloadType, codec, sampleRate, channelCount)
     }
 
     private static func parseSunshineVideoHint(

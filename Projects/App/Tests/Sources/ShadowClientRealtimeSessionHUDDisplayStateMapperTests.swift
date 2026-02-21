@@ -74,6 +74,42 @@ func realtimeSessionHUDMapperPrioritizesDecoderFailureState() {
     )
 }
 
+@Test("Realtime session HUD mapper surfaces audio device issues")
+func realtimeSessionHUDMapperSurfacesAudioDeviceIssue() {
+    let model = ShadowClientRealtimeSessionHUDDisplayStateMapper.make(
+        showDiagnosticsHUD: true,
+        diagnosticsModel: makeDiagnosticsModel(),
+        controlRoundTripMs: 8,
+        renderState: .rendering,
+        audioOutputState: .deviceUnavailable("No default output device")
+    )
+
+    #expect(
+        model == .connectionIssue(
+            title: "Audio Device Unavailable",
+            message: "No default output device"
+        )
+    )
+}
+
+@Test("Realtime session HUD mapper surfaces audio stream disconnect")
+func realtimeSessionHUDMapperSurfacesAudioDisconnect() {
+    let model = ShadowClientRealtimeSessionHUDDisplayStateMapper.make(
+        showDiagnosticsHUD: true,
+        diagnosticsModel: makeDiagnosticsModel(),
+        controlRoundTripMs: 8,
+        renderState: .rendering,
+        audioOutputState: .disconnected("Audio RTP receive failed")
+    )
+
+    #expect(
+        model == .connectionIssue(
+            title: "Audio Stream Disconnected",
+            message: "Audio RTP receive failed"
+        )
+    )
+}
+
 private func makeDiagnosticsModel() -> SettingsDiagnosticsHUDModel {
     let tick = HomeDiagnosticsTick(
         model: .init(

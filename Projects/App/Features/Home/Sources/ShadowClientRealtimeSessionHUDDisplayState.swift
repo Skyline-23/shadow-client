@@ -9,7 +9,8 @@ public enum ShadowClientRealtimeSessionHUDDisplayStateMapper {
         showDiagnosticsHUD: Bool,
         diagnosticsModel: SettingsDiagnosticsHUDModel?,
         controlRoundTripMs: Int?,
-        renderState: ShadowClientRealtimeSessionSurfaceContext.RenderState
+        renderState: ShadowClientRealtimeSessionSurfaceContext.RenderState,
+        audioOutputState: ShadowClientRealtimeAudioOutputState = .idle
     ) -> ShadowClientRealtimeSessionHUDDisplayState? {
         guard showDiagnosticsHUD else {
             return nil
@@ -35,6 +36,35 @@ public enum ShadowClientRealtimeSessionHUDDisplayStateMapper {
                 message: issue
             )
         case .idle, .connecting, .waitingForFirstFrame, .rendering:
+            break
+        }
+
+        switch audioOutputState {
+        case let .deviceUnavailable(message):
+            return .connectionIssue(
+                title: "Audio Device Unavailable",
+                message: normalizedIssueMessage(
+                    message,
+                    fallback: "Could not start local audio output device."
+                )
+            )
+        case let .decoderFailed(message):
+            return .connectionIssue(
+                title: "Audio Decode Error",
+                message: normalizedIssueMessage(
+                    message,
+                    fallback: "Could not decode incoming audio stream."
+                )
+            )
+        case let .disconnected(message):
+            return .connectionIssue(
+                title: "Audio Stream Disconnected",
+                message: normalizedIssueMessage(
+                    message,
+                    fallback: "Audio transport disconnected."
+                )
+            )
+        case .idle, .starting, .playing:
             break
         }
 

@@ -179,9 +179,7 @@ public enum ShadowClientAppSettingsDefaults {
 }
 
 public enum ShadowClientAudioPlaybackDefaults {
-    // Client-side audio decode/playback path is not implemented yet.
-    // Until that lands, route audio to the host device to avoid silent sessions.
-    public static let supportsClientPlayback = false
+    public static let supportsClientPlayback = true
 }
 
 public enum ShadowClientRTSPAnnounceDefaults {

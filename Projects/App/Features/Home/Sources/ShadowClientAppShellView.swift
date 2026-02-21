@@ -1401,7 +1401,8 @@ public struct ShadowClientAppShellView: View {
             showDiagnosticsHUD: showDiagnosticsHUD,
             diagnosticsModel: settingsDiagnosticsModel,
             controlRoundTripMs: sessionSurfaceContext.controlRoundTripMs,
-            renderState: sessionSurfaceContext.renderState
+            renderState: sessionSurfaceContext.renderState,
+            audioOutputState: sessionSurfaceContext.audioOutputState
         )
     }
 

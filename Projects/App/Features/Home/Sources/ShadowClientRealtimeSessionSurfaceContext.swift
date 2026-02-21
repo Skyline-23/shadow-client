@@ -36,6 +36,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     @Published public private(set) var activeVideoCodec: ShadowClientVideoCodec?
     @Published public private(set) var estimatedVideoFPS: Double?
     @Published public private(set) var estimatedVideoBitrateKbps: Int?
+    @Published public private(set) var audioOutputState: ShadowClientRealtimeAudioOutputState = .idle
 
     public let frameStore: ShadowClientRealtimeSessionFrameStore
 
@@ -50,6 +51,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         activeVideoCodec = nil
         estimatedVideoFPS = nil
         estimatedVideoBitrateKbps = nil
+        audioOutputState = .idle
     }
 
     public func transition(to state: RenderState) {
@@ -79,6 +81,12 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         } else {
             estimatedVideoBitrateKbps = nil
         }
+    }
+
+    public func updateAudioOutputState(
+        _ state: ShadowClientRealtimeAudioOutputState
+    ) {
+        audioOutputState = state
     }
 }
 
