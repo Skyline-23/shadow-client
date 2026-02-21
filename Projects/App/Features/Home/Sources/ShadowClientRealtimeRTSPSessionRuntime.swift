@@ -3164,11 +3164,15 @@ private final class ShadowClientUDPDatagramSocket: @unchecked Sendable {
         }
 
         if receivedBytes < 0 {
-            if errno == EAGAIN || errno == EWOULDBLOCK {
+            let errorCode = errno
+            if errorCode == EAGAIN || errorCode == EWOULDBLOCK || errorCode == EINTR {
+                return nil
+            }
+            if errorCode == EBADF, isSocketMarkedClosed() {
                 return nil
             }
             throw ShadowClientUDPDatagramSocketError.socketFailure(
-                "recvfrom() failed: \(String(cString: strerror(errno)))"
+                "recvfrom() failed (\(errorCode)): \(String(cString: strerror(errorCode)))"
             )
         }
 
@@ -3224,6 +3228,13 @@ private final class ShadowClientUDPDatagramSocket: @unchecked Sendable {
         if shouldClose {
             Darwin.close(descriptor)
         }
+    }
+
+    private func isSocketMarkedClosed() -> Bool {
+        closeLock.lock()
+        let closed = isClosed
+        closeLock.unlock()
+        return closed
     }
 
     private static func makeLocalIPv4Address(
