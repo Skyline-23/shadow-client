@@ -1,3 +1,4 @@
+import Foundation
 import ShadowClientStreaming
 
 public enum ShadowClientStreamingResolutionPreset: String, CaseIterable, Sendable {
@@ -29,7 +30,7 @@ public enum ShadowClientStreamingFrameRatePreset: Int, CaseIterable, Sendable {
     case fps90 = 90
     case fps120 = 120
 
-    fileprivate var fps: Int {
+    public var fps: Int {
         ShadowClientStreamingPresetCatalogs.frameRate.metadata(for: self).fps
     }
 }
@@ -146,6 +147,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         public static let resolution = "settings.resolution"
         public static let frameRate = "settings.frameRate"
         public static let bitrateKbps = "settings.bitrateKbps"
+        public static let autoBitrate = "settings.autoBitrate"
         public static let displayMode = "settings.displayMode"
         public static let audioConfiguration = "settings.audioConfiguration"
         public static let videoCodec = "settings.videoCodec"
@@ -179,6 +181,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
     public let resolution: ShadowClientStreamingResolutionPreset
     public let frameRate: ShadowClientStreamingFrameRatePreset
     public let bitrateKbps: Int
+    public let autoBitrate: Bool
     public let displayMode: ShadowClientDisplayMode
     public let audioConfiguration: ShadowClientAudioConfiguration
     public let videoCodec: ShadowClientVideoCodecPreference
@@ -212,6 +215,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         resolution: ShadowClientStreamingResolutionPreset = ShadowClientAppSettingsDefaults.defaultResolution,
         frameRate: ShadowClientStreamingFrameRatePreset = ShadowClientAppSettingsDefaults.defaultFrameRate,
         bitrateKbps: Int = ShadowClientAppSettingsDefaults.defaultBitrateKbps,
+        autoBitrate: Bool = ShadowClientAppSettingsDefaults.defaultAutoBitrate,
         displayMode: ShadowClientDisplayMode = .borderlessFullscreen,
         audioConfiguration: ShadowClientAudioConfiguration = .surround71,
         videoCodec: ShadowClientVideoCodecPreference = .auto,
@@ -247,6 +251,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             max(ShadowClientStreamingLaunchBounds.minimumBitrateKbps, bitrateKbps),
             ShadowClientStreamingLaunchBounds.maximumBitrateKbps
         )
+        self.autoBitrate = autoBitrate
         self.displayMode = displayMode
         self.audioConfiguration = audioConfiguration
         self.videoCodec = videoCodec
@@ -285,11 +290,19 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
     public func launchSettings(
         hostApp: ShadowClientRemoteAppDescriptor?
     ) -> ShadowClientGameStreamLaunchSettings {
-        ShadowClientGameStreamLaunchSettings(
+        let requestedHostAudioPlayback = !muteHostSpeakersWhileStreaming
+        let resolvedPlayAudioOnHost: Bool
+        if ShadowClientAudioPlaybackDefaults.supportsClientPlayback {
+            resolvedPlayAudioOnHost = requestedHostAudioPlayback
+        } else {
+            resolvedPlayAudioOnHost = true
+        }
+
+        return ShadowClientGameStreamLaunchSettings(
             width: resolution.width,
             height: resolution.height,
             fps: frameRate.fps,
-            bitrateKbps: bitrateKbps,
+            bitrateKbps: resolvedBitrateKbps,
             preferredCodec: videoCodec,
             enableHDR: preferHDR && (hostApp?.hdrSupported ?? true),
             enableSurroundAudio: audioConfiguration.prefersSurroundAudio,
@@ -301,8 +314,73 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             forceHardwareDecoding: videoDecoder != .software,
             optimizeGameSettingsForStreaming: optimizeGameSettingsForStreaming,
             quitAppOnHostAfterStreamEnds: quitAppOnHostAfterStream,
-            playAudioOnHost: !muteHostSpeakersWhileStreaming
+            playAudioOnHost: resolvedPlayAudioOnHost
         )
+    }
+
+    public var resolvedBitrateKbps: Int {
+        if !autoBitrate {
+            return bitrateKbps
+        }
+
+        return Self.recommendedBitrateKbps(
+            resolution: resolution,
+            frameRate: frameRate,
+            codec: videoCodec,
+            enableHDR: preferHDR,
+            enableYUV444: enableYUV444,
+            lowLatencyMode: lowLatencyMode,
+            unlockBitrateLimit: unlockBitrateLimit
+        )
+    }
+
+    public static func recommendedBitrateKbps(
+        resolution: ShadowClientStreamingResolutionPreset,
+        frameRate: ShadowClientStreamingFrameRatePreset,
+        codec: ShadowClientVideoCodecPreference,
+        enableHDR: Bool,
+        enableYUV444: Bool,
+        lowLatencyMode: Bool,
+        unlockBitrateLimit: Bool
+    ) -> Int {
+        let pixelsPerSecond = Double(resolution.width * resolution.height * frameRate.fps)
+        let normalizedLoad = max(
+            pixelsPerSecond / ShadowClientAppSettingsDefaults.bitrateEstimationBaselinePixelsPerSecond,
+            0.25
+        )
+        var bitrate = Double(ShadowClientAppSettingsDefaults.bitrateEstimationBaselineKbps) *
+            Foundation.pow(normalizedLoad, ShadowClientAppSettingsDefaults.bitrateEstimationScaleExponent)
+
+        let codecMultiplier: Double
+        switch codec {
+        case .auto:
+            codecMultiplier = 0.95
+        case .av1:
+            codecMultiplier = 0.82
+        case .h265:
+            codecMultiplier = 1.0
+        case .h264:
+            codecMultiplier = 1.2
+        }
+        bitrate *= codecMultiplier
+
+        if enableHDR {
+            bitrate *= 1.18
+        }
+        if enableYUV444 {
+            bitrate *= 1.30
+        }
+        if lowLatencyMode {
+            bitrate *= 1.08
+        }
+
+        let roundedStep = ShadowClientAppSettingsDefaults.bitrateStepKbps
+        let rounded = Int((bitrate / Double(roundedStep)).rounded()) * roundedStep
+        let minimum = max(ShadowClientStreamingLaunchBounds.minimumBitrateKbps, 2_000)
+        let maximum = unlockBitrateLimit
+            ? ShadowClientAppSettingsDefaults.maximumBitrateWhenUnlocked
+            : ShadowClientAppSettingsDefaults.maximumBitrateWhenLocked
+        return min(max(rounded, minimum), maximum)
     }
 
     public var identityKey: String {
@@ -313,6 +391,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             resolution.rawValue,
             "\(frameRate.fps)",
             "\(bitrateKbps)",
+            "\(autoBitrate)",
             audioConfiguration.rawValue,
             videoCodec.rawValue,
             videoDecoder.rawValue,

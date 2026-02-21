@@ -90,6 +90,7 @@ func appSettingsMapToLaunchSettings() {
         resolution: .p2160,
         frameRate: .fps120,
         bitrateKbps: 42_000,
+        autoBitrate: false,
         audioConfiguration: .surround51,
         videoCodec: .av1,
         enableVSync: true,
@@ -121,7 +122,7 @@ func appSettingsMapToLaunchSettings() {
     #expect(launch.unlockBitrateLimit == true)
     #expect(launch.optimizeGameSettingsForStreaming == true)
     #expect(launch.quitAppOnHostAfterStreamEnds == true)
-    #expect(launch.playAudioOnHost == false)
+    #expect(launch.playAudioOnHost == true)
 }
 
 @Test("Launch settings disable HDR when selected app does not support HDR")
@@ -144,6 +145,23 @@ func launchSettingsEnableAudioOnHostWhenConfigured() {
     let launch = settings.launchSettings(hostApp: nil)
 
     #expect(launch.playAudioOnHost == true)
+}
+
+@Test("Auto bitrate computes launch bitrate from stream profile")
+func autoBitrateComputesLaunchBitrate() {
+    let settings = ShadowClientAppSettings(
+        preferHDR: true,
+        resolution: .p2160,
+        frameRate: .fps120,
+        bitrateKbps: 8_000,
+        autoBitrate: true,
+        videoCodec: .h264,
+        enableYUV444: true
+    )
+    let launch = settings.launchSettings(hostApp: nil)
+
+    #expect(launch.bitrateKbps > 8_000)
+    #expect(launch.bitrateKbps <= ShadowClientAppSettingsDefaults.maximumBitrateWhenLocked)
 }
 
 private actor RecordingConnectionClient: ShadowClientConnectionClient {

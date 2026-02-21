@@ -169,9 +169,19 @@ public enum ShadowClientAppSettingsDefaults {
     public static let defaultResolution = ShadowClientStreamingResolutionPreset.p1080
     public static let defaultFrameRate = ShadowClientStreamingFrameRatePreset.fps60
     public static let defaultBitrateKbps = 22_000
+    public static let defaultAutoBitrate = true
     public static let bitrateStepKbps = 500
     public static let maximumBitrateWhenUnlocked = ShadowClientStreamingLaunchBounds.maximumBitrateKbps
     public static let maximumBitrateWhenLocked = 150_000
+    public static let bitrateEstimationBaselineKbps = 22_000
+    public static let bitrateEstimationBaselinePixelsPerSecond = 1_920.0 * 1_080.0 * 60.0
+    public static let bitrateEstimationScaleExponent = 0.92
+}
+
+public enum ShadowClientAudioPlaybackDefaults {
+    // Client-side audio decode/playback path is not implemented yet.
+    // Until that lands, route audio to the host device to avoid silent sessions.
+    public static let supportsClientPlayback = false
 }
 
 public enum ShadowClientRTSPAnnounceDefaults {
