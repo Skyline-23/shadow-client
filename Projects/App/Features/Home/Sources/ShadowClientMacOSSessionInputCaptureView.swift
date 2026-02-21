@@ -6,21 +6,18 @@ import SwiftUI
 
 struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
     let onInputEvent: @MainActor (ShadowClientRemoteInputEvent) -> Void
-    let onSessionInteraction: @MainActor () -> Void
-    let onSessionOverlayToggleCommand: @MainActor () -> Void
+    let onSessionTerminateCommand: @MainActor () -> Void
 
     func makeNSView(context: Context) -> ShadowClientMacOSInputCaptureNSView {
         let view = ShadowClientMacOSInputCaptureNSView()
         view.onInputEvent = onInputEvent
-        view.onSessionInteraction = onSessionInteraction
-        view.onSessionOverlayToggleCommand = onSessionOverlayToggleCommand
+        view.onSessionTerminateCommand = onSessionTerminateCommand
         return view
     }
 
     func updateNSView(_ nsView: ShadowClientMacOSInputCaptureNSView, context: Context) {
         nsView.onInputEvent = onInputEvent
-        nsView.onSessionInteraction = onSessionInteraction
-        nsView.onSessionOverlayToggleCommand = onSessionOverlayToggleCommand
+        nsView.onSessionTerminateCommand = onSessionTerminateCommand
         nsView.requestInputFocusIfNeeded()
     }
 }
@@ -28,8 +25,7 @@ struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
 @MainActor
 final class ShadowClientMacOSInputCaptureNSView: NSView {
     var onInputEvent: (@MainActor (ShadowClientRemoteInputEvent) -> Void)?
-    var onSessionInteraction: (@MainActor () -> Void)?
-    var onSessionOverlayToggleCommand: (@MainActor () -> Void)?
+    var onSessionTerminateCommand: (@MainActor () -> Void)?
 
     private var trackingAreaToken: NSTrackingArea?
     private var activeModifierFlags: NSEvent.ModifierFlags = []
@@ -41,7 +37,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     private var isCursorHidden = false
     private var isMouseCursorAssociationDisabled = false
     private var dropNextPointerDelta = false
-    private var locallyCapturedKeyCodes = Set<UInt16>()
+    private var locallyHandledKeyCodes = Set<UInt16>()
 
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { true }
@@ -144,18 +140,16 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
-        if handleLocalSessionOverlayToggleShortcutIfNeeded(event) {
+        if handleLocalSessionTerminateShortcutIfNeeded(event) {
             return
         }
-        onSessionInteraction?()
         emit(.keyDown(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers))
     }
 
     override func keyUp(with event: NSEvent) {
-        if locallyCapturedKeyCodes.remove(event.keyCode) != nil {
+        if locallyHandledKeyCodes.remove(event.keyCode) != nil {
             return
         }
-        onSessionInteraction?()
         emit(.keyUp(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers))
     }
 
@@ -164,16 +158,16 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
             return super.performKeyEquivalent(with: event)
         }
 
+        if handleLocalSessionTerminateShortcutIfNeeded(event) {
+            return true
+        }
+
         requestInputFocusIfNeeded()
         emit(.keyDown(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers))
         return true
     }
 
     override func flagsChanged(with event: NSEvent) {
-        if locallyCapturedKeyCodes.isEmpty {
-            onSessionInteraction?()
-        }
-
         guard let modifier = modifierMapping(for: event.keyCode) else {
             activeModifierFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             return
@@ -198,40 +192,34 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     override func mouseDown(with event: NSEvent) {
         requestInputFocusIfNeeded()
         emitPointerMove(from: event)
-        onSessionInteraction?()
         emit(.pointerButton(button: .left, isPressed: true))
     }
 
     override func mouseUp(with event: NSEvent) {
         emitPointerMove(from: event)
-        onSessionInteraction?()
         emit(.pointerButton(button: .left, isPressed: false))
     }
 
     override func rightMouseDown(with event: NSEvent) {
         requestInputFocusIfNeeded()
         emitPointerMove(from: event)
-        onSessionInteraction?()
         emit(.pointerButton(button: .right, isPressed: true))
     }
 
     override func rightMouseUp(with event: NSEvent) {
         emitPointerMove(from: event)
-        onSessionInteraction?()
         emit(.pointerButton(button: .right, isPressed: false))
     }
 
     override func otherMouseDown(with event: NSEvent) {
         requestInputFocusIfNeeded()
         emitPointerMove(from: event)
-        onSessionInteraction?()
         let button = event.buttonNumber == 2 ? ShadowClientRemoteMouseButton.middle : .other(Int(event.buttonNumber))
         emit(.pointerButton(button: button, isPressed: true))
     }
 
     override func otherMouseUp(with event: NSEvent) {
         emitPointerMove(from: event)
-        onSessionInteraction?()
         let button = event.buttonNumber == 2 ? ShadowClientRemoteMouseButton.middle : .other(Int(event.buttonNumber))
         emit(.pointerButton(button: button, isPressed: false))
     }
@@ -253,7 +241,6 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        onSessionInteraction?()
         emit(.scroll(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY))
     }
 
@@ -264,7 +251,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         }
 
         let deltaX = event.deltaX
-        let deltaY = -event.deltaY
+        let deltaY = event.deltaY
         guard deltaX != 0 || deltaY != 0 else {
             return
         }
@@ -329,7 +316,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     @objc
     private func applicationWillResignActive(_ notification: Notification) {
         _ = notification
-        locallyCapturedKeyCodes.removeAll(keepingCapacity: true)
+        locallyHandledKeyCodes.removeAll(keepingCapacity: true)
         deactivatePointerCaptureIfNeeded()
     }
 
@@ -363,22 +350,22 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         requestInputFocusIfNeeded(forceRecapture: true)
     }
 
-    private func handleLocalSessionOverlayToggleShortcutIfNeeded(_ event: NSEvent) -> Bool {
-        let requiredFlags: NSEvent.ModifierFlags = [.control, .option, .command]
+    private func handleLocalSessionTerminateShortcutIfNeeded(_ event: NSEvent) -> Bool {
+        let requiredFlags: NSEvent.ModifierFlags = [.command, .option, .shift]
         let activeFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let hasRequiredFlags = requiredFlags.isSubset(of: activeFlags)
-        let hasDisallowedFlags = activeFlags.contains(.shift) || activeFlags.contains(.capsLock)
+        let hasDisallowedFlags = activeFlags.contains(.control) || activeFlags.contains(.capsLock)
         guard hasRequiredFlags, !hasDisallowedFlags else {
             return false
         }
 
-        // Ctrl+Option+Command+M toggles local session chrome visibility.
-        guard event.keyCode == 0x2E || event.charactersIgnoringModifiers?.lowercased() == "m" else {
+        // Cmd+Option+Shift+Q ends remote session locally.
+        guard event.keyCode == 0x0C || event.charactersIgnoringModifiers?.lowercased() == "q" else {
             return false
         }
 
-        locallyCapturedKeyCodes.insert(event.keyCode)
-        onSessionOverlayToggleCommand?()
+        locallyHandledKeyCodes.insert(event.keyCode)
+        onSessionTerminateCommand?()
         return true
     }
 

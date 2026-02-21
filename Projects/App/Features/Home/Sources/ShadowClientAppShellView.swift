@@ -57,7 +57,6 @@ public struct ShadowClientAppShellView: View {
     @State private var sessionDiagnosticsHistory = ShadowClientSessionDiagnosticsHistory(
         maxSamples: ShadowClientUIRuntimeDefaults.diagnosticsHUDSampleHistoryLimit
     )
-    @StateObject private var sessionOverlayVisibilityRuntime = ShadowClientSessionOverlayVisibilityRuntime()
     @State private var launchFailureAlertMessage = ""
     @State private var isLaunchFailureAlertPresented = false
     @State private var gamepadInputRuntime = ShadowClientGamepadInputPassthroughRuntime()
@@ -144,12 +143,7 @@ public struct ShadowClientAppShellView: View {
             }
             sessionDiagnosticsHistory.appendControlRoundTripMs(newRoundTripMs)
         }
-        .onChange(of: sessionSurfaceContext.renderState, initial: false) { _, newRenderState in
-            sessionOverlayVisibilityRuntime.applyRenderState(newRenderState)
-        }
         .onChange(of: remoteDesktopRuntime.activeSession != nil, initial: true) { _, isActive in
-            sessionOverlayVisibilityRuntime.setSessionActive(isActive)
-            sessionOverlayVisibilityRuntime.applyRenderState(sessionSurfaceContext.renderState)
             gamepadInputRuntime.setSessionActive(isActive)
         }
         .onChange(of: gamepadInputConfiguration, initial: true) { _, configuration in
@@ -1247,7 +1241,7 @@ public struct ShadowClientAppShellView: View {
 
     @ViewBuilder
     private var remoteSessionFlowView: some View {
-        if let activeSession = remoteDesktopRuntime.activeSession {
+        if remoteDesktopRuntime.activeSession != nil {
             ZStack {
                 Color.black
 
@@ -1267,119 +1261,16 @@ public struct ShadowClientAppShellView: View {
                         .padding(.horizontal, 20)
                     }
 
-                    ShadowClientSessionInputInteractionView(
-                        sessionControlsVisible: sessionControlsVisibilityBinding
-                    ) { event in
+                    ShadowClientSessionInputInteractionView { event in
                         remoteDesktopRuntime.sendInput(event)
-                    } onSessionInteraction: {
-                        sessionOverlayVisibilityRuntime.registerInteraction()
-                    } onSessionOverlayToggleCommand: {
-                        sessionOverlayVisibilityRuntime.toggleByLocalCommand()
+                    } onSessionTerminateCommand: {
+                        remoteDesktopRuntime.clearActiveSession()
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.clear)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
-
-                VStack(spacing: 0) {
-                    if sessionOverlayVisibilityRuntime.isVisible {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(alignment: .top, spacing: 12) {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Remote Session")
-                                        .font(.system(.headline, design: .rounded).weight(.bold))
-                                        .foregroundStyle(.white)
-                                    Text("\(activeSession.appTitle) · \(activeSession.host)")
-                                        .font(.footnote.weight(.semibold))
-                                        .foregroundStyle(Color.white.opacity(0.86))
-                                        .lineLimit(1)
-                                    Text("Codec · \(activeSessionVideoCodecLabel)")
-                                        .font(.caption.monospacedDigit().weight(.semibold))
-                                        .foregroundStyle(Color.white.opacity(0.72))
-                                }
-
-                                Spacer(minLength: 8)
-
-                                Button {
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        showDiagnosticsHUD.toggle()
-                                    }
-                                } label: {
-                                    Label(
-                                        showDiagnosticsHUD ? "HUD On" : "HUD Off",
-                                        systemImage: showDiagnosticsHUD
-                                            ? "waveform.path.ecg.rectangle.fill"
-                                            : "waveform.path.ecg.rectangle"
-                                    )
-                                }
-                                .accessibilityIdentifier("shadow.home.session.hud-toggle")
-                                .accessibilityLabel("Toggle Session HUD")
-                                .accessibilityHint("Shows or hides realtime diagnostics overlay.")
-                                .buttonStyle(.bordered)
-
-                                Button("End Session") {
-                                    remoteDesktopRuntime.clearActiveSession()
-                                }
-                                .accessibilityIdentifier("shadow.home.session.end")
-                                .accessibilityLabel("End Session")
-                                .accessibilityHint("Disconnects the active session and returns to the host list.")
-                                .buttonStyle(.borderedProminent)
-                            }
-
-                            Text("Toggle controls: Ctrl+Option+Command+M")
-                                .font(.caption2.monospacedDigit().weight(.medium))
-                                .foregroundStyle(Color.white.opacity(0.65))
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(.ultraThinMaterial)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .padding(.horizontal, 12)
-                        .padding(.top, 12)
-                        .safeAreaPadding(.top)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-
-                    Spacer(minLength: 0)
-
-                    if shouldShowBottomSessionStatusBar {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(sessionPresentationModel.statusText)
-                                .font(.callout.weight(.semibold))
-                                .foregroundStyle(Color.white.opacity(0.90))
-                                .accessibilityIdentifier("shadow.remote.session.status")
-
-                            HStack(spacing: 8) {
-                                Label(remoteDesktopRuntime.launchState.label, systemImage: "play.circle.fill")
-                                    .font(.footnote.weight(.semibold))
-                                    .foregroundStyle(launchStateColor)
-
-                                Label(activeSessionVideoCodecLabel, systemImage: "film.stack.fill")
-                                    .font(.footnote.monospacedDigit().weight(.semibold))
-                                    .foregroundStyle(Color.mint.opacity(0.90))
-
-                                if let sessionURL = activeSession.sessionURL, !sessionURL.isEmpty {
-                                    Spacer(minLength: 6)
-                                    Text(sessionURL)
-                                        .font(.footnote.monospaced())
-                                        .foregroundStyle(Color.white.opacity(0.70))
-                                        .lineLimit(1)
-                                        .textSelection(.enabled)
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.ultraThinMaterial)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 12)
-                        .safeAreaPadding(.bottom)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                }
 
                 if let hudDisplayState = realtimeSessionHUDDisplayState {
                     VStack {
@@ -1399,7 +1290,7 @@ public struct ShadowClientAppShellView: View {
                         }
                         Spacer(minLength: 0)
                     }
-                    .padding(.top, sessionOverlayVisibilityRuntime.isVisible ? 72 : 12)
+                    .padding(.top, 12)
                     .padding(.trailing, 12)
                     .safeAreaPadding([.top, .trailing])
                     .allowsHitTesting(false)
@@ -1470,26 +1361,6 @@ public struct ShadowClientAppShellView: View {
             controlRoundTripMs: sessionSurfaceContext.controlRoundTripMs,
             renderState: sessionSurfaceContext.renderState
         )
-    }
-
-    private var sessionControlsVisibilityBinding: Binding<Bool> {
-        Binding(
-            get: { sessionOverlayVisibilityRuntime.isVisible },
-            set: { sessionOverlayVisibilityRuntime.setVisible($0) }
-        )
-    }
-
-    private var shouldShowBottomSessionStatusBar: Bool {
-        guard remoteDesktopRuntime.activeSession != nil else {
-            return false
-        }
-
-        switch sessionSurfaceContext.renderState {
-        case .rendering:
-            return sessionOverlayVisibilityRuntime.isVisible
-        case .idle, .connecting, .waitingForFirstFrame, .disconnected, .failed:
-            return true
-        }
     }
 
     private func panelSurface(cornerRadius: CGFloat) -> some View {
