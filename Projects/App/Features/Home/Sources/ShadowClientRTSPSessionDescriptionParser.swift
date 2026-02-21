@@ -261,7 +261,8 @@ public enum ShadowClientRTSPSessionDescriptionParser {
     public static func parseAudioTrack(
         sdp: String,
         contentBase: String?,
-        fallbackSessionURL: String
+        fallbackSessionURL: String,
+        preferredOpusChannelCount: Int? = nil
     ) -> ShadowClientRTSPAudioTrackDescriptor? {
         let lines = sdp
             .components(separatedBy: .newlines)
@@ -323,7 +324,8 @@ public enum ShadowClientRTSPSessionDescriptionParser {
                 }
                 let mergedParameters = mergeAudioFormatParameters(
                     existing: fmtpByPayloadType[parsed.payloadType],
-                    new: parsed.parameters
+                    new: parsed.parameters,
+                    preferredOpusChannelCount: preferredOpusChannelCount
                 )
                 fmtpByPayloadType[parsed.payloadType] = mergedParameters
                 continue
@@ -676,7 +678,8 @@ public enum ShadowClientRTSPSessionDescriptionParser {
 
     private static func mergeAudioFormatParameters(
         existing: [String: String]?,
-        new: [String: String]
+        new: [String: String],
+        preferredOpusChannelCount: Int?
     ) -> [String: String] {
         var merged = existing ?? [:]
         for (key, value) in new {
@@ -685,7 +688,8 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             {
                 merged[key] = preferredSurroundParams(
                     current: current,
-                    candidate: value
+                    candidate: value,
+                    preferredOpusChannelCount: preferredOpusChannelCount
                 )
             } else {
                 merged[key] = value
@@ -696,11 +700,34 @@ public enum ShadowClientRTSPSessionDescriptionParser {
 
     private static func preferredSurroundParams(
         current: String,
-        candidate: String
+        candidate: String,
+        preferredOpusChannelCount: Int?
     ) -> String {
         let currentChannels = inferOpusChannelCount(fromSurroundParams: current) ?? 0
         let candidateChannels = inferOpusChannelCount(fromSurroundParams: candidate) ?? 0
-        return candidateChannels >= currentChannels ? candidate : current
+        guard let preferredOpusChannelCount else {
+            return candidateChannels >= currentChannels ? candidate : current
+        }
+
+        let currentDistance = abs(currentChannels - preferredOpusChannelCount)
+        let candidateDistance = abs(candidateChannels - preferredOpusChannelCount)
+
+        if candidateDistance < currentDistance {
+            return candidate
+        }
+        if candidateDistance > currentDistance {
+            return current
+        }
+        if candidateChannels == preferredOpusChannelCount {
+            return candidate
+        }
+        if currentChannels == preferredOpusChannelCount {
+            return current
+        }
+        if candidateChannels == currentChannels {
+            return candidate
+        }
+        return candidateChannels < currentChannels ? candidate : current
     }
 
     private static func isKnownAudioCodec(_ codec: ShadowClientAudioCodec) -> Bool {

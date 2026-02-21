@@ -1402,7 +1402,8 @@ private actor ShadowClientRTSPInterleavedClient {
         let parsedAudioTrack = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
             sdp: sdp,
             contentBase: contentBase,
-            fallbackSessionURL: normalizedURL.absoluteString
+            fallbackSessionURL: normalizedURL.absoluteString,
+            preferredOpusChannelCount: videoConfiguration.enableSurroundAudio ? 6 : 2
         )
         if let parsedAudioTrack {
             audioTrackDescriptor = parsedAudioTrack

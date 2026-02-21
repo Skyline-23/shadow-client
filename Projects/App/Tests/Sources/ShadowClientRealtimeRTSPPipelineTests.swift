@@ -226,6 +226,46 @@ func rtspSdpParserInfersAudioTrackWithoutAudioMediaSection() {
     #expect(track?.channelCount == 8)
 }
 
+@Test("RTSP SDP parser prefers stereo surround params when stereo is requested")
+func rtspSdpParserPrefersStereoSurroundParamsForStereoRequest() {
+    let sdp = """
+    a=fmtp:97 surround-params=21101
+    a=fmtp:97 surround-params=642012453
+    a=fmtp:97 surround-params=88001234567
+    """
+
+    let track = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
+        sdp: sdp,
+        contentBase: "rtsp://skyline23-pc.local:48010/",
+        fallbackSessionURL: "rtsp://skyline23-pc.local:48010/",
+        preferredOpusChannelCount: 2
+    )
+
+    #expect(track != nil)
+    #expect(track?.codec == .opus)
+    #expect(track?.channelCount == 2)
+}
+
+@Test("RTSP SDP parser prefers 5.1 surround params when surround is requested")
+func rtspSdpParserPrefersSurroundParamsForSurroundRequest() {
+    let sdp = """
+    a=fmtp:97 surround-params=21101
+    a=fmtp:97 surround-params=642012453
+    a=fmtp:97 surround-params=88001234567
+    """
+
+    let track = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
+        sdp: sdp,
+        contentBase: "rtsp://skyline23-pc.local:48010/",
+        fallbackSessionURL: "rtsp://skyline23-pc.local:48010/",
+        preferredOpusChannelCount: 6
+    )
+
+    #expect(track != nil)
+    #expect(track?.codec == .opus)
+    #expect(track?.channelCount == 6)
+}
+
 @Test("RTSP SDP parser extracts AV1 codec configuration from fmtp config attribute")
 func rtspSdpParserExtractsAV1CodecConfigurationFromFmtpConfig() throws {
     let sdp = """
