@@ -75,3 +75,43 @@ Use subagents in parallel for non-trivial work with disjoint ownership, then mer
 - For H264/H265 Moonlight NV RTP packets, use depacketizer tail strategy `.passthroughForAnnexBCodecs` (do not enforce `lastPacketPayloadLength` truncation).
 - Reserve `lastPacketPayloadLength` truncation for AV1/non-AnnexB streams only (`.trimUsingLastPacketLength`).
 - `ShadowClientAppShellView` must observe `sessionSurfaceContext` directly; relying only on `remoteDesktopRuntime` can leave session HUD stuck in `waitingForFirstFrame` even when frames render.
+
+### Streaming Refactor Priority (Current)
+- Execute refactors in this exact order unless explicitly overridden by user:
+  1. AV1 receive/decode path stabilization (`refactor(video)`):
+     - hard-separate RTP receive, depacketize, and decode stages into independent actors/queues,
+     - use bounded ring buffers and watermark-based drop policy between stages,
+     - ensure decode stall does not block ingest.
+  2. AV1 failure fast fallback (`fix(streaming)`):
+     - if AV1 decode/recovery failures exceed threshold within short window, trigger immediate HEVC fallback/relaunch path.
+  3. Depacketizer continuity/recovery tuning (`fix(streaming)`):
+     - relax over-strict continuity checks,
+     - tune recovery cooldown/hysteresis to prevent recovery-loop oscillation.
+
+### Active Functional Roadmap (Must Be Implemented In Order)
+- `feat(audio): ship native opus as linked module (no dlopen)`
+  - remove runtime `dlopen` dependency for multichannel Opus on macOS,
+  - keep decoder capability/combination-based negotiation:
+    - use surround only if local decoder/output can actually support it,
+    - otherwise select stereo parameters during SDP/track negotiation (not runtime failure).
+- `refactor(input): single producer queue + coalescing sender`
+  - replace per-event send `Task` fan-out with a dedicated input send queue actor,
+  - coalesce high-rate events (`pointerMoved`, `scroll`),
+  - suppress cancellation-class network noise (`ECANCELED`/`ENOTCONN`) and apply controlled channel rebootstrap cooldown.
+- `refactor(video): hard isolate receive/depacketize/decode stages`
+  - split current runtime file responsibilities into pipeline components with clear ownership,
+  - MainActor transitions only for HUD/surface state; never in ingest/decode hot path.
+- `fix(streaming): av1 recovery policy tuning + fast hevc switch`
+  - retune AV1 recovery thresholds/windows/cooldowns,
+  - enforce fast and consistent HEVC switch trigger when AV1 recovery is exhausted.
+- `fix(macos): fullscreen transition state machine`
+  - state-machine fullscreen toggles (no retrigger during transition),
+  - prevent capture/app-focus transitions from tearing down decoder/transport loops.
+
+### Current Priority Status Snapshot
+- 1순위 AV1 수신/디코드 분리: partial (structure exists, isolation strength insufficient).
+- 2순위 AV1 실패 시 HEVC 전환: partial (trigger exists, immediacy/consistency insufficient).
+- 3순위 연속성/복구 정책 조정: partial (policy exists, tuning required).
+
+### Functional-Unit Commit Discipline
+- Commit each completed feature/fix in isolation with Conventional Commits before starting the next unit.
