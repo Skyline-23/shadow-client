@@ -151,7 +151,7 @@ public struct ShadowClientFeatureHomeView: View {
 
     private let streamOutputRuntime = StreamOutputMonitorRuntime()
 
-    @State private var telemetryCancellable: AnyCancellable?
+    @State private var telemetryTask: Task<Void, Never>?
     @State private var streamOutputHeartbeatTask: Task<Void, Never>?
     @State private var sessionPlan: MoonlightSessionReconfigurationPlan?
     @State private var streamOutputModel: StreamOutputMonitorModel = .disconnected
@@ -578,9 +578,13 @@ public struct ShadowClientFeatureHomeView: View {
     }
 
     private func startTelemetrySubscription() {
-        telemetryCancellable?.cancel()
-        telemetryCancellable = dependencies.telemetryPublisher.sink { snapshot in
-            Task {
+        telemetryTask?.cancel()
+        let telemetryValues = dependencies.telemetryPublisher.values
+        telemetryTask = Task {
+            for await snapshot in telemetryValues {
+                if Task.isCancelled {
+                    return
+                }
                 let tick = await dependencies.diagnosticsRuntime.ingest(snapshot: snapshot)
                 let streamModel = await streamOutputRuntime.ingest(snapshot: snapshot)
 
@@ -595,8 +599,8 @@ public struct ShadowClientFeatureHomeView: View {
     }
 
     private func stopTelemetrySubscription() {
-        telemetryCancellable?.cancel()
-        telemetryCancellable = nil
+        telemetryTask?.cancel()
+        telemetryTask = nil
     }
 
     @MainActor

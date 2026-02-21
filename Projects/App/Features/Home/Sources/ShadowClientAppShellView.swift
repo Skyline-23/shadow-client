@@ -1,4 +1,3 @@
-import Combine
 import ShadowClientUI
 import SwiftUI
 
@@ -53,7 +52,7 @@ public struct ShadowClientAppShellView: View {
     @ObservedObject private var remoteDesktopRuntime: ShadowClientRemoteDesktopRuntime
     @ObservedObject private var sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext
     @State private var connectionState: ShadowClientConnectionState = .disconnected
-    @State private var settingsTelemetryCancellable: AnyCancellable?
+    @State private var settingsTelemetryTask: Task<Void, Never>?
     @State private var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
     @State private var sessionDiagnosticsHistory = ShadowClientSessionDiagnosticsHistory(
         maxSamples: ShadowClientUIRuntimeDefaults.diagnosticsHUDSampleHistoryLimit
@@ -1959,9 +1958,13 @@ public struct ShadowClientAppShellView: View {
 
     @MainActor
     private func restartSettingsTelemetrySubscription(for settings: ShadowClientAppSettings) {
-        settingsTelemetryCancellable?.cancel()
-        settingsTelemetryCancellable = baseDependencies.telemetryPublisher.sink { snapshot in
-            Task {
+        settingsTelemetryTask?.cancel()
+        let telemetryValues = baseDependencies.telemetryPublisher.values
+        settingsTelemetryTask = Task {
+            for await snapshot in telemetryValues {
+                if Task.isCancelled {
+                    return
+                }
                 let model = await settingsTelemetryRuntime.ingest(
                     snapshot: snapshot,
                     settings: settings
@@ -1979,8 +1982,8 @@ public struct ShadowClientAppShellView: View {
 
     @MainActor
     private func stopSettingsTelemetrySubscription() {
-        settingsTelemetryCancellable?.cancel()
-        settingsTelemetryCancellable = nil
+        settingsTelemetryTask?.cancel()
+        settingsTelemetryTask = nil
     }
 
     @MainActor
