@@ -76,25 +76,35 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
             return .droppedCorruptFrame
         }
 
-        guard (packet.flags & ~Self.allowedFlags) == 0 else {
-            dropFrameState()
-            return .droppedCorruptFrame
-        }
+        let relevantFlags = packet.flags & Self.allowedFlags
 
         let firstPacket = isFirstPacket(
-            flags: packet.flags,
+            flags: relevantFlags,
             fecBlockNumber: packet.fecCurrentBlockNumber
         )
         let lastPacket = isLastPacket(
-            flags: packet.flags,
+            flags: relevantFlags,
             fecCurrentBlockNumber: packet.fecCurrentBlockNumber,
             fecLastBlockNumber: packet.fecLastBlockNumber
         )
 
+        if let nextFrameIndex, isBefore32(packet.frameIndex, nextFrameIndex) {
+            return .noFrame
+        }
+
+        if let lastPacketInStream {
+            let expectedStreamPacketIndex = (lastPacketInStream &+ 1) & Self.streamPacketIndexMask
+            if isBefore24(packet.streamPacketIndex, expectedStreamPacketIndex) {
+                return .noFrame
+            }
+        }
+
         guard validateStreamContinuity(
             packet: packet,
-            firstPacket: firstPacket
+            firstPacket: firstPacket,
+            hasSOF: (relevantFlags & Self.flagSOF) != 0
         ) else {
+            nextFrameIndex = packet.frameIndex &+ 1
             dropFrameState()
             return .droppedCorruptFrame
         }
@@ -103,11 +113,13 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
             packet: packet,
             firstPacket: firstPacket
         ) else {
+            nextFrameIndex = packet.frameIndex &+ 1
             dropFrameState()
             return .droppedCorruptFrame
         }
 
         lastPacketInStream = packet.streamPacketIndex
+        let containsPictureData = (relevantFlags & Self.flagContainsPicData) != 0
 
         var packetPayload = packet.payload
         var frameHeaderSize = 0
@@ -139,7 +151,7 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
             packetPayload = truncatedPayload
         }
 
-        if !packetPayload.isEmpty {
+        if containsPictureData, !packetPayload.isEmpty {
             currentFrame.append(packetPayload)
         }
 
@@ -207,18 +219,14 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
 
     private mutating func validateStreamContinuity(
         packet: ParsedPacket,
-        firstPacket: Bool
+        firstPacket: Bool,
+        hasSOF: Bool
     ) -> Bool {
         guard let lastPacketInStream else {
             return firstPacket
         }
 
         let expectedStreamPacketIndex = (lastPacketInStream &+ 1) & Self.streamPacketIndexMask
-        if isBefore24(packet.streamPacketIndex, expectedStreamPacketIndex) {
-            return false
-        }
-
-        let hasSOF = (packet.flags & Self.flagSOF) != 0
         if !hasSOF, packet.streamPacketIndex != expectedStreamPacketIndex {
             return false
         }
@@ -230,10 +238,6 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         packet: ParsedPacket,
         firstPacket: Bool
     ) -> Bool {
-        if let nextFrameIndex, isBefore32(packet.frameIndex, nextFrameIndex) {
-            return false
-        }
-
         if firstPacket {
             decodingFrame = true
             currentFrameIndex = packet.frameIndex
