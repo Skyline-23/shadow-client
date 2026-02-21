@@ -656,6 +656,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         }
         return requestedSurroundChannels
     }
+
+    public static func canDecode(track: ShadowClientRTSPAudioTrackDescriptor) -> Bool {
+        ShadowClientRealtimeAudioDecoderFactory.canDecode(track: track)
+    }
 }
 
 private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {

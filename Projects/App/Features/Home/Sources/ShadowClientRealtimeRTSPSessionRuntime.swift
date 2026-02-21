@@ -1432,12 +1432,35 @@ private actor ShadowClientRTSPInterleavedClient {
                 "RTSP audio negotiation downgraded to stereo because no runtime multichannel Opus decoder is available"
             )
         }
-        let parsedAudioTrack = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
+        var parsedAudioTrack = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
             sdp: sdp,
             contentBase: contentBase,
             fallbackSessionURL: normalizedURL.absoluteString,
             preferredOpusChannelCount: preferredOpusChannelCount
         )
+        if let negotiatedAudioTrack = parsedAudioTrack,
+           !ShadowClientRealtimeAudioSessionRuntime.canDecode(track: negotiatedAudioTrack)
+        {
+            logger.notice(
+                "RTSP selected audio track is not decodable at runtime (codec=\(negotiatedAudioTrack.codec.label, privacy: .public), channels=\(negotiatedAudioTrack.channelCount, privacy: .public)); retrying with stereo-preferred negotiation"
+            )
+            let stereoPreferredTrack = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
+                sdp: sdp,
+                contentBase: contentBase,
+                fallbackSessionURL: normalizedURL.absoluteString,
+                preferredOpusChannelCount: 2
+            )
+            if let stereoPreferredTrack,
+               ShadowClientRealtimeAudioSessionRuntime.canDecode(track: stereoPreferredTrack)
+            {
+                parsedAudioTrack = stereoPreferredTrack
+            } else {
+                parsedAudioTrack = nil
+                logger.error(
+                    "RTSP could not resolve a decodable audio track from SDP; continuing without negotiated audio track"
+                )
+            }
+        }
         if let parsedAudioTrack {
             audioTrackDescriptor = parsedAudioTrack
             logger.notice(
