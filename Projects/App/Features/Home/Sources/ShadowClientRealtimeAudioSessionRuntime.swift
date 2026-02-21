@@ -13,6 +13,8 @@ public enum ShadowClientRealtimeAudioOutputState: Equatable, Sendable {
 }
 
 public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable {
+    public static let supportsSurroundOpusMultistream = false
+
     fileprivate struct RTPPacket: Sendable {
         let sequenceNumber: UInt16
         let timestamp: UInt32
@@ -68,6 +70,20 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             controlURL: nil,
             formatParameters: [:]
         )
+
+        if resolvedTrack.codec == .opus,
+           resolvedTrack.channelCount > 2,
+           !Self.supportsSurroundOpusMultistream
+        {
+            let message = "Opus multistream surround audio is not supported by the local realtime audio decoder yet."
+            logger.error("\(message, privacy: .public)")
+            updateState(.decoderFailed(message))
+            throw NSError(
+                domain: "ShadowClientRealtimeAudioSessionRuntime",
+                code: 11,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
+        }
 
         do {
             let resolvedDecoder = try ShadowClientRealtimeAudioDecoderFactory.make(
@@ -157,6 +173,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 return
             }
 
+            var currentPayloadType = preferredPayloadType
             var loggedUnexpectedPayloadTypes = Set<Int>()
             var consecutiveDroppedOutputBuffers = 0
             while !Task.isCancelled {
@@ -171,18 +188,30 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         continue
                     }
 
-                    if packet.payloadType != preferredPayloadType {
-                        if loggedUnexpectedPayloadTypes.insert(packet.payloadType).inserted {
+                    if packet.payloadType != currentPayloadType {
+                        if let nextPayloadType = Self.payloadTypePreference(
+                            observed: packet.payloadType,
+                            current: currentPayloadType
+                        ) {
+                            let previousPayloadType = currentPayloadType
+                            currentPayloadType = nextPayloadType
+                            jitterBuffer.reset(preferredPayloadType: currentPayloadType)
                             logger.notice(
-                                "Ignoring RTP audio payload type \(packet.payloadType, privacy: .public) (expected \(preferredPayloadType, privacy: .public))"
+                                "Adapting RTP audio payload type from \(previousPayloadType, privacy: .public) to \(currentPayloadType, privacy: .public)"
                             )
+                        } else {
+                            if loggedUnexpectedPayloadTypes.insert(packet.payloadType).inserted {
+                                logger.notice(
+                                    "Ignoring RTP audio payload type \(packet.payloadType, privacy: .public) (expected \(currentPayloadType, privacy: .public))"
+                                )
+                            }
+                            continue
                         }
-                        continue
                     }
 
                     let readyPackets = jitterBuffer.enqueue(
                         packet,
-                        preferredPayloadType: preferredPayloadType
+                        preferredPayloadType: currentPayloadType
                     )
                     if readyPackets.isEmpty {
                         continue
@@ -534,6 +563,19 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             payloadType: payloadType,
             payload: Data(datagram[headerLength..<endIndex])
         )
+    }
+
+    internal static func payloadTypePreference(
+        observed: Int,
+        current: Int
+    ) -> Int? {
+        guard observed != current else {
+            return nil
+        }
+        guard (96 ... 127).contains(observed) else {
+            return nil
+        }
+        return observed
     }
 }
 
