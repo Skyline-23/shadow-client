@@ -1,5 +1,7 @@
 import Foundation
 
+/// Shadow Client-owned RTP depacketizer for Sunshine's NV video packet format.
+/// The type name preserves protocol compatibility terminology only.
 public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
     public enum IngestResult: Sendable {
         case noFrame

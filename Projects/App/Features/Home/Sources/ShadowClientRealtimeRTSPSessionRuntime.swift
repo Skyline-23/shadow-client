@@ -40,7 +40,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private let videoCodecSupport = ShadowClientVideoCodecSupport()
     private var rtspClient: ShadowClientRTSPInterleavedClient?
     private var streamTask: Task<Void, Never>?
-    private var moonlightNVDepacketizer = ShadowClientMoonlightNVRTPDepacketizer()
+    private var shadowClientNVDepacketizer = ShadowClientMoonlightNVRTPDepacketizer()
     private var hasLoggedDecodedFrameMetadata = false
     private var recentVideoTransportSamples: [VideoTransportSample] = []
     private var lastVideoStatPublishUptime: TimeInterval = 0
@@ -134,10 +134,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             remoteInputKey: resolvedVideoConfiguration.remoteInputKey
         )
 
-        moonlightNVDepacketizer.configureTailTruncationStrategy(
+        shadowClientNVDepacketizer.configureTailTruncationStrategy(
             Self.depacketizerTailTruncationStrategy(for: track.codec)
         )
-        moonlightNVDepacketizer.reset()
+        shadowClientNVDepacketizer.reset()
         await MainActor.run {
             surfaceContext.updateActiveVideoCodec(track.codec)
             surfaceContext.transition(to: .waitingForFirstFrame)
@@ -219,7 +219,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         initialParameterSets: [Data]
     ) async throws {
         _ = marker
-        switch moonlightNVDepacketizer.ingestWithStatus(payload: payload, marker: marker) {
+        switch shadowClientNVDepacketizer.ingestWithStatus(payload: payload, marker: marker) {
         case .noFrame:
             return
         case .droppedCorruptFrame:
@@ -228,7 +228,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         case let .frame(frame):
             frameAssemblyLogCount &+= 1
             if frameAssemblyLogCount <= 5 || frameAssemblyLogCount.isMultiple(of: 180) {
-                logger.notice("Moonlight NV frame assembled for codec \(String(describing: codec), privacy: .public): \(frame.count, privacy: .public) bytes")
+                logger.notice("ShadowClient NV frame assembled for codec \(String(describing: codec), privacy: .public): \(frame.count, privacy: .public) bytes")
             }
             depacketizerCorruptionCount = 0
             firstDepacketizerCorruptionUptime = 0

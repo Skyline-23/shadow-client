@@ -30,3 +30,13 @@ func payloadTypeAdaptationRejectsControlValues() {
 
     #expect(adapted == nil)
 }
+
+@Test("Payload type adaptation ignores negotiated control payload type")
+func payloadTypeAdaptationIgnoresNegotiatedControlPayloadType() {
+    let adapted = ShadowClientRealtimeAudioSessionRuntime.payloadTypePreference(
+        observed: ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType,
+        current: 97
+    )
+
+    #expect(adapted == nil)
+}

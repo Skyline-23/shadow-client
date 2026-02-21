@@ -575,6 +575,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         guard (96 ... 127).contains(observed) else {
             return nil
         }
+        guard observed != ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType else {
+            return nil
+        }
         return observed
     }
 }
