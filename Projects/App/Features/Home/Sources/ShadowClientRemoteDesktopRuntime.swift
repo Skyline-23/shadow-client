@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import Network
 import os
 
 public enum ShadowClientRemoteHostPairStatus: String, Equatable, Sendable {
@@ -1096,6 +1097,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     sessionURL: sessionURL
                 )
             } catch {
+                if Self.shouldSuppressInputSendError(error) {
+                    return
+                }
                 logger.debug("Remote input send failed: \(error.localizedDescription, privacy: .public)")
             }
         }
@@ -1108,6 +1112,43 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return nil
         }
         return trimmed
+    }
+
+    private static func shouldSuppressInputSendError(_ error: Error) -> Bool {
+        if let networkError = error as? NWError {
+            if case let .posix(code) = networkError {
+                switch code {
+                case .ECANCELED, .ENOTCONN, .ECONNRESET, .EPIPE:
+                    return true
+                default:
+                    break
+                }
+            }
+        }
+
+        if let controlError = error as? ShadowClientSunshineControlChannelError {
+            switch controlError {
+            case .connectionClosed, .connectionTimedOut:
+                return true
+            case .handshakeTimedOut,
+                 .verifyConnectNotReceived,
+                 .commandAcknowledgeTimedOut,
+                 .invalidEncryptedControlKey,
+                 .encryptedControlEncodingFailed:
+                return false
+            }
+        }
+
+        let normalized = error.localizedDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if normalized.contains("operation canceled") ||
+            normalized.contains("connection closed")
+        {
+            return true
+        }
+
+        return false
     }
 
     private static func validatedSessionURL(

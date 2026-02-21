@@ -128,6 +128,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var av1DepacketizerRecoveryCount = 0
     private var firstAV1DepacketizerRecoveryUptime: TimeInterval = 0
     private var hasRenderedFirstFrame = false
+    private var hasPublishedRenderingState = false
     private var frameAssemblyLogCount = 0
 
     public init(
@@ -187,6 +188,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         av1DepacketizerRecoveryCount = 0
         firstAV1DepacketizerRecoveryUptime = 0
         hasRenderedFirstFrame = false
+        hasPublishedRenderingState = false
         frameAssemblyLogCount = 0
 
         await MainActor.run {
@@ -227,8 +229,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         shadowClientNVDepacketizer.reset()
         await MainActor.run {
             surfaceContext.updateActiveVideoCodec(track.codec)
-            surfaceContext.transition(to: .waitingForFirstFrame)
         }
+        await transitionSurfaceState(.waitingForFirstFrame)
 
         rtspClient = client
         let decodeQueue = ShadowClientVideoDecodeQueue(
@@ -290,6 +292,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         av1DepacketizerRecoveryCount = 0
         firstAV1DepacketizerRecoveryUptime = 0
         hasRenderedFirstFrame = false
+        hasPublishedRenderingState = false
         frameAssemblyLogCount = 0
         await MainActor.run {
             surfaceContext.reset()
@@ -323,11 +326,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 return
             }
             logger.error("Realtime stream task failed: \(error.localizedDescription, privacy: .public)")
-            let surfaceContext = self.surfaceContext
             let nextState = Self.renderState(forStreamError: error)
-            await MainActor.run {
-                surfaceContext.transition(to: nextState)
-            }
+            await transitionSurfaceState(nextState)
         }
         stallMonitorTask?.cancel()
         stallMonitorTask = nil
@@ -389,10 +389,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         receiveTask?.cancel()
         stallMonitorTask?.cancel()
         stallMonitorTask = nil
-        let sessionSurfaceContext = self.surfaceContext
-        await MainActor.run {
-            sessionSurfaceContext.transition(to: .failed(message))
-        }
+        await transitionSurfaceState(.failed(message))
         await closeVideoDecodeQueue()
     }
 
@@ -526,10 +523,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         if let rtspClient {
             await rtspClient.requestVideoRecoveryFrame()
         }
-        let sessionSurfaceContext = self.surfaceContext
-        await MainActor.run {
-            sessionSurfaceContext.transition(to: .waitingForFirstFrame)
-        }
+        await transitionSurfaceState(.waitingForFirstFrame)
         return false
     }
 
@@ -597,10 +591,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         if let rtspClient {
             await rtspClient.requestVideoRecoveryFrame()
         }
-        let sessionSurfaceContext = self.surfaceContext
-        await MainActor.run {
-            sessionSurfaceContext.transition(to: .waitingForFirstFrame)
-        }
+        await transitionSurfaceState(.waitingForFirstFrame)
         return true
     }
 
@@ -688,10 +679,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         lastDecodeSubmitUptime = now
         lastDecodedFrameOutputUptime = now
-        let sessionSurfaceContext = self.surfaceContext
-        await MainActor.run {
-            sessionSurfaceContext.transition(to: .waitingForFirstFrame)
-        }
+        await transitionSurfaceState(.waitingForFirstFrame)
         return true
     }
 
@@ -713,10 +701,31 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 codec: codec,
                 pixelBuffer: sendableFrame.value
             )
-            await MainActor.run {
-                surfaceContext.frameStore.update(pixelBuffer: sendableFrame.value)
-                surfaceContext.transition(to: .rendering)
-            }
+            surfaceContext.frameStore.update(pixelBuffer: sendableFrame.value)
+            await runtime.publishRenderingStateIfNeeded()
+        }
+    }
+
+    private func transitionSurfaceState(
+        _ state: ShadowClientRealtimeSessionSurfaceContext.RenderState
+    ) async {
+        if state != .rendering {
+            hasPublishedRenderingState = false
+        }
+        let sessionSurfaceContext = self.surfaceContext
+        await MainActor.run {
+            sessionSurfaceContext.transition(to: state)
+        }
+    }
+
+    private func publishRenderingStateIfNeeded() async {
+        guard !hasPublishedRenderingState else {
+            return
+        }
+        hasPublishedRenderingState = true
+        let sessionSurfaceContext = self.surfaceContext
+        await MainActor.run {
+            sessionSurfaceContext.transition(to: .rendering)
         }
     }
 
@@ -2086,10 +2095,23 @@ private actor ShadowClientRTSPInterleavedClient {
             )
         }
 
-        try await controlChannelRuntime.sendInputPacket(
-            packet.payload,
-            channelID: packet.channelID
-        )
+        do {
+            try await controlChannelRuntime.sendInputPacket(
+                packet.payload,
+                channelID: packet.channelID
+            )
+        } catch {
+            if shouldResetControlChannelAfterInputSendError(error) {
+                logger.notice(
+                    "Sunshine input channel reset after send failure: \(error.localizedDescription, privacy: .public)"
+                )
+                await controlChannelRuntime.stop()
+                self.controlChannelRuntime = nil
+                hasStartedControlChannelBootstrap = false
+                return
+            }
+            throw error
+        }
     }
 
     func requestVideoRecoveryFrame() async {
@@ -2119,6 +2141,43 @@ private actor ShadowClientRTSPInterleavedClient {
         case .gamepadArrival:
             return "gamepadArrival"
         }
+    }
+
+    private func shouldResetControlChannelAfterInputSendError(_ error: Error) -> Bool {
+        if let controlError = error as? ShadowClientSunshineControlChannelError {
+            switch controlError {
+            case .connectionClosed,
+                 .connectionTimedOut,
+                 .commandAcknowledgeTimedOut:
+                return true
+            case .handshakeTimedOut,
+                 .verifyConnectNotReceived,
+                 .invalidEncryptedControlKey,
+                 .encryptedControlEncodingFailed:
+                return false
+            }
+        }
+
+        if let networkError = error as? NWError {
+            if case let .posix(code) = networkError {
+                switch code {
+                case .ECANCELED, .ENOTCONN, .ECONNRESET, .EPIPE:
+                    return true
+                default:
+                    break
+                }
+            }
+        }
+
+        let normalized = error.localizedDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if normalized.contains("operation canceled") ||
+            normalized.contains("connection closed")
+        {
+            return true
+        }
+        return false
     }
 
     func receiveInterleavedVideoPackets(
