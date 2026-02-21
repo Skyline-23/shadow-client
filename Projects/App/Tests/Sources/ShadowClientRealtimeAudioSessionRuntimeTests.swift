@@ -1,5 +1,31 @@
 import Testing
 @testable import ShadowClientFeatureHome
+import AVFoundation
+
+private final class MockCustomAudioDecoder: ShadowClientRealtimeCustomAudioDecoder {
+    let codec: ShadowClientAudioCodec
+    let sampleRate: Int
+    let channels: Int
+    let outputFormat: AVAudioFormat
+
+    init(
+        codec: ShadowClientAudioCodec,
+        sampleRate: Int,
+        channels: Int
+    ) {
+        self.codec = codec
+        self.sampleRate = sampleRate
+        self.channels = channels
+        self.outputFormat = AVAudioFormat(
+            standardFormatWithSampleRate: Double(sampleRate),
+            channels: AVAudioChannelCount(max(1, channels))
+        )!
+    }
+
+    func decode(payload _: Data) throws -> AVAudioPCMBuffer? {
+        nil
+    }
+}
 
 @Test("Payload type adaptation accepts dynamic payload type changes")
 func payloadTypeAdaptationAcceptsDynamicChanges() {
@@ -39,4 +65,47 @@ func payloadTypeAdaptationIgnoresNegotiatedControlPayloadType() {
     )
 
     #expect(adapted == nil)
+}
+
+@Test("Custom audio decoder registry prioritizes preferred providers")
+func customAudioDecoderRegistryPrioritizesPreferredProviders() throws {
+    ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
+    defer { ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() }
+
+    ShadowClientRealtimeCustomAudioDecoderRegistry.register(
+        provider: { _ in
+            MockCustomAudioDecoder(
+                codec: .opus,
+                sampleRate: 48_000,
+                channels: 6
+            )
+        },
+        preferred: false
+    )
+    ShadowClientRealtimeCustomAudioDecoderRegistry.register(
+        provider: { _ in
+            MockCustomAudioDecoder(
+                codec: .opus,
+                sampleRate: 44_100,
+                channels: 8
+            )
+        },
+        preferred: true
+    )
+
+    let track = ShadowClientRTSPAudioTrackDescriptor(
+        codec: .opus,
+        rtpPayloadType: 97,
+        sampleRate: 48_000,
+        channelCount: 6,
+        controlURL: nil,
+        formatParameters: [:]
+    )
+    let decoder = try ShadowClientRealtimeCustomAudioDecoderRegistry.makeDecoder(
+        for: track
+    )
+
+    #expect(decoder != nil)
+    #expect(decoder?.sampleRate == 44_100)
+    #expect(decoder?.channels == 8)
 }

@@ -701,8 +701,25 @@ private enum ShadowClientRealtimeAudioDecoderFactory {
     static func make(
         for track: ShadowClientRTSPAudioTrackDescriptor
     ) throws -> any ShadowClientRealtimeAudioPacketDecoding {
+        if let customDecoder = try ShadowClientRealtimeCustomAudioDecoderRegistry.makeDecoder(
+            for: track
+        ) {
+            return ShadowClientRealtimeCustomDecoderAdapter(
+                base: customDecoder
+            )
+        }
+
         switch track.codec {
         case .opus:
+            if track.channelCount > 2 {
+                throw NSError(
+                    domain: "ShadowClientRealtimeAudioDecoderFactory",
+                    code: 2,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "No multichannel Opus decoder provider is registered.",
+                    ]
+                )
+            }
             return try ShadowClientRealtimeOpusAudioDecoder(
                 sampleRate: track.sampleRate,
                 channels: track.channelCount
@@ -736,6 +753,107 @@ private enum ShadowClientRealtimeAudioDecoderFactory {
     }
 }
 
+private final class ShadowClientRealtimeCustomDecoderAdapter: ShadowClientRealtimeAudioPacketDecoding {
+    let base: any ShadowClientRealtimeCustomAudioDecoder
+
+    init(base: any ShadowClientRealtimeCustomAudioDecoder) {
+        self.base = base
+    }
+
+    var codec: ShadowClientAudioCodec {
+        base.codec
+    }
+
+    var sampleRate: Int {
+        base.sampleRate
+    }
+
+    var channels: Int {
+        base.channels
+    }
+
+    var outputFormat: AVAudioFormat {
+        base.outputFormat
+    }
+
+    func decode(payload: Data) throws -> AVAudioPCMBuffer? {
+        try base.decode(payload: payload)
+    }
+}
+
+private enum ShadowClientRealtimeAudioFormatFactory {
+    static func opusInputFormat(
+        sampleRate: Int,
+        channels: Int
+    ) -> AVAudioFormat? {
+        var settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatOpus,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: channels,
+        ]
+        if let channelLayoutData = channelLayoutData(for: channels) {
+            settings[AVChannelLayoutKey] = channelLayoutData
+        }
+        return AVAudioFormat(settings: settings)
+    }
+
+    static func pcmFloatOutputFormat(
+        sampleRate: Int,
+        channels: Int
+    ) -> AVAudioFormat? {
+        if channels <= 2 {
+            return AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: Double(sampleRate),
+                channels: AVAudioChannelCount(channels),
+                interleaved: false
+            )
+        }
+
+        guard let channelLayoutData = channelLayoutData(for: channels) else {
+            return nil
+        }
+        return AVAudioFormat(settings: [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: channels,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsNonInterleaved: true,
+            AVChannelLayoutKey: channelLayoutData,
+        ])
+    }
+
+    private static func channelLayoutData(for channels: Int) -> Data? {
+        guard let channelLayout = AVAudioChannelLayout(
+            layoutTag: channelLayoutTag(for: channels)
+        ) else {
+            return nil
+        }
+        return Data(
+            bytes: channelLayout.layout,
+            count: MemoryLayout<AudioChannelLayout>.size
+        )
+    }
+
+    private static func channelLayoutTag(
+        for channels: Int
+    ) -> AudioChannelLayoutTag {
+        switch channels {
+        case 1:
+            return kAudioChannelLayoutTag_Mono
+        case 2:
+            return kAudioChannelLayoutTag_Stereo
+        case 6:
+            return kAudioChannelLayoutTag_MPEG_5_1_D
+        case 8:
+            return kAudioChannelLayoutTag_MPEG_7_1_C
+        default:
+            return kAudioChannelLayoutTag_DiscreteInOrder | AudioChannelLayoutTag(channels)
+        }
+    }
+}
+
 private final class ShadowClientRealtimeOpusAudioDecoder: ShadowClientRealtimeAudioPacketDecoding {
     let codec: ShadowClientAudioCodec = .opus
     let sampleRate: Int
@@ -748,12 +866,9 @@ private final class ShadowClientRealtimeOpusAudioDecoder: ShadowClientRealtimeAu
         self.sampleRate = sampleRate
         self.channels = channels
 
-        guard let inputFormat = AVAudioFormat(
-            settings: [
-                AVFormatIDKey: kAudioFormatOpus,
-                AVSampleRateKey: sampleRate,
-                AVNumberOfChannelsKey: channels,
-            ]
+        guard let inputFormat = ShadowClientRealtimeAudioFormatFactory.opusInputFormat(
+            sampleRate: sampleRate,
+            channels: channels
         ) else {
             throw NSError(
                 domain: "ShadowClientRealtimeOpusAudioDecoder",
@@ -765,11 +880,9 @@ private final class ShadowClientRealtimeOpusAudioDecoder: ShadowClientRealtimeAu
         }
         self.inputFormat = inputFormat
 
-        guard let outputFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: Double(sampleRate),
-            channels: AVAudioChannelCount(channels),
-            interleaved: false
+        guard let outputFormat = ShadowClientRealtimeAudioFormatFactory.pcmFloatOutputFormat(
+            sampleRate: sampleRate,
+            channels: channels
         ) else {
             throw NSError(
                 domain: "ShadowClientRealtimeOpusAudioDecoder",

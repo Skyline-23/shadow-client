@@ -35,6 +35,20 @@ let project = Project(
             ]
         ),
         .target(
+            name: "ShadowClientNativeAudioDecoding",
+            destinations: .macOS,
+            product: .framework,
+            bundleId: "com.skyline23.shadow-client.native-audio-decoding",
+            deploymentTargets: .macOS("14.0"),
+            infoPlist: .default,
+            buildableFolders: [
+                "Projects/App/Features/NativeAudio/Sources",
+            ],
+            dependencies: [
+                .target(name: "ShadowClientFeatureHome"),
+            ]
+        ),
+        .target(
             name: "ShadowClientiOSApp",
             destinations: .iOS,
             product: .app,
@@ -106,6 +120,7 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
+                .target(name: "ShadowClientNativeAudioDecoding"),
                 .external(name: "ShadowClientStreaming"),
                 .external(name: "ShadowClientUI"),
             ]
