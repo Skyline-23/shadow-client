@@ -25,10 +25,10 @@ func rtspAnnouncePayloadUsesPropagatedBitrateValues() {
     let attributes = rtspAnnounceAttributes(from: payload)
 
     #expect(attributes["x-ml-video.configuredBitrateKbps"] == "48000")
-    #expect(attributes["x-nv-video[0].initialBitrateKbps"] == "38400")
-    #expect(attributes["x-nv-video[0].initialPeakBitrateKbps"] == "38400")
-    #expect(attributes["x-nv-vqos[0].bw.minimumBitrateKbps"] == "38400")
-    #expect(attributes["x-nv-vqos[0].bw.maximumBitrateKbps"] == "38400")
+    #expect(attributes["x-nv-video[0].initialBitrateKbps"] == "48000")
+    #expect(attributes["x-nv-video[0].initialPeakBitrateKbps"] == "48000")
+    #expect(attributes["x-nv-vqos[0].bw.minimumBitrateKbps"] == "48000")
+    #expect(attributes["x-nv-vqos[0].bw.maximumBitrateKbps"] == "48000")
 }
 
 @Test("RTSP ANNOUNCE payload maps HDR and YUV444 launch settings")

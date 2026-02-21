@@ -176,7 +176,7 @@ public enum ShadowClientAppSettingsDefaults {
 
 public enum ShadowClientRTSPAnnounceDefaults {
     public static let configuredBitrateKbps = ShadowClientAppSettingsDefaults.defaultBitrateKbps
-    public static let bitrateScale = 0.80
+    public static let bitrateScale = 1.0
     public static let minimumBitrateKbps = 1_000
     public static let maximumBitrateKbps = 100_000
 }
