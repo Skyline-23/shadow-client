@@ -63,6 +63,9 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let minimumTransportReadLength = 1
     public static let maximumTransportReadLength = 64 * 1_024
     public static let videoDecodeQueueCapacity = 12
+    public static let videoDecodeQueueDropWindowSeconds: TimeInterval = 1.0
+    public static let videoDecodeQueueDropRecoveryThreshold = 18
+    public static let videoDecodeQueueRecoveryCooldownSeconds: TimeInterval = 1.0
     public static let depacketizerCorruptionWindowSeconds: TimeInterval = 2.0
     public static let depacketizerCorruptionThreshold = 5
     public static let depacketizerRecoveryCooldownSeconds: TimeInterval = 1.5

@@ -36,21 +36,24 @@ private actor ShadowClientVideoDecodeQueue {
         self.capacity = max(2, capacity)
     }
 
-    func enqueue(_ accessUnit: ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit) {
+    func enqueue(_ accessUnit: ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit) -> Bool {
         guard !closed else {
-            return
+            return false
         }
 
         if !waiters.isEmpty {
             let waiter = waiters.removeFirst()
             waiter.resume(returning: accessUnit)
-            return
+            return false
         }
 
+        var droppedOldest = false
         if bufferedUnits.count >= capacity {
             bufferedUnits.removeFirst()
+            droppedOldest = true
         }
         bufferedUnits.append(accessUnit)
+        return droppedOldest
     }
 
     func next() async -> ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit? {
@@ -104,6 +107,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var hasLoggedDecodedFrameMetadata = false
     private var recentVideoTransportSamples: [VideoTransportSample] = []
     private var lastVideoStatPublishUptime: TimeInterval = 0
+    private var videoDecodeQueueDropCount = 0
+    private var firstVideoDecodeQueueDropUptime: TimeInterval = 0
+    private var lastVideoDecodeQueueRecoveryUptime: TimeInterval = 0
     private var activeVideoConfiguration: ShadowClientRemoteSessionVideoConfiguration?
     private var depacketizerCorruptionCount = 0
     private var firstDepacketizerCorruptionUptime: TimeInterval = 0
@@ -155,6 +161,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         hasLoggedDecodedFrameMetadata = false
         recentVideoTransportSamples.removeAll(keepingCapacity: false)
         lastVideoStatPublishUptime = 0
+        videoDecodeQueueDropCount = 0
+        firstVideoDecodeQueueDropUptime = 0
+        lastVideoDecodeQueueRecoveryUptime = 0
         depacketizerCorruptionCount = 0
         firstDepacketizerCorruptionUptime = 0
         lastDepacketizerRecoveryUptime = 0
@@ -245,6 +254,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         hasLoggedDecodedFrameMetadata = false
         recentVideoTransportSamples.removeAll(keepingCapacity: false)
         lastVideoStatPublishUptime = 0
+        videoDecodeQueueDropCount = 0
+        firstVideoDecodeQueueDropUptime = 0
+        lastVideoDecodeQueueRecoveryUptime = 0
         depacketizerCorruptionCount = 0
         firstDepacketizerCorruptionUptime = 0
         lastDepacketizerRecoveryUptime = 0
@@ -399,14 +411,52 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 return
             }
             if let videoDecodeQueue {
-                await videoDecodeQueue.enqueue(
+                let droppedOldest = await videoDecodeQueue.enqueue(
                     .init(
                         codec: codec,
                         parameterSets: initialParameterSets,
                         data: frame
                     )
                 )
+                if droppedOldest {
+                    await handleVideoDecodeQueueBackpressure(codec: codec)
+                }
             }
+        }
+    }
+
+    private func handleVideoDecodeQueueBackpressure(codec: ShadowClientVideoCodec) async {
+        let now = ProcessInfo.processInfo.systemUptime
+        if firstVideoDecodeQueueDropUptime == 0 ||
+            now - firstVideoDecodeQueueDropUptime > ShadowClientRealtimeSessionDefaults.videoDecodeQueueDropWindowSeconds
+        {
+            firstVideoDecodeQueueDropUptime = now
+            videoDecodeQueueDropCount = 0
+        }
+        videoDecodeQueueDropCount += 1
+
+        if videoDecodeQueueDropCount == 1 || videoDecodeQueueDropCount.isMultiple(of: 12) {
+            logger.notice(
+                "Video decode queue backpressure detected for codec \(String(describing: codec), privacy: .public) (dropped-oldest=\(self.videoDecodeQueueDropCount, privacy: .public))"
+            )
+        }
+
+        guard codec == .av1 else {
+            return
+        }
+        guard videoDecodeQueueDropCount >= ShadowClientRealtimeSessionDefaults.videoDecodeQueueDropRecoveryThreshold else {
+            return
+        }
+        guard now - lastVideoDecodeQueueRecoveryUptime >= ShadowClientRealtimeSessionDefaults.videoDecodeQueueRecoveryCooldownSeconds else {
+            return
+        }
+
+        lastVideoDecodeQueueRecoveryUptime = now
+        videoDecodeQueueDropCount = 0
+        firstVideoDecodeQueueDropUptime = 0
+        logger.error("AV1 decode queue remained saturated; requesting recovery frame to resynchronize")
+        if let rtspClient {
+            await rtspClient.requestVideoRecoveryFrame()
         }
     }
 
