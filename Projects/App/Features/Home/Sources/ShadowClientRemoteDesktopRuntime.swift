@@ -655,6 +655,116 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
     }
 }
 
+private actor ShadowClientRemoteInputSendQueue {
+    private struct PendingInput: Sendable {
+        var event: ShadowClientRemoteInputEvent
+        let host: String
+        let sessionURL: String
+    }
+
+    private let send: @Sendable (
+        ShadowClientRemoteInputEvent,
+        String,
+        String
+    ) async throws -> Void
+    private let onSendError: @Sendable (Error) -> Void
+    private var pendingInputs: [PendingInput] = []
+    private var pendingHeadIndex = 0
+    private var isDraining = false
+
+    init(
+        send: @escaping @Sendable (
+            ShadowClientRemoteInputEvent,
+            String,
+            String
+        ) async throws -> Void,
+        onSendError: @escaping @Sendable (Error) -> Void
+    ) {
+        self.send = send
+        self.onSendError = onSendError
+    }
+
+    func enqueue(
+        event: ShadowClientRemoteInputEvent,
+        host: String,
+        sessionURL: String
+    ) {
+        compactPendingInputsIfNeeded()
+        let pending = PendingInput(event: event, host: host, sessionURL: sessionURL)
+        if !coalesceIntoTail(pending) {
+            pendingInputs.append(pending)
+        }
+
+        guard !isDraining else {
+            return
+        }
+        isDraining = true
+        Task { await drainLoop() }
+    }
+
+    func clear() {
+        pendingInputs.removeAll(keepingCapacity: false)
+        pendingHeadIndex = 0
+    }
+
+    private func drainLoop() async {
+        while pendingHeadIndex < pendingInputs.count {
+            let next = pendingInputs[pendingHeadIndex]
+            pendingHeadIndex += 1
+            do {
+                try await send(next.event, next.host, next.sessionURL)
+            } catch {
+                onSendError(error)
+            }
+        }
+        pendingInputs.removeAll(keepingCapacity: false)
+        pendingHeadIndex = 0
+        isDraining = false
+    }
+
+    private func compactPendingInputsIfNeeded() {
+        guard pendingHeadIndex >= 64,
+              pendingHeadIndex * 2 >= pendingInputs.count
+        else {
+            return
+        }
+        pendingInputs.removeFirst(pendingHeadIndex)
+        pendingHeadIndex = 0
+    }
+
+    private func coalesceIntoTail(_ pending: PendingInput) -> Bool {
+        guard pendingHeadIndex < pendingInputs.count else {
+            return false
+        }
+        let lastIndex = pendingInputs.count - 1
+
+        let last = pendingInputs[lastIndex]
+        guard last.host == pending.host,
+              last.sessionURL == pending.sessionURL
+        else {
+            return false
+        }
+
+        switch (last.event, pending.event) {
+        case (.pointerMoved, .pointerMoved):
+            pendingInputs[lastIndex] = pending
+            return true
+        case let (.scroll(previousX, previousY), .scroll(nextX, nextY)):
+            pendingInputs[lastIndex] = PendingInput(
+                event: .scroll(
+                    deltaX: previousX + nextX,
+                    deltaY: previousY + nextY
+                ),
+                host: last.host,
+                sessionURL: last.sessionURL
+            )
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @Published public private(set) var hosts: [ShadowClientRemoteHostDescriptor] = []
     @Published public private(set) var apps: [ShadowClientRemoteAppDescriptor] = []
@@ -671,6 +781,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private let controlClient: any ShadowClientGameStreamControlClient
     private let sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient
     private let sessionInputClient: any ShadowClientRemoteSessionInputClient
+    private let inputSendQueue: ShadowClientRemoteInputSendQueue
     private let pinProvider: any ShadowClientPairingPINProviding
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RemoteDesktopRuntime")
     private var refreshHostsTask: Task<Void, Never>?
@@ -696,6 +807,21 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         self.controlClient = controlClient
         self.sessionConnectionClient = sessionConnectionClient
         self.sessionInputClient = sessionInputClient
+        self.inputSendQueue = ShadowClientRemoteInputSendQueue(
+            send: { [sessionInputClient] event, host, sessionURL in
+                try await sessionInputClient.send(
+                    event: event,
+                    host: host,
+                    sessionURL: sessionURL
+                )
+            },
+            onSendError: { [logger] error in
+                if Self.shouldSuppressInputSendError(error) {
+                    return
+                }
+                logger.debug("Remote input send failed: \(error.localizedDescription, privacy: .public)")
+            }
+        )
         self.pinProvider = pinProvider
         self.sessionPresentationMode = sessionConnectionClient.presentationMode
         self.sessionSurfaceContext = sessionConnectionClient.sessionSurfaceContext
@@ -1066,7 +1192,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         launchState = .idle
 
         let sessionConnectionClient = sessionConnectionClient
+        let inputSendQueue = inputSendQueue
         Task {
+            await inputSendQueue.clear()
             await sessionConnectionClient.disconnect()
         }
     }
@@ -1088,20 +1216,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         lastKnownSessionURL = sessionURL
         let host = activeSession.host
-        let sessionInputClient = sessionInputClient
+        let inputSendQueue = inputSendQueue
         Task {
-            do {
-                try await sessionInputClient.send(
-                    event: event,
-                    host: host,
-                    sessionURL: sessionURL
-                )
-            } catch {
-                if Self.shouldSuppressInputSendError(error) {
-                    return
-                }
-                logger.debug("Remote input send failed: \(error.localizedDescription, privacy: .public)")
-            }
+            await inputSendQueue.enqueue(
+                event: event,
+                host: host,
+                sessionURL: sessionURL
+            )
         }
     }
 
