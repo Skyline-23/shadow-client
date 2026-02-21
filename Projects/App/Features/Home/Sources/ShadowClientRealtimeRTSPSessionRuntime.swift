@@ -51,6 +51,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var decoderFailureCount = 0
     private var firstDecoderFailureUptime: TimeInterval = 0
     private var lastDecoderRecoveryUptime: TimeInterval = 0
+    private var decoderRecoveryAttemptCount = 0
+    private var firstDecoderRecoveryAttemptUptime: TimeInterval = 0
     private var hasRenderedFirstFrame = false
     private var frameAssemblyLogCount = 0
 
@@ -96,6 +98,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         decoderFailureCount = 0
         firstDecoderFailureUptime = 0
         lastDecoderRecoveryUptime = 0
+        decoderRecoveryAttemptCount = 0
+        firstDecoderRecoveryAttemptUptime = 0
         hasRenderedFirstFrame = false
         frameAssemblyLogCount = 0
 
@@ -192,6 +196,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         decoderFailureCount = 0
         firstDecoderFailureUptime = 0
         lastDecoderRecoveryUptime = 0
+        decoderRecoveryAttemptCount = 0
+        firstDecoderRecoveryAttemptUptime = 0
         hasRenderedFirstFrame = false
         frameAssemblyLogCount = 0
         await MainActor.run {
@@ -228,6 +234,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             firstDepacketizerCorruptionUptime = 0
 
             await updateRuntimeVideoStats(frameBytes: frame.count)
+            if codec == .av1,
+               !Self.isLikelyValidAV1AccessUnit(frame)
+            {
+                logger.error("Dropping malformed AV1 access unit before decoder submit")
+                await handleDepacketizerCorruption(codec: codec)
+                return
+            }
+
             do {
                 try await decodeFrame(
                     accessUnit: frame,
@@ -240,6 +254,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 logger.error("\(String(describing: codec), privacy: .public) decode failed: \(error.localizedDescription, privacy: .public)")
                 if await handleDecoderFailure(codec: codec) {
                     return
+                }
+                if codec == .av1 {
+                    throw ShadowClientRealtimeSessionRuntimeError.transportFailure(
+                        "AV1 decoder recovery exhausted after repeated failures. Falling back to HEVC is recommended for this session."
+                    )
                 }
                 throw error
             }
@@ -264,21 +283,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastDepacketizerRecoveryUptime = now
         depacketizerCorruptionCount = 0
         firstDepacketizerCorruptionUptime = 0
-        hasLoggedDecodedFrameMetadata = false
-        logger.error("Video depacketizer detected sustained stream discontinuity for codec \(String(describing: codec), privacy: .public); resetting decoder session for recovery")
-        await decoder.reset()
-
-        if let configuration = activeVideoConfiguration {
-            await decoder.setPreferredOutputDimensions(
-                width: configuration.width,
-                height: configuration.height,
-                fps: configuration.fps
-            )
-            await decoder.configureAV1Fallback(
-                hdrEnabled: configuration.enableHDR,
-                yuv444Enabled: configuration.enableYUV444
-            )
-        }
+        logger.error("Video depacketizer detected sustained stream discontinuity for codec \(String(describing: codec), privacy: .public); requesting recovery frame")
         if let rtspClient {
             await rtspClient.requestVideoRecoveryFrame()
         }
@@ -315,6 +320,22 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         decoderFailureCount = 0
         firstDecoderFailureUptime = 0
         hasLoggedDecodedFrameMetadata = false
+
+        if firstDecoderRecoveryAttemptUptime == 0 ||
+            now - firstDecoderRecoveryAttemptUptime > 12.0
+        {
+            firstDecoderRecoveryAttemptUptime = now
+            decoderRecoveryAttemptCount = 0
+        }
+        decoderRecoveryAttemptCount += 1
+        if codec == .av1,
+           decoderRecoveryAttemptCount >= 3
+        {
+            logger.error(
+                "AV1 decoder recovery attempts exceeded safety threshold; forcing session fallback path"
+            )
+            return false
+        }
 
         logger.error(
             "Video decoder entered recovery for codec \(String(describing: codec), privacy: .public); resetting decoder and requesting recovery frame"
@@ -507,6 +528,71 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
     }
 
+    static func isLikelyValidAV1AccessUnit(_ accessUnit: Data) -> Bool {
+        guard !accessUnit.isEmpty else {
+            return false
+        }
+
+        var index = 0
+        while index < accessUnit.count {
+            let obuHeader = accessUnit[index]
+            // forbidden bit and reserved bit should both be unset
+            if (obuHeader & 0x80) != 0 || (obuHeader & 0x01) != 0 {
+                return false
+            }
+
+            let hasExtension = (obuHeader & 0x04) != 0
+            let hasSizeField = (obuHeader & 0x02) != 0
+            guard hasSizeField else {
+                return false
+            }
+
+            index += 1
+            if hasExtension {
+                guard index < accessUnit.count else {
+                    return false
+                }
+                index += 1
+            }
+
+            guard let leb = decodeLEB128(in: accessUnit, from: index) else {
+                return false
+            }
+            index = leb.nextIndex
+            guard leb.value >= 0, index + leb.value <= accessUnit.count else {
+                return false
+            }
+            index += leb.value
+        }
+
+        return true
+    }
+
+    private static func decodeLEB128(
+        in data: Data,
+        from startIndex: Int
+    ) -> (value: Int, nextIndex: Int)? {
+        guard startIndex < data.count else {
+            return nil
+        }
+
+        var value = 0
+        var shift = 0
+        var index = startIndex
+
+        while index < data.count, shift <= 56 {
+            let byte = Int(data[index])
+            value |= (byte & 0x7F) << shift
+            index += 1
+            if (byte & 0x80) == 0 {
+                return (value, index)
+            }
+            shift += 7
+        }
+
+        return nil
+    }
+
     private static func renderState(forStreamError error: Error) -> ShadowClientRealtimeSessionSurfaceContext.RenderState {
         let normalizedMessage = error.localizedDescription
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -582,12 +668,157 @@ private struct ShadowClientRTSPResponse {
     let body: Data
 }
 
-private struct ShadowClientRTPPacket {
+struct ShadowClientRTPPacket {
     let isRTP: Bool
     let channel: Int
+    let sequenceNumber: UInt16
     let marker: Bool
     let payloadType: Int
     let payload: Data
+}
+
+struct ShadowClientRTPPacketPayloadParseResult: Equatable, Sendable {
+    let sequenceNumber: UInt16
+    let marker: Bool
+    let payloadType: Int
+    let payload: Data
+}
+
+enum ShadowClientRTPPacketPayloadParserError: Error, Equatable {
+    case invalidPacket
+}
+
+enum ShadowClientRTPPacketPayloadParser {
+    static func parse(
+        _ payload: Data
+    ) throws -> ShadowClientRTPPacketPayloadParseResult {
+        guard payload.count >= ShadowClientRTSPProtocolProfile.rtpMinimumHeaderLength else {
+            throw ShadowClientRTPPacketPayloadParserError.invalidPacket
+        }
+
+        let version = payload[0] >> ShadowClientRTSPProtocolProfile.rtpVersionShift
+        guard version == ShadowClientRTSPProtocolProfile.rtpVersion else {
+            throw ShadowClientRTPPacketPayloadParserError.invalidPacket
+        }
+
+        let hasPadding = (payload[0] & ShadowClientRTSPProtocolProfile.rtpPaddingMask) != 0
+        let hasExtension = (payload[0] & ShadowClientRTSPProtocolProfile.rtpExtensionMask) != 0
+        let csrcCount = Int(payload[0] & ShadowClientRTSPProtocolProfile.rtpCSRCCountMask)
+        let marker = (payload[1] & ShadowClientRTSPProtocolProfile.rtpMarkerMask) != 0
+        let payloadType = Int(payload[1] & ShadowClientRTSPProtocolProfile.rtpPayloadTypeMask)
+        let sequenceNumber = (UInt16(payload[2]) << 8) | UInt16(payload[3])
+
+        var headerLength = ShadowClientRTSPProtocolProfile.rtpMinimumHeaderLength + csrcCount * 4
+        guard payload.count >= headerLength else {
+            throw ShadowClientRTPPacketPayloadParserError.invalidPacket
+        }
+
+        if hasExtension {
+            // Moonlight/Sunshine RTP video packets carry a fixed 4-byte extension preamble
+            // before NV packet data. The extension length field is not used in the same way
+            // as generic RFC3550 streams, so we intentionally skip only these 4 bytes.
+            headerLength += 4
+            guard payload.count >= headerLength else {
+                throw ShadowClientRTPPacketPayloadParserError.invalidPacket
+            }
+        }
+
+        var endIndex = payload.count
+        if hasPadding, let padding = payload.last {
+            endIndex = max(headerLength, payload.count - Int(padding))
+        }
+        guard endIndex > headerLength else {
+            throw ShadowClientRTPPacketPayloadParserError.invalidPacket
+        }
+
+        return ShadowClientRTPPacketPayloadParseResult(
+            sequenceNumber: sequenceNumber,
+            marker: marker,
+            payloadType: payloadType,
+            payload: Data(payload[headerLength..<endIndex])
+        )
+    }
+}
+
+struct ShadowClientRTPVideoReorderBuffer: Sendable {
+    private let targetDepth: Int
+    private let maximumDepth: Int
+    private var expectedSequence: UInt16?
+    private var packetsBySequence: [UInt16: ShadowClientRTPPacket] = [:]
+
+    init(targetDepth: Int = 4, maximumDepth: Int = 96) {
+        self.targetDepth = max(2, targetDepth)
+        self.maximumDepth = max(self.targetDepth, maximumDepth)
+    }
+
+    mutating func reset() {
+        expectedSequence = nil
+        packetsBySequence.removeAll(keepingCapacity: false)
+    }
+
+    mutating func enqueue(_ packet: ShadowClientRTPPacket) -> [ShadowClientRTPPacket] {
+        guard packetsBySequence[packet.sequenceNumber] == nil else {
+            return []
+        }
+
+        packetsBySequence[packet.sequenceNumber] = packet
+        if expectedSequence == nil {
+            expectedSequence = packet.sequenceNumber
+        }
+
+        var readyPackets = drainContiguousPackets()
+        if readyPackets.isEmpty, packetsBySequence.count >= targetDepth {
+            advanceExpectedSequenceToNearestPacket()
+            readyPackets = drainContiguousPackets()
+        }
+
+        trimOverflow()
+        return readyPackets
+    }
+
+    private mutating func drainContiguousPackets() -> [ShadowClientRTPPacket] {
+        var readyPackets: [ShadowClientRTPPacket] = []
+        while let expectedSequence,
+              let packet = packetsBySequence.removeValue(forKey: expectedSequence)
+        {
+            readyPackets.append(packet)
+            self.expectedSequence = expectedSequence &+ 1
+        }
+        return readyPackets
+    }
+
+    private mutating func advanceExpectedSequenceToNearestPacket() {
+        guard let expectedSequence,
+              !packetsBySequence.isEmpty
+        else {
+            return
+        }
+
+        let orderedByDistance = packetsBySequence.keys.sorted { lhs, rhs in
+            sequenceDistance(from: expectedSequence, to: lhs) <
+                sequenceDistance(from: expectedSequence, to: rhs)
+        }
+        self.expectedSequence = orderedByDistance.first
+    }
+
+    private mutating func trimOverflow() {
+        guard packetsBySequence.count > maximumDepth,
+              let expectedSequence
+        else {
+            return
+        }
+
+        let keysByDistance = packetsBySequence.keys.sorted { lhs, rhs in
+            sequenceDistance(from: expectedSequence, to: lhs) <
+                sequenceDistance(from: expectedSequence, to: rhs)
+        }
+        let keysToKeep = Set(keysByDistance.prefix(maximumDepth))
+        packetsBySequence = packetsBySequence.filter { keysToKeep.contains($0.key) }
+    }
+
+    private func sequenceDistance(from start: UInt16, to end: UInt16) -> UInt16 {
+        end &- start
+    }
 }
 
 private actor ShadowClientRTSPInterleavedClient {
@@ -1520,6 +1751,7 @@ private actor ShadowClientRTSPInterleavedClient {
         var effectivePayloadType = payloadType
         var hasReceivedVideoPayload = false
         var packetCount = 0
+        var reorderBuffer = ShadowClientRTPVideoReorderBuffer()
 
         while !Task.isCancelled {
             if let packet = try parseInterleavedPacketIfAvailable() {
@@ -1539,7 +1771,13 @@ private actor ShadowClientRTSPInterleavedClient {
 
                 if packet.payloadType == effectivePayloadType {
                     hasReceivedVideoPayload = true
-                    try await onVideoPacket(packet.payload, packet.marker)
+                    let orderedPackets = reorderBuffer.enqueue(packet)
+                    for orderedPacket in orderedPackets {
+                        try await onVideoPacket(
+                            orderedPacket.payload,
+                            orderedPacket.marker
+                        )
+                    }
                     continue
                 }
 
@@ -1550,8 +1788,15 @@ private actor ShadowClientRTSPInterleavedClient {
                         "RTSP payload type mismatch; adopting stream payload type \(packet.payloadType, privacy: .public) (expected \(effectivePayloadType, privacy: .public))"
                     )
                     effectivePayloadType = packet.payloadType
+                    reorderBuffer.reset()
                     hasReceivedVideoPayload = true
-                    try await onVideoPacket(packet.payload, packet.marker)
+                    let orderedPackets = reorderBuffer.enqueue(packet)
+                    for orderedPacket in orderedPackets {
+                        try await onVideoPacket(
+                            orderedPacket.payload,
+                            orderedPacket.marker
+                        )
+                    }
                 }
                 continue
             }
@@ -1665,6 +1910,7 @@ private actor ShadowClientRTSPInterleavedClient {
         var packetCount = 0
         var parseFailureCount = 0
         var datagramCount = 0
+        var reorderBuffer = ShadowClientRTPVideoReorderBuffer()
         let receiveStart = ContinuousClock.now
 
         while !Task.isCancelled {
@@ -1714,7 +1960,13 @@ private actor ShadowClientRTSPInterleavedClient {
 
             if packet.payloadType == effectivePayloadType {
                 hasReceivedVideoPayload = true
-                try await onVideoPacket(packet.payload, packet.marker)
+                let orderedPackets = reorderBuffer.enqueue(packet)
+                for orderedPacket in orderedPackets {
+                    try await onVideoPacket(
+                        orderedPacket.payload,
+                        orderedPacket.marker
+                    )
+                }
                 continue
             }
 
@@ -1725,8 +1977,15 @@ private actor ShadowClientRTSPInterleavedClient {
                     "RTSP payload type mismatch; adopting stream payload type \(packet.payloadType, privacy: .public) (expected \(effectivePayloadType, privacy: .public))"
                 )
                 effectivePayloadType = packet.payloadType
+                reorderBuffer.reset()
                 hasReceivedVideoPayload = true
-                try await onVideoPacket(packet.payload, packet.marker)
+                let orderedPackets = reorderBuffer.enqueue(packet)
+                for orderedPacket in orderedPackets {
+                    try await onVideoPacket(
+                        orderedPacket.payload,
+                        orderedPacket.marker
+                    )
+                }
             }
         }
     }
@@ -2232,6 +2491,7 @@ private actor ShadowClientRTSPInterleavedClient {
             return ShadowClientRTPPacket(
                 isRTP: false,
                 channel: channel,
+                sequenceNumber: 0,
                 marker: false,
                 payloadType: -1,
                 payload: Data()
@@ -2245,48 +2505,20 @@ private actor ShadowClientRTSPInterleavedClient {
         _ payload: Data,
         channel: Int
     ) throws -> ShadowClientRTPPacket {
-        guard payload.count >= ShadowClientRTSPProtocolProfile.rtpMinimumHeaderLength else {
+        let parsed: ShadowClientRTPPacketPayloadParseResult
+        do {
+            parsed = try ShadowClientRTPPacketPayloadParser.parse(payload)
+        } catch {
             throw ShadowClientRTSPInterleavedClientError.invalidResponse
         }
 
-        let version = payload[0] >> ShadowClientRTSPProtocolProfile.rtpVersionShift
-        guard version == ShadowClientRTSPProtocolProfile.rtpVersion else {
-            throw ShadowClientRTSPInterleavedClientError.invalidResponse
-        }
-
-        let hasPadding = (payload[0] & ShadowClientRTSPProtocolProfile.rtpPaddingMask) != 0
-        let hasExtension = (payload[0] & ShadowClientRTSPProtocolProfile.rtpExtensionMask) != 0
-        let csrcCount = Int(payload[0] & ShadowClientRTSPProtocolProfile.rtpCSRCCountMask)
-        let marker = (payload[1] & ShadowClientRTSPProtocolProfile.rtpMarkerMask) != 0
-        let payloadType = Int(payload[1] & ShadowClientRTSPProtocolProfile.rtpPayloadTypeMask)
-
-        var headerLength = ShadowClientRTSPProtocolProfile.rtpMinimumHeaderLength + csrcCount * 4
-        guard payload.count >= headerLength else {
-            throw ShadowClientRTSPInterleavedClientError.invalidResponse
-        }
-
-        if hasExtension {
-            guard payload.count >= headerLength + 4 else {
-                throw ShadowClientRTSPInterleavedClientError.invalidResponse
-            }
-            // Moonlight/Sunshine video RTP packets reserve exactly 4 bytes after the
-            // fixed RTP header when the extension bit is set. They don't rely on the
-            // RFC3550 variable-length extension layout here.
-            headerLength += 4
-        }
-
-        var endIndex = payload.count
-        if hasPadding, let padding = payload.last {
-            endIndex = max(headerLength, payload.count - Int(padding))
-        }
-
-        let videoPayload = Data(payload[headerLength..<endIndex])
         return ShadowClientRTPPacket(
             isRTP: true,
             channel: channel,
-            marker: marker,
-            payloadType: payloadType,
-            payload: videoPayload
+            sequenceNumber: parsed.sequenceNumber,
+            marker: parsed.marker,
+            payloadType: parsed.payloadType,
+            payload: parsed.payload
         )
     }
 

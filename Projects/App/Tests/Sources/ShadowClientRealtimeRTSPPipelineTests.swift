@@ -269,6 +269,79 @@ func rtspTransportParserHandlesMissingServerPort() {
     #expect(port == nil)
 }
 
+@Test("RTP payload parser keeps Moonlight extension payload bytes after fixed extension preamble")
+func rtpPayloadParserKeepsMoonlightExtensionPayloadBytes() throws {
+    let packet = Data([
+        0x90, 0x00, 0x00, 0x01, // v=2, X=1, PT=0, sequence=1
+        0x00, 0x00, 0x00, 0x02, // timestamp
+        0x00, 0x00, 0x00, 0x03, // SSRC
+        0xBE, 0xDE, 0x00, 0x01, // extension header (1 word)
+        0x11, 0x22, 0x33, 0x44, // extension payload (4 bytes)
+        0xAA, 0xBB, 0xCC, // RTP payload
+    ])
+
+    let parsed = try ShadowClientRTPPacketPayloadParser.parse(packet)
+    #expect(parsed.sequenceNumber == 1)
+    #expect(parsed.payloadType == 0)
+    #expect(parsed.marker == false)
+    #expect(parsed.payload == Data([0x11, 0x22, 0x33, 0x44, 0xAA, 0xBB, 0xCC]))
+}
+
+@Test("RTP payload parser accepts non-zero extension length without requiring RFC3550 extension words")
+func rtpPayloadParserAcceptsMoonlightExtensionLengthField() throws {
+    let packet = Data([
+        0x90, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x02,
+        0x00, 0x00, 0x00, 0x03,
+        0xBE, 0xDE, 0x00, 0x02, // non-zero extension length field
+        0xAA, 0xBB, 0xCC, 0xDD,
+    ])
+
+    let parsed = try ShadowClientRTPPacketPayloadParser.parse(packet)
+    #expect(parsed.sequenceNumber == 1)
+    #expect(parsed.payload == Data([0xAA, 0xBB, 0xCC, 0xDD]))
+}
+
+@Test("Video RTP reorder buffer reorders nearby out-of-order packets")
+func videoRtpReorderBufferReordersNearbyPackets() {
+    var reorderBuffer = ShadowClientRTPVideoReorderBuffer(
+        targetDepth: 3,
+        maximumDepth: 16
+    )
+    let packet100 = makeVideoRTPPacket(sequenceNumber: 100, payloadByte: 0x10)
+    let packet102 = makeVideoRTPPacket(sequenceNumber: 102, payloadByte: 0x12)
+    let packet101 = makeVideoRTPPacket(sequenceNumber: 101, payloadByte: 0x11)
+
+    let firstReady = reorderBuffer.enqueue(packet100)
+    #expect(firstReady.map(\.sequenceNumber) == [100])
+
+    let secondReady = reorderBuffer.enqueue(packet102)
+    #expect(secondReady.isEmpty)
+
+    let thirdReady = reorderBuffer.enqueue(packet101)
+    #expect(thirdReady.map(\.sequenceNumber) == [101, 102])
+}
+
+@Test("Video RTP reorder buffer skips missing sequence after target depth is reached")
+func videoRtpReorderBufferSkipsMissingPacketAfterDepthThreshold() {
+    var reorderBuffer = ShadowClientRTPVideoReorderBuffer(
+        targetDepth: 3,
+        maximumDepth: 16
+    )
+    let packet200 = makeVideoRTPPacket(sequenceNumber: 200, payloadByte: 0x20)
+    let packet202 = makeVideoRTPPacket(sequenceNumber: 202, payloadByte: 0x22)
+    let packet203 = makeVideoRTPPacket(sequenceNumber: 203, payloadByte: 0x23)
+
+    let firstReady = reorderBuffer.enqueue(packet200)
+    #expect(firstReady.map(\.sequenceNumber) == [200])
+
+    let secondReady = reorderBuffer.enqueue(packet202)
+    #expect(secondReady.isEmpty)
+
+    let thirdReady = reorderBuffer.enqueue(packet203)
+    #expect(thirdReady.map(\.sequenceNumber) == [202, 203])
+}
+
 @Test("Sunshine ping payload parser accepts 16-byte ASCII payload")
 func sunshinePingPayloadParserAcceptsAsciiPayload() {
     let payload = ShadowClientRTSPTransportHeaderParser.parseSunshinePingPayload(from: "3727B184C4E23026")
@@ -491,6 +564,44 @@ func av1DepacketizerSupportsSinglePacketSofEofFrame() {
     #expect(frame == framePayload)
 }
 
+@Test("AV1 depacketizer ignores packets without picture-data flag")
+func av1DepacketizerSkipsPacketsWithoutPictureDataFlag() {
+    var depacketizer = ShadowClientAV1RTPDepacketizer()
+    let packet = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 502,
+        frameIndex: 65,
+        flags: nvVideoPacketFlagSOF | nvVideoPacketFlagEOF,
+        payloadBytes: [0xAB],
+        includeFrameHeaderWithLastPayloadLength: moonlightFrameHeaderSize + 1
+    )
+
+    let result = depacketizer.ingestWithStatus(payload: packet, marker: true)
+    switch result {
+    case .droppedCorruptFrame:
+        break
+    default:
+        Issue.record("Expected droppedCorruptFrame when packet has no picture data")
+    }
+}
+
+@Test("Realtime runtime AV1 access-unit validator accepts basic size-delimited OBU payloads")
+func realtimeRuntimeAv1AccessUnitValidatorAcceptsBasicObuSequence() {
+    // OBU temporal delimiter (type=2, size=0) + OBU frame (type=6, size=1, payload=0x00)
+    let accessUnit = Data([0x12, 0x00, 0x32, 0x01, 0x00])
+    #expect(ShadowClientRealtimeRTSPSessionRuntime.isLikelyValidAV1AccessUnit(accessUnit))
+}
+
+@Test("Realtime runtime AV1 access-unit validator rejects malformed payloads")
+func realtimeRuntimeAv1AccessUnitValidatorRejectsMalformedPayloads() {
+    // Reserved bit set (bit0)
+    let invalidHeader = Data([0x13, 0x00])
+    // Declared size larger than available payload
+    let invalidSize = Data([0x32, 0x05, 0x00])
+
+    #expect(!ShadowClientRealtimeRTSPSessionRuntime.isLikelyValidAV1AccessUnit(invalidHeader))
+    #expect(!ShadowClientRealtimeRTSPSessionRuntime.isLikelyValidAV1AccessUnit(invalidSize))
+}
+
 private let nvVideoPacketFlagContainsPicData: UInt8 = 0x01
 private let nvVideoPacketFlagEOF: UInt8 = 0x02
 private let nvVideoPacketFlagSOF: UInt8 = 0x04
@@ -532,4 +643,18 @@ private func moonlightFrameHeader(lastPayloadLength: UInt16) -> Data {
 private func littleEndianBytes<T: FixedWidthInteger>(_ value: T) -> [UInt8] {
     let littleEndianValue = value.littleEndian
     return withUnsafeBytes(of: littleEndianValue) { Array($0) }
+}
+
+private func makeVideoRTPPacket(
+    sequenceNumber: UInt16,
+    payloadByte: UInt8
+) -> ShadowClientRTPPacket {
+    ShadowClientRTPPacket(
+        isRTP: true,
+        channel: 0,
+        sequenceNumber: sequenceNumber,
+        marker: false,
+        payloadType: 0,
+        payload: Data([payloadByte])
+    )
 }
