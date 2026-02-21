@@ -83,11 +83,14 @@ Use subagents in parallel for non-trivial work with disjoint ownership, then mer
      - hard-separate RTP receive, depacketize, and decode stages into independent actors/queues,
      - use bounded ring buffers and watermark-based drop policy between stages,
      - ensure decode stall does not block ingest.
+     - status: `partial` (queue separation landed in `8ea1e0b`, but runtime remains a large single actor/file and still needs stronger stage isolation).
   2. AV1 failure fast fallback (`fix(streaming)`):
      - if AV1 decode/recovery failures exceed threshold within short window, trigger immediate HEVC fallback/relaunch path.
+     - status: `partial` (fallback path and tests landed, but field logs still show prolonged recovery-loop behavior before fallback in some scenarios).
   3. Depacketizer continuity/recovery tuning (`fix(streaming)`):
      - relax over-strict continuity checks,
      - tune recovery cooldown/hysteresis to prevent recovery-loop oscillation.
+     - status: `partial` (threshold/cooldown tuning is implemented, but oscillation is not fully eliminated under stress).
 
 ### Active Functional Roadmap (Must Be Implemented In Order)
 - `feat(audio): external Opus integration + capability-driven negotiation`
@@ -96,25 +99,31 @@ Use subagents in parallel for non-trivial work with disjoint ownership, then mer
   - keep decoder capability/combination-based negotiation:
     - use surround only if local decoder/output can actually support it,
     - otherwise select stereo parameters during SDP/track negotiation (not runtime failure).
+  - status: `partial` (`YbridOpus` + plugin path integrated and negotiation hooks added; remaining instability exists for some 6ch runtime/output combinations).
 - `refactor(runtime): AsyncStream/actor-first runtime internals`
   - preserve SwiftUI-facing `@Published` API contracts,
   - reduce ad-hoc `Task` fan-out by routing runtime intents/events through typed `AsyncStream` pipelines,
   - centralize mutable runtime coordination state in actors (or actor-backed reducers).
+  - status: `done` (runtime command/event flow migrated to typed `AsyncStream` + actor-backed coordination while preserving `@Published` surfaces).
 - `refactor(input): single producer queue + coalescing sender`
   - replace per-event send `Task` fan-out with a dedicated input send queue actor,
   - coalesce high-rate events (`pointerMoved`, `scroll`),
   - suppress cancellation-class network noise (`ECANCELED`/`ENOTCONN`) and apply controlled channel rebootstrap cooldown.
+  - status: `partial` (single queue + coalescing + benign error suppression are done; explicit rebootstrap cooldown/backoff policy is still pending).
 - `refactor(video): hard isolate receive/depacketize/decode stages`
   - split current runtime file responsibilities into pipeline components with clear ownership,
   - MainActor transitions only for HUD/surface state; never in ingest/decode hot path.
+  - status: `partial` (receive/depacketize/decode queues/tasks exist, but component split and stricter hot-path isolation are incomplete).
 - `fix(streaming): av1 recovery policy tuning + fast hevc switch`
   - retune AV1 recovery thresholds/windows/cooldowns,
   - enforce fast and consistent HEVC switch trigger when AV1 recovery is exhausted.
+  - status: `partial` (policy/tuning landed with fallback triggers, but consistency and immediacy under interaction/fullscreen stress still need improvement).
 - `fix(macos): fullscreen transition state machine`
   - state-machine fullscreen toggles (no retrigger during transition),
   - prevent capture/app-focus transitions from tearing down decoder/transport loops.
+  - status: `not_done` (current implementation uses boolean/debounce guards, not a full explicit transition state machine).
 
-### Current Priority Status Snapshot
+### Current Priority Status Snapshot (Updated: 2026-02-21)
 - 1순위 AV1 수신/디코드 분리: partial (structure exists, isolation strength insufficient).
 - 2순위 AV1 실패 시 HEVC 전환: partial (trigger exists, immediacy/consistency insufficient).
 - 3순위 연속성/복구 정책 조정: partial (policy exists, tuning required).
