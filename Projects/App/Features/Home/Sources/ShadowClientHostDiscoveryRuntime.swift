@@ -82,6 +82,59 @@ struct ShadowClientDiscoveredHostCatalog {
     }
 }
 
+private enum ShadowClientHostDiscoveryEvent: Sendable {
+    case startDiscovering(resetCatalog: Bool)
+    case searchFailed(String)
+    case serviceResolved(serviceKey: String, host: ShadowClientDiscoveredHost)
+    case serviceRemoved(serviceKey: String, moreComing: Bool)
+    case serviceDidNotResolve(serviceKey: String)
+    case stopDiscovering
+}
+
+private struct ShadowClientHostDiscoverySnapshot: Sendable {
+    let state: ShadowClientHostDiscoveryState
+    let hosts: [ShadowClientDiscoveredHost]
+}
+
+private actor ShadowClientHostDiscoveryEventReducer {
+    private var catalog = ShadowClientDiscoveredHostCatalog()
+    private var state: ShadowClientHostDiscoveryState = .idle
+
+    func reduce(_ event: ShadowClientHostDiscoveryEvent) -> ShadowClientHostDiscoverySnapshot? {
+        switch event {
+        case let .startDiscovering(resetCatalog):
+            state = .discovering
+            if resetCatalog {
+                catalog.removeAll()
+            }
+            return snapshot()
+        case let .searchFailed(message):
+            state = .failed(message)
+            return snapshot()
+        case let .serviceResolved(serviceKey, host):
+            catalog.upsert(serviceKey: serviceKey, host: host)
+            return snapshot()
+        case let .serviceRemoved(serviceKey, moreComing):
+            catalog.remove(serviceKey: serviceKey)
+            return moreComing ? nil : snapshot()
+        case let .serviceDidNotResolve(serviceKey):
+            catalog.remove(serviceKey: serviceKey)
+            return snapshot()
+        case .stopDiscovering:
+            state = .idle
+            catalog.removeAll()
+            return snapshot()
+        }
+    }
+
+    private func snapshot() -> ShadowClientHostDiscoverySnapshot {
+        ShadowClientHostDiscoverySnapshot(
+            state: state,
+            hosts: catalog.hosts
+        )
+    }
+}
+
 public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject {
     public static let defaultBonjourServiceTypes = [
         "_nvstream._tcp",
@@ -95,13 +148,42 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
     private let bonjourServiceTypes: [String]
     private var browsers: [NetServiceBrowser] = []
     private var services: [String: NetService] = [:]
-    private var catalog = ShadowClientDiscoveredHostCatalog()
+
+    private let reducer = ShadowClientHostDiscoveryEventReducer()
+    private let eventContinuation: AsyncStream<ShadowClientHostDiscoveryEvent>.Continuation
+    private var eventLoopTask: Task<Void, Never>?
 
     public init(
         bonjourServiceTypes: [String] = ShadowClientHostDiscoveryRuntime.defaultBonjourServiceTypes
     ) {
         self.bonjourServiceTypes = bonjourServiceTypes
+
+        let (eventStream, eventContinuation) = AsyncStream.makeStream(of: ShadowClientHostDiscoveryEvent.self)
+        self.eventContinuation = eventContinuation
+
         super.init()
+
+        eventLoopTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            for await event in eventStream {
+                guard let snapshot = await self.reducer.reduce(event) else {
+                    continue
+                }
+
+                await MainActor.run {
+                    self.state = snapshot.state
+                    self.hosts = snapshot.hosts
+                }
+            }
+        }
+    }
+
+    deinit {
+        eventContinuation.finish()
+        eventLoopTask?.cancel()
     }
 
     public func start() {
@@ -109,9 +191,7 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
             return
         }
 
-        state = .discovering
-        catalog.removeAll()
-        hosts = []
+        emit(.startDiscovering(resetCatalog: true))
 
         for type in bonjourServiceTypes {
             let browser = NetServiceBrowser()
@@ -134,14 +214,16 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
         }
         services.removeAll()
 
-        catalog.removeAll()
-        hosts = []
-        state = .idle
+        emit(.stopDiscovering)
     }
 
     public func refresh() {
         stop()
         start()
+    }
+
+    private func emit(_ event: ShadowClientHostDiscoveryEvent) {
+        eventContinuation.yield(event)
     }
 
     private func normalizedServiceType(_ type: String) -> String {
@@ -150,10 +232,6 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
 
     private func serviceKey(for service: NetService) -> String {
         "\(service.type)|\(service.domain)|\(service.name)"
-    }
-
-    private func renderHosts() {
-        hosts = catalog.hosts
     }
 
     private func resolvedHostName(from service: NetService) -> String? {
@@ -178,22 +256,22 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
 }
 
 extension ShadowClientHostDiscoveryRuntime: NetServiceBrowserDelegate {
-    public func netServiceBrowserWillSearch(_ browser: NetServiceBrowser) {
-        state = .discovering
+    public func netServiceBrowserWillSearch(_: NetServiceBrowser) {
+        emit(.startDiscovering(resetCatalog: false))
     }
 
     public func netServiceBrowser(
-        _ browser: NetServiceBrowser,
+        _: NetServiceBrowser,
         didNotSearch errorDict: [String: NSNumber]
     ) {
         let code = errorDict[NetService.errorCode]?.intValue ?? -1
-        state = .failed("Bonjour discovery error (\(code)).")
+        emit(.searchFailed("Bonjour discovery error (\(code))."))
     }
 
     public func netServiceBrowser(
-        _ browser: NetServiceBrowser,
+        _: NetServiceBrowser,
         didFind service: NetService,
-        moreComing: Bool
+        moreComing _: Bool
     ) {
         let key = serviceKey(for: service)
         services[key] = service
@@ -202,17 +280,14 @@ extension ShadowClientHostDiscoveryRuntime: NetServiceBrowserDelegate {
     }
 
     public func netServiceBrowser(
-        _ browser: NetServiceBrowser,
+        _: NetServiceBrowser,
         didRemove service: NetService,
         moreComing: Bool
     ) {
         let key = serviceKey(for: service)
         services[key]?.delegate = nil
         services.removeValue(forKey: key)
-        catalog.remove(serviceKey: key)
-        if !moreComing {
-            renderHosts()
-        }
+        emit(.serviceRemoved(serviceKey: key, moreComing: moreComing))
     }
 }
 
@@ -231,15 +306,17 @@ extension ShadowClientHostDiscoveryRuntime: NetServiceDelegate {
             serviceType: serviceType
         )
 
-        let key = serviceKey(for: sender)
-        catalog.upsert(serviceKey: key, host: discoveredHost)
-        renderHosts()
+        emit(
+            .serviceResolved(
+                serviceKey: serviceKey(for: sender),
+                host: discoveredHost
+            )
+        )
     }
 
-    public func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
+    public func netService(_ sender: NetService, didNotResolve _: [String: NSNumber]) {
         let key = serviceKey(for: sender)
         services.removeValue(forKey: key)
-        catalog.remove(serviceKey: key)
-        renderHosts()
+        emit(.serviceDidNotResolve(serviceKey: key))
     }
 }

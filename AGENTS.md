@@ -24,6 +24,7 @@ Use Swift 6 style: 4-space indentation, `UpperCamelCase` types, `lowerCamelCase`
 
 ## Concurrency, DI, and Streaming Rules
 Use native Swift concurrency first: prefer `actor` for shared mutable streaming state, and use `async/await` for telemetry ingest and decision flow. Keep Combine for UI-facing event surfaces (`AnyPublisher`).
+For `ObservableObject` runtimes (`HostDiscoveryRuntime`, `RemoteDesktopRuntime`), keep `@Published`/SwiftUI binding surface but migrate internal orchestration to `AsyncStream` + `actor` command/event pipelines.
 
 Use Pure DI: inject dependencies via initializers and avoid hidden service locators. Keep compatibility boundaries thin (`MoonlightSessionTelemetryCallbackAdapter` -> `MoonlightSessionTelemetryBridge` -> normalized snapshot).
 For streaming recovery, keep hysteresis in `LowLatencyTelemetryPipeline`: require sustained stable samples before releasing quality reduction, and ignore out-of-order telemetry timestamps.
@@ -89,11 +90,16 @@ Use subagents in parallel for non-trivial work with disjoint ownership, then mer
      - tune recovery cooldown/hysteresis to prevent recovery-loop oscillation.
 
 ### Active Functional Roadmap (Must Be Implemented In Order)
-- `feat(audio): ship native opus as linked module (no dlopen)`
-  - remove runtime `dlopen` dependency for multichannel Opus on macOS,
+- `feat(audio): external Opus integration + capability-driven negotiation`
+  - use external `opus` module for multichannel decode path where available,
+  - keep compatibility path that prefers system decoder when possible and falls back cleanly,
   - keep decoder capability/combination-based negotiation:
     - use surround only if local decoder/output can actually support it,
     - otherwise select stereo parameters during SDP/track negotiation (not runtime failure).
+- `refactor(runtime): AsyncStream/actor-first runtime internals`
+  - preserve SwiftUI-facing `@Published` API contracts,
+  - reduce ad-hoc `Task` fan-out by routing runtime intents/events through typed `AsyncStream` pipelines,
+  - centralize mutable runtime coordination state in actors (or actor-backed reducers).
 - `refactor(input): single producer queue + coalescing sender`
   - replace per-event send `Task` fan-out with a dedicated input send queue actor,
   - coalesce high-rate events (`pointerMoved`, `scroll`),
