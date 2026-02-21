@@ -60,6 +60,9 @@ public struct ShadowClientAppShellView: View {
     @State private var launchFailureAlertMessage = ""
     @State private var isLaunchFailureAlertPresented = false
     @State private var gamepadInputRuntime = ShadowClientGamepadInputPassthroughRuntime()
+#if os(macOS)
+    @State private var activeSessionProcessActivity: NSObjectProtocol?
+#endif
 
     public init(platformName: String, dependencies: ShadowClientFeatureHomeDependencies) {
         self.platformName = platformName
@@ -145,6 +148,7 @@ public struct ShadowClientAppShellView: View {
         }
         .onChange(of: remoteDesktopRuntime.activeSession != nil, initial: true) { _, isActive in
             gamepadInputRuntime.setSessionActive(isActive)
+            updateActiveSessionProcessActivity(isActive: isActive)
         }
         .onChange(of: gamepadInputConfiguration, initial: true) { _, configuration in
             gamepadInputRuntime.updateConfiguration(configuration)
@@ -158,6 +162,7 @@ public struct ShadowClientAppShellView: View {
         }
         .onDisappear {
             gamepadInputRuntime.stop()
+            endActiveSessionProcessActivity()
             stopSettingsTelemetrySubscription()
             stopHostDiscovery()
         }
@@ -1361,6 +1366,32 @@ public struct ShadowClientAppShellView: View {
             controlRoundTripMs: sessionSurfaceContext.controlRoundTripMs,
             renderState: sessionSurfaceContext.renderState
         )
+    }
+
+    private func updateActiveSessionProcessActivity(isActive: Bool) {
+#if os(macOS)
+        if isActive {
+            guard activeSessionProcessActivity == nil else {
+                return
+            }
+            activeSessionProcessActivity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiated, .latencyCritical, .idleSystemSleepDisabled],
+                reason: "ShadowClient active remote session"
+            )
+            return
+        }
+#endif
+        endActiveSessionProcessActivity()
+    }
+
+    private func endActiveSessionProcessActivity() {
+#if os(macOS)
+        guard let activeSessionProcessActivity else {
+            return
+        }
+        ProcessInfo.processInfo.endActivity(activeSessionProcessActivity)
+        self.activeSessionProcessActivity = nil
+#endif
     }
 
     private func panelSurface(cornerRadius: CGFloat) -> some View {
