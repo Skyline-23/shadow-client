@@ -351,15 +351,24 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     }
 
     private func handleLocalSessionTerminateShortcutIfNeeded(_ event: NSEvent) -> Bool {
-        let requiredFlags: NSEvent.ModifierFlags = [.command, .option, .shift]
         let activeFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let hasRequiredFlags = requiredFlags.isSubset(of: activeFlags)
-        let hasDisallowedFlags = activeFlags.contains(.control) || activeFlags.contains(.capsLock)
-        guard hasRequiredFlags, !hasDisallowedFlags else {
+        let commandTerminateFlags: NSEvent.ModifierFlags = [.command, .option, .shift]
+        let controlTerminateFlags: NSEvent.ModifierFlags = [.control, .option, .shift]
+
+        let isCommandTerminateShortcut =
+            commandTerminateFlags.isSubset(of: activeFlags) &&
+            !activeFlags.contains(.control)
+        let isControlTerminateShortcut =
+            controlTerminateFlags.isSubset(of: activeFlags) &&
+            !activeFlags.contains(.command)
+        let hasDisallowedFlags = activeFlags.contains(.capsLock)
+        guard !hasDisallowedFlags,
+              (isCommandTerminateShortcut || isControlTerminateShortcut)
+        else {
             return false
         }
 
-        // Cmd+Option+Shift+Q ends remote session locally.
+        // Cmd+Option+Shift+Q or Ctrl+Option+Shift+Q ends remote session locally.
         guard event.keyCode == 0x0C || event.charactersIgnoringModifiers?.lowercased() == "q" else {
             return false
         }
