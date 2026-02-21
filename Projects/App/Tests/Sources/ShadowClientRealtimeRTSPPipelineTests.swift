@@ -154,6 +154,78 @@ func rtspSdpParserInfersSunshineOpusWithoutRtpmap() {
     #expect(track?.channelCount == 2)
 }
 
+@Test("RTSP SDP parser infers 5.1 channels from Sunshine surround params")
+func rtspSdpParserInfersSurroundChannelCountFromSurroundParams() {
+    let sdp = """
+    v=0
+    o=- 0 0 IN IP4 127.0.0.1
+    s=No Name
+    t=0 0
+    m=audio 0 RTP/AVP 97
+    a=fmtp:97 surround-params=642012453
+    a=control:streamid=audio
+    """
+
+    let track = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
+        sdp: sdp,
+        contentBase: "rtsp://skyline23-pc.local:48010/",
+        fallbackSessionURL: "rtsp://skyline23-pc.local:48010/"
+    )
+
+    #expect(track != nil)
+    #expect(track?.codec == .opus)
+    #expect(track?.channelCount == 6)
+}
+
+@Test("RTSP SDP parser keeps default channel count when surround params are malformed")
+func rtspSdpParserIgnoresMalformedSurroundParams() {
+    let sdp = """
+    v=0
+    o=- 0 0 IN IP4 127.0.0.1
+    s=No Name
+    t=0 0
+    m=audio 0 RTP/AVP 97
+    a=fmtp:97 surround-params=invalid
+    a=control:streamid=audio
+    """
+
+    let track = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
+        sdp: sdp,
+        contentBase: "rtsp://skyline23-pc.local:48010/",
+        fallbackSessionURL: "rtsp://skyline23-pc.local:48010/"
+    )
+
+    #expect(track != nil)
+    #expect(track?.codec == .opus)
+    #expect(track?.channelCount == 2)
+}
+
+@Test("RTSP SDP parser infers audio track from Sunshine global fmtp lines without m=audio")
+func rtspSdpParserInfersAudioTrackWithoutAudioMediaSection() {
+    let sdp = """
+    a=x-ss-general.featureFlags:3
+    a=x-ss-general.encryptionSupported:5
+    a=x-ss-general.encryptionRequested:1
+    a=rtpmap:98 AV1/90000
+    a=fmtp:97 surround-params=21101
+    a=fmtp:97 surround-params=642012453
+    a=fmtp:97 surround-params=88001234567
+    a=control:streamid=audio/0/0
+    """
+
+    let track = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
+        sdp: sdp,
+        contentBase: "rtsp://skyline23-pc.local:48010/",
+        fallbackSessionURL: "rtsp://skyline23-pc.local:48010/"
+    )
+
+    #expect(track != nil)
+    #expect(track?.codec == .opus)
+    #expect(track?.rtpPayloadType == 97)
+    #expect(track?.sampleRate == 48_000)
+    #expect(track?.channelCount == 8)
+}
+
 @Test("RTSP SDP parser extracts AV1 codec configuration from fmtp config attribute")
 func rtspSdpParserExtractsAV1CodecConfigurationFromFmtpConfig() throws {
     let sdp = """

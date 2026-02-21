@@ -251,6 +251,7 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
     public let enableSurroundAudio: Bool
     public let enableYUV444: Bool
     public let remoteInputKey: Data?
+    public let remoteInputKeyID: UInt32?
 
     public init(
         width: Int,
@@ -261,7 +262,8 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
         enableHDR: Bool = false,
         enableSurroundAudio: Bool = false,
         enableYUV444: Bool = false,
-        remoteInputKey: Data? = nil
+        remoteInputKey: Data? = nil,
+        remoteInputKeyID: UInt32? = nil
     ) {
         self.width = max(ShadowClientStreamingLaunchBounds.minimumWidth, width)
         self.height = max(ShadowClientStreamingLaunchBounds.minimumHeight, height)
@@ -275,6 +277,7 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
         self.enableSurroundAudio = enableSurroundAudio
         self.enableYUV444 = enableYUV444
         self.remoteInputKey = remoteInputKey
+        self.remoteInputKeyID = remoteInputKeyID
     }
 }
 
@@ -944,7 +947,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         host: selectedHost.host,
                         appTitle: resolvedTitle,
                         settings: settings,
-                        remoteInputKey: initialLaunchResult.remoteInputKey
+                        remoteInputKey: initialLaunchResult.remoteInputKey,
+                        remoteInputKeyID: initialLaunchResult.remoteInputKeyID
                     )
                 } catch {
                     guard Self.shouldRetryForcedLaunch(
@@ -976,7 +980,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         host: selectedHost.host,
                         appTitle: resolvedTitle,
                         settings: forcedLaunchSettings,
-                        remoteInputKey: forcedLaunchResult.remoteInputKey
+                        remoteInputKey: forcedLaunchResult.remoteInputKey,
+                        remoteInputKeyID: forcedLaunchResult.remoteInputKeyID
                     )
 
                     connectedLaunchResult = forcedLaunchResult
@@ -1164,7 +1169,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         host: String,
         appTitle: String,
         settings: ShadowClientGameStreamLaunchSettings,
-        remoteInputKey: Data?
+        remoteInputKey: Data?,
+        remoteInputKeyID: UInt32?
     ) async throws {
         let codecCandidates = codecFallbackCandidates(for: settings.preferredCodec)
         var firstCodecFallbackError: (any Error)?
@@ -1178,7 +1184,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     videoConfiguration: sessionVideoConfiguration(
                         from: settings,
                         preferredCodec: codecCandidate,
-                        remoteInputKey: remoteInputKey
+                        remoteInputKey: remoteInputKey,
+                        remoteInputKeyID: remoteInputKeyID
                     )
                 )
                 return
@@ -1278,6 +1285,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             "av1 codec configuration record",
             "av1c",
             "av1 decode failed",
+            "runtime recovery exhausted",
+            "hevc fallback",
             "osstatus -8971",
             "vtvideo decoderselection",
             "vt-ds",
@@ -1397,7 +1406,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private static func sessionVideoConfiguration(
         from settings: ShadowClientGameStreamLaunchSettings,
         preferredCodec: ShadowClientVideoCodecPreference,
-        remoteInputKey: Data?
+        remoteInputKey: Data?,
+        remoteInputKeyID: UInt32?
     ) -> ShadowClientRemoteSessionVideoConfiguration {
         return .init(
             width: settings.width,
@@ -1408,7 +1418,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             enableHDR: settings.enableHDR,
             enableSurroundAudio: settings.enableSurroundAudio,
             enableYUV444: settings.enableYUV444,
-            remoteInputKey: remoteInputKey
+            remoteInputKey: remoteInputKey,
+            remoteInputKeyID: remoteInputKeyID
         )
     }
 

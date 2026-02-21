@@ -62,6 +62,16 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let udpParseFailureLogLimit = 6
     public static let minimumTransportReadLength = 1
     public static let maximumTransportReadLength = 64 * 1_024
+    public static let videoDecodeQueueCapacity = 12
+    public static let depacketizerCorruptionWindowSeconds: TimeInterval = 2.0
+    public static let depacketizerCorruptionThreshold = 5
+    public static let depacketizerRecoveryCooldownSeconds: TimeInterval = 1.5
+    public static let av1DepacketizerRecoveryWindowSeconds: TimeInterval = 8.0
+    public static let av1MaxDepacketizerRecoveries = 3
+    public static let decoderFailureWindowSeconds: TimeInterval = 1.5
+    public static let decoderRecoveryCooldownSeconds: TimeInterval = 0.75
+    public static let decoderRecoveryAttemptWindowSeconds: TimeInterval = 8.0
+    public static let av1MaxDecoderRecoveryAttempts = 2
 }
 
 public enum ShadowClientRTSPRequestDefaults {

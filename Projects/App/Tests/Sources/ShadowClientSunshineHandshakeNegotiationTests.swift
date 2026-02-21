@@ -10,7 +10,8 @@ func sunshineHandshakeNegotiationEnablesSessionIdentifierV1() {
         controlConnectData: 12_345,
         encryptionRequestedFlags: 0x01,
         prefersSessionIdentifierV1: true,
-        supportsEncryptedControlChannelV2: false
+        supportsEncryptedControlChannelV2: false,
+        supportsEncryptedAudioTransport: false
     )
 
     #expect(negotiation.supportsSessionIdentifierV1)
@@ -27,7 +28,8 @@ func sunshineHandshakeNegotiationDisablesSessionIdentifierV1WhenPayloadMissing()
         controlConnectData: nil,
         encryptionRequestedFlags: 0x01,
         prefersSessionIdentifierV1: true,
-        supportsEncryptedControlChannelV2: false
+        supportsEncryptedControlChannelV2: false,
+        supportsEncryptedAudioTransport: false
     )
 
     #expect(!negotiation.supportsSessionIdentifierV1)
@@ -44,10 +46,29 @@ func sunshineHandshakeNegotiationGatesEncryptedControlV2OnClientCapability() {
         controlConnectData: 99,
         encryptionRequestedFlags: 0x01,
         prefersSessionIdentifierV1: true,
-        supportsEncryptedControlChannelV2: true
+        supportsEncryptedControlChannelV2: true,
+        supportsEncryptedAudioTransport: false
     )
 
     #expect(negotiation.supportsSessionIdentifierV1)
     #expect(negotiation.controlChannelEncryptionEnabled)
     #expect(negotiation.encryptionEnabledFlags == 0x01)
+}
+
+@Test("Sunshine handshake negotiation enables encrypted audio flag when supported and requested")
+func sunshineHandshakeNegotiationEnablesEncryptedAudioWhenRequested() {
+    let negotiation = ShadowClientSunshineHandshakeNegotiation(
+        audioPingPayload: Data("AUDIOPAYLOAD12345".utf8),
+        videoPingPayload: Data("VIDEOPAYLOAD1234".utf8),
+        controlConnectData: 99,
+        encryptionRequestedFlags: 0x05,
+        prefersSessionIdentifierV1: true,
+        supportsEncryptedControlChannelV2: true,
+        supportsEncryptedAudioTransport: true
+    )
+
+    #expect(negotiation.supportsSessionIdentifierV1)
+    #expect(negotiation.controlChannelEncryptionEnabled)
+    #expect(negotiation.audioEncryptionEnabled)
+    #expect(negotiation.encryptionEnabledFlags == 0x05)
 }

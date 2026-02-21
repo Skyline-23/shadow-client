@@ -7,6 +7,7 @@ struct ShadowClientSunshineHandshakeNegotiation: Sendable {
     let encryptionRequestedFlags: UInt32
     let prefersSessionIdentifierV1: Bool
     let supportsEncryptedControlChannelV2: Bool
+    let supportsEncryptedAudioTransport: Bool
 
     var supportsSessionIdentifierV1: Bool {
         prefersSessionIdentifierV1 &&
@@ -30,9 +31,21 @@ struct ShadowClientSunshineHandshakeNegotiation: Sendable {
         return (encryptionRequestedFlags & ShadowClientSunshineHandshakeProfile.sunshineEncryptionControlV2) != 0
     }
 
+    var audioEncryptionEnabled: Bool {
+        guard supportsSessionIdentifierV1, supportsEncryptedAudioTransport else {
+            return false
+        }
+        return (encryptionRequestedFlags & ShadowClientSunshineHandshakeProfile.sunshineEncryptionAudio) != 0
+    }
+
     var encryptionEnabledFlags: UInt32 {
-        controlChannelEncryptionEnabled
-            ? ShadowClientSunshineHandshakeProfile.sunshineEncryptionControlV2
-            : 0
+        var flags: UInt32 = 0
+        if controlChannelEncryptionEnabled {
+            flags |= ShadowClientSunshineHandshakeProfile.sunshineEncryptionControlV2
+        }
+        if audioEncryptionEnabled {
+            flags |= ShadowClientSunshineHandshakeProfile.sunshineEncryptionAudio
+        }
+        return flags
     }
 }

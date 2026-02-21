@@ -269,6 +269,7 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             .filter { !$0.isEmpty }
 
         var insideAudioSection = false
+        var discoveredAudioMediaSection = false
         var advertisedPayloadTypes: [Int] = []
         var controlValue: String?
         var codecByPayloadType: [Int: ShadowClientAudioCodec] = [:]
@@ -280,23 +281,31 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             if line.hasPrefix("m=") {
                 insideAudioSection = line.hasPrefix("m=audio")
                 if insideAudioSection {
+                    discoveredAudioMediaSection = true
                     advertisedPayloadTypes = parsePayloadTypes(fromMediaLine: line)
                 }
                 continue
             }
 
-            guard insideAudioSection else {
+            let parseGlobalAudioFallback = !discoveredAudioMediaSection
+            guard insideAudioSection || parseGlobalAudioFallback else {
                 continue
             }
 
             if let controlLine = extractAttributeLine(line, prefix: "a=control:") {
-                controlValue = String(controlLine.dropFirst("a=control:".count))
+                let candidate = String(controlLine.dropFirst("a=control:".count))
+                if insideAudioSection || isLikelyAudioControlValue(candidate) {
+                    controlValue = candidate
+                }
                 continue
             }
 
             if let rtpMapLine = extractAttributeLine(line, prefix: "a=rtpmap:"),
                let mapping = parseAudioRTPMap(rtpMapLine)
             {
+                guard insideAudioSection || shouldAcceptGlobalAudioRTPMap(mapping) else {
+                    continue
+                }
                 codecByPayloadType[mapping.payloadType] = mapping.codec
                 sampleRateByPayloadType[mapping.payloadType] = mapping.sampleRate
                 channelsByPayloadType[mapping.payloadType] = mapping.channelCount
@@ -306,7 +315,17 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             if let fmtpLine = extractAttributeLine(line, prefix: "a=fmtp:"),
                let parsed = parseFMTP(fmtpLine)
             {
-                fmtpByPayloadType[parsed.payloadType] = parsed.parameters
+                guard insideAudioSection || shouldAcceptGlobalAudioFMTP(
+                    parsed,
+                    knownAudioPayloadTypes: Set(codecByPayloadType.keys)
+                ) else {
+                    continue
+                }
+                let mergedParameters = mergeAudioFormatParameters(
+                    existing: fmtpByPayloadType[parsed.payloadType],
+                    new: parsed.parameters
+                )
+                fmtpByPayloadType[parsed.payloadType] = mergedParameters
                 continue
             }
         }
@@ -341,7 +360,19 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             codec = .unknown("payload-\(selectedPayloadType)")
         }
         let sampleRate = sampleRateByPayloadType[selectedPayloadType] ?? 48_000
-        let channelCount = channelsByPayloadType[selectedPayloadType] ?? 2
+        let formatParameters = fmtpByPayloadType[selectedPayloadType] ?? [:]
+        let mappedChannelCount = channelsByPayloadType[selectedPayloadType] ?? 2
+        let channelCount: Int
+        if codec == .opus,
+           let surroundParams = formatParameters["surround-params"],
+           let inferredChannelCount = inferOpusChannelCount(
+               fromSurroundParams: surroundParams
+           )
+        {
+            channelCount = inferredChannelCount
+        } else {
+            channelCount = mappedChannelCount
+        }
         let resolvedControlURL: String?
         if let controlValue {
             resolvedControlURL = try? resolveControlURL(
@@ -359,7 +390,7 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             sampleRate: sampleRate,
             channelCount: channelCount,
             controlURL: resolvedControlURL,
-            formatParameters: fmtpByPayloadType[selectedPayloadType] ?? [:]
+            formatParameters: formatParameters
         )
     }
 
@@ -579,6 +610,106 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             }
         }
         return (payloadType, values)
+    }
+
+    private static func inferOpusChannelCount(
+        fromSurroundParams rawValue: String
+    ) -> Int? {
+        let firstToken = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(whereSeparator: { $0 == "," || $0 == ";" || $0 == " " })
+            .first
+            .map(String.init) ?? ""
+        guard let firstCharacter = firstToken.first,
+              let channelCount = Int(String(firstCharacter))
+        else {
+            return nil
+        }
+
+        switch channelCount {
+        case 2, 6, 8:
+            return channelCount
+        default:
+            return nil
+        }
+    }
+
+    private static func isLikelyAudioControlValue(_ value: String) -> Bool {
+        let normalized = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty else {
+            return false
+        }
+        return normalized.contains("audio")
+    }
+
+    private static func shouldAcceptGlobalAudioRTPMap(
+        _ mapping: (payloadType: Int, codec: ShadowClientAudioCodec, sampleRate: Int, channelCount: Int)
+    ) -> Bool {
+        if isKnownAudioCodec(mapping.codec) {
+            return true
+        }
+        // Sunshine frequently omits full audio media descriptors but still uses PT97 Opus.
+        return mapping.payloadType == 97
+    }
+
+    private static func shouldAcceptGlobalAudioFMTP(
+        _ parsed: (payloadType: Int, parameters: [String: String]),
+        knownAudioPayloadTypes: Set<Int>
+    ) -> Bool {
+        if knownAudioPayloadTypes.contains(parsed.payloadType) {
+            return true
+        }
+        if parsed.payloadType == 97 {
+            return true
+        }
+        return parsed.parameters.keys.contains { key in
+            switch key {
+            case "surround-params", "sprop-stereo", "maxplaybackrate":
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    private static func mergeAudioFormatParameters(
+        existing: [String: String]?,
+        new: [String: String]
+    ) -> [String: String] {
+        var merged = existing ?? [:]
+        for (key, value) in new {
+            if key == "surround-params",
+               let current = merged[key]
+            {
+                merged[key] = preferredSurroundParams(
+                    current: current,
+                    candidate: value
+                )
+            } else {
+                merged[key] = value
+            }
+        }
+        return merged
+    }
+
+    private static func preferredSurroundParams(
+        current: String,
+        candidate: String
+    ) -> String {
+        let currentChannels = inferOpusChannelCount(fromSurroundParams: current) ?? 0
+        let candidateChannels = inferOpusChannelCount(fromSurroundParams: candidate) ?? 0
+        return candidateChannels >= currentChannels ? candidate : current
+    }
+
+    private static func isKnownAudioCodec(_ codec: ShadowClientAudioCodec) -> Bool {
+        switch codec {
+        case .opus, .pcmu, .pcma, .l16:
+            return true
+        case .unknown:
+            return false
+        }
     }
 
     private static func parameterSets(

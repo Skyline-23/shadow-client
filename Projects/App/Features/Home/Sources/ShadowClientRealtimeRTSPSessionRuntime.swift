@@ -26,10 +26,68 @@ extension ShadowClientRealtimeSessionRuntimeError: LocalizedError {
     }
 }
 
+private actor ShadowClientVideoDecodeQueue {
+    private let capacity: Int
+    private var bufferedUnits: [ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit] = []
+    private var waiters: [CheckedContinuation<ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?, Never>] = []
+    private var closed = false
+
+    init(capacity: Int) {
+        self.capacity = max(2, capacity)
+    }
+
+    func enqueue(_ accessUnit: ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit) {
+        guard !closed else {
+            return
+        }
+
+        if !waiters.isEmpty {
+            let waiter = waiters.removeFirst()
+            waiter.resume(returning: accessUnit)
+            return
+        }
+
+        if bufferedUnits.count >= capacity {
+            bufferedUnits.removeFirst()
+        }
+        bufferedUnits.append(accessUnit)
+    }
+
+    func next() async -> ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit? {
+        if !bufferedUnits.isEmpty {
+            return bufferedUnits.removeFirst()
+        }
+        if closed {
+            return nil
+        }
+        return await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func close() {
+        guard !closed else {
+            return
+        }
+        closed = true
+        bufferedUnits.removeAll(keepingCapacity: false)
+        for waiter in waiters {
+            waiter.resume(returning: nil)
+        }
+        waiters.removeAll(keepingCapacity: false)
+    }
+}
+
 public actor ShadowClientRealtimeRTSPSessionRuntime {
     private struct VideoTransportSample: Sendable {
         let uptimeSeconds: TimeInterval
         let bytes: Int
+    }
+
+    fileprivate struct VideoAccessUnit: Sendable {
+        let codec: ShadowClientVideoCodec
+        let parameterSets: [Data]
+        let data: Data
     }
 
     public let surfaceContext: ShadowClientRealtimeSessionSurfaceContext
@@ -39,7 +97,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RealtimeSession")
     private let videoCodecSupport = ShadowClientVideoCodecSupport()
     private var rtspClient: ShadowClientRTSPInterleavedClient?
-    private var streamTask: Task<Void, Never>?
+    private var receiveTask: Task<Void, Never>?
+    private var decodeTask: Task<Void, Never>?
+    private var videoDecodeQueue: ShadowClientVideoDecodeQueue?
     private var shadowClientNVDepacketizer = ShadowClientMoonlightNVRTPDepacketizer()
     private var hasLoggedDecodedFrameMetadata = false
     private var recentVideoTransportSamples: [VideoTransportSample] = []
@@ -53,6 +113,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var lastDecoderRecoveryUptime: TimeInterval = 0
     private var decoderRecoveryAttemptCount = 0
     private var firstDecoderRecoveryAttemptUptime: TimeInterval = 0
+    private var av1DepacketizerRecoveryCount = 0
+    private var firstAV1DepacketizerRecoveryUptime: TimeInterval = 0
     private var hasRenderedFirstFrame = false
     private var frameAssemblyLogCount = 0
 
@@ -67,7 +129,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     }
 
     deinit {
-        streamTask?.cancel()
+        receiveTask?.cancel()
+        decodeTask?.cancel()
     }
 
     public func connect(
@@ -100,6 +163,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastDecoderRecoveryUptime = 0
         decoderRecoveryAttemptCount = 0
         firstDecoderRecoveryAttemptUptime = 0
+        av1DepacketizerRecoveryCount = 0
+        firstAV1DepacketizerRecoveryUptime = 0
         hasRenderedFirstFrame = false
         frameAssemblyLogCount = 0
 
@@ -131,7 +196,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         let track = try await client.start(
             url: url,
             videoConfiguration: resolvedVideoConfiguration,
-            remoteInputKey: resolvedVideoConfiguration.remoteInputKey
+            remoteInputKey: resolvedVideoConfiguration.remoteInputKey,
+            remoteInputKeyID: resolvedVideoConfiguration.remoteInputKeyID
         )
 
         shadowClientNVDepacketizer.configureTailTruncationStrategy(
@@ -144,41 +210,30 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
 
         rtspClient = client
-        streamTask = Task { [weak self] in
-            guard let self else {
-                return
-            }
+        let decodeQueue = ShadowClientVideoDecodeQueue(
+            capacity: ShadowClientRealtimeSessionDefaults.videoDecodeQueueCapacity
+        )
+        videoDecodeQueue = decodeQueue
 
-            do {
-                try await client.receiveInterleavedVideoPackets(
-                    payloadType: track.rtpPayloadType
-                ) { payload, marker in
-                    try await self.consumeRTPPayload(
-                        codec: track.codec,
-                        payload: payload,
-                        marker: marker,
-                        initialParameterSets: track.parameterSets
-                    )
-                }
-            } catch {
-                if Task.isCancelled {
-                    return
-                }
-                logger.error("Realtime stream task failed: \(error.localizedDescription, privacy: .public)")
-                let surfaceContext = self.surfaceContext
-                let nextState = Self.renderState(forStreamError: error)
-                await MainActor.run {
-                    surfaceContext.transition(to: nextState)
-                }
-            }
+        receiveTask = Task { [weak self] in
+            await self?.runReceiveLoop(
+                client: client,
+                track: track
+            )
+        }
+        decodeTask = Task { [weak self] in
+            await self?.runDecodeLoop()
         }
 
         try await waitForInitialRenderState(timeout: connectTimeout)
     }
 
     public func disconnect() async throws {
-        streamTask?.cancel()
-        streamTask = nil
+        receiveTask?.cancel()
+        receiveTask = nil
+        decodeTask?.cancel()
+        decodeTask = nil
+        await closeVideoDecodeQueue()
 
         if let rtspClient {
             await rtspClient.stop()
@@ -198,6 +253,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastDecoderRecoveryUptime = 0
         decoderRecoveryAttemptCount = 0
         firstDecoderRecoveryAttemptUptime = 0
+        av1DepacketizerRecoveryCount = 0
+        firstAV1DepacketizerRecoveryUptime = 0
         hasRenderedFirstFrame = false
         frameAssemblyLogCount = 0
         await MainActor.run {
@@ -212,6 +269,94 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         try await rtspClient.sendInput(event)
     }
 
+    private func runReceiveLoop(
+        client: ShadowClientRTSPInterleavedClient,
+        track: ShadowClientRTSPVideoTrackDescriptor
+    ) async {
+        do {
+            try await client.receiveInterleavedVideoPackets(
+                payloadType: track.rtpPayloadType
+            ) { payload, marker in
+                try await self.consumeRTPPayload(
+                    codec: track.codec,
+                    payload: payload,
+                    marker: marker,
+                    initialParameterSets: track.parameterSets
+                )
+            }
+        } catch {
+            if Task.isCancelled {
+                return
+            }
+            logger.error("Realtime stream task failed: \(error.localizedDescription, privacy: .public)")
+            let surfaceContext = self.surfaceContext
+            let nextState = Self.renderState(forStreamError: error)
+            await MainActor.run {
+                surfaceContext.transition(to: nextState)
+            }
+        }
+        await closeVideoDecodeQueue()
+    }
+
+    private func runDecodeLoop() async {
+        while !Task.isCancelled {
+            guard let accessUnit = await dequeueVideoAccessUnit() else {
+                return
+            }
+
+            do {
+                try await decodeFrame(
+                    accessUnit: accessUnit.data,
+                    codec: accessUnit.codec,
+                    parameterSets: accessUnit.parameterSets
+                )
+                decoderFailureCount = 0
+                firstDecoderFailureUptime = 0
+                if accessUnit.codec == .av1 {
+                    av1DepacketizerRecoveryCount = 0
+                    firstAV1DepacketizerRecoveryUptime = 0
+                }
+            } catch {
+                logger.error("\(String(describing: accessUnit.codec), privacy: .public) decode failed: \(error.localizedDescription, privacy: .public)")
+                if await handleDecoderFailure(codec: accessUnit.codec) {
+                    continue
+                }
+                if accessUnit.codec == .av1 {
+                    await failStreamingSession(
+                        message: Self.av1RuntimeFallbackMessage(reason: "decoder recovery exhausted")
+                    )
+                    return
+                }
+                await failStreamingSession(message: error.localizedDescription)
+                return
+            }
+        }
+    }
+
+    private func dequeueVideoAccessUnit() async -> VideoAccessUnit? {
+        guard let videoDecodeQueue else {
+            return nil
+        }
+        return await videoDecodeQueue.next()
+    }
+
+    private func closeVideoDecodeQueue() async {
+        if let videoDecodeQueue {
+            await videoDecodeQueue.close()
+        }
+        self.videoDecodeQueue = nil
+    }
+
+    private func failStreamingSession(message: String) async {
+        logger.error("\(message, privacy: .public)")
+        receiveTask?.cancel()
+        let sessionSurfaceContext = self.surfaceContext
+        await MainActor.run {
+            sessionSurfaceContext.transition(to: .failed(message))
+        }
+        await closeVideoDecodeQueue()
+    }
+
     private func consumeRTPPayload(
         codec: ShadowClientVideoCodec,
         payload: Data,
@@ -223,7 +368,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         case .noFrame:
             return
         case .droppedCorruptFrame:
-            await handleDepacketizerCorruption(codec: codec)
+            if await handleDepacketizerCorruption(codec: codec),
+               codec == .av1
+            {
+                throw ShadowClientRealtimeSessionRuntimeError.transportFailure(
+                    Self.av1RuntimeFallbackMessage(reason: "depacketizer recovery exhausted")
+                )
+            }
             return
         case let .frame(frame):
             frameAssemblyLogCount &+= 1
@@ -238,51 +389,62 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                !Self.isLikelyValidAV1AccessUnit(frame)
             {
                 logger.error("Dropping malformed AV1 access unit before decoder submit")
-                await handleDepacketizerCorruption(codec: codec)
-                return
-            }
-
-            do {
-                try await decodeFrame(
-                    accessUnit: frame,
-                    codec: codec,
-                    parameterSets: initialParameterSets
-                )
-                decoderFailureCount = 0
-                firstDecoderFailureUptime = 0
-            } catch {
-                logger.error("\(String(describing: codec), privacy: .public) decode failed: \(error.localizedDescription, privacy: .public)")
-                if await handleDecoderFailure(codec: codec) {
-                    return
-                }
-                if codec == .av1 {
+                if await handleDepacketizerCorruption(codec: codec),
+                   codec == .av1
+                {
                     throw ShadowClientRealtimeSessionRuntimeError.transportFailure(
-                        "AV1 decoder recovery exhausted after repeated failures. Falling back to HEVC is recommended for this session."
+                        Self.av1RuntimeFallbackMessage(reason: "invalid AV1 access unit stream")
                     )
                 }
-                throw error
+                return
+            }
+            if let videoDecodeQueue {
+                await videoDecodeQueue.enqueue(
+                    .init(
+                        codec: codec,
+                        parameterSets: initialParameterSets,
+                        data: frame
+                    )
+                )
             }
         }
     }
 
-    private func handleDepacketizerCorruption(codec: ShadowClientVideoCodec) async {
+    private func handleDepacketizerCorruption(codec: ShadowClientVideoCodec) async -> Bool {
         let now = ProcessInfo.processInfo.systemUptime
-        if firstDepacketizerCorruptionUptime == 0 || now - firstDepacketizerCorruptionUptime > 1.0 {
+        if firstDepacketizerCorruptionUptime == 0 ||
+            now - firstDepacketizerCorruptionUptime > ShadowClientRealtimeSessionDefaults.depacketizerCorruptionWindowSeconds
+        {
             firstDepacketizerCorruptionUptime = now
             depacketizerCorruptionCount = 0
         }
         depacketizerCorruptionCount += 1
 
-        guard depacketizerCorruptionCount >= 3 else {
-            return
+        guard depacketizerCorruptionCount >= ShadowClientRealtimeSessionDefaults.depacketizerCorruptionThreshold else {
+            return false
         }
-        guard now - lastDepacketizerRecoveryUptime >= 1.0 else {
-            return
+        guard now - lastDepacketizerRecoveryUptime >= ShadowClientRealtimeSessionDefaults.depacketizerRecoveryCooldownSeconds else {
+            return false
         }
 
         lastDepacketizerRecoveryUptime = now
         depacketizerCorruptionCount = 0
         firstDepacketizerCorruptionUptime = 0
+        if codec == .av1 {
+            if firstAV1DepacketizerRecoveryUptime == 0 ||
+                now - firstAV1DepacketizerRecoveryUptime > ShadowClientRealtimeSessionDefaults.av1DepacketizerRecoveryWindowSeconds
+            {
+                firstAV1DepacketizerRecoveryUptime = now
+                av1DepacketizerRecoveryCount = 0
+            }
+            av1DepacketizerRecoveryCount += 1
+            if av1DepacketizerRecoveryCount >= ShadowClientRealtimeSessionDefaults.av1MaxDepacketizerRecoveries {
+                logger.error(
+                    "AV1 depacketizer recovery attempts exceeded threshold; forcing HEVC fallback path"
+                )
+                return true
+            }
+        }
         logger.error("Video depacketizer detected sustained stream discontinuity for codec \(String(describing: codec), privacy: .public); requesting recovery frame")
         if let rtspClient {
             await rtspClient.requestVideoRecoveryFrame()
@@ -291,28 +453,31 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         await MainActor.run {
             sessionSurfaceContext.transition(to: .waitingForFirstFrame)
         }
+        return false
     }
 
     private func handleDecoderFailure(codec: ShadowClientVideoCodec) async -> Bool {
-        guard hasRenderedFirstFrame else {
+        if !hasRenderedFirstFrame, codec != .av1 {
             return false
         }
 
         let now = ProcessInfo.processInfo.systemUptime
-        if firstDecoderFailureUptime == 0 || now - firstDecoderFailureUptime > 1.0 {
+        if firstDecoderFailureUptime == 0 ||
+            now - firstDecoderFailureUptime > ShadowClientRealtimeSessionDefaults.decoderFailureWindowSeconds
+        {
             firstDecoderFailureUptime = now
             decoderFailureCount = 0
         }
         decoderFailureCount += 1
 
-        if decoderFailureCount == 1 {
+        if hasRenderedFirstFrame, decoderFailureCount == 1 {
             logger.notice(
                 "Video decoder dropped one frame for codec \(String(describing: codec), privacy: .public); awaiting recovery before forcing reset"
             )
             return true
         }
 
-        guard now - lastDecoderRecoveryUptime >= 1.0 else {
+        guard now - lastDecoderRecoveryUptime >= ShadowClientRealtimeSessionDefaults.decoderRecoveryCooldownSeconds else {
             return true
         }
 
@@ -322,17 +487,17 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         hasLoggedDecodedFrameMetadata = false
 
         if firstDecoderRecoveryAttemptUptime == 0 ||
-            now - firstDecoderRecoveryAttemptUptime > 12.0
+            now - firstDecoderRecoveryAttemptUptime > ShadowClientRealtimeSessionDefaults.decoderRecoveryAttemptWindowSeconds
         {
             firstDecoderRecoveryAttemptUptime = now
             decoderRecoveryAttemptCount = 0
         }
         decoderRecoveryAttemptCount += 1
         if codec == .av1,
-           decoderRecoveryAttemptCount >= 3
+           decoderRecoveryAttemptCount >= ShadowClientRealtimeSessionDefaults.av1MaxDecoderRecoveryAttempts
         {
             logger.error(
-                "AV1 decoder recovery attempts exceeded safety threshold; forcing session fallback path"
+                "AV1 decoder recovery attempts exceeded threshold; forcing HEVC fallback path"
             )
             return false
         }
@@ -403,7 +568,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             enableHDR: configuration.enableHDR,
             enableSurroundAudio: configuration.enableSurroundAudio,
             enableYUV444: configuration.enableYUV444,
-            remoteInputKey: configuration.remoteInputKey
+            remoteInputKey: configuration.remoteInputKey,
+            remoteInputKeyID: configuration.remoteInputKeyID
         )
     }
 
@@ -526,6 +692,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         case .av1:
             return .trimUsingLastPacketLength
         }
+    }
+
+    private static func av1RuntimeFallbackMessage(reason: String) -> String {
+        "AV1 decode failed (\(reason)). Runtime recovery exhausted; retry with HEVC fallback."
     }
 
     static func isLikelyValidAV1AccessUnit(_ accessUnit: Data) -> Bool {
@@ -848,6 +1018,8 @@ private actor ShadowClientRTSPInterleavedClient {
     private var hasStartedControlChannelBootstrap = false
     private var useSessionIdentifierV1 = false
     private var remoteInputKey: Data?
+    private var remoteInputKeyID: UInt32?
+    private var audioEncryptionConfiguration: ShadowClientRealtimeAudioEncryptionConfiguration?
     private var negotiatedClientPortBase: UInt16 = ShadowClientRTSPProtocolProfile.clientPortBase
     private var loggedInputSendKinds = Set<String>()
     private var loggedInputDropKinds = Set<String>()
@@ -865,9 +1037,11 @@ private actor ShadowClientRTSPInterleavedClient {
     func start(
         url: URL,
         videoConfiguration: ShadowClientRemoteSessionVideoConfiguration,
-        remoteInputKey: Data?
+        remoteInputKey: Data?,
+        remoteInputKeyID: UInt32?
     ) async throws -> ShadowClientRTSPVideoTrackDescriptor {
         self.remoteInputKey = remoteInputKey
+        self.remoteInputKeyID = remoteInputKeyID
         hasStartedControlChannelBootstrap = false
         loggedInputSendKinds.removeAll(keepingCapacity: true)
         loggedInputDropKinds.removeAll(keepingCapacity: true)
@@ -1210,7 +1384,8 @@ private actor ShadowClientRTSPInterleavedClient {
             controlConnectData: parsedControlConnectData,
             encryptionRequestedFlags: parseSunshineEncryptionRequestedFlags(from: sdp),
             prefersSessionIdentifierV1: ShadowClientSunshineSessionDefaults.prefersSessionIdentifierV1,
-            supportsEncryptedControlChannelV2: ShadowClientSunshineSessionDefaults.supportsEncryptedControlChannelV2 && remoteInputKey != nil
+            supportsEncryptedControlChannelV2: ShadowClientSunshineSessionDefaults.supportsEncryptedControlChannelV2 && remoteInputKey != nil,
+            supportsEncryptedAudioTransport: remoteInputKey != nil && remoteInputKeyID != nil
         )
         useSessionIdentifierV1 = handshakeNegotiation.supportsSessionIdentifierV1
         if handshakeNegotiation.controlChannelEncryptionEnabled, let remoteInputKey
@@ -1226,8 +1401,20 @@ private actor ShadowClientRTSPInterleavedClient {
         case .encryptedV2:
             controlModeLabel = "encrypted-v2"
         }
+        if handshakeNegotiation.audioEncryptionEnabled,
+           let remoteInputKey,
+           let remoteInputKeyID
+        {
+            audioEncryptionConfiguration = .init(
+                key: remoteInputKey,
+                keyID: remoteInputKeyID
+            )
+        } else {
+            audioEncryptionConfiguration = nil
+        }
+        let audioEncryptionLabel = handshakeNegotiation.audioEncryptionEnabled ? "encrypted" : "plaintext"
         logger.notice(
-            "RTSP negotiation session-id-v1=\(handshakeNegotiation.supportsSessionIdentifierV1, privacy: .public) ml-flags=\(handshakeNegotiation.moonlightFeatureFlags, privacy: .public) encryption-enabled=\(handshakeNegotiation.encryptionEnabledFlags, privacy: .public) control-mode=\(controlModeLabel, privacy: .public)"
+            "RTSP negotiation session-id-v1=\(handshakeNegotiation.supportsSessionIdentifierV1, privacy: .public) ml-flags=\(handshakeNegotiation.moonlightFeatureFlags, privacy: .public) encryption-enabled=\(handshakeNegotiation.encryptionEnabledFlags, privacy: .public) control-mode=\(controlModeLabel, privacy: .public) audio-mode=\(audioEncryptionLabel, privacy: .public)"
         )
 
         let announcePayload = ShadowClientRTSPAnnouncePayloadBuilder.build(
@@ -1669,6 +1856,8 @@ private actor ShadowClientRTSPInterleavedClient {
         controlChannelMode = .plaintext
         useSessionIdentifierV1 = false
         remoteInputKey = nil
+        remoteInputKeyID = nil
+        audioEncryptionConfiguration = nil
         negotiatedClientPortBase = defaultClientPortBase
         loggedInputSendKinds.removeAll(keepingCapacity: false)
         loggedInputDropKinds.removeAll(keepingCapacity: false)
@@ -1836,6 +2025,7 @@ private actor ShadowClientRTSPInterleavedClient {
         let pingPayload = videoPingPayload
         let rtspLogger = logger
         let audioPingPayload = self.audioPingPayload
+        let audioEncryptionConfiguration = self.audioEncryptionConfiguration
         let audioRuntime = ShadowClientRealtimeAudioSessionRuntime(
             stateDidChange: onAudioOutputStateChanged
         )
@@ -1861,7 +2051,8 @@ private actor ShadowClientRTSPInterleavedClient {
                     localHost: localHost,
                     preferredLocalPort: negotiatedClientPortBase &+ 1,
                     track: audioTrack,
-                    pingPayload: audioPingPayload
+                    pingPayload: audioPingPayload,
+                    encryption: audioEncryptionConfiguration
                 )
                 rtspLogger.notice("RTSP UDP audio receive switched to \(String(describing: host), privacy: .public):\(audioServerPort.rawValue, privacy: .public)")
             } catch {

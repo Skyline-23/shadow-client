@@ -334,11 +334,13 @@ func remoteDesktopRuntimeForwardsRemoteInputKeyToSessionConfiguration() async {
         ]
     )
     let remoteInputKey = Data(repeating: 0xAB, count: 16)
+    let remoteInputKeyID: UInt32 = 0x1234_ABCD
     let control = FakeControlClient(
         simulatedLaunchResult: .init(
             sessionURL: "rtsp://192.168.0.24:48010/session",
             verb: "launch",
-            remoteInputKey: remoteInputKey
+            remoteInputKey: remoteInputKey,
+            remoteInputKeyID: remoteInputKeyID
         )
     )
     let sessionConnector = FakeSessionConnectionClient()
@@ -358,6 +360,7 @@ func remoteDesktopRuntimeForwardsRemoteInputKeyToSessionConfiguration() async {
 
     let capturedConfiguration = await sessionConnector.latestVideoConfiguration()
     #expect(capturedConfiguration?.remoteInputKey == remoteInputKey)
+    #expect(capturedConfiguration?.remoteInputKeyID == remoteInputKeyID)
 }
 
 @Test("Remote desktop runtime preserves host-provided session URL without app-side host rewrite")
@@ -536,6 +539,71 @@ func remoteDesktopRuntimeFallsBackCodecAfterDecoderCreationFailure() async {
     let launchCalls = await control.launchCalls()
     #expect(launchCalls.count == 1)
     #expect(launchCalls[0].forceLaunch == false)
+    if case .launched = runtime.launchState {
+        #expect(true)
+    } else {
+        Issue.record("Expected launched state, got \(runtime.launchState)")
+    }
+}
+
+@Test("Remote desktop runtime falls back from AV1 to H265 when AV1 runtime recovery is exhausted")
+@MainActor
+func remoteDesktopRuntimeFallsBackCodecAfterAv1RuntimeRecoveryFailure() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.33": .init(
+                host: "192.168.0.33",
+                displayName: "AV1-Runtime-Host",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-AV1-RUNTIME"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.33": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let sessionURL = "rtsp://192.168.0.33:48010/session"
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: sessionURL, verb: "launch")
+    )
+    let sessionConnector = FakeSessionConnectionClient(
+        simulatedFailures: [
+            ShadowClientGameStreamError.requestFailed(
+                "AV1 decode failed (decoder recovery exhausted). Runtime recovery exhausted; retry with HEVC fallback."
+            ),
+        ]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.33"], preferredHost: "192.168.0.33")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(
+            preferredCodec: .av1,
+            enableHDR: true,
+            enableSurroundAudio: true,
+            lowLatencyMode: false
+        )
+    )
+    await waitForLaunchState(runtime)
+
+    #expect(await sessionConnector.connectCalls() == [sessionURL, sessionURL])
+    #expect(await sessionConnector.disconnectCalls() >= 1)
+    let codecHistory = await sessionConnector.videoConfigurations().map(\.preferredCodec)
+    #expect(codecHistory == [.av1, .h265])
     if case .launched = runtime.launchState {
         #expect(true)
     } else {

@@ -1,4 +1,5 @@
 import AVFoundation
+import CommonCrypto
 import Foundation
 import Network
 import os
@@ -12,9 +13,20 @@ public enum ShadowClientRealtimeAudioOutputState: Equatable, Sendable {
     case disconnected(String)
 }
 
-public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable {
-    public static let supportsSurroundOpusMultistream = false
+public struct ShadowClientRealtimeAudioEncryptionConfiguration: Equatable, Sendable {
+    public let key: Data
+    public let keyID: UInt32
 
+    public init(
+        key: Data,
+        keyID: UInt32
+    ) {
+        self.key = key
+        self.keyID = keyID
+    }
+}
+
+public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable {
     fileprivate struct RTPPacket: Sendable {
         let sequenceNumber: UInt16
         let timestamp: UInt32
@@ -34,6 +46,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var decoder: (any ShadowClientRealtimeAudioPacketDecoding)?
+    private var payloadDecryptor: ShadowClientRealtimeAudioPayloadDecryptor?
     private var output: ShadowClientRealtimeAudioEngineOutput?
     private var jitterBuffer = ShadowClientRealtimeAudioRTPJitterBuffer(
         targetDepth: 6,
@@ -57,7 +70,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         localHost: NWEndpoint.Host?,
         preferredLocalPort: UInt16?,
         track: ShadowClientRTSPAudioTrackDescriptor?,
-        pingPayload: Data?
+        pingPayload: Data?,
+        encryption: ShadowClientRealtimeAudioEncryptionConfiguration? = nil
     ) async throws {
         stop()
         updateState(.starting)
@@ -71,20 +85,6 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             formatParameters: [:]
         )
 
-        if resolvedTrack.codec == .opus,
-           resolvedTrack.channelCount > 2,
-           !Self.supportsSurroundOpusMultistream
-        {
-            let message = "Opus multistream surround audio is not supported by the local realtime audio decoder yet."
-            logger.error("\(message, privacy: .public)")
-            updateState(.decoderFailed(message))
-            throw NSError(
-                domain: "ShadowClientRealtimeAudioSessionRuntime",
-                code: 11,
-                userInfo: [NSLocalizedDescriptionKey: message]
-            )
-        }
-
         do {
             let resolvedDecoder = try ShadowClientRealtimeAudioDecoderFactory.make(
                 for: resolvedTrack
@@ -93,6 +93,13 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             output = try ShadowClientRealtimeAudioEngineOutput(
                 format: resolvedDecoder.outputFormat
             )
+            if let encryption {
+                payloadDecryptor = try ShadowClientRealtimeAudioPayloadDecryptor(
+                    configuration: encryption
+                )
+            } else {
+                payloadDecryptor = nil
+            }
         } catch {
             let message = "Audio output initialization failed: \(error.localizedDescription)"
             logger.error("\(message, privacy: .public)")
@@ -129,8 +136,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     channels: resolvedTrack.channelCount
                 )
             )
+            let encryptionLabel = payloadDecryptor == nil ? "disabled" : "enabled"
             logger.notice(
-                "Audio runtime started codec=\(resolvedTrack.codec.label, privacy: .public) payloadType=\(resolvedTrack.rtpPayloadType, privacy: .public) sampleRate=\(resolvedTrack.sampleRate, privacy: .public) channels=\(resolvedTrack.channelCount, privacy: .public)"
+                "Audio runtime started codec=\(resolvedTrack.codec.label, privacy: .public) payloadType=\(resolvedTrack.rtpPayloadType, privacy: .public) sampleRate=\(resolvedTrack.sampleRate, privacy: .public) channels=\(resolvedTrack.channelCount, privacy: .public) encryption=\(encryptionLabel, privacy: .public)"
             )
         } catch {
             let message = "Audio transport failed to start: \(error.localizedDescription)"
@@ -158,6 +166,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         output = nil
 
         decoder = nil
+        payloadDecryptor = nil
         jitterBuffer.reset(preferredPayloadType: nil)
         if emitIdleState {
             updateState(.idle)
@@ -176,6 +185,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var currentPayloadType = preferredPayloadType
             var loggedUnexpectedPayloadTypes = Set<Int>()
             var consecutiveDroppedOutputBuffers = 0
+            var consecutiveDecryptFailures = 0
             while !Task.isCancelled {
                 do {
                     guard let datagram = try await Self.receiveDatagram(over: connection),
@@ -222,8 +232,38 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             guard let decoder else {
                                 continue
                             }
+                            let decodePayload: Data
+                            if let payloadDecryptor {
+                                do {
+                                    decodePayload = try payloadDecryptor.decrypt(
+                                        payload: readyPacket.payload,
+                                        sequenceNumber: readyPacket.sequenceNumber
+                                    )
+                                    consecutiveDecryptFailures = 0
+                                } catch {
+                                    consecutiveDecryptFailures += 1
+                                    if consecutiveDecryptFailures == 1 ||
+                                        consecutiveDecryptFailures.isMultiple(of: 25)
+                                    {
+                                        logger.error(
+                                            "Failed to decrypt RTP audio payload (count=\(consecutiveDecryptFailures, privacy: .public)): \(error.localizedDescription, privacy: .public)"
+                                        )
+                                    }
+                                    if consecutiveDecryptFailures >= 150 {
+                                        let message = "Audio payload decryption repeatedly failed."
+                                        logger.error("\(message, privacy: .public)")
+                                        output?.stop()
+                                        output = nil
+                                        updateState(.decoderFailed(message))
+                                        return
+                                    }
+                                    continue
+                                }
+                            } else {
+                                decodePayload = readyPacket.payload
+                            }
                             if let pcmBuffer = try decoder.decode(
-                                payload: readyPacket.payload
+                                payload: decodePayload
                             ) {
                                 guard ShadowClientRealtimeAudioPCMBufferGuard.isSafeForPlayback(
                                     pcmBuffer
@@ -1026,5 +1066,71 @@ private final class ShadowClientRealtimeAudioEngineOutput {
         engine.reset()
         engine.detach(player)
         isStarted = false
+    }
+}
+
+private enum ShadowClientRealtimeAudioPayloadDecryptorError: Error {
+    case invalidKeyLength(Int)
+    case decryptFailed(Int)
+}
+
+private struct ShadowClientRealtimeAudioPayloadDecryptor: Sendable {
+    private let key: Data
+    private let keyID: UInt32
+
+    init(configuration: ShadowClientRealtimeAudioEncryptionConfiguration) throws {
+        guard configuration.key.count == kCCKeySizeAES128 else {
+            throw ShadowClientRealtimeAudioPayloadDecryptorError.invalidKeyLength(
+                configuration.key.count
+            )
+        }
+        key = configuration.key
+        keyID = configuration.keyID
+    }
+
+    func decrypt(
+        payload: Data,
+        sequenceNumber: UInt16
+    ) throws -> Data {
+        guard !payload.isEmpty else {
+            return payload
+        }
+
+        let ivSeed = (keyID &+ UInt32(sequenceNumber)).bigEndian
+        var iv = Data(repeating: 0, count: kCCBlockSizeAES128)
+        withUnsafeBytes(of: ivSeed) { seed in
+            iv.replaceSubrange(0 ..< seed.count, with: seed)
+        }
+
+        var output = Data(count: payload.count + kCCBlockSizeAES128)
+        let outputCapacity = output.count
+        var outputLength = 0
+        let status = output.withUnsafeMutableBytes { outputBytes in
+            payload.withUnsafeBytes { payloadBytes in
+                iv.withUnsafeBytes { ivBytes in
+                    key.withUnsafeBytes { keyBytes in
+                        CCCrypt(
+                            CCOperation(kCCDecrypt),
+                            CCAlgorithm(kCCAlgorithmAES),
+                            CCOptions(kCCOptionPKCS7Padding),
+                            keyBytes.baseAddress,
+                            key.count,
+                            ivBytes.baseAddress,
+                            payloadBytes.baseAddress,
+                            payload.count,
+                            outputBytes.baseAddress,
+                            outputCapacity,
+                            &outputLength
+                        )
+                    }
+                }
+            }
+        }
+
+        guard status == kCCSuccess else {
+            throw ShadowClientRealtimeAudioPayloadDecryptorError.decryptFailed(Int(status))
+        }
+        output.removeSubrange(outputLength ..< output.count)
+        return output
     }
 }
