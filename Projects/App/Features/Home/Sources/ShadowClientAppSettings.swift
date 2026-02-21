@@ -354,13 +354,13 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         let codecMultiplier: Double
         switch codec {
         case .auto:
-            codecMultiplier = 0.95
+            codecMultiplier = 1.0
         case .av1:
-            codecMultiplier = 0.82
+            codecMultiplier = 0.92
         case .h265:
             codecMultiplier = 1.0
         case .h264:
-            codecMultiplier = 1.2
+            codecMultiplier = 1.18
         }
         bitrate *= codecMultiplier
 

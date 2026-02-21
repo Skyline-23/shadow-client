@@ -1667,7 +1667,7 @@ public struct ShadowClientAppShellView: View {
 
     private func diagnosticsBitrateValue() -> String {
         if let bitrate = sessionSurfaceContext.estimatedVideoBitrateKbps {
-            return "\(max(0, bitrate)) kbps"
+            return "\(max(0, bitrate)) / \(effectiveBitrateKbps) kbps"
         }
         return "\(effectiveBitrateKbps) kbps"
     }
