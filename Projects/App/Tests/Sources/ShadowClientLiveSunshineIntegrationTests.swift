@@ -259,6 +259,8 @@ private func waitForRendering(
         switch state {
         case .rendering:
             return .rendering(stateTrace)
+        case let .disconnected(message):
+            return .failed(message: "disconnected: \(message)", stateTrace: stateTrace)
         case let .failed(message):
             return .failed(message: message, stateTrace: stateTrace)
         case .idle, .connecting, .waitingForFirstFrame:
@@ -286,6 +288,8 @@ private func describeRenderState(_ state: ShadowClientRealtimeSessionSurfaceCont
         return "waitingForFirstFrame"
     case .rendering:
         return "rendering"
+    case let .disconnected(message):
+        return "disconnected(\(message))"
     case let .failed(message):
         return "failed(\(message))"
     }
