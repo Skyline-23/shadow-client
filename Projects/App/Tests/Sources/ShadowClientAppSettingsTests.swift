@@ -121,6 +121,7 @@ func appSettingsMapToLaunchSettings() {
     #expect(launch.unlockBitrateLimit == true)
     #expect(launch.optimizeGameSettingsForStreaming == true)
     #expect(launch.quitAppOnHostAfterStreamEnds == true)
+    #expect(launch.playAudioOnHost == false)
 }
 
 @Test("Launch settings disable HDR when selected app does not support HDR")
@@ -135,6 +136,14 @@ func launchSettingsDisableHDRForNonHDRApp() {
 
     let launch = settings.launchSettings(hostApp: hostApp)
     #expect(launch.enableHDR == false)
+}
+
+@Test("Launch settings can route audio to host when host speaker mute is disabled")
+func launchSettingsEnableAudioOnHostWhenConfigured() {
+    let settings = ShadowClientAppSettings(muteHostSpeakersWhileStreaming: false)
+    let launch = settings.launchSettings(hostApp: nil)
+
+    #expect(launch.playAudioOnHost == true)
 }
 
 private actor RecordingConnectionClient: ShadowClientConnectionClient {

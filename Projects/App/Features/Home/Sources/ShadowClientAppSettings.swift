@@ -300,7 +300,8 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             unlockBitrateLimit: unlockBitrateLimit,
             forceHardwareDecoding: videoDecoder != .software,
             optimizeGameSettingsForStreaming: optimizeGameSettingsForStreaming,
-            quitAppOnHostAfterStreamEnds: quitAppOnHostAfterStream
+            quitAppOnHostAfterStreamEnds: quitAppOnHostAfterStream,
+            playAudioOnHost: !muteHostSpeakersWhileStreaming
         )
     }
 

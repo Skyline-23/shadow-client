@@ -93,6 +93,7 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
     public let forceHardwareDecoding: Bool
     public let optimizeGameSettingsForStreaming: Bool
     public let quitAppOnHostAfterStreamEnds: Bool
+    public let playAudioOnHost: Bool
 
     public init(
         width: Int = ShadowClientStreamingLaunchBounds.defaultWidth,
@@ -109,7 +110,8 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
         unlockBitrateLimit: Bool = false,
         forceHardwareDecoding: Bool = true,
         optimizeGameSettingsForStreaming: Bool = true,
-        quitAppOnHostAfterStreamEnds: Bool = false
+        quitAppOnHostAfterStreamEnds: Bool = false,
+        playAudioOnHost: Bool = false
     ) {
         self.width = max(ShadowClientStreamingLaunchBounds.minimumWidth, width)
         self.height = max(ShadowClientStreamingLaunchBounds.minimumHeight, height)
@@ -129,6 +131,7 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
         self.forceHardwareDecoding = forceHardwareDecoding
         self.optimizeGameSettingsForStreaming = optimizeGameSettingsForStreaming
         self.quitAppOnHostAfterStreamEnds = quitAppOnHostAfterStreamEnds
+        self.playAudioOnHost = playAudioOnHost
     }
 }
 
@@ -927,6 +930,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
 
         let isSurround = settings.enableSurroundAudio && !settings.lowLatencyMode
         let surroundAudioInfo = isSurround ? 393_279 : 131_075
+        let localAudioPlayMode = settings.playAudioOnHost ? "1" : "0"
 
         var parameters: [String: String] = [
             "appid": "\(appID)",
@@ -935,7 +939,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             "sops": "1",
             "rikey": remoteInputKey.hexString,
             "rikeyid": "\(keyID)",
-            "localAudioPlayMode": "1",
+            "localAudioPlayMode": localAudioPlayMode,
             "surroundAudioInfo": "\(surroundAudioInfo)",
             "remoteControllersBitmap": "1",
             "gcmap": "1",
