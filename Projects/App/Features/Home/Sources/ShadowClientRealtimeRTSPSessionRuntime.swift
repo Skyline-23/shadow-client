@@ -27,11 +27,17 @@ extension ShadowClientRealtimeSessionRuntimeError: LocalizedError {
 }
 
 private actor ShadowClientVideoDecodeQueue {
+    private struct Waiter {
+        let id: Int64
+        let continuation: CheckedContinuation<ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?, Never>
+    }
+
     private let capacity: Int
     private var bufferedUnits: [ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?]
     private var headIndex = 0
     private var bufferedCount = 0
-    private var waiters: [CheckedContinuation<ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?, Never>] = []
+    private var waiters: [Waiter] = []
+    private var nextWaiterID: Int64 = 0
     private var closed = false
 
     init(capacity: Int) {
@@ -46,7 +52,7 @@ private actor ShadowClientVideoDecodeQueue {
 
         if !waiters.isEmpty {
             let waiter = waiters.removeFirst()
-            waiter.resume(returning: accessUnit)
+            waiter.continuation.resume(returning: accessUnit)
             return false
         }
 
@@ -74,8 +80,26 @@ private actor ShadowClientVideoDecodeQueue {
         if closed {
             return nil
         }
-        return await withCheckedContinuation { continuation in
-            waiters.append(continuation)
+
+        let waiterID = nextWaiterID
+        nextWaiterID &+= 1
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled || closed {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                waiters.append(
+                    Waiter(
+                        id: waiterID,
+                        continuation: continuation
+                    )
+                )
+            }
+        } onCancel: {
+            Task {
+                await self.cancelWaiter(waiterID: waiterID)
+            }
         }
     }
 
@@ -88,18 +112,32 @@ private actor ShadowClientVideoDecodeQueue {
         headIndex = 0
         bufferedCount = 0
         for waiter in waiters {
-            waiter.resume(returning: nil)
+            waiter.continuation.resume(returning: nil)
         }
         waiters.removeAll(keepingCapacity: false)
+    }
+
+    private func cancelWaiter(waiterID: Int64) {
+        guard let waiterIndex = waiters.firstIndex(where: { $0.id == waiterID }) else {
+            return
+        }
+        let waiter = waiters.remove(at: waiterIndex)
+        waiter.continuation.resume(returning: nil)
     }
 }
 
 private actor ShadowClientVideoPacketQueue {
+    private struct Waiter {
+        let id: Int64
+        let continuation: CheckedContinuation<ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket?, Never>
+    }
+
     private let capacity: Int
     private var bufferedPackets: [ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket?]
     private var headIndex = 0
     private var bufferedCount = 0
-    private var waiters: [CheckedContinuation<ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket?, Never>] = []
+    private var waiters: [Waiter] = []
+    private var nextWaiterID: Int64 = 0
     private var closed = false
 
     init(capacity: Int) {
@@ -114,7 +152,7 @@ private actor ShadowClientVideoPacketQueue {
 
         if !waiters.isEmpty {
             let waiter = waiters.removeFirst()
-            waiter.resume(returning: packet)
+            waiter.continuation.resume(returning: packet)
             return false
         }
 
@@ -142,8 +180,26 @@ private actor ShadowClientVideoPacketQueue {
         if closed {
             return nil
         }
-        return await withCheckedContinuation { continuation in
-            waiters.append(continuation)
+
+        let waiterID = nextWaiterID
+        nextWaiterID &+= 1
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled || closed {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                waiters.append(
+                    Waiter(
+                        id: waiterID,
+                        continuation: continuation
+                    )
+                )
+            }
+        } onCancel: {
+            Task {
+                await self.cancelWaiter(waiterID: waiterID)
+            }
         }
     }
 
@@ -156,9 +212,17 @@ private actor ShadowClientVideoPacketQueue {
         headIndex = 0
         bufferedCount = 0
         for waiter in waiters {
-            waiter.resume(returning: nil)
+            waiter.continuation.resume(returning: nil)
         }
         waiters.removeAll(keepingCapacity: false)
+    }
+
+    private func cancelWaiter(waiterID: Int64) {
+        guard let waiterIndex = waiters.firstIndex(where: { $0.id == waiterID }) else {
+            return
+        }
+        let waiter = waiters.remove(at: waiterIndex)
+        waiter.continuation.resume(returning: nil)
     }
 }
 
@@ -232,6 +296,19 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         depacketizeTask?.cancel()
         decodeTask?.cancel()
         stallMonitorTask?.cancel()
+
+        let packetQueue = videoPacketQueue
+        let decodeQueue = videoDecodeQueue
+        let rtspClient = rtspClient
+        let decoder = self.decoder
+        Task.detached(priority: .utility) {
+            await packetQueue?.close()
+            await decodeQueue?.close()
+            if let rtspClient {
+                await rtspClient.stop()
+            }
+            await decoder.reset()
+        }
     }
 
     public func connect(
@@ -3176,75 +3253,82 @@ private actor ShadowClientRTSPInterleavedClient {
         _ connection: NWConnection,
         timeout: Duration
     ) async throws {
-        let result = await withTaskGroup(
-            of: Result<Void, Error>.self,
-            returning: Result<Void, Error>.self
-        ) { group in
-            group.addTask {
-                await withCheckedContinuation { continuation in
-                    final class ResumeGate: @unchecked Sendable {
-                        private let lock = NSLock()
-                        private let connection: NWConnection
-                        private var continuation: CheckedContinuation<Result<Void, Error>, Never>?
+        final class ReadyWaitGate: @unchecked Sendable {
+            private let lock = NSLock()
+            private let connection: NWConnection
+            private var continuation: CheckedContinuation<Void, Error>?
+            private var timeoutTask: Task<Void, Never>?
 
-                        init(
-                            connection: NWConnection,
-                            continuation: CheckedContinuation<Result<Void, Error>, Never>
-                        ) {
-                            self.connection = connection
-                            self.continuation = continuation
-                        }
+            init(connection: NWConnection) {
+                self.connection = connection
+            }
 
-                        func finish(_ result: Result<Void, Error>) {
-                            lock.lock()
-                            guard let continuation else {
-                                lock.unlock()
-                                return
-                            }
-                            self.continuation = nil
-                            lock.unlock()
-
-                            connection.stateUpdateHandler = nil
-                            continuation.resume(returning: result)
-                        }
+            func install(
+                continuation: CheckedContinuation<Void, Error>,
+                timeout: Duration,
+                timeoutError: @autoclosure @escaping () -> Error
+            ) {
+                lock.lock()
+                self.continuation = continuation
+                lock.unlock()
+                timeoutTask = Task {
+                    do {
+                        try await Task.sleep(for: timeout)
+                    } catch {
+                        return
                     }
-
-                    let gate = ResumeGate(
-                        connection: connection,
-                        continuation: continuation
-                    )
-                    connection.stateUpdateHandler = { state in
-                        switch state {
-                        case .ready:
-                            gate.finish(.success(()))
-                        case let .failed(error):
-                            gate.finish(.failure(error))
-                        case .cancelled:
-                            gate.finish(.failure(ShadowClientRTSPInterleavedClientError.connectionClosed))
-                        default:
-                            break
-                        }
-                    }
-                    connection.start(queue: self.queue)
+                    self.finish(.failure(timeoutError()))
+                    self.connection.cancel()
                 }
             }
 
-            group.addTask {
-                do {
-                    try await Task.sleep(for: timeout)
-                    connection.cancel()
-                    return .failure(ShadowClientRTSPInterleavedClientError.connectionFailed)
-                } catch {
-                    return .failure(error)
+            func finish(_ result: Result<Void, Error>) {
+                lock.lock()
+                guard let continuation else {
+                    lock.unlock()
+                    return
                 }
+                self.continuation = nil
+                let timeoutTask = self.timeoutTask
+                self.timeoutTask = nil
+                lock.unlock()
+
+                connection.stateUpdateHandler = nil
+                timeoutTask?.cancel()
+                continuation.resume(with: result)
             }
 
-            let first = await group.next() ?? .failure(ShadowClientRTSPInterleavedClientError.connectionFailed)
-            group.cancelAll()
-            return first
+            func cancel() {
+                finish(.failure(CancellationError()))
+                connection.cancel()
+            }
         }
 
-        try result.get()
+        let gate = ReadyWaitGate(connection: connection)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                gate.install(
+                    continuation: continuation,
+                    timeout: timeout,
+                    timeoutError: ShadowClientRTSPInterleavedClientError.connectionFailed
+                )
+                connection.stateUpdateHandler = { state in
+                    switch state {
+                    case .ready:
+                        gate.finish(.success(()))
+                    case let .failed(error):
+                        gate.finish(.failure(error))
+                    case .cancelled:
+                        gate.finish(.failure(ShadowClientRTSPInterleavedClientError.connectionClosed))
+                    default:
+                        break
+                    }
+                }
+                connection.start(queue: self.queue)
+            }
+        } onCancel: {
+            gate.cancel()
+        }
     }
 
     private func resolvedRemoteHost(from connection: NWConnection) -> NWEndpoint.Host? {

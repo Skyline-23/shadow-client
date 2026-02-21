@@ -428,84 +428,88 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         _ connection: NWConnection,
         timeout: Duration
     ) async throws {
-        let result = await withTaskGroup(
-            of: Result<Void, Error>.self,
-            returning: Result<Void, Error>.self
-        ) { group in
-            group.addTask { [connectionQueue] in
-                await withCheckedContinuation {
-                    (continuation: CheckedContinuation<Result<Void, Error>, Never>) in
-                    final class ResumeGate: @unchecked Sendable {
-                        private let lock = NSLock()
-                        private var continuation: CheckedContinuation<Result<Void, Error>, Never>?
-                        private let connection: NWConnection
+        final class ReadyWaitGate: @unchecked Sendable {
+            private let lock = NSLock()
+            private let connection: NWConnection
+            private var continuation: CheckedContinuation<Void, Error>?
+            private var timeoutTask: Task<Void, Never>?
 
-                        init(
-                            continuation: CheckedContinuation<Result<Void, Error>, Never>,
-                            connection: NWConnection
-                        ) {
-                            self.continuation = continuation
-                            self.connection = connection
-                        }
+            init(connection: NWConnection) {
+                self.connection = connection
+            }
 
-                        func resume(with result: Result<Void, Error>) {
-                            lock.lock()
-                            guard let continuation else {
-                                lock.unlock()
-                                return
-                            }
-                            self.continuation = nil
-                            lock.unlock()
-
-                            connection.stateUpdateHandler = nil
-                            continuation.resume(returning: result)
-                        }
+            func install(
+                continuation: CheckedContinuation<Void, Error>,
+                timeout: Duration,
+                timeoutError: @autoclosure @escaping () -> Error
+            ) {
+                lock.lock()
+                self.continuation = continuation
+                lock.unlock()
+                timeoutTask = Task {
+                    do {
+                        try await Task.sleep(for: timeout)
+                    } catch {
+                        return
                     }
-
-                    let gate = ResumeGate(
-                        continuation: continuation,
-                        connection: connection
-                    )
-                    connection.stateUpdateHandler = { state in
-                        switch state {
-                        case .ready:
-                            gate.resume(with: .success(()))
-                        case let .failed(error):
-                            gate.resume(with: .failure(error))
-                        case .cancelled:
-                            gate.resume(with: .failure(CancellationError()))
-                        default:
-                            break
-                        }
-                    }
-                    connection.start(queue: connectionQueue)
+                    self.finish(.failure(timeoutError()))
+                    self.connection.cancel()
                 }
             }
 
-            group.addTask {
-                do {
-                    try await Task.sleep(for: timeout)
-                    connection.cancel()
-                    return .failure(
-                        NSError(
-                            domain: "ShadowClientRealtimeAudioSessionRuntime",
-                            code: 1,
-                            userInfo: [
-                                NSLocalizedDescriptionKey: "Audio UDP connection timed out.",
-                            ]
-                        )
-                    )
-                } catch {
-                    return .failure(error)
+            func finish(_ result: Result<Void, Error>) {
+                lock.lock()
+                guard let continuation else {
+                    lock.unlock()
+                    return
                 }
+                self.continuation = nil
+                let timeoutTask = self.timeoutTask
+                self.timeoutTask = nil
+                lock.unlock()
+
+                connection.stateUpdateHandler = nil
+                timeoutTask?.cancel()
+                continuation.resume(with: result)
             }
 
-            let first = await group.next() ?? .failure(CancellationError())
-            group.cancelAll()
-            return first
+            func cancel() {
+                finish(.failure(CancellationError()))
+                connection.cancel()
+            }
         }
 
-        try result.get()
+        let gate = ReadyWaitGate(connection: connection)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                gate.install(
+                    continuation: continuation,
+                    timeout: timeout,
+                    timeoutError: NSError(
+                        domain: "ShadowClientRealtimeAudioSessionRuntime",
+                        code: 1,
+                        userInfo: [
+                            NSLocalizedDescriptionKey: "Audio UDP connection timed out.",
+                        ]
+                    )
+                )
+                connection.stateUpdateHandler = { state in
+                    switch state {
+                    case .ready:
+                        gate.finish(.success(()))
+                    case let .failed(error):
+                        gate.finish(.failure(error))
+                    case .cancelled:
+                        gate.finish(.failure(CancellationError()))
+                    default:
+                        break
+                    }
+                }
+                connection.start(queue: connectionQueue)
+            }
+        } onCancel: {
+            gate.cancel()
+        }
     }
 
     private func logLocalEndpoint(
