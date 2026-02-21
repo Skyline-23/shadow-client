@@ -1128,7 +1128,7 @@ enum ShadowClientRTPPacketPayloadParser {
             sequenceNumber: sequenceNumber,
             marker: marker,
             payloadType: payloadType,
-            payload: Data(payload[headerLength..<endIndex])
+            payload: payload[headerLength..<endIndex]
         )
     }
 }

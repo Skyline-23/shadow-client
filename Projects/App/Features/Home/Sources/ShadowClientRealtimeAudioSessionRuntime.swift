@@ -613,7 +613,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             sequenceNumber: sequenceNumber,
             timestamp: timestamp,
             payloadType: payloadType,
-            payload: Data(datagram[headerLength..<endIndex])
+            payload: datagram[headerLength..<endIndex]
         )
     }
 

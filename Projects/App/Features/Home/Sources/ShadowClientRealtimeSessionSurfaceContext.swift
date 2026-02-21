@@ -4,20 +4,27 @@ import Foundation
 public final class ShadowClientRealtimeSessionFrameStore: @unchecked Sendable {
     private let lock = NSLock()
     private var latestPixelBuffer: CVPixelBuffer?
+    private var latestRevision: UInt64 = 0
 
     public init() {}
 
     public func update(pixelBuffer: CVPixelBuffer?) {
         lock.lock()
         latestPixelBuffer = pixelBuffer
+        latestRevision &+= 1
         lock.unlock()
     }
 
     public func snapshot() -> CVPixelBuffer? {
+        snapshotWithRevision().pixelBuffer
+    }
+
+    public func snapshotWithRevision() -> (pixelBuffer: CVPixelBuffer?, revision: UInt64) {
         lock.lock()
         let buffer = latestPixelBuffer
+        let revision = latestRevision
         lock.unlock()
-        return buffer
+        return (buffer, revision)
     }
 }
 

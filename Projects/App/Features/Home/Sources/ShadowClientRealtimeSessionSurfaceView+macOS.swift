@@ -65,6 +65,8 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private var cachedTransform: CGAffineTransform = .identity
     private var cachedSupportsExtendedDynamicRange = false
     private var lastExtendedDynamicRangeProbeUptime: TimeInterval = 0
+    private var lastRenderedFrameRevision: UInt64 = .max
+    private var lastRenderedDrawableSize: CGSize = .zero
 
     init?(
         device: MTLDevice,
@@ -91,7 +93,15 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             return
         }
 
-        if let pixelBuffer = frameStore.snapshot() {
+        let snapshot = frameStore.snapshotWithRevision()
+        let drawableSize = view.drawableSize
+        if snapshot.revision == lastRenderedFrameRevision,
+           drawableSize == lastRenderedDrawableSize
+        {
+            return
+        }
+
+        if let pixelBuffer = snapshot.pixelBuffer {
             let colorConfiguration = ShadowClientRealtimeSessionColorPipeline.configuration(for: pixelBuffer)
             let supportsExtendedDynamicRange = cachedExtendedDynamicRangeSupport(for: view)
             let shouldToneMapHDRToSDR =
@@ -127,7 +137,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             let outputColorSpace = shouldToneMapHDRToSDR
                 ? ShadowClientRealtimeSessionColorPipeline.defaultDisplayColorSpace
                 : colorConfiguration.displayColorSpace
-            let drawableRect = CGRect(origin: .zero, size: view.drawableSize)
+            let drawableRect = CGRect(origin: .zero, size: drawableSize)
             let sourceRect = sourceImage.extent
             let transformed = sourceImage.transformed(
                 by: transformForRendering(
@@ -151,6 +161,8 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
 
         commandBuffer.present(drawable)
         commandBuffer.commit()
+        lastRenderedFrameRevision = snapshot.revision
+        lastRenderedDrawableSize = drawableSize
     }
 
     private func transformForRendering(

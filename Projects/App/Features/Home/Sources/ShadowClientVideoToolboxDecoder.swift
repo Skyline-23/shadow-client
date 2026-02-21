@@ -189,26 +189,19 @@ public actor ShadowClientVideoToolboxDecoder {
         let samplePayload: Data
         switch newCodec {
         case .h264, .h265:
-            var nals = splitAnnexB(annexBAccessUnit)
-            if nals.isEmpty {
-                nals = splitLengthPrefixedNALUnits(annexBAccessUnit)
-            }
-            guard !nals.isEmpty else {
+            guard let parsedAccessUnit = makeLengthPrefixedSamplePayload(
+                from: annexBAccessUnit,
+                codec: newCodec
+            ) else {
                 return
             }
-            let streamParameterSets = extractParameterSets(from: nals, codec: newCodec)
             if !explicitParameterSets.isEmpty {
                 latestParameterSets = explicitParameterSets
             }
-            if !streamParameterSets.isEmpty {
-                latestParameterSets = streamParameterSets
+            if !parsedAccessUnit.parameterSets.isEmpty {
+                latestParameterSets = parsedAccessUnit.parameterSets
             }
-
-            let sampleNals = nals.filter { !isParameterSetNAL($0, codec: newCodec) }
-            guard !sampleNals.isEmpty else {
-                return
-            }
-            samplePayload = makeLengthPrefixedBuffer(from: sampleNals)
+            samplePayload = parsedAccessUnit.samplePayload
         case .av1:
             let discoveredAV1CodecConfiguration = ShadowClientAV1CodecConfigurationBuilder.build(
                 fromAccessUnit: annexBAccessUnit
@@ -659,31 +652,51 @@ public actor ShadowClientVideoToolboxDecoder {
         return sampleBuffer
     }
 
-    private func splitAnnexB(_ buffer: Data) -> [Data] {
-        var nals: [Data] = []
-        var index = buffer.startIndex
+    private struct LengthPrefixedSampleParseResult {
+        let samplePayload: Data
+        let parameterSets: [Data]
+    }
 
-        func startCodeLength(at i: Int) -> Int {
-            let remaining = buffer.count - i
-            guard remaining >= 3 else {
-                return 0
-            }
-            if buffer[i] == 0 && buffer[i + 1] == 0 && buffer[i + 2] == 1 {
-                return 3
-            }
-            if remaining >= 4 &&
-                buffer[i] == 0 &&
-                buffer[i + 1] == 0 &&
-                buffer[i + 2] == 0 &&
-                buffer[i + 3] == 1
-            {
-                return 4
-            }
-            return 0
-        }
+    private enum NALUnitDisposition {
+        case sample
+        case ignore
+        case h264SPS
+        case h264PPS
+        case h265VPS
+        case h265SPS
+        case h265PPS
+    }
 
-        while index < buffer.endIndex {
-            let prefixLength = startCodeLength(at: index)
+    private func makeLengthPrefixedSamplePayload(
+        from accessUnit: Data,
+        codec: ShadowClientVideoCodec
+    ) -> LengthPrefixedSampleParseResult? {
+        makeLengthPrefixedSamplePayloadFromAnnexB(
+            accessUnit,
+            codec: codec
+        ) ?? makeLengthPrefixedSamplePayloadFromLengthPrefixed(
+            accessUnit,
+            codec: codec
+        )
+    }
+
+    private func makeLengthPrefixedSamplePayloadFromAnnexB(
+        _ accessUnit: Data,
+        codec: ShadowClientVideoCodec
+    ) -> LengthPrefixedSampleParseResult? {
+        var samplePayload = Data()
+        samplePayload.reserveCapacity(accessUnit.count + 32)
+
+        var h264SPS: Data?
+        var h264PPS: Data?
+        var h265VPS: Data?
+        var h265SPS: Data?
+        var h265PPS: Data?
+        var hasSampleNAL = false
+
+        var index = accessUnit.startIndex
+        while index < accessUnit.endIndex {
+            let prefixLength = annexBStartCodeLength(in: accessUnit, at: index)
             if prefixLength == 0 {
                 index += 1
                 continue
@@ -691,92 +704,206 @@ public actor ShadowClientVideoToolboxDecoder {
 
             let nalStart = index + prefixLength
             var next = nalStart
-            while next < buffer.endIndex {
-                if startCodeLength(at: next) > 0 {
+            while next < accessUnit.endIndex {
+                if annexBStartCodeLength(in: accessUnit, at: next) > 0 {
                     break
                 }
                 next += 1
             }
 
             if nalStart < next {
-                nals.append(Data(buffer[nalStart..<next]))
+                consumeNALUnit(
+                    from: accessUnit,
+                    range: nalStart ..< next,
+                    codec: codec,
+                    samplePayload: &samplePayload,
+                    hasSampleNAL: &hasSampleNAL,
+                    h264SPS: &h264SPS,
+                    h264PPS: &h264PPS,
+                    h265VPS: &h265VPS,
+                    h265SPS: &h265SPS,
+                    h265PPS: &h265PPS
+                )
             }
             index = next
         }
 
-        return nals
+        guard hasSampleNAL else {
+            return nil
+        }
+
+        return LengthPrefixedSampleParseResult(
+            samplePayload: samplePayload,
+            parameterSets: collectedParameterSets(
+                codec: codec,
+                h264SPS: h264SPS,
+                h264PPS: h264PPS,
+                h265VPS: h265VPS,
+                h265SPS: h265SPS,
+                h265PPS: h265PPS
+            )
+        )
     }
 
-    private func splitLengthPrefixedNALUnits(_ buffer: Data) -> [Data] {
-        var nals: [Data] = []
-        var index = buffer.startIndex
+    private func makeLengthPrefixedSamplePayloadFromLengthPrefixed(
+        _ accessUnit: Data,
+        codec: ShadowClientVideoCodec
+    ) -> LengthPrefixedSampleParseResult? {
+        var samplePayload = Data()
+        samplePayload.reserveCapacity(accessUnit.count)
 
-        while index + 4 <= buffer.endIndex {
-            let length = Int(buffer[index]) << 24 |
-                Int(buffer[index + 1]) << 16 |
-                Int(buffer[index + 2]) << 8 |
-                Int(buffer[index + 3])
+        var h264SPS: Data?
+        var h264PPS: Data?
+        var h265VPS: Data?
+        var h265SPS: Data?
+        var h265PPS: Data?
+        var hasSampleNAL = false
+
+        var index = accessUnit.startIndex
+        while index + 4 <= accessUnit.endIndex {
+            let length = Int(accessUnit[index]) << 24 |
+                Int(accessUnit[index + 1]) << 16 |
+                Int(accessUnit[index + 2]) << 8 |
+                Int(accessUnit[index + 3])
             index += 4
 
             guard length > 0 else {
-                return []
+                return nil
             }
             let nalEnd = index + length
-            guard nalEnd <= buffer.endIndex else {
-                return []
+            guard nalEnd <= accessUnit.endIndex else {
+                return nil
             }
-            nals.append(Data(buffer[index..<nalEnd]))
+
+            consumeNALUnit(
+                from: accessUnit,
+                range: index ..< nalEnd,
+                codec: codec,
+                samplePayload: &samplePayload,
+                hasSampleNAL: &hasSampleNAL,
+                h264SPS: &h264SPS,
+                h264PPS: &h264PPS,
+                h265VPS: &h265VPS,
+                h265SPS: &h265SPS,
+                h265PPS: &h265PPS
+            )
             index = nalEnd
         }
 
-        guard index == buffer.endIndex else {
-            return []
+        guard index == accessUnit.endIndex, hasSampleNAL else {
+            return nil
         }
-        return nals
+
+        return LengthPrefixedSampleParseResult(
+            samplePayload: samplePayload,
+            parameterSets: collectedParameterSets(
+                codec: codec,
+                h264SPS: h264SPS,
+                h264PPS: h264PPS,
+                h265VPS: h265VPS,
+                h265SPS: h265SPS,
+                h265PPS: h265PPS
+            )
+        )
     }
 
-    private func extractParameterSets(
-        from nals: [Data],
+    private func consumeNALUnit(
+        from accessUnit: Data,
+        range: Range<Int>,
+        codec: ShadowClientVideoCodec,
+        samplePayload: inout Data,
+        hasSampleNAL: inout Bool,
+        h264SPS: inout Data?,
+        h264PPS: inout Data?,
+        h265VPS: inout Data?,
+        h265SPS: inout Data?,
+        h265PPS: inout Data?
+    ) {
+        let disposition = nalUnitDisposition(
+            in: accessUnit,
+            range: range,
+            codec: codec
+        )
+        switch disposition {
+        case .sample:
+            hasSampleNAL = true
+            var nalLength = UInt32(range.count).bigEndian
+            withUnsafeBytes(of: &nalLength) { samplePayload.append(contentsOf: $0) }
+            samplePayload.append(accessUnit[range])
+        case .ignore:
+            break
+        case .h264SPS:
+            h264SPS = Data(accessUnit[range])
+        case .h264PPS:
+            h264PPS = Data(accessUnit[range])
+        case .h265VPS:
+            h265VPS = Data(accessUnit[range])
+        case .h265SPS:
+            h265SPS = Data(accessUnit[range])
+        case .h265PPS:
+            h265PPS = Data(accessUnit[range])
+        }
+    }
+
+    private func nalUnitDisposition(
+        in accessUnit: Data,
+        range: Range<Int>,
         codec: ShadowClientVideoCodec
+    ) -> NALUnitDisposition {
+        guard !range.isEmpty else {
+            return .ignore
+        }
+
+        switch codec {
+        case .h264:
+            let nalType = accessUnit[range.lowerBound] & 0x1F
+            switch nalType {
+            case 7:
+                return .h264SPS
+            case 8:
+                return .h264PPS
+            case 9:
+                return .ignore
+            default:
+                return .sample
+            }
+        case .h265:
+            guard range.count >= 2 else {
+                return .ignore
+            }
+            let nalType = (accessUnit[range.lowerBound] >> 1) & 0x3F
+            switch nalType {
+            case 32:
+                return .h265VPS
+            case 33:
+                return .h265SPS
+            case 34:
+                return .h265PPS
+            default:
+                return .sample
+            }
+        case .av1:
+            return .sample
+        }
+    }
+
+    private func collectedParameterSets(
+        codec: ShadowClientVideoCodec,
+        h264SPS: Data?,
+        h264PPS: Data?,
+        h265VPS: Data?,
+        h265SPS: Data?,
+        h265PPS: Data?
     ) -> [Data] {
         switch codec {
         case .h264:
-            var sps: Data?
-            var pps: Data?
-            for nal in nals {
-                guard let first = nal.first else {
-                    continue
-                }
-                let type = first & 0x1F
-                if type == 7 {
-                    sps = nal
-                } else if type == 8 {
-                    pps = nal
-                }
-            }
-            if let sps, let pps {
-                return [sps, pps]
+            if let h264SPS, let h264PPS {
+                return [h264SPS, h264PPS]
             }
             return []
         case .h265:
-            var vps: Data?
-            var sps: Data?
-            var pps: Data?
-            for nal in nals {
-                guard nal.count >= 2 else {
-                    continue
-                }
-                let type = (nal[0] >> 1) & 0x3F
-                if type == 32 {
-                    vps = nal
-                } else if type == 33 {
-                    sps = nal
-                } else if type == 34 {
-                    pps = nal
-                }
-            }
-            if let vps, let sps, let pps {
-                return [vps, sps, pps]
+            if let h265VPS, let h265SPS, let h265PPS {
+                return [h265VPS, h265SPS, h265PPS]
             }
             return []
         case .av1:
@@ -784,36 +911,23 @@ public actor ShadowClientVideoToolboxDecoder {
         }
     }
 
-    private func isParameterSetNAL(_ nal: Data, codec: ShadowClientVideoCodec) -> Bool {
-        guard !nal.isEmpty else {
-            return false
+    private func annexBStartCodeLength(in accessUnit: Data, at index: Int) -> Int {
+        let remaining = accessUnit.count - index
+        guard remaining >= 3 else {
+            return 0
         }
-
-        switch codec {
-        case .h264:
-            let type = nal[0] & 0x1F
-            return type == 7 || type == 8 || type == 9
-        case .h265:
-            guard nal.count >= 2 else {
-                return false
-            }
-            let type = (nal[0] >> 1) & 0x3F
-            return type == 32 || type == 33 || type == 34
-        case .av1:
-            return false
+        if accessUnit[index] == 0 && accessUnit[index + 1] == 0 && accessUnit[index + 2] == 1 {
+            return 3
         }
-    }
-
-    private func makeLengthPrefixedBuffer(from nalUnits: [Data]) -> Data {
-        var output = Data()
-        output.reserveCapacity(nalUnits.reduce(0) { $0 + $1.count + 4 })
-
-        for nal in nalUnits {
-            var bigEndianLength = UInt32(nal.count).bigEndian
-            withUnsafeBytes(of: &bigEndianLength) { output.append(contentsOf: $0) }
-            output.append(nal)
+        if remaining >= 4 &&
+            accessUnit[index] == 0 &&
+            accessUnit[index + 1] == 0 &&
+            accessUnit[index + 2] == 0 &&
+            accessUnit[index + 3] == 1
+        {
+            return 4
         }
-        return output
+        return 0
     }
 
     private func withUnsafeParameterSetPointers<T>(
