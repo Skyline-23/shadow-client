@@ -85,17 +85,17 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     func mtkView(_: MTKView, drawableSizeWillChange _: CGSize) {}
 
     func draw(in view: MTKView) {
-        guard let drawable = view.currentDrawable,
-              let commandBuffer = commandQueue.makeCommandBuffer()
-        else {
-            return
-        }
-
         let snapshot = frameStore.snapshotWithRevision()
         let drawableSize = view.drawableSize
         if snapshot.revision == lastRenderedFrameRevision,
            drawableSize == lastRenderedDrawableSize
         {
+            return
+        }
+
+        guard let drawable = view.currentDrawable,
+              let commandBuffer = commandQueue.makeCommandBuffer()
+        else {
             return
         }
 
