@@ -64,12 +64,15 @@ enum ShadowClientSunshineHandshakeProfile {
 
 enum ShadowClientSunshineControlMessageProfile {
     static let genericChannelID: UInt8 = 0x00
+    static let urgentChannelID: UInt8 = 0x01
     static let keyboardChannelID: UInt8 = 0x02
     static let mouseChannelID: UInt8 = 0x03
+    static let gamepadChannelBaseID: UInt8 = 0x10
 
     static let startATypeLegacy: UInt16 = 0x0305
     static let startATypeEncryptedV2: UInt16 = 0x0302
     static let startBType: UInt16 = 0x0307
+    static let invalidateReferenceFramesType: UInt16 = 0x0301
     static let periodicPingType: UInt16 = 0x0200
     static let inputDataType: UInt16 = 0x0206
 
@@ -77,6 +80,18 @@ enum ShadowClientSunshineControlMessageProfile {
     static let startBPayload = Data([0x00])
     static let periodicPingInterval: Duration = .milliseconds(100)
     static let periodicPingPayload = Data([0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+
+    static func invalidateReferenceFramesPayload(
+        firstFrame: UInt64,
+        lastFrame: UInt64
+    ) -> Data {
+        var payload = Data()
+        payload.reserveCapacity(24)
+        payload.appendUInt64LE(firstFrame)
+        payload.appendUInt64LE(lastFrame)
+        payload.appendUInt64LE(0)
+        return payload
+    }
 }
 
 enum ShadowClientRTSPAnnounceProfile {
@@ -202,5 +217,12 @@ enum ShadowClientRTSPAnnounceProfile {
 
     static func surroundAudioQuality(surroundEnabled: Bool) -> String {
         surroundEnabled ? surroundAudioQualityEnabled : surroundAudioQualityDisabled
+    }
+}
+
+private extension Data {
+    mutating func appendUInt64LE(_ value: UInt64) {
+        var littleEndianValue = value.littleEndian
+        Swift.withUnsafeBytes(of: &littleEndianValue) { append(contentsOf: $0) }
     }
 }

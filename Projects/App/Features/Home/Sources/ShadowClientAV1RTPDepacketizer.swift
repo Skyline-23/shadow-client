@@ -1,6 +1,12 @@
 import Foundation
 
 public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
+    public enum IngestResult: Sendable {
+        case noFrame
+        case frame(Data)
+        case droppedCorruptFrame
+    }
+
     public enum TailTruncationStrategy: Sendable {
         case trimUsingLastPacketLength
         case passthroughForAnnexBCodecs
@@ -54,16 +60,25 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
     }
 
     public mutating func ingest(payload: Data, marker: Bool) -> Data? {
+        switch ingestWithStatus(payload: payload, marker: marker) {
+        case let .frame(frame):
+            return frame
+        case .noFrame, .droppedCorruptFrame:
+            return nil
+        }
+    }
+
+    public mutating func ingestWithStatus(payload: Data, marker: Bool) -> IngestResult {
         _ = marker
 
         guard let packet = parseVideoPacket(from: payload) else {
             dropFrameState()
-            return nil
+            return .droppedCorruptFrame
         }
 
         guard (packet.flags & ~Self.allowedFlags) == 0 else {
             dropFrameState()
-            return nil
+            return .droppedCorruptFrame
         }
 
         let firstPacket = isFirstPacket(
@@ -81,7 +96,7 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
             firstPacket: firstPacket
         ) else {
             dropFrameState()
-            return nil
+            return .droppedCorruptFrame
         }
 
         guard validateFrameContinuity(
@@ -89,7 +104,7 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
             firstPacket: firstPacket
         ) else {
             dropFrameState()
-            return nil
+            return .droppedCorruptFrame
         }
 
         lastPacketInStream = packet.streamPacketIndex
@@ -99,7 +114,7 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         if firstPacket {
             guard let header = parseFirstPacketHeader(from: packetPayload) else {
                 dropFrameState()
-                return nil
+                return .droppedCorruptFrame
             }
 
             frameHeaderSize = header.frameHeaderSize
@@ -119,7 +134,7 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
             ) else {
                 nextFrameIndex = packet.frameIndex &+ 1
                 dropFrameState()
-                return nil
+                return .droppedCorruptFrame
             }
             packetPayload = truncatedPayload
         }
@@ -129,7 +144,7 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         }
 
         guard lastPacket else {
-            return nil
+            return .noFrame
         }
 
         let frame = currentFrame
@@ -138,7 +153,10 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         lastPacketPayloadLength = 0
         nextFrameIndex = packet.frameIndex &+ 1
         currentFrame.removeAll(keepingCapacity: true)
-        return frame.isEmpty ? nil : frame
+        guard !frame.isEmpty else {
+            return .droppedCorruptFrame
+        }
+        return .frame(frame)
     }
 
     private mutating func dropFrameState() {

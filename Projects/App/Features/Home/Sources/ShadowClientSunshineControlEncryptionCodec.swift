@@ -25,6 +25,31 @@ enum ShadowClientSunshineControlChannelMode: Sendable {
     var startBPayload: Data {
         ShadowClientSunshineControlMessageProfile.startBPayload
     }
+
+    var recoveryRequestType: UInt16 {
+        switch self {
+        case .plaintext:
+            return ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesType
+        case .encryptedV2:
+            return ShadowClientSunshineControlMessageProfile.startATypeEncryptedV2
+        }
+    }
+
+    var recoveryRequestPayload: Data {
+        switch self {
+        case .plaintext:
+            return ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesPayload(
+                firstFrame: 0,
+                lastFrame: 0
+            )
+        case .encryptedV2:
+            return ShadowClientSunshineControlMessageProfile.startAPayload
+        }
+    }
+
+    var recoveryRequestChannelID: UInt8 {
+        ShadowClientSunshineControlMessageProfile.urgentChannelID
+    }
 }
 
 enum ShadowClientSunshineControlEncryptionError: Error {

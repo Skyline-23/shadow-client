@@ -438,6 +438,42 @@ func av1DepacketizerDropsCorruptPacketSequence() {
     #expect(frame == nil)
 }
 
+@Test("AV1 depacketizer emits explicit corruption status for discontinuous packet sequence")
+func av1DepacketizerReportsCorruptPacketSequenceStatus() {
+    var depacketizer = ShadowClientAV1RTPDepacketizer()
+    let frameIndex: UInt32 = 34
+
+    let sofPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 210,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF,
+        payloadBytes: [0x10, 0x11],
+        includeFrameHeaderWithLastPayloadLength: 2
+    )
+    let corruptEofPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 212,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagEOF,
+        payloadBytes: [0x22, 0x33]
+    )
+
+    let firstResult = depacketizer.ingestWithStatus(payload: sofPacket, marker: false)
+    switch firstResult {
+    case .noFrame:
+        break
+    default:
+        Issue.record("Expected no frame for SOF packet")
+    }
+
+    let secondResult = depacketizer.ingestWithStatus(payload: corruptEofPacket, marker: true)
+    switch secondResult {
+    case .droppedCorruptFrame:
+        break
+    default:
+        Issue.record("Expected droppedCorruptFrame for discontinuous stream packet sequence")
+    }
+}
+
 @Test("AV1 depacketizer supports single packet with SOF|EOF flags")
 func av1DepacketizerSupportsSinglePacketSofEofFrame() {
     var depacketizer = ShadowClientAV1RTPDepacketizer()

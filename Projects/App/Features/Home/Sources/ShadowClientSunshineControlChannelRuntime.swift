@@ -141,6 +141,26 @@ actor ShadowClientSunshineControlChannelRuntime {
         )
     }
 
+    func requestVideoRecoveryFrame() async {
+        guard let connection else {
+            return
+        }
+
+        do {
+            try await sendReliableControlMessageWithoutBlockingForAcknowledge(
+                type: controlChannelMode.recoveryRequestType,
+                payload: controlChannelMode.recoveryRequestPayload,
+                channelID: controlChannelMode.recoveryRequestChannelID,
+                over: connection
+            )
+            logger.notice(
+                "Sunshine video recovery request sent type=\(self.controlChannelMode.recoveryRequestType, privacy: .public) channel=\(self.controlChannelMode.recoveryRequestChannelID, privacy: .public)"
+            )
+        } catch {
+            logger.error("Sunshine video recovery request failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     private func waitForVerifyConnect(
         over connection: NWConnection,
         expectedConnectID: UInt32

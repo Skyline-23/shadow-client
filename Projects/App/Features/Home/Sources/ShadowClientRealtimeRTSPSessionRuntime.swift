@@ -44,6 +44,15 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var hasLoggedDecodedFrameMetadata = false
     private var recentVideoTransportSamples: [VideoTransportSample] = []
     private var lastVideoStatPublishUptime: TimeInterval = 0
+    private var activeVideoConfiguration: ShadowClientRemoteSessionVideoConfiguration?
+    private var depacketizerCorruptionCount = 0
+    private var firstDepacketizerCorruptionUptime: TimeInterval = 0
+    private var lastDepacketizerRecoveryUptime: TimeInterval = 0
+    private var decoderFailureCount = 0
+    private var firstDecoderFailureUptime: TimeInterval = 0
+    private var lastDecoderRecoveryUptime: TimeInterval = 0
+    private var hasRenderedFirstFrame = false
+    private var frameAssemblyLogCount = 0
 
     public init(
         surfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init(),
@@ -67,6 +76,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     ) async throws {
         try await disconnect()
         let resolvedVideoConfiguration = resolveRuntimeVideoConfiguration(videoConfiguration)
+        activeVideoConfiguration = resolvedVideoConfiguration
         let sessionSurfaceContext = self.surfaceContext
         await decoder.setPreferredOutputDimensions(
             width: resolvedVideoConfiguration.width,
@@ -80,6 +90,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         hasLoggedDecodedFrameMetadata = false
         recentVideoTransportSamples.removeAll(keepingCapacity: false)
         lastVideoStatPublishUptime = 0
+        depacketizerCorruptionCount = 0
+        firstDepacketizerCorruptionUptime = 0
+        lastDepacketizerRecoveryUptime = 0
+        decoderFailureCount = 0
+        firstDecoderFailureUptime = 0
+        lastDecoderRecoveryUptime = 0
+        hasRenderedFirstFrame = false
+        frameAssemblyLogCount = 0
 
         await MainActor.run {
             sessionSurfaceContext.reset()
@@ -164,9 +182,18 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         rtspClient = nil
 
         await decoder.reset()
+        activeVideoConfiguration = nil
         hasLoggedDecodedFrameMetadata = false
         recentVideoTransportSamples.removeAll(keepingCapacity: false)
         lastVideoStatPublishUptime = 0
+        depacketizerCorruptionCount = 0
+        firstDepacketizerCorruptionUptime = 0
+        lastDepacketizerRecoveryUptime = 0
+        decoderFailureCount = 0
+        firstDecoderFailureUptime = 0
+        lastDecoderRecoveryUptime = 0
+        hasRenderedFirstFrame = false
+        frameAssemblyLogCount = 0
         await MainActor.run {
             surfaceContext.reset()
         }
@@ -185,11 +212,21 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         marker: Bool,
         initialParameterSets: [Data]
     ) async throws {
-        if marker {
-            logger.notice("RTP packet marker set for codec \(String(describing: codec), privacy: .public), payload \(payload.count, privacy: .public) bytes")
-        }
-        if let frame = moonlightNVDepacketizer.ingest(payload: payload, marker: marker) {
-            logger.notice("Moonlight NV frame assembled for codec \(String(describing: codec), privacy: .public): \(frame.count, privacy: .public) bytes")
+        _ = marker
+        switch moonlightNVDepacketizer.ingestWithStatus(payload: payload, marker: marker) {
+        case .noFrame:
+            return
+        case .droppedCorruptFrame:
+            await handleDepacketizerCorruption(codec: codec)
+            return
+        case let .frame(frame):
+            frameAssemblyLogCount &+= 1
+            if frameAssemblyLogCount <= 5 || frameAssemblyLogCount.isMultiple(of: 180) {
+                logger.notice("Moonlight NV frame assembled for codec \(String(describing: codec), privacy: .public): \(frame.count, privacy: .public) bytes")
+            }
+            depacketizerCorruptionCount = 0
+            firstDepacketizerCorruptionUptime = 0
+
             await updateRuntimeVideoStats(frameBytes: frame.count)
             do {
                 try await decodeFrame(
@@ -197,11 +234,111 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     codec: codec,
                     parameterSets: initialParameterSets
                 )
+                decoderFailureCount = 0
+                firstDecoderFailureUptime = 0
             } catch {
                 logger.error("\(String(describing: codec), privacy: .public) decode failed: \(error.localizedDescription, privacy: .public)")
+                if await handleDecoderFailure(codec: codec) {
+                    return
+                }
                 throw error
             }
         }
+    }
+
+    private func handleDepacketizerCorruption(codec: ShadowClientVideoCodec) async {
+        let now = ProcessInfo.processInfo.systemUptime
+        if firstDepacketizerCorruptionUptime == 0 || now - firstDepacketizerCorruptionUptime > 1.0 {
+            firstDepacketizerCorruptionUptime = now
+            depacketizerCorruptionCount = 0
+        }
+        depacketizerCorruptionCount += 1
+
+        guard depacketizerCorruptionCount >= 3 else {
+            return
+        }
+        guard now - lastDepacketizerRecoveryUptime >= 1.0 else {
+            return
+        }
+
+        lastDepacketizerRecoveryUptime = now
+        depacketizerCorruptionCount = 0
+        firstDepacketizerCorruptionUptime = 0
+        hasLoggedDecodedFrameMetadata = false
+        logger.error("Video depacketizer detected sustained stream discontinuity for codec \(String(describing: codec), privacy: .public); resetting decoder session for recovery")
+        await decoder.reset()
+
+        if let configuration = activeVideoConfiguration {
+            await decoder.setPreferredOutputDimensions(
+                width: configuration.width,
+                height: configuration.height,
+                fps: configuration.fps
+            )
+            await decoder.configureAV1Fallback(
+                hdrEnabled: configuration.enableHDR,
+                yuv444Enabled: configuration.enableYUV444
+            )
+        }
+        if let rtspClient {
+            await rtspClient.requestVideoRecoveryFrame()
+        }
+        let sessionSurfaceContext = self.surfaceContext
+        await MainActor.run {
+            sessionSurfaceContext.transition(to: .waitingForFirstFrame)
+        }
+    }
+
+    private func handleDecoderFailure(codec: ShadowClientVideoCodec) async -> Bool {
+        guard hasRenderedFirstFrame else {
+            return false
+        }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        if firstDecoderFailureUptime == 0 || now - firstDecoderFailureUptime > 1.0 {
+            firstDecoderFailureUptime = now
+            decoderFailureCount = 0
+        }
+        decoderFailureCount += 1
+
+        if decoderFailureCount == 1 {
+            logger.notice(
+                "Video decoder dropped one frame for codec \(String(describing: codec), privacy: .public); awaiting recovery before forcing reset"
+            )
+            return true
+        }
+
+        guard now - lastDecoderRecoveryUptime >= 1.0 else {
+            return true
+        }
+
+        lastDecoderRecoveryUptime = now
+        decoderFailureCount = 0
+        firstDecoderFailureUptime = 0
+        hasLoggedDecodedFrameMetadata = false
+
+        logger.error(
+            "Video decoder entered recovery for codec \(String(describing: codec), privacy: .public); resetting decoder and requesting recovery frame"
+        )
+        await decoder.reset()
+        if let configuration = activeVideoConfiguration {
+            await decoder.setPreferredOutputDimensions(
+                width: configuration.width,
+                height: configuration.height,
+                fps: configuration.fps
+            )
+            await decoder.configureAV1Fallback(
+                hdrEnabled: configuration.enableHDR,
+                yuv444Enabled: configuration.enableYUV444
+            )
+        }
+        if let rtspClient {
+            await rtspClient.requestVideoRecoveryFrame()
+        }
+        let sessionSurfaceContext = self.surfaceContext
+        await MainActor.run {
+            sessionSurfaceContext.transition(to: .waitingForFirstFrame)
+        }
+        return true
     }
 
     private func decodeFrame(
@@ -317,6 +454,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         codec: ShadowClientVideoCodec,
         pixelBuffer: CVPixelBuffer
     ) {
+        hasRenderedFirstFrame = true
         guard !hasLoggedDecodedFrameMetadata else {
             return
         }
@@ -1332,6 +1470,16 @@ private actor ShadowClientRTSPInterleavedClient {
             packet.payload,
             channelID: packet.channelID
         )
+    }
+
+    func requestVideoRecoveryFrame() async {
+        await ensureSunshineControlChannelStarted(
+            fallbackHost: remoteHost ?? .init("127.0.0.1")
+        )
+        guard let controlChannelRuntime else {
+            return
+        }
+        await controlChannelRuntime.requestVideoRecoveryFrame()
     }
 
     private func inputEventKind(_ event: ShadowClientRemoteInputEvent) -> String {
