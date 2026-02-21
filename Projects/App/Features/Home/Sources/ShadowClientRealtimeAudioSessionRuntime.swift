@@ -620,6 +620,30 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         }
         return observed
     }
+
+    public static func preferredOpusChannelCountForNegotiation(
+        surroundRequested: Bool,
+        preferredSurroundChannelCount: Int = 6,
+        sampleRate: Int = 48_000
+    ) -> Int {
+        guard surroundRequested else {
+            return 2
+        }
+
+        let requestedSurroundChannels = max(3, preferredSurroundChannelCount)
+        let surroundTrack = ShadowClientRTSPAudioTrackDescriptor(
+            codec: .opus,
+            rtpPayloadType: 97,
+            sampleRate: sampleRate,
+            channelCount: requestedSurroundChannels,
+            controlURL: nil,
+            formatParameters: [:]
+        )
+        guard ShadowClientRealtimeAudioDecoderFactory.canDecode(track: surroundTrack) else {
+            return 2
+        }
+        return requestedSurroundChannels
+    }
 }
 
 private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
@@ -698,6 +722,15 @@ private protocol ShadowClientRealtimeAudioPacketDecoding {
 }
 
 private enum ShadowClientRealtimeAudioDecoderFactory {
+    static func canDecode(track: ShadowClientRTSPAudioTrackDescriptor) -> Bool {
+        do {
+            _ = try make(for: track)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     static func make(
         for track: ShadowClientRTSPAudioTrackDescriptor
     ) throws -> any ShadowClientRealtimeAudioPacketDecoding {

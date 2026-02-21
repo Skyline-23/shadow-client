@@ -1408,11 +1408,20 @@ private actor ShadowClientRTSPInterleavedClient {
             primary: track.controlURL,
             sessionURL: normalizedURL.absoluteString
         )
+        let preferredOpusChannelCount =
+            ShadowClientRealtimeAudioSessionRuntime.preferredOpusChannelCountForNegotiation(
+                surroundRequested: videoConfiguration.enableSurroundAudio
+            )
+        if videoConfiguration.enableSurroundAudio, preferredOpusChannelCount <= 2 {
+            logger.notice(
+                "RTSP audio negotiation downgraded to stereo because no runtime multichannel Opus decoder is available"
+            )
+        }
         let parsedAudioTrack = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
             sdp: sdp,
             contentBase: contentBase,
             fallbackSessionURL: normalizedURL.absoluteString,
-            preferredOpusChannelCount: videoConfiguration.enableSurroundAudio ? 6 : 2
+            preferredOpusChannelCount: preferredOpusChannelCount
         )
         if let parsedAudioTrack {
             audioTrackDescriptor = parsedAudioTrack

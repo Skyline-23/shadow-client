@@ -109,3 +109,42 @@ func customAudioDecoderRegistryPrioritizesPreferredProviders() throws {
     #expect(decoder?.sampleRate == 44_100)
     #expect(decoder?.channels == 8)
 }
+
+@Test("Audio negotiation downgrades surround request to stereo without multichannel decoder")
+func audioNegotiationDowngradesSurroundWhenDecoderUnavailable() {
+    ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
+    defer { ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() }
+
+    let preferredChannels = ShadowClientRealtimeAudioSessionRuntime.preferredOpusChannelCountForNegotiation(
+        surroundRequested: true,
+        preferredSurroundChannelCount: 6
+    )
+
+    #expect(preferredChannels == 2)
+}
+
+@Test("Audio negotiation keeps surround request when multichannel decoder is available")
+func audioNegotiationKeepsSurroundWhenDecoderAvailable() {
+    ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
+    defer { ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() }
+
+    ShadowClientRealtimeCustomAudioDecoderRegistry.register(
+        provider: { track in
+            guard track.codec == .opus, track.channelCount > 2 else {
+                return nil
+            }
+            return MockCustomAudioDecoder(
+                codec: .opus,
+                sampleRate: track.sampleRate,
+                channels: track.channelCount
+            )
+        }
+    )
+
+    let preferredChannels = ShadowClientRealtimeAudioSessionRuntime.preferredOpusChannelCountForNegotiation(
+        surroundRequested: true,
+        preferredSurroundChannelCount: 6
+    )
+
+    #expect(preferredChannels == 6)
+}
