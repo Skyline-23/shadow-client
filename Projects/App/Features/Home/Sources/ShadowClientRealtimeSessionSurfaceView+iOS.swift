@@ -67,7 +67,10 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         }
         self.frameStore = frameStore
         self.commandQueue = commandQueue
-        self.ciContext = CIContext(mtlDevice: device)
+        self.ciContext = CIContext(
+            mtlCommandQueue: commandQueue,
+            options: [.cacheIntermediates: false]
+        )
         super.init()
     }
 

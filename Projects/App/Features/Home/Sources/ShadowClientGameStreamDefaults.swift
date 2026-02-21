@@ -49,6 +49,7 @@ public enum ShadowClientStreamingLaunchBounds {
 
 public enum ShadowClientVideoDecoderDefaults {
     public static let defaultDecodePresentationTimeScale = ShadowClientStreamingLaunchBounds.defaultFPS
+    public static let defaultPixelBufferPoolMinimumBufferCount = 8
 }
 
 public enum ShadowClientRealtimeSessionDefaults {

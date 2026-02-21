@@ -40,15 +40,63 @@ extension ShadowClientVideoToolboxDecoderError: LocalizedError {
 
 private final class ShadowClientRealtimeDecoderOutputBridge: @unchecked Sendable {
     private let onFrame: @Sendable (CVPixelBuffer) async -> Void
+    private let deliveryQueue = DispatchQueue(
+        label: "com.skyline23.shadow-client.video-decoder.output",
+        qos: .userInteractive
+    )
+    private var latestPixelBuffer: CVPixelBuffer?
+    private var isDelivering = false
+    private var activeDeliveryTask: Task<Void, Never>?
 
     init(onFrame: @escaping @Sendable (CVPixelBuffer) async -> Void) {
         self.onFrame = onFrame
     }
 
+    deinit {
+        activeDeliveryTask?.cancel()
+    }
+
     func emit(_ pixelBuffer: CVPixelBuffer) {
         let sendablePixelBuffer = ShadowClientDecoderSendablePixelBuffer(value: pixelBuffer)
-        Task {
-            await onFrame(sendablePixelBuffer.value)
+        deliveryQueue.async { [weak self] in
+            guard let self else {
+                return
+            }
+            self.latestPixelBuffer = sendablePixelBuffer.value
+            self.scheduleDeliveryIfNeeded()
+        }
+    }
+
+    func stop() {
+        activeDeliveryTask?.cancel()
+        activeDeliveryTask = nil
+        deliveryQueue.async { [weak self] in
+            self?.latestPixelBuffer = nil
+            self?.isDelivering = false
+        }
+    }
+
+    private func scheduleDeliveryIfNeeded() {
+        guard !isDelivering,
+              let pixelBuffer = latestPixelBuffer
+        else {
+            return
+        }
+        latestPixelBuffer = nil
+        isDelivering = true
+        let sendablePixelBuffer = ShadowClientDecoderSendablePixelBuffer(value: pixelBuffer)
+        activeDeliveryTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            await self.onFrame(sendablePixelBuffer.value)
+            self.deliveryQueue.async { [weak self] in
+                guard let self else {
+                    return
+                }
+                self.isDelivering = false
+                self.scheduleDeliveryIfNeeded()
+            }
         }
     }
 }
@@ -273,7 +321,7 @@ public actor ShadowClientVideoToolboxDecoder {
             let creationStatus = VTDecompressionSessionCreate(
                 allocator: kCFAllocatorDefault,
                 formatDescription: formatDescription,
-                decoderSpecification: nil,
+                decoderSpecification: Self.hardwareDecoderSpecification,
                 imageBufferAttributes: imageBufferAttributes as CFDictionary,
                 outputCallback: &callbackRecord,
                 decompressionSessionOut: &createdSession
@@ -340,6 +388,7 @@ public actor ShadowClientVideoToolboxDecoder {
         if let session {
             VTDecompressionSessionInvalidate(session)
         }
+        outputBridge?.stop()
         session = nil
         formatDescription = nil
         outputBridge = nil
@@ -358,7 +407,16 @@ public actor ShadowClientVideoToolboxDecoder {
         [
             kCVPixelBufferMetalCompatibilityKey as String: true,
             kCVPixelBufferIOSurfacePropertiesKey as String: [:] as CFDictionary,
+            kCVPixelBufferPoolMinimumBufferCountKey as String:
+                ShadowClientVideoDecoderDefaults.defaultPixelBufferPoolMinimumBufferCount,
         ]
+    }
+
+    private static var hardwareDecoderSpecification: CFDictionary {
+        [
+            kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder as String: true,
+            kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder as String: true,
+        ] as CFDictionary
     }
 
     private func pixelBufferAttributes(for codec: ShadowClientVideoCodec) -> [String: Any] {
