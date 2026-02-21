@@ -157,6 +157,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 return
             }
 
+            var loggedUnexpectedPayloadTypes = Set<Int>()
+            var consecutiveDroppedOutputBuffers = 0
             while !Task.isCancelled {
                 do {
                     guard let datagram = try await Self.receiveDatagram(over: connection),
@@ -166,6 +168,15 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     }
 
                     guard let packet = Self.parseRTPPacket(datagram) else {
+                        continue
+                    }
+
+                    if packet.payloadType != preferredPayloadType {
+                        if loggedUnexpectedPayloadTypes.insert(packet.payloadType).inserted {
+                            logger.notice(
+                                "Ignoring RTP audio payload type \(packet.payloadType, privacy: .public) (expected \(preferredPayloadType, privacy: .public))"
+                            )
+                        }
                         continue
                     }
 
@@ -185,11 +196,35 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             if let pcmBuffer = try decoder.decode(
                                 payload: readyPacket.payload
                             ) {
+                                guard ShadowClientRealtimeAudioPCMBufferGuard.isSafeForPlayback(
+                                    pcmBuffer
+                                ) else {
+                                    consecutiveDroppedOutputBuffers += 1
+                                    if consecutiveDroppedOutputBuffers == 1 ||
+                                        consecutiveDroppedOutputBuffers.isMultiple(of: 25)
+                                    {
+                                        logger.error(
+                                            "Dropping suspicious decoded audio buffer (count=\(consecutiveDroppedOutputBuffers, privacy: .public))"
+                                        )
+                                    }
+                                    if consecutiveDroppedOutputBuffers >= 150 {
+                                        let message = "Audio decoder produced repeated suspicious PCM buffers."
+                                        logger.error("\(message, privacy: .public)")
+                                        output?.stop()
+                                        output = nil
+                                        updateState(.decoderFailed(message))
+                                        return
+                                    }
+                                    continue
+                                }
+                                consecutiveDroppedOutputBuffers = 0
                                 output?.enqueue(pcmBuffer: pcmBuffer)
                             }
                         } catch {
                             let message = "Audio decode failed: \(error.localizedDescription)"
                             logger.error("\(message, privacy: .public)")
+                            output?.stop()
+                            output = nil
                             updateState(.decoderFailed(message))
                             return
                         }
@@ -200,6 +235,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     }
                     let message = "Audio RTP receive failed: \(error.localizedDescription)"
                     logger.error("\(message, privacy: .public)")
+                    output?.stop()
+                    output = nil
                     updateState(.disconnected(message))
                     return
                 }
@@ -525,12 +562,8 @@ private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
         if lockedPayloadType == nil {
             lockedPayloadType = preferredPayloadType
         }
-        if let lockedPayloadType, packet.payloadType != lockedPayloadType {
-            if expectedSequence == nil {
-                self.lockedPayloadType = packet.payloadType
-            } else {
-                return []
-            }
+        guard let lockedPayloadType, packet.payloadType == lockedPayloadType else {
+            return []
         }
 
         packetsBySequence[packet.sequenceNumber] = packet
