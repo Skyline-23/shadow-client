@@ -57,6 +57,7 @@ public struct ShadowClientAppShellView: View {
     @State private var sessionDiagnosticsHistory = ShadowClientSessionDiagnosticsHistory(
         maxSamples: ShadowClientUIRuntimeDefaults.diagnosticsHUDSampleHistoryLimit
     )
+    @State private var lastRoundTripHistoryAppendUptime: TimeInterval = 0
     @State private var launchFailureAlertMessage = ""
     @State private var isLaunchFailureAlertPresented = false
     @State private var gamepadInputRuntime = ShadowClientGamepadInputPassthroughRuntime()
@@ -144,6 +145,11 @@ public struct ShadowClientAppShellView: View {
             guard remoteDesktopRuntime.activeSession != nil else {
                 return
             }
+            let now = ProcessInfo.processInfo.systemUptime
+            guard now - lastRoundTripHistoryAppendUptime >= 0.05 else {
+                return
+            }
+            lastRoundTripHistoryAppendUptime = now
             sessionDiagnosticsHistory.appendControlRoundTripMs(newRoundTripMs)
         }
         .onChange(of: remoteDesktopRuntime.activeSession != nil, initial: true) { _, isActive in

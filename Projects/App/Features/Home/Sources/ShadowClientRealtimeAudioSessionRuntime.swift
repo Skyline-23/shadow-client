@@ -84,11 +84,13 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             controlURL: nil,
             formatParameters: [:]
         )
+        var decoderImplementationName = "unknown"
 
         do {
             let resolvedDecoder = try ShadowClientRealtimeAudioDecoderFactory.make(
                 for: resolvedTrack
             )
+            decoderImplementationName = String(describing: type(of: resolvedDecoder))
             decoder = resolvedDecoder
             output = try ShadowClientRealtimeAudioEngineOutput(
                 format: resolvedDecoder.outputFormat
@@ -138,7 +140,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             )
             let encryptionLabel = payloadDecryptor == nil ? "disabled" : "enabled"
             logger.notice(
-                "Audio runtime started codec=\(resolvedTrack.codec.label, privacy: .public) payloadType=\(resolvedTrack.rtpPayloadType, privacy: .public) sampleRate=\(resolvedTrack.sampleRate, privacy: .public) channels=\(resolvedTrack.channelCount, privacy: .public) encryption=\(encryptionLabel, privacy: .public)"
+                "Audio runtime started codec=\(resolvedTrack.codec.label, privacy: .public) payloadType=\(resolvedTrack.rtpPayloadType, privacy: .public) sampleRate=\(resolvedTrack.sampleRate, privacy: .public) channels=\(resolvedTrack.channelCount, privacy: .public) encryption=\(encryptionLabel, privacy: .public) decoder=\(decoderImplementationName, privacy: .public)"
             )
         } catch {
             let message = "Audio transport failed to start: \(error.localizedDescription)"
@@ -757,6 +759,11 @@ private enum ShadowClientRealtimeAudioDecoderFactory {
         let customDecoderAttempt = makeCustomDecoderAttempt(for: track)
         switch track.codec {
         case .opus:
+            if track.channelCount > 2,
+               let customDecoder = customDecoderAttempt.decoder
+            {
+                return ShadowClientRealtimeCustomDecoderAdapter(base: customDecoder)
+            }
             do {
                 return try ShadowClientRealtimeOpusAudioDecoder(
                     sampleRate: track.sampleRate,
