@@ -57,7 +57,7 @@ public struct ShadowClientAppShellView: View {
     @State private var sessionDiagnosticsHistory = ShadowClientSessionDiagnosticsHistory(
         maxSamples: ShadowClientUIRuntimeDefaults.diagnosticsHUDSampleHistoryLimit
     )
-    @State private var sessionControlsVisible = true
+    @StateObject private var sessionOverlayVisibilityRuntime = ShadowClientSessionOverlayVisibilityRuntime()
     @State private var launchFailureAlertMessage = ""
     @State private var isLaunchFailureAlertPresented = false
     @State private var gamepadInputRuntime = ShadowClientGamepadInputPassthroughRuntime()
@@ -145,16 +145,11 @@ public struct ShadowClientAppShellView: View {
             sessionDiagnosticsHistory.appendControlRoundTripMs(newRoundTripMs)
         }
         .onChange(of: sessionSurfaceContext.renderState, initial: false) { _, newRenderState in
-            switch newRenderState {
-            case .disconnected, .failed:
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    sessionControlsVisible = true
-                }
-            case .idle, .connecting, .waitingForFirstFrame, .rendering:
-                break
-            }
+            sessionOverlayVisibilityRuntime.applyRenderState(newRenderState)
         }
         .onChange(of: remoteDesktopRuntime.activeSession != nil, initial: true) { _, isActive in
+            sessionOverlayVisibilityRuntime.setSessionActive(isActive)
+            sessionOverlayVisibilityRuntime.applyRenderState(sessionSurfaceContext.renderState)
             gamepadInputRuntime.setSessionActive(isActive)
         }
         .onChange(of: gamepadInputConfiguration, initial: true) { _, configuration in
@@ -1273,9 +1268,13 @@ public struct ShadowClientAppShellView: View {
                     }
 
                     ShadowClientSessionInputInteractionView(
-                        sessionControlsVisible: $sessionControlsVisible
+                        sessionControlsVisible: sessionControlsVisibilityBinding
                     ) { event in
                         remoteDesktopRuntime.sendInput(event)
+                    } onSessionInteraction: {
+                        sessionOverlayVisibilityRuntime.registerInteraction()
+                    } onSessionOverlayToggleCommand: {
+                        sessionOverlayVisibilityRuntime.toggleByLocalCommand()
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.clear)
@@ -1284,47 +1283,53 @@ public struct ShadowClientAppShellView: View {
                 .contentShape(Rectangle())
 
                 VStack(spacing: 0) {
-                    if sessionControlsVisible {
-                        HStack(alignment: .top, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Remote Session")
-                                    .font(.system(.headline, design: .rounded).weight(.bold))
-                                    .foregroundStyle(.white)
-                                Text("\(activeSession.appTitle) · \(activeSession.host)")
-                                    .font(.footnote.weight(.semibold))
-                                    .foregroundStyle(Color.white.opacity(0.86))
-                                    .lineLimit(1)
-                                Text("Codec · \(activeSessionVideoCodecLabel)")
-                                    .font(.caption.monospacedDigit().weight(.semibold))
-                                    .foregroundStyle(Color.white.opacity(0.72))
-                            }
-
-                            Spacer(minLength: 8)
-
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    showDiagnosticsHUD.toggle()
+                    if sessionOverlayVisibilityRuntime.isVisible {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .top, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Remote Session")
+                                        .font(.system(.headline, design: .rounded).weight(.bold))
+                                        .foregroundStyle(.white)
+                                    Text("\(activeSession.appTitle) · \(activeSession.host)")
+                                        .font(.footnote.weight(.semibold))
+                                        .foregroundStyle(Color.white.opacity(0.86))
+                                        .lineLimit(1)
+                                    Text("Codec · \(activeSessionVideoCodecLabel)")
+                                        .font(.caption.monospacedDigit().weight(.semibold))
+                                        .foregroundStyle(Color.white.opacity(0.72))
                                 }
-                            } label: {
-                                Label(
-                                    showDiagnosticsHUD ? "HUD On" : "HUD Off",
-                                    systemImage: showDiagnosticsHUD
-                                        ? "waveform.path.ecg.rectangle.fill"
-                                        : "waveform.path.ecg.rectangle"
-                                )
-                            }
-                            .accessibilityIdentifier("shadow.home.session.hud-toggle")
-                            .accessibilityLabel("Toggle Session HUD")
-                            .accessibilityHint("Shows or hides realtime diagnostics overlay.")
-                            .buttonStyle(.bordered)
 
-                            Button("End Session") {
-                                remoteDesktopRuntime.clearActiveSession()
+                                Spacer(minLength: 8)
+
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        showDiagnosticsHUD.toggle()
+                                    }
+                                } label: {
+                                    Label(
+                                        showDiagnosticsHUD ? "HUD On" : "HUD Off",
+                                        systemImage: showDiagnosticsHUD
+                                            ? "waveform.path.ecg.rectangle.fill"
+                                            : "waveform.path.ecg.rectangle"
+                                    )
+                                }
+                                .accessibilityIdentifier("shadow.home.session.hud-toggle")
+                                .accessibilityLabel("Toggle Session HUD")
+                                .accessibilityHint("Shows or hides realtime diagnostics overlay.")
+                                .buttonStyle(.bordered)
+
+                                Button("End Session") {
+                                    remoteDesktopRuntime.clearActiveSession()
+                                }
+                                .accessibilityIdentifier("shadow.home.session.end")
+                                .accessibilityLabel("End Session")
+                                .accessibilityHint("Disconnects the active session and returns to the host list.")
+                                .buttonStyle(.borderedProminent)
                             }
-                            .accessibilityIdentifier("shadow.home.session.end")
-                            .accessibilityLabel("End Session")
-                            .accessibilityHint("Disconnects the active session and returns to the host list.")
-                            .buttonStyle(.borderedProminent)
+
+                            Text("Toggle controls: Ctrl+Option+Command+M")
+                                .font(.caption2.monospacedDigit().weight(.medium))
+                                .foregroundStyle(Color.white.opacity(0.65))
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
@@ -1338,7 +1343,7 @@ public struct ShadowClientAppShellView: View {
 
                     Spacer(minLength: 0)
 
-                    if sessionControlsVisible {
+                    if shouldShowBottomSessionStatusBar {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(sessionPresentationModel.statusText)
                                 .font(.callout.weight(.semibold))
@@ -1394,14 +1399,11 @@ public struct ShadowClientAppShellView: View {
                         }
                         Spacer(minLength: 0)
                     }
-                    .padding(.top, sessionControlsVisible ? 72 : 12)
+                    .padding(.top, sessionOverlayVisibilityRuntime.isVisible ? 72 : 12)
                     .padding(.trailing, 12)
                     .safeAreaPadding([.top, .trailing])
                     .allowsHitTesting(false)
                 }
-            }
-            .onAppear {
-                sessionControlsVisible = true
             }
         }
     }
@@ -1468,6 +1470,26 @@ public struct ShadowClientAppShellView: View {
             controlRoundTripMs: sessionSurfaceContext.controlRoundTripMs,
             renderState: sessionSurfaceContext.renderState
         )
+    }
+
+    private var sessionControlsVisibilityBinding: Binding<Bool> {
+        Binding(
+            get: { sessionOverlayVisibilityRuntime.isVisible },
+            set: { sessionOverlayVisibilityRuntime.setVisible($0) }
+        )
+    }
+
+    private var shouldShowBottomSessionStatusBar: Bool {
+        guard remoteDesktopRuntime.activeSession != nil else {
+            return false
+        }
+
+        switch sessionSurfaceContext.renderState {
+        case .rendering:
+            return sessionOverlayVisibilityRuntime.isVisible
+        case .idle, .connecting, .waitingForFirstFrame, .disconnected, .failed:
+            return true
+        }
     }
 
     private func panelSurface(cornerRadius: CGFloat) -> some View {
