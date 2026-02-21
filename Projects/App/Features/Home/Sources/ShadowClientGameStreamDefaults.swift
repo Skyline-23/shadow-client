@@ -75,6 +75,11 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let decoderRecoveryCooldownSeconds: TimeInterval = 0.75
     public static let decoderRecoveryAttemptWindowSeconds: TimeInterval = 8.0
     public static let av1MaxDecoderRecoveryAttempts = 2
+    public static let decoderOutputStallThresholdSeconds: TimeInterval = 1.1
+    public static let decoderOutputStallActiveDecodeWindowSeconds: TimeInterval = 0.45
+    public static let decoderOutputStallRecoveryCooldownSeconds: TimeInterval = 1.0
+    public static let decoderOutputStallRecoveryWindowSeconds: TimeInterval = 8.0
+    public static let av1MaxDecoderOutputStallRecoveries = 2
 }
 
 public enum ShadowClientRTSPRequestDefaults {

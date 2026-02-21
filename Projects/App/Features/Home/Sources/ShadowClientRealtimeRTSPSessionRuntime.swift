@@ -102,6 +102,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var rtspClient: ShadowClientRTSPInterleavedClient?
     private var receiveTask: Task<Void, Never>?
     private var decodeTask: Task<Void, Never>?
+    private var stallMonitorTask: Task<Void, Never>?
     private var videoDecodeQueue: ShadowClientVideoDecodeQueue?
     private var shadowClientNVDepacketizer = ShadowClientMoonlightNVRTPDepacketizer()
     private var hasLoggedDecodedFrameMetadata = false
@@ -119,6 +120,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var lastDecoderRecoveryUptime: TimeInterval = 0
     private var decoderRecoveryAttemptCount = 0
     private var firstDecoderRecoveryAttemptUptime: TimeInterval = 0
+    private var decoderOutputStallRecoveryCount = 0
+    private var firstDecoderOutputStallRecoveryUptime: TimeInterval = 0
+    private var lastDecoderOutputStallRecoveryUptime: TimeInterval = 0
+    private var lastDecodeSubmitUptime: TimeInterval = 0
+    private var lastDecodedFrameOutputUptime: TimeInterval = 0
     private var av1DepacketizerRecoveryCount = 0
     private var firstAV1DepacketizerRecoveryUptime: TimeInterval = 0
     private var hasRenderedFirstFrame = false
@@ -137,6 +143,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     deinit {
         receiveTask?.cancel()
         decodeTask?.cancel()
+        stallMonitorTask?.cancel()
     }
 
     public func connect(
@@ -172,6 +179,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastDecoderRecoveryUptime = 0
         decoderRecoveryAttemptCount = 0
         firstDecoderRecoveryAttemptUptime = 0
+        decoderOutputStallRecoveryCount = 0
+        firstDecoderOutputStallRecoveryUptime = 0
+        lastDecoderOutputStallRecoveryUptime = 0
+        lastDecodeSubmitUptime = 0
+        lastDecodedFrameOutputUptime = 0
         av1DepacketizerRecoveryCount = 0
         firstAV1DepacketizerRecoveryUptime = 0
         hasRenderedFirstFrame = false
@@ -233,6 +245,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         decodeTask = Task { [weak self] in
             await self?.runDecodeLoop()
         }
+        stallMonitorTask = Task { [weak self] in
+            await self?.runDecoderOutputStallMonitor(codec: track.codec)
+        }
 
         try await waitForInitialRenderState(timeout: connectTimeout)
     }
@@ -242,6 +257,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         receiveTask = nil
         decodeTask?.cancel()
         decodeTask = nil
+        stallMonitorTask?.cancel()
+        stallMonitorTask = nil
         await closeVideoDecodeQueue()
 
         if let rtspClient {
@@ -265,6 +282,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastDecoderRecoveryUptime = 0
         decoderRecoveryAttemptCount = 0
         firstDecoderRecoveryAttemptUptime = 0
+        decoderOutputStallRecoveryCount = 0
+        firstDecoderOutputStallRecoveryUptime = 0
+        lastDecoderOutputStallRecoveryUptime = 0
+        lastDecodeSubmitUptime = 0
+        lastDecodedFrameOutputUptime = 0
         av1DepacketizerRecoveryCount = 0
         firstAV1DepacketizerRecoveryUptime = 0
         hasRenderedFirstFrame = false
@@ -307,6 +329,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 surfaceContext.transition(to: nextState)
             }
         }
+        stallMonitorTask?.cancel()
+        stallMonitorTask = nil
         await closeVideoDecodeQueue()
     }
 
@@ -322,6 +346,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     codec: accessUnit.codec,
                     parameterSets: accessUnit.parameterSets
                 )
+                lastDecodeSubmitUptime = ProcessInfo.processInfo.systemUptime
                 decoderFailureCount = 0
                 firstDecoderFailureUptime = 0
                 if accessUnit.codec == .av1 {
@@ -362,6 +387,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private func failStreamingSession(message: String) async {
         logger.error("\(message, privacy: .public)")
         receiveTask?.cancel()
+        stallMonitorTask?.cancel()
+        stallMonitorTask = nil
         let sessionSurfaceContext = self.surfaceContext
         await MainActor.run {
             sessionSurfaceContext.transition(to: .failed(message))
@@ -577,6 +604,97 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         return true
     }
 
+    private func runDecoderOutputStallMonitor(codec: ShadowClientVideoCodec) async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(250))
+            if Task.isCancelled {
+                return
+            }
+
+            let now = ProcessInfo.processInfo.systemUptime
+            let shouldRecover = Self.shouldTriggerDecoderOutputStallRecovery(
+                hasRenderedFirstFrame: hasRenderedFirstFrame,
+                now: now,
+                lastDecodeSubmitUptime: lastDecodeSubmitUptime,
+                lastDecodedFrameOutputUptime: lastDecodedFrameOutputUptime
+            )
+            guard shouldRecover else {
+                continue
+            }
+
+            if await handleDecoderOutputStall(codec: codec, now: now) {
+                continue
+            }
+            if codec == .av1 {
+                await failStreamingSession(
+                    message: Self.av1RuntimeFallbackMessage(reason: "decoder output stalled")
+                )
+                return
+            }
+            await failStreamingSession(
+                message: "Video decoder output stalled while transport remained active."
+            )
+            return
+        }
+    }
+
+    private func handleDecoderOutputStall(
+        codec: ShadowClientVideoCodec,
+        now: TimeInterval
+    ) async -> Bool {
+        guard now - lastDecoderOutputStallRecoveryUptime >=
+            ShadowClientRealtimeSessionDefaults.decoderOutputStallRecoveryCooldownSeconds
+        else {
+            return true
+        }
+
+        if firstDecoderOutputStallRecoveryUptime == 0 ||
+            now - firstDecoderOutputStallRecoveryUptime >
+            ShadowClientRealtimeSessionDefaults.decoderOutputStallRecoveryWindowSeconds
+        {
+            firstDecoderOutputStallRecoveryUptime = now
+            decoderOutputStallRecoveryCount = 0
+        }
+        decoderOutputStallRecoveryCount += 1
+        lastDecoderOutputStallRecoveryUptime = now
+
+        if codec == .av1,
+           decoderOutputStallRecoveryCount >=
+           ShadowClientRealtimeSessionDefaults.av1MaxDecoderOutputStallRecoveries
+        {
+            logger.error(
+                "AV1 decoder output stall recovery attempts exceeded threshold; forcing HEVC fallback path"
+            )
+            return false
+        }
+
+        logger.error(
+            "Video decoder output stalled for codec \(String(describing: codec), privacy: .public); resetting decoder and requesting recovery frame"
+        )
+        await decoder.reset()
+        if let configuration = activeVideoConfiguration {
+            await decoder.setPreferredOutputDimensions(
+                width: configuration.width,
+                height: configuration.height,
+                fps: configuration.fps
+            )
+            await decoder.configureAV1Fallback(
+                hdrEnabled: configuration.enableHDR,
+                yuv444Enabled: configuration.enableYUV444
+            )
+        }
+        if let rtspClient {
+            await rtspClient.requestVideoRecoveryFrame()
+        }
+        lastDecodeSubmitUptime = now
+        lastDecodedFrameOutputUptime = now
+        let sessionSurfaceContext = self.surfaceContext
+        await MainActor.run {
+            sessionSurfaceContext.transition(to: .waitingForFirstFrame)
+        }
+        return true
+    }
+
     private func decodeFrame(
         accessUnit: Data,
         codec: ShadowClientVideoCodec,
@@ -590,6 +708,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             parameterSets: parameterSets
         ) { [surfaceContext] pixelBuffer in
             let sendableFrame = ShadowClientSendablePixelBuffer(value: pixelBuffer)
+            await runtime.recordDecodedFrameOutputUptime()
             await runtime.logDecodedFrameMetadataIfNeeded(
                 codec: codec,
                 pixelBuffer: sendableFrame.value
@@ -716,6 +835,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         )
     }
 
+    private func recordDecodedFrameOutputUptime() {
+        lastDecodedFrameOutputUptime = ProcessInfo.processInfo.systemUptime
+        decoderOutputStallRecoveryCount = 0
+        firstDecoderOutputStallRecoveryUptime = 0
+    }
+
     private func attachmentStringValue(
         forKey key: CFString,
         pixelBuffer: CVPixelBuffer
@@ -746,6 +871,30 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
     private static func av1RuntimeFallbackMessage(reason: String) -> String {
         "AV1 decode failed (\(reason)). Runtime recovery exhausted; retry with HEVC fallback."
+    }
+
+    static func shouldTriggerDecoderOutputStallRecovery(
+        hasRenderedFirstFrame: Bool,
+        now: TimeInterval,
+        lastDecodeSubmitUptime: TimeInterval,
+        lastDecodedFrameOutputUptime: TimeInterval
+    ) -> Bool {
+        guard hasRenderedFirstFrame else {
+            return false
+        }
+        guard lastDecodeSubmitUptime > 0, lastDecodedFrameOutputUptime > 0 else {
+            return false
+        }
+
+        let secondsSinceDecodeSubmit = now - lastDecodeSubmitUptime
+        let secondsSinceDecodedFrameOutput = now - lastDecodedFrameOutputUptime
+        guard secondsSinceDecodeSubmit <=
+            ShadowClientRealtimeSessionDefaults.decoderOutputStallActiveDecodeWindowSeconds
+        else {
+            return false
+        }
+        return secondsSinceDecodedFrameOutput >=
+            ShadowClientRealtimeSessionDefaults.decoderOutputStallThresholdSeconds
     }
 
     static func isLikelyValidAV1AccessUnit(_ accessUnit: Data) -> Bool {

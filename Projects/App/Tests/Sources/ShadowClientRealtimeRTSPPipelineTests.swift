@@ -674,6 +674,42 @@ func realtimeRuntimeAv1AccessUnitValidatorRejectsMalformedPayloads() {
     #expect(!ShadowClientRealtimeRTSPSessionRuntime.isLikelyValidAV1AccessUnit(invalidSize))
 }
 
+@Test("Realtime runtime stall detector triggers recovery when decode submits continue without frame output")
+func realtimeRuntimeStallDetectorTriggersRecoveryForActiveDecodePath() {
+    let shouldRecover = ShadowClientRealtimeRTSPSessionRuntime.shouldTriggerDecoderOutputStallRecovery(
+        hasRenderedFirstFrame: true,
+        now: 100.0,
+        lastDecodeSubmitUptime: 99.8,
+        lastDecodedFrameOutputUptime: 98.5
+    )
+
+    #expect(shouldRecover)
+}
+
+@Test("Realtime runtime stall detector ignores stale decode submit timestamps")
+func realtimeRuntimeStallDetectorIgnoresInactiveDecodePath() {
+    let shouldRecover = ShadowClientRealtimeRTSPSessionRuntime.shouldTriggerDecoderOutputStallRecovery(
+        hasRenderedFirstFrame: true,
+        now: 100.0,
+        lastDecodeSubmitUptime: 98.9,
+        lastDecodedFrameOutputUptime: 98.0
+    )
+
+    #expect(!shouldRecover)
+}
+
+@Test("Realtime runtime stall detector does not trigger before first rendered frame")
+func realtimeRuntimeStallDetectorRequiresFirstRenderedFrame() {
+    let shouldRecover = ShadowClientRealtimeRTSPSessionRuntime.shouldTriggerDecoderOutputStallRecovery(
+        hasRenderedFirstFrame: false,
+        now: 100.0,
+        lastDecodeSubmitUptime: 99.8,
+        lastDecodedFrameOutputUptime: 98.2
+    )
+
+    #expect(!shouldRecover)
+}
+
 private let nvVideoPacketFlagContainsPicData: UInt8 = 0x01
 private let nvVideoPacketFlagEOF: UInt8 = 0x02
 private let nvVideoPacketFlagSOF: UInt8 = 0x04
