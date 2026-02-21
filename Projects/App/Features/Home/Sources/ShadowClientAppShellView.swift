@@ -1959,9 +1959,9 @@ public struct ShadowClientAppShellView: View {
     @MainActor
     private func restartSettingsTelemetrySubscription(for settings: ShadowClientAppSettings) {
         settingsTelemetryTask?.cancel()
-        let telemetryValues = baseDependencies.telemetryPublisher.values
         settingsTelemetryTask = Task {
-            for await snapshot in telemetryValues {
+            let telemetryStream = await baseDependencies.makeTelemetryStream()
+            for await snapshot in telemetryStream {
                 if Task.isCancelled {
                     return
                 }

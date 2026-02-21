@@ -40,7 +40,7 @@ public final class ShadowClientFeatureHomeContainer {
         )
 
         self.dependencies = .init(
-            telemetryPublisher: bridge.snapshotPublisher,
+            makeTelemetryStream: { await bridge.snapshotStream() },
             diagnosticsRuntime: diagnosticsRuntime,
             connectionRuntime: connectionRuntime,
             hostDiscoveryRuntime: hostDiscoveryRuntime,

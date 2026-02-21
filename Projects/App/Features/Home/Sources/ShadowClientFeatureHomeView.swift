@@ -1,10 +1,11 @@
-import Combine
 import ShadowClientStreaming
 import ShadowClientUI
 import SwiftUI
 
 public struct ShadowClientFeatureHomeDependencies {
-    public let telemetryPublisher: AnyPublisher<StreamingTelemetrySnapshot, Never>
+    public typealias TelemetryStreamFactory = @Sendable () async -> AsyncStream<StreamingTelemetrySnapshot>
+
+    public let makeTelemetryStream: TelemetryStreamFactory
     public let diagnosticsRuntime: HomeDiagnosticsRuntime
     public let connectionRuntime: ShadowClientConnectionRuntime
     public let hostDiscoveryRuntime: ShadowClientHostDiscoveryRuntime
@@ -15,7 +16,7 @@ public struct ShadowClientFeatureHomeDependencies {
     public let hostCapabilities: HostStreamingCapabilities
 
     public init(
-        telemetryPublisher: AnyPublisher<StreamingTelemetrySnapshot, Never>,
+        makeTelemetryStream: @escaping TelemetryStreamFactory,
         diagnosticsRuntime: HomeDiagnosticsRuntime,
         connectionRuntime: ShadowClientConnectionRuntime,
         hostDiscoveryRuntime: ShadowClientHostDiscoveryRuntime,
@@ -25,7 +26,7 @@ public struct ShadowClientFeatureHomeDependencies {
         sessionPreferences: StreamingUserPreferences,
         hostCapabilities: HostStreamingCapabilities
     ) {
-        self.telemetryPublisher = telemetryPublisher
+        self.makeTelemetryStream = makeTelemetryStream
         self.diagnosticsRuntime = diagnosticsRuntime
         self.connectionRuntime = connectionRuntime
         self.hostDiscoveryRuntime = hostDiscoveryRuntime
@@ -579,9 +580,9 @@ public struct ShadowClientFeatureHomeView: View {
 
     private func startTelemetrySubscription() {
         telemetryTask?.cancel()
-        let telemetryValues = dependencies.telemetryPublisher.values
         telemetryTask = Task {
-            for await snapshot in telemetryValues {
+            let telemetryStream = await dependencies.makeTelemetryStream()
+            for await snapshot in telemetryStream {
                 if Task.isCancelled {
                     return
                 }

@@ -417,7 +417,7 @@ public extension ShadowClientFeatureHomeDependencies {
         let updatedPreferences = settings.streamingPreferences
 
         return .init(
-            telemetryPublisher: telemetryPublisher,
+            makeTelemetryStream: makeTelemetryStream,
             diagnosticsRuntime: HomeDiagnosticsRuntime(
                 launchRuntime: AdaptiveSessionLaunchRuntime(
                     telemetryPipeline: .init(initialBufferMs: 40.0),
