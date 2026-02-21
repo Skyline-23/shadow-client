@@ -765,6 +765,17 @@ private actor ShadowClientRemoteInputSendQueue {
     }
 }
 
+private enum ShadowClientRemoteDesktopCommand: Sendable {
+    case refreshHosts(candidates: [String], preferredHost: String?)
+    case pairSelectedHost
+    case launchSelectedApp(appID: Int, appTitle: String?, settings: ShadowClientGameStreamLaunchSettings)
+    case clearActiveSession
+    case sendInput(ShadowClientRemoteInputEvent)
+    case openSessionFlow(host: String, appTitle: String)
+    case selectHost(String)
+    case refreshSelectedHostApps
+}
+
 public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @Published public private(set) var hosts: [ShadowClientRemoteHostDescriptor] = []
     @Published public private(set) var apps: [ShadowClientRemoteAppDescriptor] = []
@@ -784,6 +795,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private let inputSendQueue: ShadowClientRemoteInputSendQueue
     private let pinProvider: any ShadowClientPairingPINProviding
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RemoteDesktopRuntime")
+    private let commandContinuation: AsyncStream<ShadowClientRemoteDesktopCommand>.Continuation
+    private var commandLoopTask: Task<Void, Never>?
     private var refreshHostsTask: Task<Void, Never>?
     private var refreshAppsTask: Task<Void, Never>?
     private var pairTask: Task<Void, Never>?
@@ -803,10 +816,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         sessionInputClient: any ShadowClientRemoteSessionInputClient = NoopShadowClientRemoteSessionInputClient(),
         pinProvider: any ShadowClientPairingPINProviding = ShadowClientRandomPairingPINProvider()
     ) {
+        let (commandStream, commandContinuation) = AsyncStream.makeStream(of: ShadowClientRemoteDesktopCommand.self)
+
         self.metadataClient = metadataClient
         self.controlClient = controlClient
         self.sessionConnectionClient = sessionConnectionClient
         self.sessionInputClient = sessionInputClient
+        self.commandContinuation = commandContinuation
         self.inputSendQueue = ShadowClientRemoteInputSendQueue(
             send: { [sessionInputClient] event, host, sessionURL in
                 try await sessionInputClient.send(
@@ -825,13 +841,51 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         self.pinProvider = pinProvider
         self.sessionPresentationMode = sessionConnectionClient.presentationMode
         self.sessionSurfaceContext = sessionConnectionClient.sessionSurfaceContext
+
+        commandLoopTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            for await command in commandStream {
+                await self.process(command: command)
+            }
+        }
     }
 
     deinit {
+        commandContinuation.finish()
+        commandLoopTask?.cancel()
         refreshHostsTask?.cancel()
         refreshAppsTask?.cancel()
         pairTask?.cancel()
         launchTask?.cancel()
+    }
+
+    @MainActor
+    private func process(command: ShadowClientRemoteDesktopCommand) {
+        switch command {
+        case let .refreshHosts(candidates, preferredHost):
+            performRefreshHosts(candidates: candidates, preferredHost: preferredHost)
+        case .pairSelectedHost:
+            performPairSelectedHost()
+        case let .launchSelectedApp(appID, appTitle, settings):
+            performLaunchSelectedApp(
+                appID: appID,
+                appTitle: appTitle,
+                settings: settings
+            )
+        case .clearActiveSession:
+            performClearActiveSession()
+        case let .sendInput(event):
+            performSendInput(event)
+        case let .openSessionFlow(host, appTitle):
+            performOpenSessionFlow(host: host, appTitle: appTitle)
+        case let .selectHost(hostID):
+            performSelectHost(hostID)
+        case .refreshSelectedHostApps:
+            performRefreshSelectedHostApps()
+        }
     }
 
     @MainActor
@@ -850,6 +904,19 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     @MainActor
     public func refreshHosts(
+        candidates: [String],
+        preferredHost: String? = nil
+    ) {
+        commandContinuation.yield(
+            .refreshHosts(
+                candidates: candidates,
+                preferredHost: preferredHost
+            )
+        )
+    }
+
+    @MainActor
+    private func performRefreshHosts(
         candidates: [String],
         preferredHost: String? = nil
     ) {
@@ -930,13 +997,18 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     }
                 }
 
-                refreshSelectedHostApps()
+                performRefreshSelectedHostApps()
             }
         }
     }
 
     @MainActor
     public func pairSelectedHost() {
+        commandContinuation.yield(.pairSelectedHost)
+    }
+
+    @MainActor
+    private func performPairSelectedHost() {
         guard let selectedHost else {
             pairingState = .failed("Select host first.")
             return
@@ -1026,6 +1098,21 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     @MainActor
     public func launchSelectedApp(
+        appID: Int,
+        appTitle: String? = nil,
+        settings: ShadowClientGameStreamLaunchSettings
+    ) {
+        commandContinuation.yield(
+            .launchSelectedApp(
+                appID: appID,
+                appTitle: appTitle,
+                settings: settings
+            )
+        )
+    }
+
+    @MainActor
+    private func performLaunchSelectedApp(
         appID: Int,
         appTitle: String? = nil,
         settings: ShadowClientGameStreamLaunchSettings
@@ -1183,6 +1270,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     @MainActor
     public func clearActiveSession() {
+        commandContinuation.yield(.clearActiveSession)
+    }
+
+    @MainActor
+    private func performClearActiveSession() {
         launchTask?.cancel()
         launchTask = nil
         launchGeneration &+= 1
@@ -1201,6 +1293,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     @MainActor
     public func sendInput(_ event: ShadowClientRemoteInputEvent) {
+        commandContinuation.yield(.sendInput(event))
+    }
+
+    @MainActor
+    private func performSendInput(_ event: ShadowClientRemoteInputEvent) {
         guard let activeSession else {
             return
         }
@@ -1587,6 +1684,16 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     @MainActor
     public func openSessionFlow(host: String, appTitle: String = "Remote Desktop") {
+        commandContinuation.yield(
+            .openSessionFlow(
+                host: host,
+                appTitle: appTitle
+            )
+        )
+    }
+
+    @MainActor
+    private func performOpenSessionFlow(host: String, appTitle: String = "Remote Desktop") {
         let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedHost.isEmpty else {
             return
@@ -1607,6 +1714,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     @MainActor
     public func selectHost(_ hostID: String) {
+        commandContinuation.yield(.selectHost(hostID))
+    }
+
+    @MainActor
+    private func performSelectHost(_ hostID: String) {
         pendingSelectedHostID = hostID
         guard hosts.contains(where: { $0.id == hostID }) else {
             return
@@ -1614,11 +1726,16 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         pendingSelectedHostID = nil
         selectedHostID = hostID
-        refreshSelectedHostApps()
+        performRefreshSelectedHostApps()
     }
 
     @MainActor
     public func refreshSelectedHostApps() {
+        commandContinuation.yield(.refreshSelectedHostApps)
+    }
+
+    @MainActor
+    private func performRefreshSelectedHostApps() {
         appRefreshGeneration &+= 1
         let refreshGeneration = appRefreshGeneration
 
