@@ -1333,6 +1333,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     private static func shouldSuppressInputSendError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if (nsError.domain == "Network.NWError" && nsError.code == 89) ||
+            (nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled)
+        {
+            return true
+        }
+
         if let networkError = error as? NWError {
             if case let .posix(code) = networkError {
                 switch code {
@@ -1361,6 +1368,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         if normalized.contains("operation canceled") ||
+            normalized.contains("operation cancelled") ||
+            normalized.contains("nwerror error 89") ||
             normalized.contains("connection closed")
         {
             return true
