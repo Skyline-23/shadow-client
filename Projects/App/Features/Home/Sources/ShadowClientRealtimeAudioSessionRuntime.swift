@@ -185,6 +185,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var currentPayloadType = preferredPayloadType
             var loggedUnexpectedPayloadTypes = Set<Int>()
             var consecutiveDroppedOutputBuffers = 0
+            var consecutiveDroppedOutputQueueBuffers = 0
             var consecutiveDecryptFailures = 0
             while !Task.isCancelled {
                 do {
@@ -287,7 +288,18 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                     continue
                                 }
                                 consecutiveDroppedOutputBuffers = 0
-                                output?.enqueue(pcmBuffer: pcmBuffer)
+                                if output?.enqueue(pcmBuffer: pcmBuffer) == false {
+                                    consecutiveDroppedOutputQueueBuffers += 1
+                                    if consecutiveDroppedOutputQueueBuffers == 1 ||
+                                        consecutiveDroppedOutputQueueBuffers.isMultiple(of: 25)
+                                    {
+                                        logger.error(
+                                            "Dropping decoded audio buffer due to output queue saturation (count=\(consecutiveDroppedOutputQueueBuffers, privacy: .public))"
+                                        )
+                                    }
+                                    continue
+                                }
+                                consecutiveDroppedOutputQueueBuffers = 0
                             }
                         } catch {
                             let message = "Audio decode failed: \(error.localizedDescription)"
@@ -894,6 +906,8 @@ private final class ShadowClientRealtimeOpusAudioDecoder: ShadowClientRealtimeAu
     let outputFormat: AVAudioFormat
     private let inputFormat: AVAudioFormat
     private let converter: AVAudioConverter
+    private var compressedPacketBuffer: AVAudioCompressedBuffer
+    private var compressedPacketCapacity: Int
 
     init(sampleRate: Int, channels: Int) throws {
         self.sampleRate = sampleRate
@@ -937,26 +951,27 @@ private final class ShadowClientRealtimeOpusAudioDecoder: ShadowClientRealtimeAu
             )
         }
         self.converter = converter
+        let initialCompressedPacketCapacity = 2_048
+        self.compressedPacketCapacity = initialCompressedPacketCapacity
+        self.compressedPacketBuffer = AVAudioCompressedBuffer(
+            format: inputFormat,
+            packetCapacity: 1,
+            maximumPacketSize: max(1, initialCompressedPacketCapacity)
+        )
     }
 
     func decode(payload: Data) throws -> AVAudioPCMBuffer? {
         guard !payload.isEmpty else {
             return nil
         }
-
-        let compressedBuffer = AVAudioCompressedBuffer(
-            format: inputFormat,
-            packetCapacity: 1,
-            maximumPacketSize: max(1, payload.count)
-        )
-
+        ensureCompressedPacketBufferCapacity(minimumPacketSize: payload.count)
         payload.copyBytes(
-            to: compressedBuffer.data.assumingMemoryBound(to: UInt8.self),
+            to: compressedPacketBuffer.data.assumingMemoryBound(to: UInt8.self),
             count: payload.count
         )
-        compressedBuffer.byteLength = UInt32(payload.count)
-        compressedBuffer.packetCount = 1
-        if let packetDescriptions = compressedBuffer.packetDescriptions {
+        compressedPacketBuffer.byteLength = UInt32(payload.count)
+        compressedPacketBuffer.packetCount = 1
+        if let packetDescriptions = compressedPacketBuffer.packetDescriptions {
             packetDescriptions[0] = AudioStreamPacketDescription(
                 mStartOffset: 0,
                 mVariableFramesInPacket: 0,
@@ -974,14 +989,14 @@ private final class ShadowClientRealtimeOpusAudioDecoder: ShadowClientRealtimeAu
 
         var didProvideInput = false
         var conversionError: NSError?
-        let status = converter.convert(to: pcmBuffer, error: &conversionError) { _, status in
+        let status = converter.convert(to: pcmBuffer, error: &conversionError) { [self] _, status in
             if didProvideInput {
                 status.pointee = .noDataNow
                 return nil
             }
             didProvideInput = true
             status.pointee = .haveData
-            return compressedBuffer
+            return self.compressedPacketBuffer
         }
 
         if let conversionError {
@@ -1004,6 +1019,19 @@ private final class ShadowClientRealtimeOpusAudioDecoder: ShadowClientRealtimeAu
         @unknown default:
             return nil
         }
+    }
+
+    private func ensureCompressedPacketBufferCapacity(minimumPacketSize: Int) {
+        guard minimumPacketSize > compressedPacketCapacity else {
+            return
+        }
+        let nextCapacity = max(minimumPacketSize, compressedPacketCapacity * 2)
+        compressedPacketCapacity = nextCapacity
+        compressedPacketBuffer = AVAudioCompressedBuffer(
+            format: inputFormat,
+            packetCapacity: 1,
+            maximumPacketSize: max(1, nextCapacity)
+        )
     }
 }
 
@@ -1170,9 +1198,13 @@ private final class ShadowClientRealtimeG711AudioDecoder: ShadowClientRealtimeAu
 }
 
 private final class ShadowClientRealtimeAudioEngineOutput {
+    private static let maximumQueuedBufferCount = 12
+
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let format: AVAudioFormat
+    private let queuedBufferLock = NSLock()
+    private var queuedBufferCount = 0
     private var isStarted = false
 
     init(format: AVAudioFormat) throws {
@@ -1188,7 +1220,7 @@ private final class ShadowClientRealtimeAudioEngineOutput {
         isStarted = true
     }
 
-    func enqueue(pcmBuffer: AVAudioPCMBuffer) {
+    func enqueue(pcmBuffer: AVAudioPCMBuffer) -> Bool {
         if !isStarted {
             try? engine.start()
             player.play()
@@ -1197,10 +1229,21 @@ private final class ShadowClientRealtimeAudioEngineOutput {
             player.play()
         }
 
+        queuedBufferLock.lock()
+        if queuedBufferCount >= Self.maximumQueuedBufferCount {
+            queuedBufferLock.unlock()
+            return false
+        }
+        queuedBufferCount += 1
+        queuedBufferLock.unlock()
+
         player.scheduleBuffer(
             pcmBuffer,
-            completionHandler: nil
-        )
+            completionCallbackType: .dataConsumed
+        ) { [weak self] _ in
+            self?.didConsumeQueuedBuffer()
+        }
+        return true
     }
 
     func stop() {
@@ -1212,6 +1255,15 @@ private final class ShadowClientRealtimeAudioEngineOutput {
         engine.reset()
         engine.detach(player)
         isStarted = false
+        queuedBufferLock.lock()
+        queuedBufferCount = 0
+        queuedBufferLock.unlock()
+    }
+
+    private func didConsumeQueuedBuffer() {
+        queuedBufferLock.lock()
+        queuedBufferCount = max(0, queuedBufferCount - 1)
+        queuedBufferLock.unlock()
     }
 }
 

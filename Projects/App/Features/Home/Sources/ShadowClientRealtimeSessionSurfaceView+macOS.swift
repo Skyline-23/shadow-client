@@ -4,6 +4,7 @@ import SwiftUI
 import AppKit
 import CoreImage
 import CoreVideo
+import Foundation
 import MetalKit
 
 struct ShadowClientRealtimeSessionSurfaceRepresentable: NSViewRepresentable {
@@ -59,6 +60,11 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private let frameStore: ShadowClientRealtimeSessionFrameStore
     private let commandQueue: MTLCommandQueue
     private let ciContext: CIContext
+    private var cachedSourceRect: CGRect = .null
+    private var cachedDrawableRect: CGRect = .null
+    private var cachedTransform: CGAffineTransform = .identity
+    private var cachedSupportsExtendedDynamicRange = false
+    private var lastExtendedDynamicRangeProbeUptime: TimeInterval = 0
 
     init?(
         device: MTLDevice,
@@ -87,7 +93,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
 
         if let pixelBuffer = frameStore.snapshot() {
             let colorConfiguration = ShadowClientRealtimeSessionColorPipeline.configuration(for: pixelBuffer)
-            let supportsExtendedDynamicRange = supportsExtendedDynamicRangeDisplay(for: view)
+            let supportsExtendedDynamicRange = cachedExtendedDynamicRangeSupport(for: view)
             let shouldToneMapHDRToSDR =
                 colorConfiguration.prefersExtendedDynamicRange && !supportsExtendedDynamicRange
 
@@ -123,22 +129,12 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 : colorConfiguration.displayColorSpace
             let drawableRect = CGRect(origin: .zero, size: view.drawableSize)
             let sourceRect = sourceImage.extent
-            let scale = min(
-                drawableRect.width / max(sourceRect.width, 1),
-                drawableRect.height / max(sourceRect.height, 1)
+            let transformed = sourceImage.transformed(
+                by: transformForRendering(
+                    sourceRect: sourceRect,
+                    drawableRect: drawableRect
+                )
             )
-            let scaledSize = CGSize(
-                width: sourceRect.width * scale,
-                height: sourceRect.height * scale
-            )
-            let offset = CGPoint(
-                x: (drawableRect.width - scaledSize.width) * 0.5,
-                y: (drawableRect.height - scaledSize.height) * 0.5
-            )
-
-            let transformed = sourceImage
-                .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-                .transformed(by: CGAffineTransform(translationX: offset.x, y: offset.y))
 
             ciContext.render(
                 transformed,
@@ -155,6 +151,34 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
 
         commandBuffer.present(drawable)
         commandBuffer.commit()
+    }
+
+    private func transformForRendering(
+        sourceRect: CGRect,
+        drawableRect: CGRect
+    ) -> CGAffineTransform {
+        if sourceRect.equalTo(cachedSourceRect), drawableRect.equalTo(cachedDrawableRect) {
+            return cachedTransform
+        }
+
+        let scale = min(
+            drawableRect.width / max(sourceRect.width, 1),
+            drawableRect.height / max(sourceRect.height, 1)
+        )
+        let scaledSize = CGSize(
+            width: sourceRect.width * scale,
+            height: sourceRect.height * scale
+        )
+        let offset = CGPoint(
+            x: (drawableRect.width - scaledSize.width) * 0.5,
+            y: (drawableRect.height - scaledSize.height) * 0.5
+        )
+
+        cachedSourceRect = sourceRect
+        cachedDrawableRect = drawableRect
+        cachedTransform = CGAffineTransform(scaleX: scale, y: scale)
+            .translatedBy(x: offset.x / max(scale, 0.0001), y: offset.y / max(scale, 0.0001))
+        return cachedTransform
     }
 
     private func applyColorConfiguration(
@@ -192,6 +216,15 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         let screen = view.window?.screen ?? NSScreen.main
         let currentHeadroom = screen?.maximumExtendedDynamicRangeColorComponentValue ?? 1
         return currentHeadroom > 1.01
+    }
+
+    private func cachedExtendedDynamicRangeSupport(for view: MTKView) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - lastExtendedDynamicRangeProbeUptime > 1.0 {
+            cachedSupportsExtendedDynamicRange = supportsExtendedDynamicRangeDisplay(for: view)
+            lastExtendedDynamicRangeProbeUptime = now
+        }
+        return cachedSupportsExtendedDynamicRange
     }
 
     private func toneMapHDRToSDRSoftwareFallback(_ image: CIImage) -> CIImage {

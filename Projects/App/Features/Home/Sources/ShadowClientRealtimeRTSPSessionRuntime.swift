@@ -28,12 +28,15 @@ extension ShadowClientRealtimeSessionRuntimeError: LocalizedError {
 
 private actor ShadowClientVideoDecodeQueue {
     private let capacity: Int
-    private var bufferedUnits: [ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit] = []
+    private var bufferedUnits: [ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?]
+    private var headIndex = 0
+    private var bufferedCount = 0
     private var waiters: [CheckedContinuation<ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?, Never>] = []
     private var closed = false
 
     init(capacity: Int) {
         self.capacity = max(2, capacity)
+        self.bufferedUnits = Array(repeating: nil, count: self.capacity)
     }
 
     func enqueue(_ accessUnit: ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit) -> Bool {
@@ -48,17 +51,25 @@ private actor ShadowClientVideoDecodeQueue {
         }
 
         var droppedOldest = false
-        if bufferedUnits.count >= capacity {
-            bufferedUnits.removeFirst()
+        if bufferedCount >= capacity {
+            bufferedUnits[headIndex] = nil
+            headIndex = (headIndex + 1) % capacity
+            bufferedCount -= 1
             droppedOldest = true
         }
-        bufferedUnits.append(accessUnit)
+        let tailIndex = (headIndex + bufferedCount) % capacity
+        bufferedUnits[tailIndex] = accessUnit
+        bufferedCount += 1
         return droppedOldest
     }
 
     func next() async -> ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit? {
-        if !bufferedUnits.isEmpty {
-            return bufferedUnits.removeFirst()
+        if bufferedCount > 0 {
+            let unit = bufferedUnits[headIndex]
+            bufferedUnits[headIndex] = nil
+            headIndex = (headIndex + 1) % capacity
+            bufferedCount -= 1
+            return unit
         }
         if closed {
             return nil
@@ -73,7 +84,9 @@ private actor ShadowClientVideoDecodeQueue {
             return
         }
         closed = true
-        bufferedUnits.removeAll(keepingCapacity: false)
+        bufferedUnits = Array(repeating: nil, count: capacity)
+        headIndex = 0
+        bufferedCount = 0
         for waiter in waiters {
             waiter.resume(returning: nil)
         }
@@ -82,11 +95,6 @@ private actor ShadowClientVideoDecodeQueue {
 }
 
 public actor ShadowClientRealtimeRTSPSessionRuntime {
-    private struct VideoTransportSample: Sendable {
-        let uptimeSeconds: TimeInterval
-        let bytes: Int
-    }
-
     fileprivate struct VideoAccessUnit: Sendable {
         let codec: ShadowClientVideoCodec
         let parameterSets: [Data]
@@ -106,7 +114,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var videoDecodeQueue: ShadowClientVideoDecodeQueue?
     private var shadowClientNVDepacketizer = ShadowClientMoonlightNVRTPDepacketizer()
     private var hasLoggedDecodedFrameMetadata = false
-    private var recentVideoTransportSamples: [VideoTransportSample] = []
+    private var videoStatsWindowStartUptime: TimeInterval = 0
+    private var videoStatsFrameCount = 0
+    private var videoStatsByteCount = 0
     private var lastVideoStatPublishUptime: TimeInterval = 0
     private var videoDecodeQueueDropCount = 0
     private var firstVideoDecodeQueueDropUptime: TimeInterval = 0
@@ -167,7 +177,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             yuv444Enabled: resolvedVideoConfiguration.enableYUV444
         )
         hasLoggedDecodedFrameMetadata = false
-        recentVideoTransportSamples.removeAll(keepingCapacity: false)
+        videoStatsWindowStartUptime = 0
+        videoStatsFrameCount = 0
+        videoStatsByteCount = 0
         lastVideoStatPublishUptime = 0
         videoDecodeQueueDropCount = 0
         firstVideoDecodeQueueDropUptime = 0
@@ -271,7 +283,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         await decoder.reset()
         activeVideoConfiguration = nil
         hasLoggedDecodedFrameMetadata = false
-        recentVideoTransportSamples.removeAll(keepingCapacity: false)
+        videoStatsWindowStartUptime = 0
+        videoStatsFrameCount = 0
+        videoStatsByteCount = 0
         lastVideoStatPublishUptime = 0
         videoDecodeQueueDropCount = 0
         firstVideoDecodeQueueDropUptime = 0
@@ -688,21 +702,36 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         codec: ShadowClientVideoCodec,
         parameterSets: [Data]
     ) async throws {
-        let surfaceContext = self.surfaceContext
         let runtime = self
         try await decoder.decode(
             accessUnit: accessUnit,
             codec: codec,
             parameterSets: parameterSets
-        ) { [surfaceContext] pixelBuffer in
+        ) { pixelBuffer in
             let sendableFrame = ShadowClientSendablePixelBuffer(value: pixelBuffer)
-            await runtime.recordDecodedFrameOutputUptime()
-            await runtime.logDecodedFrameMetadataIfNeeded(
+            await runtime.handleDecodedFrameOutput(
                 codec: codec,
                 pixelBuffer: sendableFrame.value
             )
-            surfaceContext.frameStore.update(pixelBuffer: sendableFrame.value)
-            await runtime.publishRenderingStateIfNeeded()
+        }
+    }
+
+    private func handleDecodedFrameOutput(
+        codec: ShadowClientVideoCodec,
+        pixelBuffer: CVPixelBuffer
+    ) async {
+        recordDecodedFrameOutputUptime()
+        logDecodedFrameMetadataIfNeeded(
+            codec: codec,
+            pixelBuffer: pixelBuffer
+        )
+        surfaceContext.frameStore.update(pixelBuffer: pixelBuffer)
+        if !hasPublishedRenderingState {
+            hasPublishedRenderingState = true
+            let sessionSurfaceContext = self.surfaceContext
+            await MainActor.run {
+                sessionSurfaceContext.transition(to: .rendering)
+            }
         }
     }
 
@@ -715,17 +744,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         let sessionSurfaceContext = self.surfaceContext
         await MainActor.run {
             sessionSurfaceContext.transition(to: state)
-        }
-    }
-
-    private func publishRenderingStateIfNeeded() async {
-        guard !hasPublishedRenderingState else {
-            return
-        }
-        hasPublishedRenderingState = true
-        let sessionSurfaceContext = self.surfaceContext
-        await MainActor.run {
-            sessionSurfaceContext.transition(to: .rendering)
         }
     }
 
@@ -753,26 +771,23 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
     private func updateRuntimeVideoStats(frameBytes: Int) async {
         let now = ProcessInfo.processInfo.systemUptime
-        recentVideoTransportSamples.append(
-            .init(uptimeSeconds: now, bytes: max(0, frameBytes))
-        )
-        recentVideoTransportSamples.removeAll {
-            now - $0.uptimeSeconds > 1.0
+        if videoStatsWindowStartUptime == 0 {
+            videoStatsWindowStartUptime = now
         }
-
-        guard let oldest = recentVideoTransportSamples.first else {
-            return
-        }
-
-        let windowDuration = max(now - oldest.uptimeSeconds, 0.001)
-        let totalBytes = recentVideoTransportSamples.reduce(0) { $0 + $1.bytes }
-        let bitrateKbps = Int((Double(totalBytes) * 8.0 / 1_000.0) / windowDuration)
-        let fps = Double(recentVideoTransportSamples.count) / windowDuration
+        videoStatsFrameCount += 1
+        videoStatsByteCount += max(0, frameBytes)
 
         if now - lastVideoStatPublishUptime < 0.2 {
             return
         }
         lastVideoStatPublishUptime = now
+
+        let windowDuration = max(now - videoStatsWindowStartUptime, 0.001)
+        let bitrateKbps = Int((Double(videoStatsByteCount) * 8.0 / 1_000.0) / windowDuration)
+        let fps = Double(videoStatsFrameCount) / windowDuration
+        videoStatsWindowStartUptime = now
+        videoStatsFrameCount = 0
+        videoStatsByteCount = 0
 
         let sessionSurfaceContext = self.surfaceContext
         await MainActor.run {
@@ -3142,6 +3157,10 @@ private final class ShadowClientUDPDatagramSocket: @unchecked Sendable {
     private let addressLength = socklen_t(MemoryLayout<sockaddr_in>.size)
     private let closeLock = NSLock()
     private var isClosed = false
+    private var receiveBuffer: [UInt8] = Array(
+        repeating: 0,
+        count: ShadowClientRealtimeSessionDefaults.maximumTransportReadLength
+    )
 
     init(
         localHost: NWEndpoint.Host?,
@@ -3170,6 +3189,30 @@ private final class ShadowClientUDPDatagramSocket: @unchecked Sendable {
             SO_RCVTIMEO,
             &receiveTimeout,
             socklen_t(MemoryLayout<timeval>.size)
+        )
+        var receiveBufferSize: Int32 = 4 * 1_024 * 1_024
+        _ = setsockopt(
+            descriptor,
+            SOL_SOCKET,
+            SO_RCVBUF,
+            &receiveBufferSize,
+            socklen_t(MemoryLayout<Int32>.size)
+        )
+        var sendBufferSize: Int32 = 1 * 1_024 * 1_024
+        _ = setsockopt(
+            descriptor,
+            SOL_SOCKET,
+            SO_SNDBUF,
+            &sendBufferSize,
+            socklen_t(MemoryLayout<Int32>.size)
+        )
+        var noSigPipe: Int32 = 1
+        _ = setsockopt(
+            descriptor,
+            SOL_SOCKET,
+            SO_NOSIGPIPE,
+            &noSigPipe,
+            socklen_t(MemoryLayout<Int32>.size)
         )
 
         var localAddress = Self.makeLocalIPv4Address(from: localHost, port: localPort)
@@ -3214,16 +3257,18 @@ private final class ShadowClientUDPDatagramSocket: @unchecked Sendable {
     }
 
     func receive(maximumLength: Int) throws -> Data? {
-        var buffer = [UInt8](repeating: 0, count: maximumLength)
+        if receiveBuffer.count < maximumLength {
+            receiveBuffer = Array(repeating: 0, count: maximumLength)
+        }
         var sourceAddress = sockaddr_storage()
         var sourceLength = socklen_t(MemoryLayout<sockaddr_storage>.size)
-        let receivedBytes = buffer.withUnsafeMutableBytes { bytes in
+        let receivedBytes = receiveBuffer.withUnsafeMutableBytes { bytes in
             withUnsafeMutablePointer(to: &sourceAddress) { pointer in
                 pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
                     recvfrom(
                         descriptor,
                         bytes.baseAddress,
-                        bytes.count,
+                        min(maximumLength, bytes.count),
                         0,
                         sockaddrPointer,
                         &sourceLength
@@ -3248,7 +3293,12 @@ private final class ShadowClientUDPDatagramSocket: @unchecked Sendable {
         guard receivedBytes > 0 else {
             return nil
         }
-        return Data(buffer.prefix(receivedBytes))
+        return receiveBuffer.withUnsafeBytes { bytes in
+            guard let baseAddress = bytes.baseAddress else {
+                return Data()
+            }
+            return Data(bytes: baseAddress, count: receivedBytes)
+        }
     }
 
     func localEndpointDescription() -> String {

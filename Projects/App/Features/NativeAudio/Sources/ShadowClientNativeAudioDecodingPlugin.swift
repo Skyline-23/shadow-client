@@ -187,6 +187,7 @@ private final class ShadowClientNativeOpusMultistreamDecoder: ShadowClientRealti
     private let libopus: ShadowClientNativeLibOpus
     private let decoder: OpaquePointer
     private let maxFrameSamplesPerChannel: Int32 = 5_760
+    private var interleavedScratch: [Float]
 
     init(sampleRate: Int, channels: Int) throws {
         self.sampleRate = sampleRate
@@ -243,6 +244,10 @@ private final class ShadowClientNativeOpusMultistreamDecoder: ShadowClientRealti
             )
         }
         self.decoder = decoder
+        interleavedScratch = [Float](
+            repeating: 0,
+            count: Int(maxFrameSamplesPerChannel) * channels
+        )
     }
 
     deinit {
@@ -254,17 +259,13 @@ private final class ShadowClientNativeOpusMultistreamDecoder: ShadowClientRealti
             return nil
         }
 
-        var interleavedSamples = [Float](
-            repeating: 0,
-            count: Int(maxFrameSamplesPerChannel) * channels
-        )
         let decodedFrameCount = payload.withUnsafeBytes { payloadBytes in
             let dataPointer = payloadBytes.bindMemory(to: UInt8.self).baseAddress
             return libopus.decodeFloat(
                 decoder,
                 dataPointer,
                 Int32(payload.count),
-                &interleavedSamples,
+                &interleavedScratch,
                 maxFrameSamplesPerChannel,
                 0
             )
@@ -295,7 +296,7 @@ private final class ShadowClientNativeOpusMultistreamDecoder: ShadowClientRealti
         for frameIndex in 0..<frameCount {
             let baseIndex = frameIndex * channels
             for channelIndex in 0..<channels {
-                channelData[channelIndex][frameIndex] = interleavedSamples[baseIndex + channelIndex]
+                channelData[channelIndex][frameIndex] = interleavedScratch[baseIndex + channelIndex]
             }
         }
         pcmBuffer.frameLength = AVAudioFrameCount(frameCount)
