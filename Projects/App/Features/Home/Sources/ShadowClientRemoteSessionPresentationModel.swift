@@ -63,6 +63,29 @@ public enum ShadowClientRemoteSessionPresentationMapper {
             )
         }
 
+        switch renderState {
+        case let .disconnected(message):
+            return .init(
+                statusText: "Remote session disconnected: \(message)",
+                overlay: .init(
+                    title: "Remote session disconnected. Reconnect to resume input/output.",
+                    symbol: "wifi.slash"
+                ),
+                launchTone: .failed
+            )
+        case let .failed(message):
+            return .init(
+                statusText: "Native decoder failed: \(message)",
+                overlay: .init(
+                    title: "Native decoder failed. Check stream codec/session state.",
+                    symbol: "exclamationmark.triangle"
+                ),
+                launchTone: .failed
+            )
+        case .idle, .connecting, .waitingForFirstFrame, .rendering:
+            break
+        }
+
         switch launchState {
         case .idle:
             return .init(
@@ -90,24 +113,6 @@ public enum ShadowClientRemoteSessionPresentationMapper {
                     overlay: nil,
                     launchTone: .launched
                 )
-            case let .disconnected(message):
-                return .init(
-                    statusText: "Remote session disconnected: \(message)",
-                    overlay: .init(
-                        title: "Remote session disconnected. Reconnect to resume input/output.",
-                        symbol: "wifi.slash"
-                    ),
-                    launchTone: .failed
-                )
-            case let .failed(message):
-                return .init(
-                    statusText: "Native decoder failed: \(message)",
-                    overlay: .init(
-                        title: "Native decoder failed. Check stream codec/session state.",
-                        symbol: "exclamationmark.triangle"
-                    ),
-                    launchTone: .failed
-                )
             case .connecting:
                 return .init(
                     statusText: "Connecting to remote stream...",
@@ -117,6 +122,8 @@ public enum ShadowClientRemoteSessionPresentationMapper {
                     ),
                     launchTone: .launching
                 )
+            case .disconnected, .failed:
+                break
             case .waitingForFirstFrame, .idle:
                 break
             }
