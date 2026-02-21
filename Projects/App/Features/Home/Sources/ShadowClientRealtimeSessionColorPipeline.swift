@@ -15,8 +15,8 @@ enum ShadowClientRealtimeSessionColorPipeline {
         ?? CGColorSpace(name: CGColorSpace.sRGB)
         ?? CGColorSpaceCreateDeviceRGB()
 
-    private static let defaultHDRDisplayColorSpace = CGColorSpace(name: CGColorSpace.extendedLinearITUR_2020)
-        ?? CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)
+    private static let defaultHDRDisplayColorSpace = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)
+        ?? CGColorSpace(name: CGColorSpace.extendedLinearITUR_2020)
         ?? defaultSDRColorSpace
     static let hdrToSdrToneMapSourceHeadroom: Float = 6.0
     static let hdrToSdrToneMapTargetHeadroom: Float = 1.0

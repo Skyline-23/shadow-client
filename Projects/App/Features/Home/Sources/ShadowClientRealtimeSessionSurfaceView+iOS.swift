@@ -170,6 +170,9 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         if #available(iOS 16.0, tvOS 16.0, *),
            let metalLayer = view.layer as? CAMetalLayer
         {
+            metalLayer.colorspace = shouldRenderExtendedDynamicRange
+                ? configuration.displayColorSpace
+                : ShadowClientRealtimeSessionColorPipeline.defaultDisplayColorSpace
             metalLayer.wantsExtendedDynamicRangeContent = shouldRenderExtendedDynamicRange
         }
     }
