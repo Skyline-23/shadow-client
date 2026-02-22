@@ -232,6 +232,20 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
 
                     for readyPacket in readyPackets {
                         do {
+                            guard let audioOutput = output else {
+                                continue
+                            }
+                            guard audioOutput.hasEnqueueCapacity else {
+                                consecutiveDroppedOutputQueueBuffers += 1
+                                if consecutiveDroppedOutputQueueBuffers == 1 ||
+                                    consecutiveDroppedOutputQueueBuffers.isMultiple(of: 25)
+                                {
+                                    logger.error(
+                                        "Skipping audio decode due to output queue saturation (count=\(consecutiveDroppedOutputQueueBuffers, privacy: .public))"
+                                    )
+                                }
+                                continue
+                            }
                             guard let decoder else {
                                 continue
                             }
@@ -290,7 +304,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                     continue
                                 }
                                 consecutiveDroppedOutputBuffers = 0
-                                if output?.enqueue(pcmBuffer: pcmBuffer) == false {
+                                if audioOutput.enqueue(pcmBuffer: pcmBuffer) == false {
                                     consecutiveDroppedOutputQueueBuffers += 1
                                     if consecutiveDroppedOutputQueueBuffers == 1 ||
                                         consecutiveDroppedOutputQueueBuffers.isMultiple(of: 25)
@@ -703,13 +717,19 @@ private enum ShadowClientRealtimeAudioOutputCapability {
 private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
     private let targetDepth: Int
     private let maximumDepth: Int
+    private let maximumDrainBatch: Int
     private(set) var lockedPayloadType: Int?
     private var expectedSequence: UInt16?
     private var packetsBySequence: [UInt16: ShadowClientRealtimeAudioSessionRuntime.RTPPacket] = [:]
 
-    init(targetDepth: Int, maximumDepth: Int) {
+    init(
+        targetDepth: Int,
+        maximumDepth: Int,
+        maximumDrainBatch: Int = 8
+    ) {
         self.targetDepth = max(2, targetDepth)
         self.maximumDepth = max(self.targetDepth, maximumDepth)
+        self.maximumDrainBatch = max(1, maximumDrainBatch)
     }
 
     mutating func reset(preferredPayloadType: Int?) {
@@ -735,7 +755,8 @@ private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
         }
 
         var readyPackets: [ShadowClientRealtimeAudioSessionRuntime.RTPPacket] = []
-        while let expectedSequence,
+        while readyPackets.count < maximumDrainBatch,
+              let expectedSequence,
               let nextPacket = packetsBySequence.removeValue(forKey: expectedSequence)
         {
             readyPackets.append(nextPacket)
@@ -746,7 +767,8 @@ private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
             let sortedSequenceNumbers = packetsBySequence.keys.sorted()
             if let firstSequence = sortedSequenceNumbers.first {
                 expectedSequence = firstSequence
-                while let expectedSequence,
+                while readyPackets.count < maximumDrainBatch,
+                      let expectedSequence,
                       let nextPacket = packetsBySequence.removeValue(forKey: expectedSequence)
                 {
                     readyPackets.append(nextPacket)
@@ -1268,7 +1290,7 @@ private final class ShadowClientRealtimeG711AudioDecoder: ShadowClientRealtimeAu
 }
 
 private final class ShadowClientRealtimeAudioEngineOutput {
-    private static let maximumQueuedBufferCount = 12
+    private static let maximumQueuedBufferCount = 16
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -1314,6 +1336,13 @@ private final class ShadowClientRealtimeAudioEngineOutput {
             self?.didConsumeQueuedBuffer()
         }
         return true
+    }
+
+    var hasEnqueueCapacity: Bool {
+        queuedBufferLock.lock()
+        let hasCapacity = queuedBufferCount < Self.maximumQueuedBufferCount
+        queuedBufferLock.unlock()
+        return hasCapacity
     }
 
     func stop() {
