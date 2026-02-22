@@ -112,6 +112,34 @@ func redPayloadExtractionSkipsRedundantBlocks() {
     #expect(extracted?.payload == Data([0xCC, 0xDD, 0xEE]))
 }
 
+@Test("RTP payload normalizer unwraps RED wrapper packets")
+func rtpPayloadNormalizerUnwrapsREDWrapperPackets() {
+    let normalized = ShadowClientRealtimeAudioRTPPayloadNormalizer.normalize(
+        payloadType: 127,
+        payload: Data([97, 0x11, 0x22, 0x33]),
+        preferredPayloadType: 97,
+        wrapperPayloadType: 127
+    )
+
+    #expect(normalized.payloadType == 97)
+    #expect(normalized.payload == Data([0x11, 0x22, 0x33]))
+    #expect(normalized.normalizationKey == "rtp-red:127->97")
+}
+
+@Test("RTP payload normalizer falls back to direct Opus when RED parse fails")
+func rtpPayloadNormalizerFallsBackToDirectOpus() {
+    let normalized = ShadowClientRealtimeAudioRTPPayloadNormalizer.normalize(
+        payloadType: 127,
+        payload: Data([0xF8, 0xAA, 0xBB]),
+        preferredPayloadType: 97,
+        wrapperPayloadType: 127
+    )
+
+    #expect(normalized.payloadType == 97)
+    #expect(normalized.payload == Data([0xF8, 0xAA, 0xBB]))
+    #expect(normalized.normalizationKey == "rtp-direct-opus:127->97")
+}
+
 @Test("Custom audio decoder registry prioritizes preferred providers")
 func customAudioDecoderRegistryPrioritizesPreferredProviders() throws {
     ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()

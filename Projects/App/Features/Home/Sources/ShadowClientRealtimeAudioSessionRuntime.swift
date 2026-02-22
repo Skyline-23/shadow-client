@@ -224,7 +224,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
 
             var currentPayloadType = preferredPayloadType
             var loggedUnexpectedPayloadTypes = Set<Int>()
-            var loggedUnwrappedREDPayloadTypes = Set<Int>()
+            var loggedPayloadNormalizationKeys = Set<String>()
             var hasLockedPayloadType = false
             var pendingPayloadTypeCandidate: Int?
             var pendingPayloadTypeCandidateCount = 0
@@ -314,22 +314,25 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     guard let parsedPacket = Self.parseRTPPacket(datagram) else {
                         continue
                     }
-                    var packet = parsedPacket
-                    if packet.payloadType == ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType,
-                       let redPrimaryPayload = Self.extractRTPREDPrimaryPayload(from: packet.payload)
+                    let normalizedPayload = ShadowClientRealtimeAudioRTPPayloadNormalizer.normalize(
+                        payloadType: parsedPacket.payloadType,
+                        payload: parsedPacket.payload,
+                        preferredPayloadType: currentPayloadType,
+                        wrapperPayloadType: ShadowClientRealtimeSessionDefaults
+                            .ignoredRTPControlPayloadType
+                    )
+                    if let normalizationKey = normalizedPayload.normalizationKey,
+                       loggedPayloadNormalizationKeys.insert(normalizationKey).inserted,
+                       let normalizationMessage = normalizedPayload.normalizationMessage
                     {
-                        packet = RTPPacket(
-                            sequenceNumber: packet.sequenceNumber,
-                            timestamp: packet.timestamp,
-                            payloadType: redPrimaryPayload.payloadType,
-                            payload: redPrimaryPayload.payload
-                        )
-                        if loggedUnwrappedREDPayloadTypes.insert(packet.payloadType).inserted {
-                            logger.notice(
-                                "Unwrapped RTP RED payload type \(ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType, privacy: .public) to primary payload type \(packet.payloadType, privacy: .public)"
-                            )
-                        }
+                        logger.notice("\(normalizationMessage, privacy: .public)")
                     }
+                    let packet = RTPPacket(
+                        sequenceNumber: parsedPacket.sequenceNumber,
+                        timestamp: parsedPacket.timestamp,
+                        payloadType: normalizedPayload.payloadType,
+                        payload: normalizedPayload.payload
+                    )
 
                     if packet.payloadType != currentPayloadType {
                         consecutivePayloadTypeMismatchCount += 1
@@ -927,71 +930,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     internal static func extractRTPREDPrimaryPayload(
         from payload: Data
     ) -> (payloadType: Int, payload: Data)? {
-        guard !payload.isEmpty else {
-            return nil
-        }
-
-        struct REDBlockHeader: Sendable {
-            let payloadType: Int
-            let blockLength: Int?
-        }
-
-        var headers: [REDBlockHeader] = []
-        var index = payload.startIndex
-        while index < payload.endIndex {
-            let headerByte = payload[index]
-            index += 1
-
-            let hasFollowingREDHeaders = (headerByte & 0x80) != 0
-            let payloadType = Int(headerByte & 0x7F)
-            if hasFollowingREDHeaders {
-                guard (payload.endIndex - index) >= 3 else {
-                    return nil
-                }
-                let byte2 = payload[index + 1]
-                let byte3 = payload[index + 2]
-                index += 3
-                let blockLength = (Int(byte2 & 0x03) << 8) | Int(byte3)
-                headers.append(
-                    .init(
-                        payloadType: payloadType,
-                        blockLength: blockLength
-                    )
-                )
-            } else {
-                headers.append(
-                    .init(
-                        payloadType: payloadType,
-                        blockLength: nil
-                    )
-                )
-                break
-            }
-        }
-
-        guard let primaryHeader = headers.last else {
-            return nil
-        }
-
-        var payloadIndex = index
-        for header in headers.dropLast() {
-            guard let blockLength = header.blockLength else {
-                return nil
-            }
-            guard payloadIndex + blockLength <= payload.endIndex else {
-                return nil
-            }
-            payloadIndex += blockLength
-        }
-
-        guard payloadIndex < payload.endIndex else {
-            return nil
-        }
-        let primaryPayload = Data(payload[payloadIndex ..< payload.endIndex])
-        guard !primaryPayload.isEmpty else {
-            return nil
-        }
-        return (primaryHeader.payloadType, primaryPayload)
+        ShadowClientRealtimeAudioRTPPayloadNormalizer.extractRTPREDPrimaryPayload(from: payload)
     }
 
     internal static func payloadTypePreference(
@@ -1829,8 +1768,12 @@ private final class ShadowClientRealtimeAudioEngineOutput {
             return true
         }
 
-        // If playback unexpectedly stops, rebuild the graph before replaying to avoid
-        // AVAudioPlayerNode assertions from stale/detached engine state.
+        if startPlayerLocked() {
+            return true
+        }
+
+        // If direct restart fails, rebuild the graph before replaying to avoid
+        // AVAudioPlayerNode assertions from detached/stale engine state.
         return rebuildGraphAndStartLocked()
     }
 
