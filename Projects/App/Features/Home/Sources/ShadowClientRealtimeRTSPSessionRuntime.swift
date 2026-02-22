@@ -909,7 +909,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 }
             } catch {
                 logger.error("\(String(describing: accessUnit.codec), privacy: .public) decode failed: \(error.localizedDescription, privacy: .public)")
-                if await handleDecoderFailure(codec: accessUnit.codec) {
+                if await handleDecoderFailure(codec: accessUnit.codec, error: error) {
                     continue
                 }
                 if accessUnit.codec == .av1 {
@@ -1285,7 +1285,17 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         return false
     }
 
-    private func handleDecoderFailure(codec: ShadowClientVideoCodec) async -> Bool {
+    private func handleDecoderFailure(
+        codec: ShadowClientVideoCodec,
+        error: any Error
+    ) async -> Bool {
+        if codec == .av1, Self.shouldForceAV1Fallback(forDecoderError: error) {
+            logger.error(
+                "AV1 decoder reported fatal failure; forcing HEVC fallback path"
+            )
+            return false
+        }
+
         if !hasRenderedFirstFrame, codec != .av1 {
             return false
         }
@@ -1482,8 +1492,24 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         decoderOutputStallRecoveryCount += 1
         let underPressureSignal = isPipelineUnderIngressPressure || hasRecentConsumerTrimPressure
-        if codec != .av1 || !underPressureSignal {
+        let av1PressureFallbackTriggered: Bool
+        if codec == .av1, underPressureSignal {
+            av1PressureFallbackTriggered = registerAV1DecoderOutputStallPressureEvent(now: now)
+        } else {
             resetAV1DecoderOutputStallPressureTracking()
+            av1PressureFallbackTriggered = false
+        }
+        if codec == .av1,
+           Self.shouldForceAV1FallbackForDecoderOutputStall(
+               recoveryAttemptCount: decoderOutputStallRecoveryCount,
+               maxRecoveryAttempts: ShadowClientRealtimeSessionDefaults.av1MaxDecoderOutputStallRecoveries,
+               pressureFallbackTriggered: av1PressureFallbackTriggered
+           )
+        {
+            logger.error(
+                "AV1 decoder output stall recoveries exceeded threshold; forcing HEVC fallback path"
+            )
+            return false
         }
         lastDecoderOutputStallRecoveryUptime = now
         if hasRecentConsumerTrimPressure {
@@ -1849,6 +1875,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastDecodedFrameOutputUptime = ProcessInfo.processInfo.systemUptime
         decoderOutputStallCandidateCount = 0
         firstDecoderOutputStallCandidateUptime = 0
+        resetAV1DecoderOutputStallPressureTracking()
         videoReceiveQueueDropCount = 0
         firstVideoReceiveQueueDropUptime = 0
         videoDecodeQueueDropCount = 0
@@ -1918,6 +1945,47 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
     private static func av1RuntimeFallbackMessage(reason: String) -> String {
         "AV1 decode failed (\(reason)). Runtime recovery exhausted; retry with HEVC fallback."
+    }
+
+    static func shouldForceAV1FallbackForDecoderOutputStall(
+        recoveryAttemptCount: Int,
+        maxRecoveryAttempts: Int = ShadowClientRealtimeSessionDefaults.av1MaxDecoderOutputStallRecoveries,
+        pressureFallbackTriggered: Bool
+    ) -> Bool {
+        if pressureFallbackTriggered {
+            return true
+        }
+        return recoveryAttemptCount >= max(1, maxRecoveryAttempts)
+    }
+
+    static func shouldForceAV1Fallback(forDecoderError error: any Error) -> Bool {
+        if let decoderError = error as? ShadowClientVideoToolboxDecoderError {
+            switch decoderError {
+            case .missingParameterSets, .missingFrameDimensions, .cannotCreateSampleBuffer:
+                return false
+            case .missingAV1CodecConfiguration,
+                 .unsupportedCodec,
+                 .cannotCreateFormatDescription,
+                 .cannotCreateDecoder,
+                 .decodeFailed:
+                return true
+            }
+        }
+
+        let normalized = error.localizedDescription.lowercased()
+        if normalized.isEmpty {
+            return false
+        }
+        let fatalSignatures = [
+            "hardware decode failed",
+            "could not create hardware decoder session",
+            "could not create video format description",
+            "decoder codec is not supported",
+            "av1 codec configuration record",
+            "vt-ds",
+            "osstatus -12903",
+        ]
+        return fatalSignatures.contains(where: normalized.contains)
     }
 
     private static func dynamicRangeMode(
