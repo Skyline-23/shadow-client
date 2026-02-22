@@ -1401,10 +1401,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 continue
             }
 
+            let underPressureSignal = isPipelineUnderIngressPressure || hasRecentConsumerTrimPressure
             if Self.shouldSuppressDecoderOutputStallRecovery(
                 now: now,
                 lastDecodedFrameOutputUptime: lastDecodedFrameOutputUptime,
-                isPipelineUnderIngressPressure: isPipelineUnderIngressPressure
+                underPressureSignal: underPressureSignal
             ) {
                 continue
             }
@@ -1474,18 +1475,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             decoderOutputStallRecoveryCount = 0
         }
         decoderOutputStallRecoveryCount += 1
-        if codec != .av1 || !isPipelineUnderIngressPressure {
+        let underPressureSignal = isPipelineUnderIngressPressure || hasRecentConsumerTrimPressure
+        if codec != .av1 || !underPressureSignal {
             resetAV1DecoderOutputStallPressureTracking()
         }
         lastDecoderOutputStallRecoveryUptime = now
-        if codec == .av1 && isPipelineUnderIngressPressure,
-           registerAV1DecoderOutputStallPressureEvent(now: now)
-        {
-            logger.error(
-                "AV1 decoder output stalled under sustained queue pressure; forcing HEVC fallback path"
-            )
-            return false
-        }
         if hasRecentConsumerTrimPressure {
             await decoder.reportDecoderInstabilitySignal()
         } else if isPipelineUnderIngressPressure {
@@ -1500,7 +1494,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 : 0)
 
         if Self.shouldUseSoftDecoderOutputStallRecovery(
-            isPipelineUnderIngressPressure: isPipelineUnderIngressPressure,
+            underPressureSignal: underPressureSignal,
             recoveryAttemptCount: decoderOutputStallRecoveryCount,
             softRecoveryAttemptLimit: softRecoveryAttemptLimit
         ) {
@@ -1512,23 +1506,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             return true
         }
 
-        if codec == .av1, isPipelineUnderIngressPressure {
+        if underPressureSignal {
             logger.notice(
-                "Video decoder output stalled for codec \(String(describing: codec), privacy: .public) under sustained queue pressure; extending soft recovery window and skipping decoder reset"
+                "Video decoder output stalled for codec \(String(describing: codec), privacy: .public) while queue pressure signal is active; extending soft recovery window and skipping decoder reset"
             )
-            _ = await requestVideoRecoveryFrame(reason: "decoder-output-stall-av1-pressure")
+            _ = await requestVideoRecoveryFrame(reason: "decoder-output-stall-pressure-extended")
             lastDecodeSubmitUptime = now
             return true
-        }
-
-        if codec == .av1,
-           decoderOutputStallRecoveryCount >=
-           ShadowClientRealtimeSessionDefaults.av1MaxDecoderOutputStallRecoveries
-        {
-            logger.error(
-                "AV1 decoder output stall recovery attempts exceeded threshold; forcing HEVC fallback path"
-            )
-            return false
         }
 
         logger.error(
@@ -2033,9 +2017,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     static func shouldSuppressDecoderOutputStallRecovery(
         now: TimeInterval,
         lastDecodedFrameOutputUptime: TimeInterval,
-        isPipelineUnderIngressPressure: Bool
+        underPressureSignal: Bool
     ) -> Bool {
-        guard isPipelineUnderIngressPressure else {
+        guard underPressureSignal else {
             return false
         }
         guard lastDecodedFrameOutputUptime > 0 else {
@@ -2047,6 +2031,18 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             ShadowClientRealtimeSessionDefaults.decoderOutputStallSuppressionMaximumSecondsUnderPressure
         )
         return elapsedSinceFrameOutput < suppressionCeiling
+    }
+
+    static func shouldSuppressDecoderOutputStallRecovery(
+        now: TimeInterval,
+        lastDecodedFrameOutputUptime: TimeInterval,
+        isPipelineUnderIngressPressure: Bool
+    ) -> Bool {
+        shouldSuppressDecoderOutputStallRecovery(
+            now: now,
+            lastDecodedFrameOutputUptime: lastDecodedFrameOutputUptime,
+            underPressureSignal: isPipelineUnderIngressPressure
+        )
     }
 
     static func isRecentQueuePressureSignal(
@@ -2061,17 +2057,29 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     }
 
     static func shouldUseSoftDecoderOutputStallRecovery(
-        isPipelineUnderIngressPressure: Bool,
+        underPressureSignal: Bool,
         recoveryAttemptCount: Int,
         softRecoveryAttemptLimit: Int
     ) -> Bool {
-        guard isPipelineUnderIngressPressure else {
+        guard underPressureSignal else {
             return false
         }
         guard recoveryAttemptCount > 0 else {
             return false
         }
         return recoveryAttemptCount <= max(0, softRecoveryAttemptLimit)
+    }
+
+    static func shouldUseSoftDecoderOutputStallRecovery(
+        isPipelineUnderIngressPressure: Bool,
+        recoveryAttemptCount: Int,
+        softRecoveryAttemptLimit: Int
+    ) -> Bool {
+        shouldUseSoftDecoderOutputStallRecovery(
+            underPressureSignal: isPipelineUnderIngressPressure,
+            recoveryAttemptCount: recoveryAttemptCount,
+            softRecoveryAttemptLimit: softRecoveryAttemptLimit
+        )
     }
 
     static func didCounterCrossIntervalBoundary(
