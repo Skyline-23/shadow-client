@@ -132,6 +132,28 @@ func rtpPayloadNormalizerClassifiesMoonlightAudioFECPayloads() {
     #expect(normalized.normalizationKey == "rtp-audio-fec:127")
 }
 
+@Test("RTP payload normalizer unwraps RED wrapper payload to primary payload")
+func rtpPayloadNormalizerUnwrapsREDWrapperPayload() {
+    let normalized = ShadowClientRealtimeAudioRTPPayloadNormalizer.normalize(
+        payloadType: 127,
+        payload: Data([
+            0x81, // F=1, PT=97 (redundant block)
+            0x00, // timestamp offset high
+            0x02, // timestamp offset low + block length high (10 bits)
+            0x02, // block length low (2 bytes)
+            0x61, // F=0, PT=97 primary
+            0xAA, 0xBB, // redundant block
+            0xCC, 0xDD, 0xEE, // primary payload
+        ]),
+        preferredPayloadType: 97,
+        wrapperPayloadType: 127
+    )
+
+    #expect(normalized.payloadType == 97)
+    #expect(normalized.payload == Data([0xCC, 0xDD, 0xEE]))
+    #expect(normalized.normalizationKey == "rtp-audio-red:127->97")
+}
+
 @Test("RTP payload normalizer does not treat ambiguous PT127 payload as direct Opus")
 func rtpPayloadNormalizerDoesNotTreatAmbiguousPT127AsDirectOpus() {
     let normalized = ShadowClientRealtimeAudioRTPPayloadNormalizer.normalize(
@@ -146,8 +168,8 @@ func rtpPayloadNormalizerDoesNotTreatAmbiguousPT127AsDirectOpus() {
     #expect(normalized.normalizationKey == nil)
 }
 
-@Test("RTP payload normalizer keeps non-FEC PT127 payload unchanged")
-func rtpPayloadNormalizerKeepsNonFECPayloadUnchanged() {
+@Test("RTP payload normalizer unwraps RED primary payload for PT127 wrapper")
+func rtpPayloadNormalizerUnwrapsREDPrimaryPayload() {
     let normalized = ShadowClientRealtimeAudioRTPPayloadNormalizer.normalize(
         payloadType: 127,
         payload: Data([97, 0xF8, 0xAA, 0xBB]),
@@ -155,9 +177,9 @@ func rtpPayloadNormalizerKeepsNonFECPayloadUnchanged() {
         wrapperPayloadType: 127
     )
 
-    #expect(normalized.payloadType == 127)
-    #expect(normalized.payload == Data([97, 0xF8, 0xAA, 0xBB]))
-    #expect(normalized.normalizationKey == nil)
+    #expect(normalized.payloadType == 97)
+    #expect(normalized.payload == Data([0xF8, 0xAA, 0xBB]))
+    #expect(normalized.normalizationKey == "rtp-audio-red:127->97")
 }
 
 @Test("Moonlight audio FEC payload classifier validates header fields")

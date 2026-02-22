@@ -38,6 +38,18 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
             )
         }
 
+        if let (primaryPayloadType, primaryPayload) = extractRTPREDPrimaryPayload(from: payload),
+           primaryPayloadType != wrapperPayloadType,
+           (96 ... 127).contains(primaryPayloadType)
+        {
+            return .init(
+                payloadType: primaryPayloadType,
+                payload: primaryPayload,
+                normalizationKey: "rtp-audio-red:\(wrapperPayloadType)->\(primaryPayloadType)",
+                normalizationMessage: "Unwrapped RTP RED wrapper \(wrapperPayloadType) to primary payload type \(primaryPayloadType)"
+            )
+        }
+
         return .init(
             payloadType: payloadType,
             payload: payload,
