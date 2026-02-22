@@ -269,8 +269,8 @@ func audioDecodeWindowKeepsOldestPacketsUnderOutputQueuePressure() {
     #expect(window.droppedPacketCount == 6)
 }
 
-@Test("Audio decode window decodes all packets when output queue has headroom")
-func audioDecodeWindowDecodesAllPacketsWithHeadroom() {
+@Test("Audio decode window limits decode batch to available output slots")
+func audioDecodeWindowLimitsDecodeBatchToAvailableSlots() {
     let window = ShadowClientRealtimeAudioSessionRuntime.audioReadyPacketDecodeWindow(
         readyPacketCount: 6,
         availableOutputSlots: 4,
@@ -278,7 +278,20 @@ func audioDecodeWindowDecodesAllPacketsWithHeadroom() {
     )
 
     #expect(window.decodeStartIndex == 0)
-    #expect(window.decodeEndIndex == 6)
+    #expect(window.decodeEndIndex == 4)
+    #expect(window.droppedPacketCount == 2)
+}
+
+@Test("Audio decode window drains all ready packets when output slots are sufficient")
+func audioDecodeWindowDrainsAllReadyPacketsWhenOutputSlotsAreSufficient() {
+    let window = ShadowClientRealtimeAudioSessionRuntime.audioReadyPacketDecodeWindow(
+        readyPacketCount: 3,
+        availableOutputSlots: 4,
+        decodeSheddingLowWatermarkSlots: 2
+    )
+
+    #expect(window.decodeStartIndex == 0)
+    #expect(window.decodeEndIndex == 3)
     #expect(window.droppedPacketCount == 0)
 }
 

@@ -316,6 +316,23 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     }
                 }
             }
+            let activateDecodeCooldownUnderSaturation: (String) -> Void = { reason in
+                guard decodeCooldownDeadline == nil else {
+                    return
+                }
+                decodeCooldownDeadline = clock.now + decodeCooldown
+                outputQueueDecodeCooldownActivationCount += 1
+                let trimmedCount = self.jitterBuffer.trimToMostRecent(
+                    maxBufferedPackets: queuePressureProfile.pressureTrimToRecentPackets
+                )
+                if outputQueueDecodeCooldownActivationCount == 1 ||
+                    outputQueueDecodeCooldownActivationCount.isMultiple(of: 12)
+                {
+                    self.logger.notice(
+                        "Audio decode cooldown activated due to \(reason, privacy: .public) (count=\(outputQueueDecodeCooldownActivationCount, privacy: .public), trimmed=\(trimmedCount, privacy: .public))"
+                    )
+                }
+            }
             while !Task.isCancelled {
                 do {
                     guard let datagram = try await Self.receiveDatagram(over: connection),
@@ -468,6 +485,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                     "Audio output recovery attempt failed while queue saturation persisted"
                                 )
                             }
+                            activateDecodeCooldownUnderSaturation("failed-recovery")
                         }
                         if consecutiveOutputQueueSaturationCount == decodeSaturationBurstThreshold ||
                             (
@@ -489,18 +507,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         }
                         if consecutiveOutputQueueSaturationCount >= decodeSaturationBurstThreshold {
                             consecutiveOutputQueueSaturationCount = 0
-                            decodeCooldownDeadline = clock.now + decodeCooldown
-                            outputQueueDecodeCooldownActivationCount += 1
-                            let trimmedCount = jitterBuffer.trimToMostRecent(
-                                maxBufferedPackets: queuePressureProfile.pressureTrimToRecentPackets
-                            )
-                            if outputQueueDecodeCooldownActivationCount == 1 ||
-                                outputQueueDecodeCooldownActivationCount.isMultiple(of: 12)
-                            {
-                                logger.notice(
-                                    "Audio decode cooldown activated due to sustained output queue saturation (count=\(outputQueueDecodeCooldownActivationCount, privacy: .public), trimmed=\(trimmedCount, privacy: .public))"
-                                )
-                            }
+                            activateDecodeCooldownUnderSaturation("sustained-output-queue-saturation")
                         }
                         return false
                     }
@@ -1410,16 +1417,11 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             return (0, 0, readyPacketCount)
         }
 
-        let normalizedLowWatermark = max(1, decodeSheddingLowWatermarkSlots)
+        _ = max(1, decodeSheddingLowWatermarkSlots)
         let decodeCount = min(readyPacketCount, availableOutputSlots)
-        if availableOutputSlots <= normalizedLowWatermark,
-           readyPacketCount > decodeCount
-        {
-            // Keep in-order continuity under pressure by decoding oldest ready
-            // packets first and shedding newest overflow packets.
-            return (0, decodeCount, readyPacketCount - decodeCount)
-        }
-        return (0, readyPacketCount, 0)
+        // Keep in-order continuity under pressure by decoding oldest ready packets
+        // first and shedding newest overflow packets beyond current output capacity.
+        return (0, decodeCount, max(0, readyPacketCount - decodeCount))
     }
 
     internal static func maximumRecoveredAudioPacketsPerBurst(
@@ -1491,11 +1493,11 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             normalizedChannels > 2 ? 3 : 2
         )
         let maximumQueuedBuffers = min(
-            128,
+            192,
             max(
-                32,
+                40,
                 max(
-                    estimatedPacketsPerSecond,
+                    estimatedPacketsPerSecond + (estimatedPacketsPerSecond / 2),
                     24 + (normalizedChannels * 6)
                 )
             )
