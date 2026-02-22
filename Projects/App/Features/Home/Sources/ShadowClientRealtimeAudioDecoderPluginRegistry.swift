@@ -8,10 +8,15 @@ public protocol ShadowClientRealtimeCustomAudioDecoder: AnyObject {
     var outputFormat: AVAudioFormat { get }
     var requiresPlaybackSafetyGuard: Bool { get }
     func decode(payload: Data) throws -> AVAudioPCMBuffer?
+    func decode(payload: Data, decodeFEC: Bool) throws -> AVAudioPCMBuffer?
 }
 
 public extension ShadowClientRealtimeCustomAudioDecoder {
     var requiresPlaybackSafetyGuard: Bool { true }
+
+    func decode(payload: Data, decodeFEC _: Bool) throws -> AVAudioPCMBuffer? {
+        try decode(payload: payload)
+    }
 }
 
 public typealias ShadowClientRealtimeCustomAudioDecoderProvider =

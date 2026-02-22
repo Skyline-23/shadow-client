@@ -103,6 +103,13 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
         guard !payload.isEmpty else {
             return nil
         }
+        return try decode(payload: payload, decodeFEC: false)
+    }
+
+    func decode(payload: Data, decodeFEC: Bool) throws -> AVAudioPCMBuffer? {
+        guard !payload.isEmpty else {
+            return nil
+        }
         guard payload.count <= 4_096 else {
             return nil
         }
@@ -111,7 +118,7 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
             let decodedFrameCount = try int16DecodeScratch.withUnsafeMutableBufferPointer { scratchBuffer in
                 try decoder.decodeInterleavedInt16(
                     payload: payload,
-                    decodeFEC: false,
+                    decodeFEC: decodeFEC,
                     into: scratchBuffer
                 )
             }

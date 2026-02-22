@@ -260,6 +260,13 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 ShadowClientRealtimeSessionDefaults.audioDecodeFailureLogInterval
             )
             let clock = ContinuousClock()
+            let minimumPacketSamples = max(1, sampleRate / 400)
+            let maximumPacketSamples = max(minimumPacketSamples, minimumPacketSamples * 48)
+            var lastDecodedSequenceNumber: UInt16?
+            var lastDecodedTimestamp: UInt32?
+            var estimatedSamplesPerPacket = max(minimumPacketSamples, sampleRate / 50)
+            var lossConcealmentEventCount = 0
+            var inBandFECRecoveryCount = 0
 
             let registerOutputQueuePressureDrop: (Int, String) -> Void = { droppedCount, reason in
                 guard droppedCount > 0 else {
@@ -359,6 +366,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 let previousPayloadType = currentPayloadType
                                 currentPayloadType = nextPayloadType
                                 jitterBuffer.reset(preferredPayloadType: currentPayloadType)
+                                lastDecodedSequenceNumber = nil
+                                lastDecodedTimestamp = nil
                                 logger.notice(
                                     "Adapting RTP audio payload type from \(previousPayloadType, privacy: .public) to \(currentPayloadType, privacy: .public) after lock expiry due to sustained mismatch"
                                 )
@@ -386,6 +395,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 consecutivePayloadTypeMismatchCount = 0
                                 payloadTypeMismatchPressure = 0
                                 jitterBuffer.reset(preferredPayloadType: currentPayloadType)
+                                lastDecodedSequenceNumber = nil
+                                lastDecodedTimestamp = nil
                                 logger.notice(
                                     "Adapting RTP audio payload type from \(previousPayloadType, privacy: .public) to \(currentPayloadType, privacy: .public) after \(payloadAdaptationObservationThreshold, privacy: .public) consecutive candidate packets"
                                 )
@@ -483,6 +494,24 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 registerOutputQueuePressureDrop(1, "guard-no-slots")
                                 continue
                             }
+                            let missingPacketCount = Self.missingRTPPacketCount(
+                                previousSequenceNumber: lastDecodedSequenceNumber,
+                                currentSequenceNumber: readyPacket.sequenceNumber
+                            )
+                            if let previousSequenceNumber = lastDecodedSequenceNumber,
+                               let previousTimestamp = lastDecodedTimestamp,
+                               let refreshedEstimate = Self.estimatedAudioSamplesPerPacket(
+                                   sampleRate: sampleRate,
+                                   previousSequenceNumber: previousSequenceNumber,
+                                   currentSequenceNumber: readyPacket.sequenceNumber,
+                                   previousTimestamp: previousTimestamp,
+                                   currentTimestamp: readyPacket.timestamp,
+                                   minimumPacketSamples: minimumPacketSamples,
+                                   maximumPacketSamples: maximumPacketSamples
+                               )
+                            {
+                                estimatedSamplesPerPacket = refreshedEstimate
+                            }
                             let decodePayload: Data
                             if let payloadDecryptor {
                                 do {
@@ -515,8 +544,83 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             } else {
                                 decodePayload = readyPacket.payload
                             }
+                            if missingPacketCount > 0 {
+                                var recoveredMissingPacketCount = 0
+                                if missingPacketCount == 1, remainingOutputSlots > 0 {
+                                    if let fecBuffer = try decoder.decode(
+                                        payload: decodePayload,
+                                        decodeFEC: true
+                                    ) {
+                                        if audioOutput.enqueue(pcmBuffer: fecBuffer) {
+                                            remainingOutputSlots = max(0, remainingOutputSlots - 1)
+                                            recoveredMissingPacketCount = 1
+                                            inBandFECRecoveryCount += 1
+                                            if inBandFECRecoveryCount == 1 ||
+                                                inBandFECRecoveryCount.isMultiple(of: 50)
+                                            {
+                                                logger.notice(
+                                                    "Audio in-band Opus FEC recovered missing packet (count=\(inBandFECRecoveryCount, privacy: .public))"
+                                                )
+                                            }
+                                        } else {
+                                            registerOutputQueuePressureDrop(1, "drop-fec-recovery-buffer")
+                                        }
+                                    }
+                                }
+
+                                let concealmentPacketCount = max(
+                                    0,
+                                    missingPacketCount - recoveredMissingPacketCount
+                                )
+                                if concealmentPacketCount > 0 {
+                                    let concealmentFrameCount = max(
+                                        minimumPacketSamples,
+                                        estimatedSamplesPerPacket
+                                    )
+                                    var insertedConcealmentCount = 0
+                                    for _ in 0 ..< concealmentPacketCount {
+                                        guard remainingOutputSlots > 0 else {
+                                            registerOutputQueuePressureDrop(
+                                                concealmentPacketCount - insertedConcealmentCount,
+                                                "drop-loss-concealment-buffer"
+                                            )
+                                            break
+                                        }
+                                        guard let silenceBuffer = Self.makeSilentPCMBuffer(
+                                            format: decoder.outputFormat,
+                                            frameCount: concealmentFrameCount
+                                        ) else {
+                                            registerOutputQueuePressureDrop(1, "alloc-loss-concealment-buffer")
+                                            continue
+                                        }
+                                        if audioOutput.enqueue(pcmBuffer: silenceBuffer) {
+                                            remainingOutputSlots = max(0, remainingOutputSlots - 1)
+                                            insertedConcealmentCount += 1
+                                        } else {
+                                            registerOutputQueuePressureDrop(1, "drop-loss-concealment-buffer")
+                                        }
+                                    }
+                                    if insertedConcealmentCount > 0 {
+                                        let previousLossConcealmentEventCount =
+                                            lossConcealmentEventCount
+                                        lossConcealmentEventCount += insertedConcealmentCount
+                                        if lossConcealmentEventCount == insertedConcealmentCount ||
+                                            Self.didCounterCrossIntervalBoundary(
+                                                previous: previousLossConcealmentEventCount,
+                                                current: lossConcealmentEventCount,
+                                                interval: 25
+                                            )
+                                        {
+                                            logger.notice(
+                                                "Audio packet loss concealment inserted buffers (count=\(lossConcealmentEventCount, privacy: .public), frameSamples=\(concealmentFrameCount, privacy: .public))"
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                             if let pcmBuffer = try decoder.decode(
-                                payload: decodePayload
+                                payload: decodePayload,
+                                decodeFEC: false
                             ) {
                                 consecutiveDecodeFailures = 0
                                 if decoder.requiresPlaybackSafetyGuard {
@@ -555,6 +659,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 }
                                 remainingOutputSlots = max(0, remainingOutputSlots - 1)
                             }
+                            lastDecodedSequenceNumber = readyPacket.sequenceNumber
+                            lastDecodedTimestamp = readyPacket.timestamp
                         } catch {
                             consecutiveDecodeFailures += 1
                             if consecutiveDecodeFailures == 1 ||
@@ -930,6 +1036,118 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         return currentBoundary > previousBoundary
     }
 
+    private static func missingRTPPacketCount(
+        previousSequenceNumber: UInt16?,
+        currentSequenceNumber: UInt16
+    ) -> Int {
+        guard let previousSequenceNumber else {
+            return 0
+        }
+        let sequenceDelta = Int(
+            sequenceDistanceForward(
+                from: previousSequenceNumber,
+                to: currentSequenceNumber
+            )
+        )
+        guard sequenceDelta > 1, sequenceDelta < 1024 else {
+            return 0
+        }
+        return sequenceDelta - 1
+    }
+
+    private static func estimatedAudioSamplesPerPacket(
+        sampleRate: Int,
+        previousSequenceNumber: UInt16,
+        currentSequenceNumber: UInt16,
+        previousTimestamp: UInt32,
+        currentTimestamp: UInt32,
+        minimumPacketSamples: Int,
+        maximumPacketSamples: Int
+    ) -> Int? {
+        let sequenceDelta = Int(
+            sequenceDistanceForward(
+                from: previousSequenceNumber,
+                to: currentSequenceNumber
+            )
+        )
+        guard sequenceDelta > 0, sequenceDelta < 64 else {
+            return nil
+        }
+        let timestampDelta = Int(
+            timestampDistanceForward(
+                from: previousTimestamp,
+                to: currentTimestamp
+            )
+        )
+        guard timestampDelta > 0 else {
+            return nil
+        }
+        let rawSamplesPerPacket = timestampDelta / sequenceDelta
+        guard rawSamplesPerPacket > 0 else {
+            return nil
+        }
+        let sampleStep = max(1, sampleRate / 400)
+        let normalizedSamples = max(
+            minimumPacketSamples,
+            min(
+                maximumPacketSamples,
+                max(sampleStep, (rawSamplesPerPacket / sampleStep) * sampleStep)
+            )
+        )
+        return normalizedSamples
+    }
+
+    private static func sequenceDistanceForward(
+        from: UInt16,
+        to: UInt16
+    ) -> UInt16 {
+        to &- from
+    }
+
+    private static func timestampDistanceForward(
+        from: UInt32,
+        to: UInt32
+    ) -> UInt32 {
+        to &- from
+    }
+
+    private static func makeSilentPCMBuffer(
+        format: AVAudioFormat,
+        frameCount: Int
+    ) -> AVAudioPCMBuffer? {
+        guard frameCount > 0 else {
+            return nil
+        }
+        let boundedFrameCount = AVAudioFrameCount(min(frameCount, Int(UInt16.max)))
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: boundedFrameCount
+        ) else {
+            return nil
+        }
+        buffer.frameLength = boundedFrameCount
+        let byteCountFloat = Int(boundedFrameCount) * MemoryLayout<Float>.size
+        let byteCountInt16 = Int(boundedFrameCount) * MemoryLayout<Int16>.size
+        let channelCount = Int(format.channelCount)
+        switch format.commonFormat {
+        case .pcmFormatFloat32:
+            if let channelData = buffer.floatChannelData {
+                for channel in 0 ..< channelCount {
+                    memset(channelData[channel], 0, byteCountFloat)
+                }
+            }
+        case .pcmFormatInt16:
+            if let channelData = buffer.int16ChannelData {
+                for channel in 0 ..< channelCount {
+                    memset(channelData[channel], 0, byteCountInt16)
+                }
+            }
+        default:
+            return nil
+        }
+        return buffer
+    }
+
     internal static func extractRTPREDPrimaryPayload(
         from payload: Data
     ) -> (payloadType: Int, payload: Data)? {
@@ -1216,10 +1434,15 @@ private protocol ShadowClientRealtimeAudioPacketDecoding {
     var outputFormat: AVAudioFormat { get }
     var requiresPlaybackSafetyGuard: Bool { get }
     func decode(payload: Data) throws -> AVAudioPCMBuffer?
+    func decode(payload: Data, decodeFEC: Bool) throws -> AVAudioPCMBuffer?
 }
 
 private extension ShadowClientRealtimeAudioPacketDecoding {
     var requiresPlaybackSafetyGuard: Bool { true }
+
+    func decode(payload: Data, decodeFEC _: Bool) throws -> AVAudioPCMBuffer? {
+        try decode(payload: payload)
+    }
 }
 
 private enum ShadowClientRealtimeAudioDecoderFactory {
@@ -1347,6 +1570,10 @@ private final class ShadowClientRealtimeCustomDecoderAdapter: ShadowClientRealti
 
     func decode(payload: Data) throws -> AVAudioPCMBuffer? {
         try base.decode(payload: payload)
+    }
+
+    func decode(payload: Data, decodeFEC: Bool) throws -> AVAudioPCMBuffer? {
+        try base.decode(payload: payload, decodeFEC: decodeFEC)
     }
 }
 
