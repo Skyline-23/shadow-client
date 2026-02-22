@@ -96,12 +96,12 @@ func enetAcknowledgePacketGenerationUsesBigEndianOrder() {
 }
 
 @Test("ENet send-reliable packet wraps control payload with channel and payload length")
-func enetSendReliablePacketEncodesHeaderAndPayload() {
+func enetSendReliablePacketEncodesHeaderAndPayload() throws {
     let payload = ShadowClientSunshineENetPacketCodec.makeControlMessagePayload(
         type: 0x0305,
         payload: Data([0x00, 0x00])
     )
-    let packet = ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
+    let packet = try ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
         outgoingPeerID: 0x0123,
         outgoingSessionID: 0x02,
         reliableSequenceNumber: 0x3456,
@@ -118,6 +118,22 @@ func enetSendReliablePacketEncodesHeaderAndPayload() {
     #expect(Array(packet[6...7]) == [0x34, 0x56]) // reliable sequence
     #expect(Array(packet[8...9]) == [0x00, 0x04]) // payload length
     #expect(Array(packet[10...13]) == [0x05, 0x03, 0x00, 0x00]) // control payload
+}
+
+@Test("ENet send-reliable packet rejects oversized payloads without trapping")
+func enetSendReliablePacketRejectsOversizedPayload() throws {
+    let oversizedPayload = Data(repeating: 0xFF, count: Int(UInt16.max) + 1)
+
+    #expect(throws: ShadowClientSunshineENetPacketCodecError.reliablePayloadTooLarge(oversizedPayload.count)) {
+        _ = try ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
+            outgoingPeerID: 0x0001,
+            outgoingSessionID: 0x00,
+            reliableSequenceNumber: 0x0001,
+            channelID: 0x00,
+            sentTime: 0x0001,
+            payload: oversizedPayload
+        )
+    }
 }
 
 @Test("ENet control payload codec stores control packet type as little-endian")

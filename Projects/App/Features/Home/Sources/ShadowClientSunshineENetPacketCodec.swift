@@ -1,5 +1,9 @@
 import Foundation
 
+enum ShadowClientSunshineENetPacketCodecError: Error, Equatable {
+    case reliablePayloadTooLarge(Int)
+}
+
 enum ShadowClientSunshineENetPacketCodec {
     struct ParsedPacket: Sendable {
         struct Command: Sendable {
@@ -114,8 +118,10 @@ enum ShadowClientSunshineENetPacketCodec {
         channelID: UInt8,
         sentTime: UInt16,
         payload: Data
-    ) -> Data {
-        precondition(payload.count <= Int(UInt16.max), "ENet reliable payload must fit UInt16 length field")
+    ) throws -> Data {
+        guard payload.count <= Int(UInt16.max) else {
+            throw ShadowClientSunshineENetPacketCodecError.reliablePayloadTooLarge(payload.count)
+        }
         var packet = Data()
         packet.reserveCapacity(10 + payload.count)
 

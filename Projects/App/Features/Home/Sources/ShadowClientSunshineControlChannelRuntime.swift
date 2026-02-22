@@ -272,7 +272,7 @@ actor ShadowClientSunshineControlChannelRuntime {
         logger.notice(
             "Sunshine control send type=\(type, privacy: .public) relSeq=\(reliableSequenceNumber, privacy: .public) payloadBytes=\(controlPayload.count, privacy: .public) mode=\(controlModeLabel, privacy: .public)"
         )
-        let packet = ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
+        let packet = try ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
             outgoingPeerID: outgoingPeerID,
             outgoingSessionID: outgoingSessionID,
             reliableSequenceNumber: reliableSequenceNumber,
@@ -295,7 +295,7 @@ actor ShadowClientSunshineControlChannelRuntime {
     ) async throws {
         let controlPayload = try buildControlPayload(type: type, payload: payload)
         let reliableSequenceNumber = nextReliableSequenceNumber(for: channelID)
-        let packet = ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
+        let packet = try ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
             outgoingPeerID: outgoingPeerID,
             outgoingSessionID: outgoingSessionID,
             reliableSequenceNumber: reliableSequenceNumber,
