@@ -1,6 +1,7 @@
 import ShadowClientStreaming
 import SwiftUI
 import ShadowClientFeatureHome
+import ShadowClientNativeAudioDecoding
 
 @main
 struct ShadowClientiOSApp: App {
@@ -9,6 +10,7 @@ struct ShadowClientiOSApp: App {
     init() {
         let bridge = MoonlightSessionTelemetryBridge()
         MoonlightSessionTelemetryIngress.configure(bridge: bridge)
+        ShadowClientNativeAudioDecodingPlugin.registerDefaultDecoders()
         self.container = .live(bridge: bridge)
     }
 
