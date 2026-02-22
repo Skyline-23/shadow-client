@@ -126,8 +126,8 @@ func rtpPayloadNormalizerUnwrapsREDWrapperPackets() {
     #expect(normalized.normalizationKey == "rtp-red:127->97")
 }
 
-@Test("RTP payload normalizer falls back to direct Opus when RED parse fails")
-func rtpPayloadNormalizerFallsBackToDirectOpus() {
+@Test("RTP payload normalizer does not treat ambiguous PT127 payload as direct Opus")
+func rtpPayloadNormalizerDoesNotTreatAmbiguousPT127AsDirectOpus() {
     let normalized = ShadowClientRealtimeAudioRTPPayloadNormalizer.normalize(
         payloadType: 127,
         payload: Data([0xF8, 0xAA, 0xBB]),
@@ -135,9 +135,43 @@ func rtpPayloadNormalizerFallsBackToDirectOpus() {
         wrapperPayloadType: 127
     )
 
+    #expect(normalized.payloadType == 127)
+    #expect(normalized.payload == Data([0xF8, 0xAA, 0xBB]))
+    #expect(normalized.normalizationKey == nil)
+}
+
+@Test("RTP payload normalizer unwraps single-byte prefixed PT127 wrapper")
+func rtpPayloadNormalizerUnwrapsSingleBytePrefixedWrapper() {
+    let normalized = ShadowClientRealtimeAudioRTPPayloadNormalizer.normalize(
+        payloadType: 127,
+        payload: Data([97, 0xF8, 0xAA, 0xBB]),
+        preferredPayloadType: 97,
+        wrapperPayloadType: 127
+    )
+
     #expect(normalized.payloadType == 97)
     #expect(normalized.payload == Data([0xF8, 0xAA, 0xBB]))
-    #expect(normalized.normalizationKey == "rtp-direct-opus:127->97")
+    #expect(
+        normalized.normalizationKey ==
+            "\(ShadowClientRealtimeAudioRTPPayloadNormalizer.wrapperPayloadPrefixNormalizationKey):127->97"
+    )
+}
+
+@Test("RTP payload normalizer unwraps four-byte prefixed PT127 wrapper")
+func rtpPayloadNormalizerUnwrapsFourBytePrefixedWrapper() {
+    let normalized = ShadowClientRealtimeAudioRTPPayloadNormalizer.normalize(
+        payloadType: 127,
+        payload: Data([0xE1, 0x00, 0x04, 0x02, 0xF8, 0xAA, 0xBB]),
+        preferredPayloadType: 97,
+        wrapperPayloadType: 127
+    )
+
+    #expect(normalized.payloadType == 97)
+    #expect(normalized.payload == Data([0xF8, 0xAA, 0xBB]))
+    #expect(
+        normalized.normalizationKey ==
+            "\(ShadowClientRealtimeAudioRTPPayloadNormalizer.wrapperPayloadPrefixNormalizationKey):127->97"
+    )
 }
 
 @Test("Custom audio decoder registry prioritizes preferred providers")

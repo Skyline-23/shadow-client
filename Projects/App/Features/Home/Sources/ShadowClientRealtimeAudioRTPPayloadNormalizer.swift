@@ -1,6 +1,8 @@
 import Foundation
 
 struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
+    static let wrapperPayloadPrefixNormalizationKey = "rtp-wrapper-prefixed-primary"
+
     struct Result: Sendable {
         let payloadType: Int
         let payload: Data
@@ -35,14 +37,17 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
             )
         }
 
-        if preferredPayloadType != wrapperPayloadType,
-           isLikelyDirectOpusPayload(payload)
+        if let prefixedPrimary = extractWrapperPrefixedPrimaryPayload(
+            from: payload,
+            preferredPayloadType: preferredPayloadType
+        ),
+           preferredPayloadType != wrapperPayloadType
         {
             return .init(
                 payloadType: preferredPayloadType,
-                payload: payload,
-                normalizationKey: "rtp-direct-opus:\(wrapperPayloadType)->\(preferredPayloadType)",
-                normalizationMessage: "Treating RTP payload type \(wrapperPayloadType) as direct Opus for payload type \(preferredPayloadType)"
+                payload: prefixedPrimary,
+                normalizationKey: "\(wrapperPayloadPrefixNormalizationKey):\(wrapperPayloadType)->\(preferredPayloadType)",
+                normalizationMessage: "Unwrapped RTP payload type \(wrapperPayloadType) wrapper prefix to primary payload type \(preferredPayloadType)"
             )
         }
 
@@ -122,6 +127,38 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
             return nil
         }
         return (primaryHeader.payloadType, primaryPayload)
+    }
+
+    private static func extractWrapperPrefixedPrimaryPayload(
+        from payload: Data,
+        preferredPayloadType: Int
+    ) -> Data? {
+        guard payload.count > 1 else {
+            return nil
+        }
+
+        let firstByte = payload[payload.startIndex]
+        let embeddedPayloadType = Int(firstByte & 0x7F)
+        guard embeddedPayloadType == preferredPayloadType else {
+            return nil
+        }
+
+        if (firstByte & 0x80) != 0 {
+            guard payload.count > 4 else {
+                return nil
+            }
+            let candidate = Data(payload.dropFirst(4))
+            guard isLikelyDirectOpusPayload(candidate) else {
+                return nil
+            }
+            return candidate
+        }
+
+        let candidate = Data(payload.dropFirst(1))
+        guard isLikelyDirectOpusPayload(candidate) else {
+            return nil
+        }
+        return candidate
     }
 
     private static func isLikelyDirectOpusPayload(_ payload: Data) -> Bool {
