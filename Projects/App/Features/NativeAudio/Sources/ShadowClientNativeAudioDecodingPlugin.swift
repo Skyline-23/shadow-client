@@ -40,7 +40,7 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
     let sampleRate: Int
     let channels: Int
     let outputFormat: AVAudioFormat
-    let requiresPlaybackSafetyGuard = false
+    let requiresPlaybackSafetyGuard = true
 
     private let decoder: OpusDecoder
     private let maximumSamplesPerChannel: Int
