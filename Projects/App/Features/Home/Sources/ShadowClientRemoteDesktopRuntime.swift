@@ -902,6 +902,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var launchGeneration: UInt64 = 0
     private var pendingSelectedHostID: String?
     private var lastKnownSessionURL: String?
+    private var persistentCodecFallback: ShadowClientVideoCodecPreference?
 
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
@@ -1228,6 +1229,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let controlClient = controlClient
         let sessionConnectionClient = sessionConnectionClient
         let launchedAppTitle = appTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let launchSettingsToUse = launchSettingsApplyingPersistentFallback(settings)
         launchTask = Task {
             do {
                 await sessionConnectionClient.disconnect()
@@ -1238,7 +1240,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     appID: appID,
                     currentGameID: selectedHost.currentGameID,
                     forceLaunch: false,
-                    settings: settings
+                    settings: launchSettingsToUse
                 )
 
                 let resolvedTitle: String
@@ -1257,7 +1259,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         sessionURL: connectedSessionURL,
                         host: selectedHost.host,
                         appTitle: resolvedTitle,
-                        settings: settings,
+                        settings: launchSettingsToUse,
                         remoteInputKey: initialLaunchResult.remoteInputKey,
                         remoteInputKeyID: initialLaunchResult.remoteInputKeyID,
                         serverAppVersion: selectedHost.appVersion
@@ -1273,7 +1275,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     await sessionConnectionClient.disconnect()
 
                     let forcedLaunchSettings = Self.forcedLaunchSettings(
-                        from: settings,
+                        from: launchSettingsToUse,
                         connectError: error
                     )
                     let forcedLaunchResult = try await controlClient.launch(
@@ -1285,6 +1287,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         settings: forcedLaunchSettings
                     )
                     let forcedSessionURL = try Self.validatedSessionURL(from: forcedLaunchResult)
+
+                    persistCodecFallbackIfNeeded(
+                        attemptedPreferredCodec: launchSettingsToUse.preferredCodec,
+                        fallbackSettings: forcedLaunchSettings
+                    )
 
                     try await Self.connectWithCodecFallback(
                         sessionConnectionClient: sessionConnectionClient,
@@ -1804,6 +1811,31 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             remoteInputKeyID: remoteInputKeyID,
             serverAppVersion: serverAppVersion
         )
+    }
+
+    private func launchSettingsApplyingPersistentFallback(
+        _ settings: ShadowClientGameStreamLaunchSettings
+    ) -> ShadowClientGameStreamLaunchSettings {
+        switch settings.preferredCodec {
+        case .h264, .h265:
+            persistentCodecFallback = nil
+            return settings
+        case .auto, .av1:
+            if let fallback = persistentCodecFallback {
+                return Self.launchSettings(settings, preferredCodec: fallback)
+            }
+            return settings
+        }
+    }
+
+    private func persistCodecFallbackIfNeeded(
+        attemptedPreferredCodec: ShadowClientVideoCodecPreference,
+        fallbackSettings: ShadowClientGameStreamLaunchSettings
+    ) {
+        guard fallbackSettings.preferredCodec != attemptedPreferredCodec else {
+            return
+        }
+        persistentCodecFallback = fallbackSettings.preferredCodec
     }
 
     @MainActor

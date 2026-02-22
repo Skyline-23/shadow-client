@@ -1123,6 +1123,31 @@ func realtimeRuntimeVideoFrameBoundaryClassifier() {
     #expect(!nonBoundary)
 }
 
+@Test("Realtime runtime video frame-start classifier requires SOF and first FEC block")
+func realtimeRuntimeVideoFrameStartClassifier() {
+    var sofPayload = Data(repeating: 0, count: 16)
+    sofPayload[sofPayload.startIndex + 8] = 0x01 // SOF
+    sofPayload[sofPayload.startIndex + 11] = 0x00 // current block = 0
+    let sofStart = ShadowClientRealtimeRTSPSessionRuntime.isLikelyVideoFrameStart(
+        payload: sofPayload
+    )
+    #expect(sofStart)
+
+    var nonSOFPayload = sofPayload
+    nonSOFPayload[nonSOFPayload.startIndex + 8] = 0x00
+    let nonSOFStart = ShadowClientRealtimeRTSPSessionRuntime.isLikelyVideoFrameStart(
+        payload: nonSOFPayload
+    )
+    #expect(!nonSOFStart)
+
+    var nonFirstFECBlockPayload = sofPayload
+    nonFirstFECBlockPayload[nonFirstFECBlockPayload.startIndex + 11] = 0x10 // current block = 1
+    let nonFirstFECBlockStart = ShadowClientRealtimeRTSPSessionRuntime.isLikelyVideoFrameStart(
+        payload: nonFirstFECBlockPayload
+    )
+    #expect(!nonFirstFECBlockStart)
+}
+
 @Test("Realtime runtime stall detector triggers recovery when decode submits continue without frame output")
 func realtimeRuntimeStallDetectorTriggersRecoveryForActiveDecodePath() {
     let shouldRecover = ShadowClientRealtimeRTSPSessionRuntime.shouldTriggerDecoderOutputStallRecovery(

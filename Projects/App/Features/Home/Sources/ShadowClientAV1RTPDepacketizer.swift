@@ -3,6 +3,15 @@ import Foundation
 /// Shadow Client-owned RTP depacketizer for Sunshine's NV video packet format.
 /// The type name preserves protocol compatibility terminology only.
 public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
+    public struct AssembledFrameMetadata: Sendable {
+        public let frameIndex: UInt32
+        public let firstStreamPacketIndex: UInt32
+        public let frameHeaderType: UInt8?
+        public let frameType: UInt8?
+        public let frameHeaderSize: Int
+        public let lastPacketPayloadLength: UInt16
+    }
+
     public enum IngestResult: Sendable {
         case noFrame
         case frame(Data)
@@ -35,6 +44,8 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
     private struct FirstPacketHeader {
         let frameHeaderSize: Int
         let lastPacketPayloadLength: UInt16
+        let headerType: UInt8?
+        let frameType: UInt8?
     }
 
     private struct ServerAppVersion: Comparable {
@@ -66,6 +77,8 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
     private var lastPacketPayloadLength: UInt16 = 0
     private var tailTruncationStrategy: TailTruncationStrategy
     private var frameHeaderSelectionMode: FrameHeaderSelectionMode = .heuristic
+    private var currentFrameMetadata: AssembledFrameMetadata?
+    private var lastCompletedFrameMetadata: AssembledFrameMetadata?
 
     public init(tailTruncationStrategy: TailTruncationStrategy = .trimUsingLastPacketLength) {
         self.tailTruncationStrategy = tailTruncationStrategy
@@ -87,6 +100,14 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         nextFrameIndex = nil
         lastPacketInStream = nil
         lastPacketPayloadLength = 0
+        currentFrameMetadata = nil
+        lastCompletedFrameMetadata = nil
+    }
+
+    public mutating func consumeLastCompletedFrameMetadata() -> AssembledFrameMetadata? {
+        let metadata = lastCompletedFrameMetadata
+        lastCompletedFrameMetadata = nil
+        return metadata
     }
 
     public mutating func ingest(payload: Data, marker: Bool) -> Data? {
@@ -168,6 +189,14 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
 
             frameHeaderSize = header.frameHeaderSize
             lastPacketPayloadLength = header.lastPacketPayloadLength
+            currentFrameMetadata = AssembledFrameMetadata(
+                frameIndex: packet.frameIndex,
+                firstStreamPacketIndex: packet.streamPacketIndex,
+                frameHeaderType: header.headerType,
+                frameType: header.frameType,
+                frameHeaderSize: frameHeaderSize,
+                lastPacketPayloadLength: lastPacketPayloadLength
+            )
             if frameHeaderSize > 0 {
                 packetPayload.removeFirst(frameHeaderSize)
             }
@@ -197,14 +226,17 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         }
 
         let frame = currentFrame
+        let completedMetadata = currentFrameMetadata
         decodingFrame = false
         currentFrameIndex = 0
         lastPacketPayloadLength = 0
         nextFrameIndex = packet.frameIndex &+ 1
+        currentFrameMetadata = nil
         currentFrame.removeAll(keepingCapacity: true)
         guard !frame.isEmpty else {
             return .droppedCorruptFrame
         }
+        lastCompletedFrameMetadata = completedMetadata
         return .frame(frame)
     }
 
@@ -212,6 +244,7 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         decodingFrame = false
         currentFrameIndex = 0
         lastPacketPayloadLength = 0
+        currentFrameMetadata = nil
         currentFrame.removeAll(keepingCapacity: true)
     }
 
@@ -309,6 +342,13 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         guard frameHeaderSize <= payload.count else {
             return nil
         }
+        let headerType = payload.first
+        let frameType: UInt8?
+        if payload.count >= 4 {
+            frameType = payload[payload.startIndex + 3]
+        } else {
+            frameType = nil
+        }
         let lastPayloadLength: UInt16
         if tailTruncationStrategy == .trimUsingLastPacketLength {
             guard let parsedLength = readUInt16LE(payload, at: 4) else {
@@ -320,7 +360,9 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         }
         return FirstPacketHeader(
             frameHeaderSize: frameHeaderSize,
-            lastPacketPayloadLength: lastPayloadLength
+            lastPacketPayloadLength: lastPayloadLength,
+            headerType: headerType,
+            frameType: frameType
         )
     }
 

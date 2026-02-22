@@ -856,21 +856,18 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         packetQueue: ShadowClientVideoPacketQueue
     ) async {
         var packetsSinceDecodeQueueProbe = 0
-        var droppingPacketsUntilFrameBoundary = false
+        var droppingPacketsUntilFrameStart = false
 
         while !Task.isCancelled {
             guard let packet = await packetQueue.next() else {
                 break
             }
 
-            if droppingPacketsUntilFrameBoundary {
-                if Self.isLikelyVideoFrameBoundary(
-                    marker: packet.marker,
-                    payload: packet.payload
-                ) {
-                    droppingPacketsUntilFrameBoundary = false
+            if droppingPacketsUntilFrameStart {
+                if !Self.isLikelyVideoFrameStart(payload: packet.payload) {
+                    continue
                 }
-                continue
+                droppingPacketsUntilFrameStart = false
             }
 
             packetsSinceDecodeQueueProbe += 1
@@ -890,11 +887,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                         droppedCount: 1,
                         source: "depacketize-shed"
                     )
-                    if !Self.isLikelyVideoFrameBoundary(
-                        marker: packet.marker,
-                        payload: packet.payload
-                    ) {
-                        droppingPacketsUntilFrameBoundary = true
+                    resetDepacketizerStateForBoundaryRealignment(codec: codec)
+                    if !Self.isLikelyVideoFrameStart(payload: packet.payload) {
+                        droppingPacketsUntilFrameStart = true
                     }
                     continue
                 }
@@ -1314,7 +1309,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             if trimmedCount > 0 {
                 // Trimming can drop packet heads in the middle of an access unit.
                 // Reset depacketizer state so next frame assembly restarts on a clean boundary.
-                shadowClientNVDepacketizer.reset()
+                resetDepacketizerStateForBoundaryRealignment(codec: codec)
                 logger.notice(
                     "Video receive queue pressure trim dropped \(trimmedCount, privacy: .public) stale packets for codec \(String(describing: codec), privacy: .public)"
                 )
@@ -1350,6 +1345,15 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             for: codec,
             reason: "receive-queue-saturation"
         )
+    }
+
+    private func resetDepacketizerStateForBoundaryRealignment(codec: ShadowClientVideoCodec) {
+        shadowClientNVDepacketizer.reset()
+        if codec == .av1 {
+            awaitingAV1SyncFrame = true
+            av1SyncGateDroppedFrameCount = 0
+            lastAV1DecodeSubmissionContext = nil
+        }
     }
 
     private func isVideoPipelineUnderIngressPressure(now: TimeInterval) -> Bool {
@@ -2913,6 +2917,23 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         let fecCurrentBlockNumber = (multiFecBlocks >> 4) & 0x03
         let fecLastBlockNumber = (multiFecBlocks >> 6) & 0x03
         return fecCurrentBlockNumber == fecLastBlockNumber
+    }
+
+    static func isLikelyVideoFrameStart(payload: Data) -> Bool {
+        // NV packet header encodes SOF/FEC block metadata at fixed offsets.
+        guard payload.count >= 12 else {
+            return false
+        }
+
+        let flags = payload[payload.startIndex + 8]
+        let hasSOF = (flags & 0x01) != 0
+        guard hasSOF else {
+            return false
+        }
+
+        let multiFecBlocks = payload[payload.startIndex + 11]
+        let fecCurrentBlockNumber = (multiFecBlocks >> 4) & 0x03
+        return fecCurrentBlockNumber == 0
     }
 
     private static func decodeLEB128(
