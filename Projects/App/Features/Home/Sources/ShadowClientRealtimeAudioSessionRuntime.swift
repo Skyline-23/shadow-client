@@ -520,8 +520,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     } else {
                         isDecodeCooldownActive = false
                     }
-                    let readyPacketDrainLimit: Int? =
-                        (isDecodeCooldownActive || preDrainAvailableOutputSlots <= 0) ? 0 : nil
+                    let readyPacketDrainLimit = Self.audioReadyPacketDrainLimit(
+                        isDecodeCooldownActive: isDecodeCooldownActive,
+                        availableOutputSlots: preDrainAvailableOutputSlots
+                    )
                     let readyPackets = jitterBuffer.enqueue(
                         packet,
                         preferredPayloadType: currentPayloadType,
@@ -1424,6 +1426,20 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         return (0, decodeCount, max(0, readyPacketCount - decodeCount))
     }
 
+    internal static func audioReadyPacketDrainLimit(
+        isDecodeCooldownActive: Bool,
+        availableOutputSlots: Int,
+        maximumDrainBatch: Int = 8
+    ) -> Int? {
+        if isDecodeCooldownActive {
+            return 0
+        }
+        guard availableOutputSlots > 0 else {
+            return 0
+        }
+        return min(max(1, maximumDrainBatch), availableOutputSlots)
+    }
+
     internal static func maximumRecoveredAudioPacketsPerBurst(
         availableOutputSlots: Int
     ) -> Int {
@@ -1492,13 +1508,17 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             ShadowClientRealtimeSessionDefaults.audioOutputQueueDecodeSheddingLowWatermarkSlots,
             normalizedChannels > 2 ? 3 : 2
         )
+        let targetQueuedWindowPackets = max(
+            8,
+            Int((Double(estimatedPacketsPerSecond) * 0.25).rounded(.up))
+        )
         let maximumQueuedBuffers = min(
-            192,
+            36,
             max(
-                40,
+                12,
                 max(
-                    estimatedPacketsPerSecond + (estimatedPacketsPerSecond / 2),
-                    24 + (normalizedChannels * 6)
+                    targetQueuedWindowPackets + normalizedChannels,
+                    10 + (normalizedChannels * 2)
                 )
             )
         )

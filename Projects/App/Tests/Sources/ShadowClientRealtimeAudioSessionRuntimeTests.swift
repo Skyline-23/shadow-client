@@ -295,6 +295,43 @@ func audioDecodeWindowDrainsAllReadyPacketsWhenOutputSlotsAreSufficient() {
     #expect(window.droppedPacketCount == 0)
 }
 
+@Test("Audio ready packet drain limit disables draining while decode cooldown is active")
+func audioReadyPacketDrainLimitDisablesDuringCooldown() {
+    let limit = ShadowClientRealtimeAudioSessionRuntime.audioReadyPacketDrainLimit(
+        isDecodeCooldownActive: true,
+        availableOutputSlots: 4
+    )
+
+    #expect(limit == 0)
+}
+
+@Test("Audio ready packet drain limit disables draining when output queue has no slots")
+func audioReadyPacketDrainLimitDisablesWhenNoSlots() {
+    let limit = ShadowClientRealtimeAudioSessionRuntime.audioReadyPacketDrainLimit(
+        isDecodeCooldownActive: false,
+        availableOutputSlots: 0
+    )
+
+    #expect(limit == 0)
+}
+
+@Test("Audio ready packet drain limit is bounded by available slots and batch size")
+func audioReadyPacketDrainLimitUsesAvailableSlotsAndBatchCap() {
+    let bySlots = ShadowClientRealtimeAudioSessionRuntime.audioReadyPacketDrainLimit(
+        isDecodeCooldownActive: false,
+        availableOutputSlots: 3,
+        maximumDrainBatch: 8
+    )
+    let byBatch = ShadowClientRealtimeAudioSessionRuntime.audioReadyPacketDrainLimit(
+        isDecodeCooldownActive: false,
+        availableOutputSlots: 12,
+        maximumDrainBatch: 8
+    )
+
+    #expect(bySlots == 3)
+    #expect(byBatch == 8)
+}
+
 @Test("Audio recovered-packet burst budget is capped and slot-aware")
 func audioRecoveredPacketBurstBudgetIsCappedAndSlotAware() {
     let oneSlotBudget = ShadowClientRealtimeAudioSessionRuntime.maximumRecoveredAudioPacketsPerBurst(
