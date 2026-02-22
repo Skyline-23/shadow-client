@@ -282,6 +282,40 @@ func audioDecodeWindowDecodesAllPacketsWithHeadroom() {
     #expect(window.droppedPacketCount == 0)
 }
 
+@Test("Audio recovered-packet burst budget is capped and slot-aware")
+func audioRecoveredPacketBurstBudgetIsCappedAndSlotAware() {
+    let oneSlotBudget = ShadowClientRealtimeAudioSessionRuntime.maximumRecoveredAudioPacketsPerBurst(
+        availableOutputSlots: 1
+    )
+    let twoSlotBudget = ShadowClientRealtimeAudioSessionRuntime.maximumRecoveredAudioPacketsPerBurst(
+        availableOutputSlots: 2
+    )
+    let tenSlotBudget = ShadowClientRealtimeAudioSessionRuntime.maximumRecoveredAudioPacketsPerBurst(
+        availableOutputSlots: 10
+    )
+
+    #expect(oneSlotBudget == 1)
+    #expect(twoSlotBudget == 1)
+    #expect(tenSlotBudget == 4)
+}
+
+@Test("Audio concealment burst budget is capped and slot-aware")
+func audioConcealmentBurstBudgetIsCappedAndSlotAware() {
+    let oneSlotBudget = ShadowClientRealtimeAudioSessionRuntime.maximumConcealmentPacketsPerBurst(
+        availableOutputSlots: 1
+    )
+    let fourSlotBudget = ShadowClientRealtimeAudioSessionRuntime.maximumConcealmentPacketsPerBurst(
+        availableOutputSlots: 4
+    )
+    let tenSlotBudget = ShadowClientRealtimeAudioSessionRuntime.maximumConcealmentPacketsPerBurst(
+        availableOutputSlots: 10
+    )
+
+    #expect(oneSlotBudget == 1)
+    #expect(fourSlotBudget == 2)
+    #expect(tenSlotBudget == 3)
+}
+
 @Test("Custom audio decoder registry prioritizes preferred providers")
 func customAudioDecoderRegistryPrioritizesPreferredProviders() throws {
     ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
