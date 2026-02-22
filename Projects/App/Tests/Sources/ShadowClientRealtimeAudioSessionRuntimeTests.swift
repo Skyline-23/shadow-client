@@ -123,6 +123,53 @@ func audioNegotiationDowngradesSurroundWhenDecoderUnavailable() {
     #expect(preferredChannels == 2)
 }
 
+@Test("Opus decoding requires external decoder provider")
+func opusDecodingRequiresExternalDecoderProvider() {
+    ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
+    defer { ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() }
+
+    let stereoTrack = ShadowClientRTSPAudioTrackDescriptor(
+        codec: .opus,
+        rtpPayloadType: 97,
+        sampleRate: 48_000,
+        channelCount: 2,
+        controlURL: nil,
+        formatParameters: [:]
+    )
+
+    #expect(!ShadowClientRealtimeAudioSessionRuntime.canDecode(track: stereoTrack))
+}
+
+@Test("Opus decoding succeeds when external decoder provider is available")
+func opusDecodingSucceedsWithExternalDecoderProvider() {
+    ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
+    defer { ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() }
+
+    ShadowClientRealtimeCustomAudioDecoderRegistry.register(
+        provider: { track in
+            guard track.codec == .opus else {
+                return nil
+            }
+            return MockCustomAudioDecoder(
+                codec: .opus,
+                sampleRate: track.sampleRate,
+                channels: track.channelCount
+            )
+        }
+    )
+
+    let stereoTrack = ShadowClientRTSPAudioTrackDescriptor(
+        codec: .opus,
+        rtpPayloadType: 97,
+        sampleRate: 48_000,
+        channelCount: 2,
+        controlURL: nil,
+        formatParameters: [:]
+    )
+
+    #expect(ShadowClientRealtimeAudioSessionRuntime.canDecode(track: stereoTrack))
+}
+
 @Test("Audio negotiation keeps surround request when multichannel decoder is available")
 func audioNegotiationKeepsSurroundWhenDecoderAvailable() {
     ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()

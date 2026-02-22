@@ -21,6 +21,18 @@ func audioPCMGuardRejectsHeavilyClippedBuffers() {
     #expect(accepted == false)
 }
 
+@Test("Audio PCM guard tolerates sparse extreme samples by clamping")
+func audioPCMGuardToleratesSparseExtremeSamples() {
+    var frames = Array(repeating: Float(0.12), count: 512)
+    frames[17] = 32.0
+    let buffer = makePCMBuffer(frames: frames)
+
+    let accepted = ShadowClientRealtimeAudioPCMBufferGuard.isSafeForPlayback(buffer)
+
+    #expect(accepted == true)
+    #expect(buffer.floatChannelData?[0][17] == 1.0)
+}
+
 @Test("Audio PCM guard accepts valid buffers")
 func audioPCMGuardAcceptsValidBuffer() {
     let frames: [Float] = (0 ..< 256).map { index in

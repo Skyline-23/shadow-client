@@ -39,6 +39,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         let pressureTrimInterval: Int
         let pressureTrimToRecentPackets: Int
         let decodeSheddingLowWatermarkSlots: Int
+        let maximumQueuedBuffers: Int
     }
 
     private let logger = Logger(
@@ -97,10 +98,17 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             let resolvedDecoder = try ShadowClientRealtimeAudioDecoderFactory.make(
                 for: resolvedTrack
             )
-            decoderImplementationName = String(describing: type(of: resolvedDecoder))
+            let queuePressureProfile = Self.audioQueuePressureProfile(
+                sampleRate: resolvedTrack.sampleRate,
+                channels: resolvedTrack.channelCount
+            )
+            decoderImplementationName = ShadowClientRealtimeAudioDecoderFactory.debugName(
+                for: resolvedDecoder
+            )
             decoder = resolvedDecoder
             output = try ShadowClientRealtimeAudioEngineOutput(
-                format: resolvedDecoder.outputFormat
+                format: resolvedDecoder.outputFormat,
+                maximumQueuedBufferCount: queuePressureProfile.maximumQueuedBuffers
             )
             if let encryption {
                 payloadDecryptor = try ShadowClientRealtimeAudioPayloadDecryptor(
@@ -134,11 +142,26 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 over: udpConnection,
                 pingPayload: pingPayload
             )
+            guard let activeDecoder = decoder,
+                  let activeOutput = output
+            else {
+                let message = "Audio runtime dependencies were released before receive loop start."
+                logger.error("\(message, privacy: .public)")
+                updateState(.disconnected(message))
+                throw NSError(
+                    domain: "ShadowClientRealtimeAudioSessionRuntime",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: message]
+                )
+            }
             startReceiveLoop(
                 over: udpConnection,
                 preferredPayloadType: resolvedTrack.rtpPayloadType,
                 sampleRate: resolvedTrack.sampleRate,
-                channels: resolvedTrack.channelCount
+                channels: resolvedTrack.channelCount,
+                decoder: activeDecoder,
+                payloadDecryptor: payloadDecryptor,
+                output: activeOutput
             )
             updateState(
                 .playing(
@@ -173,8 +196,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         connection?.cancel()
         connection = nil
 
-        output?.stop()
+        let outputToStop = output
         output = nil
+        outputToStop?.stop()
 
         decoder = nil
         payloadDecryptor = nil
@@ -188,7 +212,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         over connection: NWConnection,
         preferredPayloadType: Int,
         sampleRate: Int,
-        channels: Int
+        channels: Int,
+        decoder: any ShadowClientRealtimeAudioPacketDecoding,
+        payloadDecryptor: ShadowClientRealtimeAudioPayloadDecryptor?,
+        output audioOutput: ShadowClientRealtimeAudioEngineOutput
     ) {
         receiveTask = Task { [weak self] in
             guard let self else {
@@ -201,10 +228,19 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var consecutiveDecryptFailures = 0
             var outputQueuePressureDropCount = 0
             var firstOutputQueuePressureDropUptime: TimeInterval = 0
+            var consecutiveOutputQueueSaturationCount = 0
+            var outputQueueDecodeCooldownActivationCount = 0
+            var decodeCooldownDeadline: ContinuousClock.Instant?
             let queuePressureProfile = Self.audioQueuePressureProfile(
                 sampleRate: sampleRate,
                 channels: channels
             )
+            let decodeSaturationBurstThreshold = max(
+                1,
+                ShadowClientRealtimeSessionDefaults.audioOutputQueueSaturationBurstThreshold
+            )
+            let decodeCooldown = ShadowClientRealtimeSessionDefaults.audioOutputQueueDecodeCooldown
+            let clock = ContinuousClock()
 
             let registerOutputQueuePressureDrop: (Int, String) -> Void = { droppedCount, reason in
                 guard droppedCount > 0 else {
@@ -289,14 +325,35 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         continue
                     }
 
-                    guard let audioOutput = output else {
-                        continue
+                    if let cooldownDeadline = decodeCooldownDeadline {
+                        if clock.now < cooldownDeadline {
+                            registerOutputQueuePressureDrop(readyPackets.count, "decode-cooldown")
+                            continue
+                        }
+                        decodeCooldownDeadline = nil
                     }
                     let availableOutputSlots = audioOutput.availableEnqueueSlots
                     if availableOutputSlots <= 0 {
+                        consecutiveOutputQueueSaturationCount += 1
                         registerOutputQueuePressureDrop(readyPackets.count, "skip-decode")
+                        if consecutiveOutputQueueSaturationCount >= decodeSaturationBurstThreshold {
+                            consecutiveOutputQueueSaturationCount = 0
+                            decodeCooldownDeadline = clock.now + decodeCooldown
+                            outputQueueDecodeCooldownActivationCount += 1
+                            let trimmedCount = jitterBuffer.trimToMostRecent(
+                                maxBufferedPackets: queuePressureProfile.pressureTrimToRecentPackets
+                            )
+                            if outputQueueDecodeCooldownActivationCount == 1 ||
+                                outputQueueDecodeCooldownActivationCount.isMultiple(of: 12)
+                            {
+                                logger.notice(
+                                    "Audio decode cooldown activated due to sustained output queue saturation (count=\(outputQueueDecodeCooldownActivationCount, privacy: .public), trimmed=\(trimmedCount, privacy: .public))"
+                                )
+                            }
+                        }
                         continue
                     }
+                    consecutiveOutputQueueSaturationCount = 0
 
                     var remainingOutputSlots = availableOutputSlots
                     let decodeSheddingLowWatermark = max(
@@ -317,9 +374,6 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     for packetIndex in packetsToDecodeStartIndex ..< readyPackets.count {
                         let readyPacket = readyPackets[packetIndex]
                         do {
-                            guard let decoder else {
-                                continue
-                            }
                             guard remainingOutputSlots > 0 else {
                                 registerOutputQueuePressureDrop(1, "guard-no-slots")
                                 continue
@@ -344,9 +398,11 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                     if consecutiveDecryptFailures >= 150 {
                                         let message = "Audio payload decryption repeatedly failed."
                                         logger.error("\(message, privacy: .public)")
-                                        output?.stop()
-                                        output = nil
-                                        updateState(.decoderFailed(message))
+                                        handleReceiveLoopTermination(
+                                            over: connection,
+                                            output: audioOutput,
+                                            state: .decoderFailed(message)
+                                        )
                                         return
                                     }
                                     continue
@@ -365,15 +421,25 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                         consecutiveDroppedOutputBuffers.isMultiple(of: 25)
                                     {
                                         logger.error(
-                                            "Dropping suspicious decoded audio buffer (count=\(consecutiveDroppedOutputBuffers, privacy: .public))"
+                                            "Sanitizing suspicious decoded audio buffer (count=\(consecutiveDroppedOutputBuffers, privacy: .public))"
                                         )
+                                    }
+                                    ShadowClientRealtimeAudioPCMBufferGuard.replaceWithSilence(
+                                        pcmBuffer
+                                    )
+                                    if audioOutput.enqueue(pcmBuffer: pcmBuffer) == false {
+                                        registerOutputQueuePressureDrop(1, "drop-suspicious-buffer")
+                                    } else {
+                                        remainingOutputSlots = max(0, remainingOutputSlots - 1)
                                     }
                                     if consecutiveDroppedOutputBuffers >= 150 {
                                         let message = "Audio decoder produced repeated suspicious PCM buffers."
                                         logger.error("\(message, privacy: .public)")
-                                        output?.stop()
-                                        output = nil
-                                        updateState(.decoderFailed(message))
+                                        handleReceiveLoopTermination(
+                                            over: connection,
+                                            output: audioOutput,
+                                            state: .decoderFailed(message)
+                                        )
                                         return
                                     }
                                     continue
@@ -388,9 +454,11 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         } catch {
                             let message = "Audio decode failed: \(error.localizedDescription)"
                             logger.error("\(message, privacy: .public)")
-                            output?.stop()
-                            output = nil
-                            updateState(.decoderFailed(message))
+                            handleReceiveLoopTermination(
+                                over: connection,
+                                output: audioOutput,
+                                state: .decoderFailed(message)
+                            )
                             return
                         }
                     }
@@ -400,13 +468,40 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     }
                     let message = "Audio RTP receive failed: \(error.localizedDescription)"
                     logger.error("\(message, privacy: .public)")
-                    output?.stop()
-                    output = nil
-                    updateState(.disconnected(message))
+                    handleReceiveLoopTermination(
+                        over: connection,
+                        output: audioOutput,
+                        state: .disconnected(message)
+                    )
                     return
                 }
             }
         }
+    }
+
+    private func handleReceiveLoopTermination(
+        over connection: NWConnection,
+        output audioOutput: ShadowClientRealtimeAudioEngineOutput,
+        state finalState: ShadowClientRealtimeAudioOutputState
+    ) {
+        if output === audioOutput {
+            output = nil
+        }
+        audioOutput.stop()
+
+        guard self.connection === connection else {
+            return
+        }
+
+        receiveTask = nil
+        pingTask?.cancel()
+        pingTask = nil
+        connection.cancel()
+        self.connection = nil
+        decoder = nil
+        payloadDecryptor = nil
+        jitterBuffer.reset(preferredPayloadType: nil)
+        updateState(finalState)
     }
 
     private func startPingLoop(
@@ -766,11 +861,22 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             ShadowClientRealtimeSessionDefaults.audioOutputQueueDecodeSheddingLowWatermarkSlots,
             normalizedChannels > 2 ? 3 : 2
         )
+        let maximumQueuedBuffers = min(
+            96,
+            max(
+                24,
+                max(
+                    estimatedPacketsPerSecond / 2,
+                    16 + (normalizedChannels * 4)
+                )
+            )
+        )
         return .init(
             pressureSignalInterval: pressureSignalInterval,
             pressureTrimInterval: pressureTrimInterval,
             pressureTrimToRecentPackets: pressureTrimToRecentPackets,
-            decodeSheddingLowWatermarkSlots: decodeSheddingLowWatermarkSlots
+            decodeSheddingLowWatermarkSlots: decodeSheddingLowWatermarkSlots,
+            maximumQueuedBuffers: maximumQueuedBuffers
         )
     }
 
@@ -951,32 +1057,26 @@ private enum ShadowClientRealtimeAudioDecoderFactory {
         let customDecoderAttempt = makeCustomDecoderAttempt(for: track)
         switch track.codec {
         case .opus:
-            if track.channelCount > 2,
-               let customDecoder = customDecoderAttempt.decoder
-            {
+            if let customDecoder = customDecoderAttempt.decoder {
                 return ShadowClientRealtimeCustomDecoderAdapter(base: customDecoder)
             }
-            do {
-                return try ShadowClientRealtimeOpusAudioDecoder(
-                    sampleRate: track.sampleRate,
-                    channels: track.channelCount
+            if let customDecoderError = customDecoderAttempt.error {
+                throw NSError(
+                    domain: "ShadowClientRealtimeAudioDecoderFactory",
+                    code: 2,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "External Opus decoder bootstrap failed (\(customDecoderError.localizedDescription)).",
+                    ]
                 )
-            } catch {
-                if let customDecoder = customDecoderAttempt.decoder {
-                    return ShadowClientRealtimeCustomDecoderAdapter(base: customDecoder)
-                }
-                if let customDecoderError = customDecoderAttempt.error {
-                    throw NSError(
-                        domain: "ShadowClientRealtimeAudioDecoderFactory",
-                        code: 2,
-                        userInfo: [
-                            NSLocalizedDescriptionKey:
-                                "Audio decoder bootstrap failed (custom decoder: \(customDecoderError.localizedDescription); system decoder: \(error.localizedDescription)).",
-                        ]
-                    )
-                }
-                throw error
             }
+            throw NSError(
+                domain: "ShadowClientRealtimeAudioDecoderFactory",
+                code: 3,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "External Opus decoder is required but unavailable.",
+                ]
+            )
         case .l16:
             if let customDecoder = customDecoderAttempt.decoder {
                 return ShadowClientRealtimeCustomDecoderAdapter(base: customDecoder)
@@ -1026,6 +1126,15 @@ private enum ShadowClientRealtimeAudioDecoderFactory {
             return (nil, error)
         }
     }
+
+    static func debugName(
+        for decoder: any ShadowClientRealtimeAudioPacketDecoding
+    ) -> String {
+        if let customAdapter = decoder as? ShadowClientRealtimeCustomDecoderAdapter {
+            return String(describing: type(of: customAdapter.base))
+        }
+        return String(describing: type(of: decoder))
+    }
 }
 
 private final class ShadowClientRealtimeCustomDecoderAdapter: ShadowClientRealtimeAudioPacketDecoding {
@@ -1057,21 +1166,6 @@ private final class ShadowClientRealtimeCustomDecoderAdapter: ShadowClientRealti
 }
 
 private enum ShadowClientRealtimeAudioFormatFactory {
-    static func opusInputFormat(
-        sampleRate: Int,
-        channels: Int
-    ) -> AVAudioFormat? {
-        var settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatOpus,
-            AVSampleRateKey: sampleRate,
-            AVNumberOfChannelsKey: channels,
-        ]
-        if let channelLayoutData = channelLayoutData(for: channels) {
-            settings[AVChannelLayoutKey] = channelLayoutData
-        }
-        return AVAudioFormat(settings: settings)
-    }
-
     static func pcmFloatOutputFormat(
         sampleRate: Int,
         channels: Int
@@ -1126,142 +1220,6 @@ private enum ShadowClientRealtimeAudioFormatFactory {
         default:
             return kAudioChannelLayoutTag_DiscreteInOrder | AudioChannelLayoutTag(channels)
         }
-    }
-}
-
-private final class ShadowClientRealtimeOpusAudioDecoder: ShadowClientRealtimeAudioPacketDecoding {
-    let codec: ShadowClientAudioCodec = .opus
-    let sampleRate: Int
-    let channels: Int
-    let outputFormat: AVAudioFormat
-    private let inputFormat: AVAudioFormat
-    private let converter: AVAudioConverter
-    private var compressedPacketBuffer: AVAudioCompressedBuffer
-    private var compressedPacketCapacity: Int
-
-    init(sampleRate: Int, channels: Int) throws {
-        self.sampleRate = sampleRate
-        self.channels = channels
-
-        guard let inputFormat = ShadowClientRealtimeAudioFormatFactory.opusInputFormat(
-            sampleRate: sampleRate,
-            channels: channels
-        ) else {
-            throw NSError(
-                domain: "ShadowClientRealtimeOpusAudioDecoder",
-                code: 1,
-                userInfo: [
-                    NSLocalizedDescriptionKey: "Could not create Opus input format.",
-                ]
-            )
-        }
-        self.inputFormat = inputFormat
-
-        guard let outputFormat = ShadowClientRealtimeAudioFormatFactory.pcmFloatOutputFormat(
-            sampleRate: sampleRate,
-            channels: channels
-        ) else {
-            throw NSError(
-                domain: "ShadowClientRealtimeOpusAudioDecoder",
-                code: 2,
-                userInfo: [
-                    NSLocalizedDescriptionKey: "Could not create Opus output format.",
-                ]
-            )
-        }
-        self.outputFormat = outputFormat
-
-        guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
-            throw NSError(
-                domain: "ShadowClientRealtimeOpusAudioDecoder",
-                code: 3,
-                userInfo: [
-                    NSLocalizedDescriptionKey: "Could not create Opus converter.",
-                ]
-            )
-        }
-        self.converter = converter
-        let initialCompressedPacketCapacity = 2_048
-        self.compressedPacketCapacity = initialCompressedPacketCapacity
-        self.compressedPacketBuffer = AVAudioCompressedBuffer(
-            format: inputFormat,
-            packetCapacity: 1,
-            maximumPacketSize: max(1, initialCompressedPacketCapacity)
-        )
-    }
-
-    func decode(payload: Data) throws -> AVAudioPCMBuffer? {
-        guard !payload.isEmpty else {
-            return nil
-        }
-        ensureCompressedPacketBufferCapacity(minimumPacketSize: payload.count)
-        payload.copyBytes(
-            to: compressedPacketBuffer.data.assumingMemoryBound(to: UInt8.self),
-            count: payload.count
-        )
-        compressedPacketBuffer.byteLength = UInt32(payload.count)
-        compressedPacketBuffer.packetCount = 1
-        if let packetDescriptions = compressedPacketBuffer.packetDescriptions {
-            packetDescriptions[0] = AudioStreamPacketDescription(
-                mStartOffset: 0,
-                mVariableFramesInPacket: 0,
-                mDataByteSize: UInt32(payload.count)
-            )
-        }
-
-        let frameCapacity: AVAudioFrameCount = 5_760
-        guard let pcmBuffer = AVAudioPCMBuffer(
-            pcmFormat: outputFormat,
-            frameCapacity: frameCapacity
-        ) else {
-            return nil
-        }
-
-        var didProvideInput = false
-        var conversionError: NSError?
-        let status = converter.convert(to: pcmBuffer, error: &conversionError) { [self] _, status in
-            if didProvideInput {
-                status.pointee = .noDataNow
-                return nil
-            }
-            didProvideInput = true
-            status.pointee = .haveData
-            return self.compressedPacketBuffer
-        }
-
-        if let conversionError {
-            throw conversionError
-        }
-
-        switch status {
-        case .haveData, .inputRanDry:
-            return pcmBuffer.frameLength > 0 ? pcmBuffer : nil
-        case .endOfStream:
-            return nil
-        case .error:
-            throw NSError(
-                domain: "ShadowClientRealtimeOpusAudioDecoder",
-                code: 4,
-                userInfo: [
-                    NSLocalizedDescriptionKey: "Opus conversion failed.",
-                ]
-            )
-        @unknown default:
-            return nil
-        }
-    }
-
-    private func ensureCompressedPacketBufferCapacity(minimumPacketSize: Int) {
-        guard minimumPacketSize > compressedPacketCapacity else {
-            return
-        }
-        let nextCapacity = max(minimumPacketSize, compressedPacketCapacity * 2)
-        compressedPacketCapacity = nextCapacity
-        compressedPacketBuffer = AVAudioCompressedBuffer(
-            format: inputFormat,
-            packetCapacity: 1,
-            maximumPacketSize: max(1, nextCapacity)
-        )
     }
 }
 
@@ -1428,44 +1386,97 @@ private final class ShadowClientRealtimeG711AudioDecoder: ShadowClientRealtimeAu
 }
 
 private final class ShadowClientRealtimeAudioEngineOutput {
-    private static let maximumQueuedBufferCount = 16
+    private static let minimumQueuedBufferCount = 16
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
+    private let engineStateLock = NSLock()
     private let format: AVAudioFormat
+    private let maximumQueuedBufferCount: Int
     private let queuedBufferLock = NSLock()
     private var queuedBufferCount = 0
     private var isStarted = false
+    private var isTerminated = false
+    private var isGraphConfigured = false
 
-    init(format: AVAudioFormat) throws {
+    init(
+        format: AVAudioFormat,
+        maximumQueuedBufferCount: Int = minimumQueuedBufferCount
+    ) throws {
         self.format = format
-        engine.attach(player)
-        engine.connect(
-            player,
-            to: engine.mainMixerNode,
-            format: format
+        self.maximumQueuedBufferCount = max(
+            Self.minimumQueuedBufferCount,
+            maximumQueuedBufferCount
         )
+        guard configureGraphLocked() else {
+            throw NSError(
+                domain: "ShadowClientRealtimeAudioEngineOutput",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Audio player node could not be attached to engine."]
+            )
+        }
+        engine.prepare()
         try engine.start()
+        guard player.engine === engine else {
+            throw NSError(
+                domain: "ShadowClientRealtimeAudioEngineOutput",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Audio player node is not attached to engine."]
+            )
+        }
         player.play()
         isStarted = true
     }
 
     func enqueue(pcmBuffer: AVAudioPCMBuffer) -> Bool {
-        if !isStarted {
-            try? engine.start()
-            player.play()
-            isStarted = true
-        } else if !player.isPlaying {
-            player.play()
-        }
-
         queuedBufferLock.lock()
-        if queuedBufferCount >= Self.maximumQueuedBufferCount {
+        if queuedBufferCount >= maximumQueuedBufferCount {
             queuedBufferLock.unlock()
             return false
         }
         queuedBufferCount += 1
         queuedBufferLock.unlock()
+
+        engineStateLock.lock()
+        defer { engineStateLock.unlock() }
+
+        guard !isTerminated else {
+            didConsumeQueuedBuffer()
+            return false
+        }
+
+        if player.engine !== engine || !isGraphConfigured {
+            guard configureGraphLocked() else {
+                didConsumeQueuedBuffer()
+                return false
+            }
+            isStarted = false
+        }
+
+        if !engine.isRunning {
+            engine.prepare()
+            try? engine.start()
+            guard engine.isRunning else {
+                didConsumeQueuedBuffer()
+                return false
+            }
+            isStarted = false
+        }
+
+        if !isStarted || !player.isPlaying {
+            // AVAudioEngine route/interrupt transitions can leave player state stale
+            // while this runtime is still alive. Rebind before calling play().
+            guard configureGraphLocked() else {
+                didConsumeQueuedBuffer()
+                return false
+            }
+            guard player.engine === engine else {
+                didConsumeQueuedBuffer()
+                return false
+            }
+            player.play()
+            isStarted = true
+        }
 
         player.scheduleBuffer(
             pcmBuffer,
@@ -1478,27 +1489,36 @@ private final class ShadowClientRealtimeAudioEngineOutput {
 
     var hasEnqueueCapacity: Bool {
         queuedBufferLock.lock()
-        let hasCapacity = queuedBufferCount < Self.maximumQueuedBufferCount
+        let hasCapacity = queuedBufferCount < maximumQueuedBufferCount
         queuedBufferLock.unlock()
         return hasCapacity
     }
 
     var availableEnqueueSlots: Int {
         queuedBufferLock.lock()
-        let available = max(0, Self.maximumQueuedBufferCount - queuedBufferCount)
+        let available = max(0, maximumQueuedBufferCount - queuedBufferCount)
         queuedBufferLock.unlock()
         return available
     }
 
     func stop() {
-        guard isStarted else {
+        engineStateLock.lock()
+        if isTerminated {
+            engineStateLock.unlock()
             return
         }
+        isTerminated = true
         player.stop()
+        if player.engine === engine {
+            engine.disconnectNodeOutput(player)
+            engine.detach(player)
+        }
         engine.stop()
         engine.reset()
-        engine.detach(player)
+        isGraphConfigured = false
         isStarted = false
+        engineStateLock.unlock()
+
         queuedBufferLock.lock()
         queuedBufferCount = 0
         queuedBufferLock.unlock()
@@ -1508,6 +1528,29 @@ private final class ShadowClientRealtimeAudioEngineOutput {
         queuedBufferLock.lock()
         queuedBufferCount = max(0, queuedBufferCount - 1)
         queuedBufferLock.unlock()
+    }
+
+    private func configureGraphLocked() -> Bool {
+        if let attachedEngine = player.engine, attachedEngine !== engine {
+            attachedEngine.detach(player)
+            isGraphConfigured = false
+        }
+
+        if player.engine == nil {
+            engine.attach(player)
+        }
+        guard player.engine === engine else {
+            return false
+        }
+
+        engine.disconnectNodeOutput(player)
+        engine.connect(
+            player,
+            to: engine.mainMixerNode,
+            format: format
+        )
+        isGraphConfigured = true
+        return true
     }
 }
 
