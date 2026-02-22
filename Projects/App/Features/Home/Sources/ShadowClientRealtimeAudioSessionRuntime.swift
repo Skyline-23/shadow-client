@@ -267,6 +267,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var estimatedSamplesPerPacket = max(minimumPacketSamples, sampleRate / 50)
             var lossConcealmentEventCount = 0
             var inBandFECRecoveryCount = 0
+            var rsFECRecoveryCount = 0
+            let moonlightRSFECQueue = ShadowClientRealtimeAudioMoonlightRSFECQueue()
 
             let registerOutputQueuePressureDrop: (Int, String) -> Void = { droppedCount, reason in
                 guard droppedCount > 0 else {
@@ -339,6 +341,15 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         timestamp: parsedPacket.timestamp,
                         payloadType: normalizedPayload.payloadType,
                         payload: normalizedPayload.payload
+                    )
+                    await moonlightRSFECQueue.ingest(
+                        packetSequenceNumber: packet.sequenceNumber,
+                        packetTimestamp: packet.timestamp,
+                        payloadType: packet.payloadType,
+                        payload: packet.payload,
+                        expectedPrimaryPayloadType: currentPayloadType,
+                        wrapperPayloadType: ShadowClientRealtimeSessionDefaults
+                            .ignoredRTPControlPayloadType
                     )
 
                     if packet.payloadType != currentPayloadType {
@@ -546,7 +557,123 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             }
                             if missingPacketCount > 0 {
                                 var recoveredMissingPacketCount = 0
-                                if missingPacketCount == 1, remainingOutputSlots > 0 {
+                                if let previousSequenceNumber = lastDecodedSequenceNumber,
+                                   missingPacketCount > 0,
+                                   remainingOutputSlots > 0
+                                {
+                                    for missingOffset in 1 ... missingPacketCount {
+                                        guard remainingOutputSlots > 0 else {
+                                            registerOutputQueuePressureDrop(
+                                                missingPacketCount - recoveredMissingPacketCount,
+                                                "drop-rs-fec-recovery-buffer"
+                                            )
+                                            break
+                                        }
+                                        let missingSequenceNumber = previousSequenceNumber &+
+                                            UInt16(missingOffset)
+                                        guard let recoveredPayload = await moonlightRSFECQueue
+                                            .takeRecoveredPayload(
+                                                sequenceNumber: missingSequenceNumber
+                                            )
+                                        else {
+                                            continue
+                                        }
+
+                                        let recoveredDecodePayload: Data
+                                        if let payloadDecryptor {
+                                            do {
+                                                recoveredDecodePayload = try payloadDecryptor.decrypt(
+                                                    payload: recoveredPayload,
+                                                    sequenceNumber: missingSequenceNumber
+                                                )
+                                                consecutiveDecryptFailures = 0
+                                            } catch {
+                                                consecutiveDecryptFailures += 1
+                                                if consecutiveDecryptFailures == 1 ||
+                                                    consecutiveDecryptFailures.isMultiple(of: 25)
+                                                {
+                                                    logger.error(
+                                                        "Failed to decrypt RS-FEC recovered RTP audio payload (count=\(consecutiveDecryptFailures, privacy: .public)): \(error.localizedDescription, privacy: .public)"
+                                                    )
+                                                }
+                                                continue
+                                            }
+                                        } else {
+                                            recoveredDecodePayload = recoveredPayload
+                                        }
+
+                                        do {
+                                            if let recoveredPCMBuffer = try decoder.decode(
+                                                payload: recoveredDecodePayload,
+                                                decodeFEC: false
+                                            ) {
+                                                if decoder.requiresPlaybackSafetyGuard {
+                                                    guard ShadowClientRealtimeAudioPCMBufferGuard
+                                                        .isSafeForPlayback(recoveredPCMBuffer)
+                                                    else {
+                                                        ShadowClientRealtimeAudioPCMBufferGuard
+                                                            .replaceWithSilence(recoveredPCMBuffer)
+                                                        if audioOutput.enqueue(
+                                                            pcmBuffer: recoveredPCMBuffer
+                                                        ) == false {
+                                                            registerOutputQueuePressureDrop(
+                                                                1,
+                                                                "drop-rs-fec-sanitized-buffer"
+                                                            )
+                                                            continue
+                                                        }
+                                                        remainingOutputSlots = max(
+                                                            0,
+                                                            remainingOutputSlots - 1
+                                                        )
+                                                        recoveredMissingPacketCount += 1
+                                                        continue
+                                                    }
+                                                }
+
+                                                if audioOutput.enqueue(
+                                                    pcmBuffer: recoveredPCMBuffer
+                                                ) == false {
+                                                    registerOutputQueuePressureDrop(
+                                                        1,
+                                                        "drop-rs-fec-recovery-buffer"
+                                                    )
+                                                    continue
+                                                }
+                                                remainingOutputSlots = max(
+                                                    0,
+                                                    remainingOutputSlots - 1
+                                                )
+                                                recoveredMissingPacketCount += 1
+                                            }
+                                        } catch {
+                                            logger.error(
+                                                "Audio RS-FEC recovered payload decode failed for sequence \(missingSequenceNumber, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                                            )
+                                        }
+                                    }
+                                }
+
+                                if recoveredMissingPacketCount > 0 {
+                                    let previousRSFECRecoveryCount = rsFECRecoveryCount
+                                    rsFECRecoveryCount += recoveredMissingPacketCount
+                                    if rsFECRecoveryCount == recoveredMissingPacketCount ||
+                                        Self.didCounterCrossIntervalBoundary(
+                                            previous: previousRSFECRecoveryCount,
+                                            current: rsFECRecoveryCount,
+                                            interval: 25
+                                        )
+                                    {
+                                        logger.notice(
+                                            "Audio Moonlight RS-FEC recovered missing packets (count=\(rsFECRecoveryCount, privacy: .public))"
+                                        )
+                                    }
+                                }
+
+                                if recoveredMissingPacketCount == 0,
+                                   missingPacketCount == 1,
+                                   remainingOutputSlots > 0
+                                {
                                     if let fecBuffer = try decoder.decode(
                                         payload: decodePayload,
                                         decodeFEC: true
