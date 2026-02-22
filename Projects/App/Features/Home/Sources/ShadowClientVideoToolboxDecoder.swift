@@ -225,6 +225,7 @@ public actor ShadowClientVideoToolboxDecoder {
             for: Int(normalizedPresentationTimeScale)
         )
         clampDecodePacingPenalty()
+        clampDecodeSubmitPacingMultiplier()
     }
 
     public func setDecodePresentationTimeScale(_ timescale: CMTimeScale) {
@@ -234,6 +235,7 @@ public actor ShadowClientVideoToolboxDecoder {
             for: Int(normalizedPresentationTimeScale)
         )
         clampDecodePacingPenalty()
+        clampDecodeSubmitPacingMultiplier()
     }
 
     public func applyLaunchSettings(_ settings: ShadowClientGameStreamLaunchSettings) {
@@ -253,9 +255,10 @@ public actor ShadowClientVideoToolboxDecoder {
     }
 
     public func reportQueueSaturationSignal() {
+        lastDecoderInstabilitySignalUptime = ProcessInfo.processInfo.systemUptime
         decodePacingPenalty = max(0, decodePacingPenalty - 2)
         decodeSubmitPacingMultiplier = max(
-            1.0,
+            minimumDecodeSubmitPacingMultiplier(),
             decodeSubmitPacingMultiplier - (ShadowClientVideoDecoderDefaults.decodePacingMultiplierStep * 2)
         )
     }
@@ -269,6 +272,7 @@ public actor ShadowClientVideoToolboxDecoder {
             ShadowClientVideoDecoderDefaults.decodePacingMaximumMultiplier,
             decodeSubmitPacingMultiplier + ShadowClientVideoDecoderDefaults.decodePacingMultiplierStep
         )
+        clampDecodeSubmitPacingMultiplier()
     }
 
     public func decode(
@@ -560,11 +564,23 @@ public actor ShadowClientVideoToolboxDecoder {
         )
     }
 
+    private func clampDecodeSubmitPacingMultiplier() {
+        let minimumMultiplier = minimumDecodeSubmitPacingMultiplier()
+        let maximumMultiplier = max(
+            minimumMultiplier,
+            ShadowClientVideoDecoderDefaults.decodePacingMaximumMultiplier
+        )
+        decodeSubmitPacingMultiplier = min(
+            maximumMultiplier,
+            max(minimumMultiplier, decodeSubmitPacingMultiplier)
+        )
+    }
+
     private func recoverDecodePacingIfStable(now: TimeInterval) {
         guard lastDecoderInstabilitySignalUptime > 0 else {
             return
         }
-        guard decodePacingPenalty > 0 || decodeSubmitPacingMultiplier > 1.0 else {
+        guard decodePacingPenalty > 0 || abs(decodeSubmitPacingMultiplier - 1.0) > .ulpOfOne else {
             return
         }
 
@@ -576,10 +592,17 @@ public actor ShadowClientVideoToolboxDecoder {
         }
 
         decodePacingPenalty = max(0, decodePacingPenalty - 1)
-        decodeSubmitPacingMultiplier = max(
-            1.0,
-            decodeSubmitPacingMultiplier - ShadowClientVideoDecoderDefaults.decodePacingMultiplierStep
-        )
+        if decodeSubmitPacingMultiplier > 1.0 {
+            decodeSubmitPacingMultiplier = max(
+                1.0,
+                decodeSubmitPacingMultiplier - ShadowClientVideoDecoderDefaults.decodePacingMultiplierStep
+            )
+        } else if decodeSubmitPacingMultiplier < 1.0 {
+            decodeSubmitPacingMultiplier = min(
+                1.0,
+                decodeSubmitPacingMultiplier + ShadowClientVideoDecoderDefaults.decodePacingMultiplierStep
+            )
+        }
         lastDecoderInstabilitySignalUptime = now
     }
 
@@ -588,7 +611,17 @@ public actor ShadowClientVideoToolboxDecoder {
     }
 
     private func currentTargetSubmitIntervalSeconds() -> TimeInterval {
-        currentFrameIntervalSeconds() * decodeSubmitPacingMultiplier
+        currentFrameIntervalSeconds() * max(
+            minimumDecodeSubmitPacingMultiplier(),
+            decodeSubmitPacingMultiplier
+        )
+    }
+
+    private func minimumDecodeSubmitPacingMultiplier() -> Double {
+        min(
+            1.0,
+            max(0.1, ShadowClientVideoDecoderDefaults.decodePacingMinimumMultiplier)
+        )
     }
 
     private static func normalizedPresentationTimeScale(_ timescale: CMTimeScale) -> CMTimeScale {

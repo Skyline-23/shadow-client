@@ -763,7 +763,7 @@ func realtimeRuntimeAv1AccessUnitValidatorRejectsMalformedPayloads() {
     #expect(!ShadowClientRealtimeRTSPSessionRuntime.isLikelyValidAV1AccessUnit(invalidSize))
 }
 
-@Test("Realtime runtime depacketizer shedding activates only for AV1 when decode queue crosses watermark")
+@Test("Realtime runtime depacketizer shedding activates for any codec when decode queue crosses watermark")
 func realtimeRuntimeDepacketizerSheddingClassifier() {
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime.shouldShedDepacketizerWork(
@@ -778,11 +778,76 @@ func realtimeRuntimeDepacketizerSheddingClassifier() {
         )
     )
     #expect(
-        !ShadowClientRealtimeRTSPSessionRuntime.shouldShedDepacketizerWork(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldShedDepacketizerWork(
             codec: .h265,
             bufferedDecodeUnits: ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueShedHighWatermark + 8
         )
     )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldShedDepacketizerWork(
+            codec: .h264,
+            bufferedDecodeUnits: ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueShedHighWatermark + 4
+        )
+    )
+}
+
+@Test("Realtime runtime decode-queue recovery classifier suppresses producer trim/shed loops")
+func realtimeRuntimeDecodeQueueRecoveryClassifier() {
+    #expect(!ShadowClientRealtimeRTSPSessionRuntime.shouldTriggerDecodeQueueRecovery(source: "producer-trim"))
+    #expect(!ShadowClientRealtimeRTSPSessionRuntime.shouldTriggerDecodeQueueRecovery(source: "producer-shed"))
+    #expect(ShadowClientRealtimeRTSPSessionRuntime.shouldTriggerDecodeQueueRecovery(source: "consumer-trim"))
+    #expect(ShadowClientRealtimeRTSPSessionRuntime.shouldTriggerDecodeQueueRecovery(source: "depacketize-shed"))
+}
+
+@Test("Realtime runtime producer-trim recovery helper respects threshold and cooldown")
+func realtimeRuntimeProducerTrimRecoveryHelper() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldRequestProducerTrimRecovery(
+            dropCount: ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerTrimRecoveryDropThreshold - 1,
+            now: 10,
+            lastRecoveryUptime: 0
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldRequestProducerTrimRecovery(
+            dropCount: ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerTrimRecoveryDropThreshold,
+            now: 10,
+            lastRecoveryUptime: 0
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldRequestProducerTrimRecovery(
+            dropCount: ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerTrimRecoveryDropThreshold + 12,
+            now: 10,
+            lastRecoveryUptime: 9.2
+        )
+    )
+}
+
+@Test("Realtime runtime video frame-boundary classifier accepts marker or NV EOF packet")
+func realtimeRuntimeVideoFrameBoundaryClassifier() {
+    let markerBoundary = ShadowClientRealtimeRTSPSessionRuntime.isLikelyVideoFrameBoundary(
+        marker: true,
+        payload: Data()
+    )
+    #expect(markerBoundary)
+
+    var eofPayload = Data(repeating: 0, count: 16)
+    eofPayload[eofPayload.startIndex + 8] = 0x02 // EOF
+    eofPayload[eofPayload.startIndex + 11] = 0xF0 // current=3, last=3
+    let eofBoundary = ShadowClientRealtimeRTSPSessionRuntime.isLikelyVideoFrameBoundary(
+        marker: false,
+        payload: eofPayload
+    )
+    #expect(eofBoundary)
+
+    var nonBoundaryPayload = eofPayload
+    nonBoundaryPayload[nonBoundaryPayload.startIndex + 11] = 0x70 // current=3, last=1
+    let nonBoundary = ShadowClientRealtimeRTSPSessionRuntime.isLikelyVideoFrameBoundary(
+        marker: false,
+        payload: nonBoundaryPayload
+    )
+    #expect(!nonBoundary)
 }
 
 @Test("Realtime runtime stall detector triggers recovery when decode submits continue without frame output")
@@ -882,6 +947,45 @@ func realtimeRuntimeCounterBoundaryHelperIgnoresNonCrossing() {
             previous: 10,
             current: 20,
             interval: 0
+        )
+    )
+}
+
+@Test("Realtime runtime recovery request gate suppresses duplicate requests while one is pending")
+func realtimeRuntimeRecoveryRequestGateSuppressesPendingDuplicates() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldAllowVideoRecoveryFrameRequest(
+            now: 10.0,
+            lastRequestUptime: 9.6,
+            isRequestPending: true,
+            minimumInterval: 0.25,
+            pendingTimeout: 2.0
+        )
+    )
+}
+
+@Test("Realtime runtime recovery request gate reopens after pending timeout")
+func realtimeRuntimeRecoveryRequestGateReopensAfterPendingTimeout() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldAllowVideoRecoveryFrameRequest(
+            now: 10.0,
+            lastRequestUptime: 7.0,
+            isRequestPending: true,
+            minimumInterval: 0.75,
+            pendingTimeout: 2.0
+        )
+    )
+}
+
+@Test("Realtime runtime recovery request gate honors cooldown when no request is pending")
+func realtimeRuntimeRecoveryRequestGateHonorsCooldown() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldAllowVideoRecoveryFrameRequest(
+            now: 10.0,
+            lastRequestUptime: 9.7,
+            isRequestPending: false,
+            minimumInterval: 0.5,
+            pendingTimeout: 2.0
         )
     )
 }
