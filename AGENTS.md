@@ -102,12 +102,12 @@ Use subagents in parallel for non-trivial work with disjoint ownership, then mer
 
 ### Active Functional Roadmap (Must Be Implemented In Order)
 - `feat(audio): external Opus integration + capability-driven negotiation`
-  - use external `opus` module for multichannel decode path where available,
-  - keep compatibility path that prefers system decoder when possible and falls back cleanly,
+  - use external `opus` module for Opus decode path across stereo and multichannel tracks,
+  - use external `opus` decoder as the default/required Opus path (system Opus decoder disabled for runtime streaming due corruption risk on target workloads),
   - keep decoder capability/combination-based negotiation:
     - use surround only if local decoder/output can actually support it,
     - otherwise select stereo parameters during SDP/track negotiation (not runtime failure).
-  - status: `partial` (`YbridOpus` + plugin path integrated and negotiation hooks added; remaining instability exists for some 6ch runtime/output combinations).
+  - status: `in_progress` (external decoder path is now the primary Opus runtime path; stereo provider + queue/guard tuning are being hardened with field logs).
 - `refactor(runtime): AsyncStream/actor-first runtime internals`
   - preserve SwiftUI-facing `@Published` API contracts,
   - reduce ad-hoc `Task` fan-out by routing runtime intents/events through typed `AsyncStream` pipelines,
@@ -129,10 +129,12 @@ Use subagents in parallel for non-trivial work with disjoint ownership, then mer
 - `perf(streaming): GPU-first queue/backpressure tuning`
   - apply bitrate/fps-adaptive receive/decode queue profiles instead of fixed queue constants,
   - tune VideoToolbox AV1/H26x in-flight decode budget adaptively from session resolution/fps (aggressive enough to prevent decode starvation under fullscreen/interaction bursts),
+  - apply backlog-aware in-flight expansion (bounded) so decode submission catches up under transient bursts without permanently overdriving VT,
   - gate queue-pressure recovery escalation on decoded-frame output stall (prevent recovery-request loops while rendering is healthy),
+  - preserve frame boundaries when trimming receive queue under pressure (avoid partial-AU restart corruption),
   - keep decode throughput recovery and render cadence synchronized to session FPS to avoid decode↔render oscillation,
   - apply the same pressure-shed policy family to audio output queue saturation (decode-side shedding + bounded queue policy) to avoid audio loop thrash.
-  - status: `in_progress` (adaptive queue profile + stall-gated recovery is the current active implementation step).
+  - status: `in_progress` (adaptive queue profile + stall-gated recovery + backlog-aware VT in-flight + audio saturation cooldown are landed; receive-queue sizing now caps bitrate outliers using resolution/fps model and decoder output bridge no longer timer-throttles frame delivery, but fullscreen/interaction stress stability is still being tuned).
 - `fix(macos): fullscreen transition state machine`
   - state-machine fullscreen toggles (no retrigger during transition),
   - prevent capture/app-focus transitions from tearing down decoder/transport loops.
