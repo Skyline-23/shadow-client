@@ -143,8 +143,36 @@ func audioNegotiationKeepsSurroundWhenDecoderAvailable() {
 
     let preferredChannels = ShadowClientRealtimeAudioSessionRuntime.preferredOpusChannelCountForNegotiation(
         surroundRequested: true,
-        preferredSurroundChannelCount: 6
+        preferredSurroundChannelCount: 6,
+        maximumOutputChannels: 8
     )
 
     #expect(preferredChannels == 6)
+}
+
+@Test("Audio negotiation downgrades surround request when playback output is stereo-only")
+func audioNegotiationDowngradesSurroundWhenOutputIsStereoOnly() {
+    ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
+    defer { ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() }
+
+    ShadowClientRealtimeCustomAudioDecoderRegistry.register(
+        provider: { track in
+            guard track.codec == .opus, track.channelCount > 2 else {
+                return nil
+            }
+            return MockCustomAudioDecoder(
+                codec: .opus,
+                sampleRate: track.sampleRate,
+                channels: track.channelCount
+            )
+        }
+    )
+
+    let preferredChannels = ShadowClientRealtimeAudioSessionRuntime.preferredOpusChannelCountForNegotiation(
+        surroundRequested: true,
+        preferredSurroundChannelCount: 6,
+        maximumOutputChannels: 2
+    )
+
+    #expect(preferredChannels == 2)
 }

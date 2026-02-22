@@ -642,29 +642,61 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     public static func preferredOpusChannelCountForNegotiation(
         surroundRequested: Bool,
         preferredSurroundChannelCount: Int = 6,
-        sampleRate: Int = 48_000
+        sampleRate: Int = 48_000,
+        maximumOutputChannels: Int? = nil
     ) -> Int {
         guard surroundRequested else {
             return 2
         }
 
+        let resolvedMaximumOutputChannels = max(
+            1,
+            maximumOutputChannels ?? ShadowClientRealtimeAudioOutputCapability.maximumOutputChannels()
+        )
+        guard resolvedMaximumOutputChannels > 2 else {
+            return 2
+        }
+
         let requestedSurroundChannels = max(3, preferredSurroundChannelCount)
+        let negotiatedSurroundChannels = min(
+            requestedSurroundChannels,
+            resolvedMaximumOutputChannels
+        )
+        guard negotiatedSurroundChannels > 2 else {
+            return 2
+        }
         let surroundTrack = ShadowClientRTSPAudioTrackDescriptor(
             codec: .opus,
             rtpPayloadType: 97,
             sampleRate: sampleRate,
-            channelCount: requestedSurroundChannels,
+            channelCount: negotiatedSurroundChannels,
             controlURL: nil,
             formatParameters: [:]
         )
         guard ShadowClientRealtimeAudioDecoderFactory.canDecode(track: surroundTrack) else {
             return 2
         }
-        return requestedSurroundChannels
+        return negotiatedSurroundChannels
     }
 
     public static func canDecode(track: ShadowClientRTSPAudioTrackDescriptor) -> Bool {
         ShadowClientRealtimeAudioDecoderFactory.canDecode(track: track)
+    }
+}
+
+private enum ShadowClientRealtimeAudioOutputCapability {
+    static func maximumOutputChannels() -> Int {
+        let engine = AVAudioEngine()
+        let outputChannels = Int(engine.outputNode.inputFormat(forBus: 0).channelCount)
+        if outputChannels > 0 {
+            return outputChannels
+        }
+
+        let mixerChannels = Int(engine.mainMixerNode.outputFormat(forBus: 0).channelCount)
+        if mixerChannels > 0 {
+            return mixerChannels
+        }
+        return 2
     }
 }
 
