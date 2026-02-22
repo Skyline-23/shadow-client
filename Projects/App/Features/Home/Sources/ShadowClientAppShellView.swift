@@ -1300,12 +1300,20 @@ public struct ShadowClientAppShellView: View {
                     .accessibilityLabel("Remote Session Surface")
 
                     if let overlay = sessionPresentationModel.overlay {
-                        playbackOverlayLabel(
-                            overlay.title,
-                            symbol: overlay.symbol,
-                            tone: sessionPresentationModel.launchTone
-                        )
-                        .padding(.horizontal, 20)
+                        ZStack {
+                            Color.black
+                                .opacity(playbackOverlayDimOpacity(for: sessionPresentationModel.launchTone))
+                                .ignoresSafeArea()
+
+                            playbackOverlayLabel(
+                                overlay.title,
+                                symbol: overlay.symbol,
+                                tone: sessionPresentationModel.launchTone
+                            )
+                            .padding(.horizontal, 20)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
                     }
 
                     ShadowClientSessionInputInteractionView { event in
@@ -1508,6 +1516,17 @@ public struct ShadowClientAppShellView: View {
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(textColor)
             }
+    }
+
+    private func playbackOverlayDimOpacity(for tone: ShadowClientRemoteSessionLaunchTone) -> Double {
+        switch tone {
+        case .failed:
+            return 0.58
+        case .launching:
+            return 0.46
+        case .idle, .launched:
+            return 0.34
+        }
     }
 
     private func realtimeSessionHUDCard<Content: View>(
