@@ -1,3 +1,5 @@
+import Foundation
+
 private actor TelemetryBridgeRegistry {
     private var bridge: MoonlightSessionTelemetryBridge = .shared
 
@@ -10,25 +12,72 @@ private actor TelemetryBridgeRegistry {
     }
 }
 
-private actor TelemetryIngressActivityRegistry {
-    private var callbackCount = 0
-    private var lastCallbackTimestampMs: Int?
+private final class TelemetryIngressActivityRegistry {
+    private struct ActivityState {
+        var callbackCount = 0
+        var lastCallbackTimestampMs: Int?
+    }
 
-    func record(timestampMs: Int) {
-        callbackCount += 1
-        lastCallbackTimestampMs = timestampMs
+    private let lock = NSLock()
+    private var globalActivity = ActivityState()
+    private var perBridgeActivity: [ObjectIdentifier: ActivityState] = [:]
+
+    func record(timestampMs: Int, bridge: MoonlightSessionTelemetryBridge) {
+        lock.lock()
+        globalActivity.callbackCount += 1
+        globalActivity.lastCallbackTimestampMs = timestampMs
+
+        let identifier = ObjectIdentifier(bridge)
+        var bridgeActivity = perBridgeActivity[identifier] ?? ActivityState()
+        bridgeActivity.callbackCount += 1
+        bridgeActivity.lastCallbackTimestampMs = timestampMs
+        perBridgeActivity[identifier] = bridgeActivity
+        lock.unlock()
+    }
+
+    func recordGlobal(timestampMs: Int) {
+        lock.lock()
+        globalActivity.callbackCount += 1
+        globalActivity.lastCallbackTimestampMs = timestampMs
+        lock.unlock()
+    }
+
+    func recordPerBridge(timestampMs: Int, bridge: MoonlightSessionTelemetryBridge) {
+        lock.lock()
+        let identifier = ObjectIdentifier(bridge)
+        var bridgeActivity = perBridgeActivity[identifier] ?? ActivityState()
+        bridgeActivity.callbackCount += 1
+        bridgeActivity.lastCallbackTimestampMs = timestampMs
+        perBridgeActivity[identifier] = bridgeActivity
+        lock.unlock()
     }
 
     func current() -> MoonlightTelemetryIngressActivity {
-        MoonlightTelemetryIngressActivity(
-            callbackCount: callbackCount,
-            lastCallbackTimestampMs: lastCallbackTimestampMs
+        lock.lock()
+        defer { lock.unlock() }
+        return MoonlightTelemetryIngressActivity(
+            callbackCount: globalActivity.callbackCount,
+            lastCallbackTimestampMs: globalActivity.lastCallbackTimestampMs
+        )
+    }
+
+    func current(for bridge: MoonlightSessionTelemetryBridge) -> MoonlightTelemetryIngressActivity {
+        lock.lock()
+        defer { lock.unlock() }
+        let identifier = ObjectIdentifier(bridge)
+        let bridgeActivity = perBridgeActivity[identifier] ?? ActivityState()
+
+        return MoonlightTelemetryIngressActivity(
+            callbackCount: bridgeActivity.callbackCount,
+            lastCallbackTimestampMs: bridgeActivity.lastCallbackTimestampMs
         )
     }
 
     func reset() {
-        callbackCount = 0
-        lastCallbackTimestampMs = nil
+        lock.lock()
+        globalActivity = ActivityState()
+        perBridgeActivity.removeAll()
+        lock.unlock()
     }
 }
 
@@ -56,7 +105,13 @@ public enum MoonlightSessionTelemetryIngress {
     }
 
     public static func callbackActivity() async -> MoonlightTelemetryIngressActivity {
-        await activityRegistry.current()
+        activityRegistry.current()
+    }
+
+    public static func callbackActivity(
+        for bridge: MoonlightSessionTelemetryBridge
+    ) async -> MoonlightTelemetryIngressActivity {
+        activityRegistry.current(for: bridge)
     }
 
     public static func ingestFromCallback(
@@ -69,7 +124,39 @@ public enum MoonlightSessionTelemetryIngress {
         timestampMs: Int64,
         bridge: MoonlightSessionTelemetryBridge
     ) async {
-        await activityRegistry.record(timestampMs: Int(timestampMs))
+        await ingestFromCallback(
+            renderedFrames: renderedFrames,
+            networkDroppedFrames: networkDroppedFrames,
+            pacerDroppedFrames: pacerDroppedFrames,
+            jitterMs: jitterMs,
+            packetLossPercent: packetLossPercent,
+            avSyncOffsetMs: avSyncOffsetMs,
+            timestampMs: timestampMs,
+            bridge: bridge,
+            recordGlobalActivity: true,
+            recordPerBridgeActivity: true
+        )
+    }
+
+    private static func ingestFromCallback(
+        renderedFrames: Int32,
+        networkDroppedFrames: Int32,
+        pacerDroppedFrames: Int32,
+        jitterMs: Double,
+        packetLossPercent: Double,
+        avSyncOffsetMs: Double,
+        timestampMs: Int64,
+        bridge: MoonlightSessionTelemetryBridge,
+        recordGlobalActivity: Bool,
+        recordPerBridgeActivity: Bool
+    ) async {
+        if recordGlobalActivity {
+            activityRegistry.recordGlobal(timestampMs: Int(timestampMs))
+        }
+
+        if recordPerBridgeActivity {
+            activityRegistry.recordPerBridge(timestampMs: Int(timestampMs), bridge: bridge)
+        }
 
         let raw = MoonlightSessionRawTelemetry(
             renderedFrames: Int(renderedFrames),

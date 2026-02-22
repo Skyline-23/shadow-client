@@ -76,7 +76,7 @@ func telemetryIngressExposesCallbackActivityCounters() async {
     let bridge = MoonlightSessionTelemetryBridge()
     await MoonlightSessionTelemetryIngress.resetActivityForTests()
 
-    let initial = await MoonlightSessionTelemetryIngress.callbackActivity()
+    let initial = await MoonlightSessionTelemetryIngress.callbackActivity(for: bridge)
     #expect(initial.callbackCount == 0)
     #expect(initial.lastCallbackTimestampMs == nil)
 
@@ -91,7 +91,7 @@ func telemetryIngressExposesCallbackActivityCounters() async {
         bridge: bridge
     )
 
-    let firstActivity = await MoonlightSessionTelemetryIngress.callbackActivity()
+    let firstActivity = await MoonlightSessionTelemetryIngress.callbackActivity(for: bridge)
     #expect(firstActivity.callbackCount == 1)
     #expect(firstActivity.lastCallbackTimestampMs == 1_111)
 
@@ -106,7 +106,7 @@ func telemetryIngressExposesCallbackActivityCounters() async {
         bridge: bridge
     )
 
-    let secondActivity = await MoonlightSessionTelemetryIngress.callbackActivity()
+    let secondActivity = await MoonlightSessionTelemetryIngress.callbackActivity(for: bridge)
     #expect(secondActivity.callbackCount == 2)
     #expect(secondActivity.lastCallbackTimestampMs == 2_222)
 }
