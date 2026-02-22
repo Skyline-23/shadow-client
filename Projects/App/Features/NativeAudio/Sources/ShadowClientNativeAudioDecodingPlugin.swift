@@ -6,6 +6,11 @@ import SwiftOpus
 public enum ShadowClientNativeAudioDecodingPlugin {
     private static let lock = NSLock()
     private static var isRegistered = false
+    private static let compatibilityProfile = ShadowClientNativeOpusCompatibilityProfile.detect()
+
+    static var currentCompatibilityProfile: ShadowClientNativeOpusCompatibilityProfile {
+        compatibilityProfile
+    }
 
     public static func registerDefaultDecoders() {
         lock.lock()
@@ -22,7 +27,8 @@ public enum ShadowClientNativeAudioDecodingPlugin {
                 }
                 return try ShadowClientNativeOpusDecoder(
                     sampleRate: track.sampleRate,
-                    channels: track.channelCount
+                    channels: track.channelCount,
+                    compatibilityProfile: compatibilityProfile
                 )
             }
         )
@@ -40,13 +46,21 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
     private let maximumSamplesPerChannel: Int
     private let minimumSamplesPerChannelStep: Int
     private let maximumDecodedSamplesPerChannel: Int
+    private let maximumPayloadBytes: Int
+    private let supportsInBandFEC: Bool
     private let decodeLock = NSLock()
     private var int16DecodeScratch: [Int16]
     private let int16ToFloatScale = 1.0 / Float(Int16.max)
 
-    init(sampleRate: Int, channels: Int) throws {
+    init(
+        sampleRate: Int,
+        channels: Int,
+        compatibilityProfile: ShadowClientNativeOpusCompatibilityProfile
+    ) throws {
         self.sampleRate = sampleRate
         self.channels = channels
+        maximumPayloadBytes = max(512, compatibilityProfile.maximumSupportedPayloadBytes)
+        supportsInBandFEC = compatibilityProfile.supportsInBandFEC
 
         guard let opusSampleRate = OpusSampleRate(exactly: sampleRate) else {
             throw NSError(
@@ -60,6 +74,16 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
 
         let multistreamLayout: OpusChannelLayout?
         if channels > 2 {
+            guard compatibilityProfile.supportsSurroundDecoding(channelCount: channels) else {
+                throw NSError(
+                        domain: "ShadowClientNativeOpusDecoder",
+                        code: 3,
+                        userInfo: [
+                            NSLocalizedDescriptionKey:
+                                "Runtime libopus tag \(compatibilityProfile.resolvedRuntimeLibopusTag?.rawValue ?? "unresolved") does not support surround decode for \(channels) channels.",
+                        ]
+                    )
+                }
             multistreamLayout = try OpusChannelLayout.standardSurround(for: channels)
         } else {
             multistreamLayout = nil
@@ -110,15 +134,16 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
         guard !payload.isEmpty else {
             return nil
         }
-        guard payload.count <= 4_096 else {
+        guard payload.count <= maximumPayloadBytes else {
             return nil
         }
 
         return try decodeLock.withLock {
+            let resolvedDecodeFEC = decodeFEC && supportsInBandFEC
             let decodedFrameCount = try int16DecodeScratch.withUnsafeMutableBufferPointer { scratchBuffer in
                 try decoder.decodeInterleavedInt16(
                     payload: payload,
-                    decodeFEC: decodeFEC,
+                    decodeFEC: resolvedDecodeFEC,
                     into: scratchBuffer
                 )
             }

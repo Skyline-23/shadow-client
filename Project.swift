@@ -180,6 +180,7 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
+                .target(name: "ShadowClientNativeAudioDecoding"),
                 .sdk(name: "AppIntents", type: .framework),
                 .external(name: "Testing"),
             ]
@@ -196,6 +197,7 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
+                .target(name: "ShadowClientNativeAudioDecoding"),
                 .sdk(name: "AppIntents", type: .framework),
                 .external(name: "Testing"),
             ]
