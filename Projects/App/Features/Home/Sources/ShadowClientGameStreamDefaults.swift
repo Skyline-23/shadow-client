@@ -144,6 +144,7 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let decoderOutputStallSuppressionMaximumSecondsUnderPressure: TimeInterval = 12.0
     public static let decoderOutputStallPressureSoftRecoveryAttempts = 4
     public static let decoderOutputStallConsumerTrimSoftRecoveryBonusAttempts = 5
+    public static let decoderOutputStallPressureHardResetGraceAttempts = 2
     public static let decoderOutputStallConsumerTrimPressureWindowSeconds: TimeInterval = 2.5
     public static let decoderOutputStallConsumerTrimPacingWindowSeconds: TimeInterval = 2.0
     public static let videoQueuePressureRecentSignalWindowSeconds: TimeInterval = 2.5

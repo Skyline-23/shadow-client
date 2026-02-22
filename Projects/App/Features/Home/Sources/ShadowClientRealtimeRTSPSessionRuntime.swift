@@ -26,6 +26,29 @@ extension ShadowClientRealtimeSessionRuntimeError: LocalizedError {
     }
 }
 
+private final class ShadowClientRealtimeUptimeSignal: @unchecked Sendable {
+    private let lock = NSLock()
+    private var uptime: TimeInterval = 0
+
+    func recordNow() {
+        lock.lock()
+        uptime = ProcessInfo.processInfo.systemUptime
+        lock.unlock()
+    }
+
+    func current() -> TimeInterval {
+        lock.lock()
+        defer { lock.unlock() }
+        return uptime
+    }
+
+    func reset() {
+        lock.lock()
+        uptime = 0
+        lock.unlock()
+    }
+}
+
 private actor ShadowClientVideoDecodeQueue {
     private let capacity: Int
     private var bufferedUnits: [ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?]
@@ -479,6 +502,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var firstDecoderOutputStallCandidateUptime: TimeInterval = 0
     private var lastDecodeSubmitUptime: TimeInterval = 0
     private var lastDecodedFrameOutputUptime: TimeInterval = 0
+    private let decodedFrameCallbackSignal = ShadowClientRealtimeUptimeSignal()
     private var av1DepacketizerRecoveryCount = 0
     private var firstAV1DepacketizerRecoveryUptime: TimeInterval = 0
     private var av1DecoderOutputStallPressureCount = 0
@@ -582,6 +606,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         firstDecoderOutputStallCandidateUptime = 0
         lastDecodeSubmitUptime = 0
         lastDecodedFrameOutputUptime = 0
+        decodedFrameCallbackSignal.reset()
         av1DepacketizerRecoveryCount = 0
         firstAV1DepacketizerRecoveryUptime = 0
         av1DecoderOutputStallPressureCount = 0
@@ -726,6 +751,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         firstDecoderOutputStallCandidateUptime = 0
         lastDecodeSubmitUptime = 0
         lastDecodedFrameOutputUptime = 0
+        decodedFrameCallbackSignal.reset()
         av1DepacketizerRecoveryCount = 0
         firstAV1DepacketizerRecoveryUptime = 0
         av1DecoderOutputStallPressureCount = 0
@@ -1109,7 +1135,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         guard Self.shouldEscalateQueuePressureToRecovery(
             now: now,
-            lastDecodedFrameOutputUptime: lastDecodedFrameOutputUptime,
+            lastDecodedFrameOutputUptime: effectiveLastDecodedFrameOutputUptime(),
             minimumStallSeconds: ShadowClientRealtimeSessionDefaults.videoQueuePressureRecoveryMinimumOutputStallSeconds
         ) else {
             return
@@ -1184,7 +1210,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
         guard Self.shouldEscalateQueuePressureToRecovery(
             now: now,
-            lastDecodedFrameOutputUptime: lastDecodedFrameOutputUptime,
+            lastDecodedFrameOutputUptime: effectiveLastDecodedFrameOutputUptime(),
             minimumStallSeconds: ShadowClientRealtimeSessionDefaults.videoQueuePressureRecoveryMinimumOutputStallSeconds
         ) else {
             return
@@ -1256,7 +1282,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             : ShadowClientRealtimeSessionDefaults.videoQueuePressureRecoveryMinimumOutputStallSeconds
         guard Self.shouldEscalateQueuePressureToRecovery(
             now: now,
-            lastDecodedFrameOutputUptime: lastDecodedFrameOutputUptime,
+            lastDecodedFrameOutputUptime: effectiveLastDecodedFrameOutputUptime(),
             minimumStallSeconds: depacketizerRecoveryMinimumStallSeconds
         ) else {
             return false
@@ -1382,6 +1408,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             let now = ProcessInfo.processInfo.systemUptime
             let isPipelineUnderIngressPressure =
                 isVideoPipelineUnderIngressPressure(now: now) || pendingVideoRecoveryRequest
+            let effectiveLastDecodedFrameOutputUptime = effectiveLastDecodedFrameOutputUptime()
             let hasRecentConsumerTrimPressure = lastVideoDecodeQueueConsumerTrimUptime > 0 &&
                 now - lastVideoDecodeQueueConsumerTrimUptime <=
                 ShadowClientRealtimeSessionDefaults.decoderOutputStallConsumerTrimPressureWindowSeconds
@@ -1408,7 +1435,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 hasRenderedFirstFrame: hasRenderedFirstFrame,
                 now: now,
                 lastDecodeSubmitUptime: lastDecodeSubmitUptime,
-                lastDecodedFrameOutputUptime: lastDecodedFrameOutputUptime,
+                lastDecodedFrameOutputUptime: effectiveLastDecodedFrameOutputUptime,
                 activeDecodeWindowSeconds: effectiveActiveDecodeWindowSeconds,
                 stallThresholdSeconds: effectiveStallThresholdSeconds
             )
@@ -1427,7 +1454,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             let underPressureSignal = isPipelineUnderIngressPressure || hasRecentConsumerTrimPressure
             if Self.shouldSuppressDecoderOutputStallRecovery(
                 now: now,
-                lastDecodedFrameOutputUptime: lastDecodedFrameOutputUptime,
+                lastDecodedFrameOutputUptime: effectiveLastDecodedFrameOutputUptime,
                 underPressureSignal: underPressureSignal
             ) {
                 continue
@@ -1546,17 +1573,28 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
 
         if underPressureSignal {
-            logger.notice(
-                "Video decoder output stalled for codec \(String(describing: codec), privacy: .public) while queue pressure signal is active; extending soft recovery window and skipping decoder reset"
+            let hardResetPressureGraceAttempts = max(
+                0,
+                ShadowClientRealtimeSessionDefaults.decoderOutputStallPressureHardResetGraceAttempts
             )
-            _ = await requestVideoRecoveryFrame(reason: "decoder-output-stall-pressure-extended")
-            lastDecodeSubmitUptime = now
-            return true
+            let maximumSoftPressureAttempts = softRecoveryAttemptLimit + hardResetPressureGraceAttempts
+            if decoderOutputStallRecoveryCount <= maximumSoftPressureAttempts {
+                logger.notice(
+                    "Video decoder output stalled for codec \(String(describing: codec), privacy: .public) while queue pressure signal is active; extending soft recovery window and skipping decoder reset"
+                )
+                _ = await requestVideoRecoveryFrame(reason: "decoder-output-stall-pressure-extended")
+                lastDecodeSubmitUptime = now
+                return true
+            }
+            logger.error(
+                "Video decoder output stalled for codec \(String(describing: codec), privacy: .public) while queue pressure persisted; forcing decoder hard reset path"
+            )
         }
 
         logger.error(
             "Video decoder output stalled for codec \(String(describing: codec), privacy: .public); resetting decoder and requesting recovery frame"
         )
+        resetVideoQueuePressureTracking()
         await flushVideoPipelineForRecovery(codec: codec)
 
         let shouldResetDecoder = codec != .av1 ||
@@ -1613,12 +1651,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         remainingDecodeQueueBacklog: Int
     ) async throws {
         let runtime = self
+        let decodedFrameCallbackSignal = self.decodedFrameCallbackSignal
         try await decoder.decode(
             accessUnit: accessUnit,
             codec: codec,
             parameterSets: parameterSets,
             backlogHint: remainingDecodeQueueBacklog
         ) { pixelBuffer in
+            decodedFrameCallbackSignal.recordNow()
             let sendableFrame = ShadowClientSendablePixelBuffer(value: pixelBuffer)
             await runtime.handleDecodedFrameOutput(
                 codec: codec,
@@ -1886,11 +1926,21 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         decoderOutputStallCandidateCount = 0
         firstDecoderOutputStallCandidateUptime = 0
         resetAV1DecoderOutputStallPressureTracking()
+        resetVideoQueuePressureTracking()
+        pendingVideoRecoveryRequest = false
+    }
+
+    private func effectiveLastDecodedFrameOutputUptime() -> TimeInterval {
+        max(lastDecodedFrameOutputUptime, decodedFrameCallbackSignal.current())
+    }
+
+    private func resetVideoQueuePressureTracking() {
         videoReceiveQueueDropCount = 0
         firstVideoReceiveQueueDropUptime = 0
         videoDecodeQueueDropCount = 0
         firstVideoDecodeQueueDropUptime = 0
-        pendingVideoRecoveryRequest = false
+        lastVideoQueuePressureSignalUptime = 0
+        lastVideoDecodeQueueConsumerTrimUptime = 0
     }
 
     @discardableResult
