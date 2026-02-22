@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Testing
 @testable import ShadowClientFeatureHome
 
@@ -796,6 +797,47 @@ func realtimeRuntimeStallDetectorRequiresFirstRenderedFrame() {
     )
 
     #expect(!shouldRecover)
+}
+
+@Test("Realtime runtime treats canceled input send errors as transient and does not reset control channel")
+func realtimeRuntimeInputSendClassifierTreatsCanceledAsTransient() {
+    let nwCanceled = NSError(domain: "Network.NWError", code: 89)
+    let urlCanceled = NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)
+    let posixCanceled = NWError.posix(.ECANCELED)
+    let posixNotConnected = NWError.posix(.ENOTCONN)
+
+    #expect(ShadowClientRealtimeRTSPSessionRuntime.isTransientInputSendError(nwCanceled))
+    #expect(ShadowClientRealtimeRTSPSessionRuntime.isTransientInputSendError(urlCanceled))
+    #expect(ShadowClientRealtimeRTSPSessionRuntime.isTransientInputSendError(posixCanceled))
+    #expect(ShadowClientRealtimeRTSPSessionRuntime.isTransientInputSendError(posixNotConnected))
+
+    #expect(!ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(nwCanceled))
+    #expect(!ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(posixCanceled))
+    #expect(!ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(posixNotConnected))
+}
+
+@Test("Realtime runtime resets control channel for fatal send errors")
+func realtimeRuntimeInputSendClassifierResetsForFatalErrors() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(
+            ShadowClientSunshineControlChannelError.connectionClosed
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(
+            ShadowClientSunshineControlChannelError.commandAcknowledgeTimedOut
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(
+            NWError.posix(.ECONNRESET)
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(
+            NWError.posix(.EPIPE)
+        )
+    )
 }
 
 private let nvVideoPacketFlagContainsPicData: UInt8 = 0x01

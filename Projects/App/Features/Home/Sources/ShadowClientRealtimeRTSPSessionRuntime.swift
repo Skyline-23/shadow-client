@@ -1225,6 +1225,79 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             ShadowClientRealtimeSessionDefaults.decoderOutputStallThresholdSeconds
     }
 
+    static func isTransientInputSendError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if (nsError.domain == "Network.NWError" && nsError.code == 89) ||
+            (nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled)
+        {
+            return true
+        }
+
+        if let networkError = error as? NWError {
+            if case let .posix(code) = networkError {
+                switch code {
+                case .ECANCELED, .ENOTCONN:
+                    return true
+                default:
+                    break
+                }
+            }
+        }
+
+        let normalized = error.localizedDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if normalized.contains("operation canceled") ||
+            normalized.contains("operation cancelled") ||
+            normalized.contains("nwerror error 89")
+        {
+            return true
+        }
+        return false
+    }
+
+    static func shouldResetInputControlChannelAfterSendError(_ error: Error) -> Bool {
+        if isTransientInputSendError(error) {
+            return false
+        }
+
+        if let controlError = error as? ShadowClientSunshineControlChannelError {
+            switch controlError {
+            case .connectionClosed,
+                 .connectionTimedOut,
+                 .commandAcknowledgeTimedOut:
+                return true
+            case .handshakeTimedOut,
+                 .verifyConnectNotReceived,
+                 .invalidEncryptedControlKey,
+                 .encryptedControlEncodingFailed:
+                return false
+            }
+        }
+
+        if let networkError = error as? NWError {
+            if case let .posix(code) = networkError {
+                switch code {
+                case .ECONNRESET, .EPIPE:
+                    return true
+                default:
+                    break
+                }
+            }
+        }
+
+        let normalized = error.localizedDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if normalized.contains("connection closed") ||
+            normalized.contains("connection reset by peer") ||
+            normalized.contains("broken pipe")
+        {
+            return true
+        }
+        return false
+    }
+
     static func isLikelyValidAV1AccessUnit(_ accessUnit: Data) -> Bool {
         guard !accessUnit.isEmpty else {
             return false
@@ -2472,7 +2545,10 @@ private actor ShadowClientRTSPInterleavedClient {
                 channelID: packet.channelID
             )
         } catch {
-            if shouldResetControlChannelAfterInputSendError(error) {
+            if ShadowClientRealtimeRTSPSessionRuntime.isTransientInputSendError(error) {
+                return
+            }
+            if ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(error) {
                 logger.notice(
                     "Sunshine input channel reset after send failure: \(error.localizedDescription, privacy: .public)"
                 )
@@ -2512,52 +2588,6 @@ private actor ShadowClientRTSPInterleavedClient {
         case .gamepadArrival:
             return "gamepadArrival"
         }
-    }
-
-    private func shouldResetControlChannelAfterInputSendError(_ error: Error) -> Bool {
-        let nsError = error as NSError
-        if (nsError.domain == "Network.NWError" && nsError.code == 89) ||
-            (nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled)
-        {
-            return true
-        }
-
-        if let controlError = error as? ShadowClientSunshineControlChannelError {
-            switch controlError {
-            case .connectionClosed,
-                 .connectionTimedOut,
-                 .commandAcknowledgeTimedOut:
-                return true
-            case .handshakeTimedOut,
-                 .verifyConnectNotReceived,
-                 .invalidEncryptedControlKey,
-                 .encryptedControlEncodingFailed:
-                return false
-            }
-        }
-
-        if let networkError = error as? NWError {
-            if case let .posix(code) = networkError {
-                switch code {
-                case .ECANCELED, .ENOTCONN, .ECONNRESET, .EPIPE:
-                    return true
-                default:
-                    break
-                }
-            }
-        }
-
-        let normalized = error.localizedDescription
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        if normalized.contains("operation canceled") ||
-            normalized.contains("operation cancelled") ||
-            normalized.contains("nwerror error 89") ||
-            normalized.contains("connection closed")
-        {
-            return true
-        }
-        return false
     }
 
     func receiveInterleavedVideoPackets(
