@@ -149,7 +149,7 @@ public actor ShadowClientVideoToolboxDecoder {
     private var decodePacingPenalty = 0
     private var decodeSubmitPacingMultiplier = 1.0
     private var lastDecodeSubmitUptime: TimeInterval = 0
-    private var lastBackpressureSignalUptime: TimeInterval = 0
+    private var lastDecoderInstabilitySignalUptime: TimeInterval = 0
     private var av1FallbackHDR = false
     private var av1FallbackYUV444 = false
     private var av1CodecConfigurationOrigin: ShadowClientAV1CodecConfigurationOrigin?
@@ -227,9 +227,17 @@ public actor ShadowClientVideoToolboxDecoder {
         av1FallbackYUV444 = yuv444Enabled
     }
 
-    public func reportBackpressureSignal() {
+    public func reportQueueSaturationSignal() {
+        decodePacingPenalty = max(0, decodePacingPenalty - 2)
+        decodeSubmitPacingMultiplier = max(
+            1.0,
+            decodeSubmitPacingMultiplier - (ShadowClientVideoDecoderDefaults.decodePacingMultiplierStep * 2)
+        )
+    }
+
+    public func reportDecoderInstabilitySignal() {
         let now = ProcessInfo.processInfo.systemUptime
-        lastBackpressureSignalUptime = now
+        lastDecoderInstabilitySignalUptime = now
         let maximumPenalty = maximumDecodePacingPenalty()
         decodePacingPenalty = min(maximumPenalty, decodePacingPenalty + 1)
         decodeSubmitPacingMultiplier = min(
@@ -471,7 +479,7 @@ public actor ShadowClientVideoToolboxDecoder {
         decodePacingPenalty = 0
         decodeSubmitPacingMultiplier = 1.0
         lastDecodeSubmitUptime = 0
-        lastBackpressureSignalUptime = 0
+        lastDecoderInstabilitySignalUptime = 0
     }
 
     private func waitForSubmitPacingWindow() async throws {
@@ -532,7 +540,7 @@ public actor ShadowClientVideoToolboxDecoder {
     }
 
     private func recoverDecodePacingIfStable(now: TimeInterval) {
-        guard lastBackpressureSignalUptime > 0 else {
+        guard lastDecoderInstabilitySignalUptime > 0 else {
             return
         }
         guard decodePacingPenalty > 0 || decodeSubmitPacingMultiplier > 1.0 else {
@@ -542,7 +550,7 @@ public actor ShadowClientVideoToolboxDecoder {
         let frameIntervalSeconds = currentFrameIntervalSeconds()
         let recoveryIntervalSeconds = frameIntervalSeconds *
             Double(ShadowClientVideoDecoderDefaults.decodePacingRecoveryFrameWindow)
-        guard now - lastBackpressureSignalUptime >= recoveryIntervalSeconds else {
+        guard now - lastDecoderInstabilitySignalUptime >= recoveryIntervalSeconds else {
             return
         }
 
@@ -551,7 +559,7 @@ public actor ShadowClientVideoToolboxDecoder {
             1.0,
             decodeSubmitPacingMultiplier - ShadowClientVideoDecoderDefaults.decodePacingMultiplierStep
         )
-        lastBackpressureSignalUptime = now
+        lastDecoderInstabilitySignalUptime = now
     }
 
     private func currentFrameIntervalSeconds() -> TimeInterval {
