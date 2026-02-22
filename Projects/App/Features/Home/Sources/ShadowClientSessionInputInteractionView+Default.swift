@@ -1,4 +1,4 @@
-#if !os(macOS)
+#if os(tvOS)
 import SwiftUI
 
 struct ShadowClientSessionInputInteractionPlatformView: View {
