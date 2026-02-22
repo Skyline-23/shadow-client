@@ -204,6 +204,58 @@ func moonlightAudioFECClassifierValidatesHeaderFields() {
     #expect(!invalidPrimaryPayloadType)
 }
 
+@Test("Audio jitter skip policy does not skip before out-of-order wait elapses")
+func audioJitterSkipPolicyDoesNotSkipBeforeOutOfOrderWaitElapses() {
+    let shouldSkip = ShadowClientRealtimeAudioSessionRuntime.shouldSkipMissingAudioSequence(
+        bufferedPacketCount: 6,
+        targetDepth: 6,
+        waitElapsed: 0.005,
+        requiredOutOfOrderWait: 0.010,
+        isSevereOverflow: false
+    )
+
+    #expect(!shouldSkip)
+}
+
+@Test("Audio jitter skip policy skips after out-of-order wait elapses")
+func audioJitterSkipPolicySkipsAfterOutOfOrderWaitElapses() {
+    let shouldSkip = ShadowClientRealtimeAudioSessionRuntime.shouldSkipMissingAudioSequence(
+        bufferedPacketCount: 6,
+        targetDepth: 6,
+        waitElapsed: 0.012,
+        requiredOutOfOrderWait: 0.010,
+        isSevereOverflow: false
+    )
+
+    #expect(shouldSkip)
+}
+
+@Test("Audio jitter skip policy skips immediately under severe overflow")
+func audioJitterSkipPolicySkipsImmediatelyUnderSevereOverflow() {
+    let shouldSkip = ShadowClientRealtimeAudioSessionRuntime.shouldSkipMissingAudioSequence(
+        bufferedPacketCount: 2,
+        targetDepth: 6,
+        waitElapsed: nil,
+        requiredOutOfOrderWait: 0.010,
+        isSevereOverflow: true
+    )
+
+    #expect(shouldSkip)
+}
+
+@Test("Audio jitter skip policy does not skip below target depth")
+func audioJitterSkipPolicyDoesNotSkipBelowTargetDepth() {
+    let shouldSkip = ShadowClientRealtimeAudioSessionRuntime.shouldSkipMissingAudioSequence(
+        bufferedPacketCount: 3,
+        targetDepth: 6,
+        waitElapsed: 0.020,
+        requiredOutOfOrderWait: 0.010,
+        isSevereOverflow: false
+    )
+
+    #expect(!shouldSkip)
+}
+
 @Test("Custom audio decoder registry prioritizes preferred providers")
 func customAudioDecoderRegistryPrioritizesPreferredProviders() throws {
     ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()

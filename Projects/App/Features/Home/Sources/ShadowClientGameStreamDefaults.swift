@@ -159,6 +159,9 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let audioOutputQueuePressureTrimInterval = 60
     public static let audioOutputQueuePressureTrimToRecentPackets = 8
     public static let audioOutputQueueDecodeSheddingLowWatermarkSlots = 2
+    public static let audioJitterBufferTargetDepth = 6
+    public static let audioJitterBufferMaximumDepth = 32
+    public static let audioJitterBufferOutOfOrderWaitSeconds: TimeInterval = 0.010
     public static let audioOutputQueueSaturationBurstThreshold = 6
     public static let audioOutputQueueDecodeCooldown: Duration = .milliseconds(8)
     public static let audioPayloadTypeAdaptationObservationThreshold = 3

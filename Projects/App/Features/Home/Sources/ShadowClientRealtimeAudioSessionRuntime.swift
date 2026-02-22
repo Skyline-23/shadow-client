@@ -57,8 +57,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     private var payloadDecryptor: ShadowClientRealtimeAudioPayloadDecryptor?
     private var output: ShadowClientRealtimeAudioEngineOutput?
     private var jitterBuffer = ShadowClientRealtimeAudioRTPJitterBuffer(
-        targetDepth: 6,
-        maximumDepth: 32
+        targetDepth: ShadowClientRealtimeSessionDefaults.audioJitterBufferTargetDepth,
+        maximumDepth: ShadowClientRealtimeSessionDefaults.audioJitterBufferMaximumDepth,
+        outOfOrderWait: ShadowClientRealtimeSessionDefaults.audioJitterBufferOutOfOrderWaitSeconds
     )
     private var state: ShadowClientRealtimeAudioOutputState = .idle
 
@@ -439,7 +440,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
 
                     let readyPackets = jitterBuffer.enqueue(
                         packet,
-                        preferredPayloadType: currentPayloadType
+                        preferredPayloadType: currentPayloadType,
+                        nowUptime: ProcessInfo.processInfo.systemUptime
                     )
                     if readyPackets.isEmpty {
                         continue
@@ -1311,6 +1313,28 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         return observed
     }
 
+    internal static func shouldSkipMissingAudioSequence(
+        bufferedPacketCount: Int,
+        targetDepth: Int,
+        waitElapsed: TimeInterval?,
+        requiredOutOfOrderWait: TimeInterval,
+        isSevereOverflow: Bool
+    ) -> Bool {
+        guard bufferedPacketCount > 0 else {
+            return false
+        }
+        if isSevereOverflow {
+            return true
+        }
+        guard bufferedPacketCount >= max(1, targetDepth) else {
+            return false
+        }
+        guard let waitElapsed else {
+            return false
+        }
+        return waitElapsed >= max(0, requiredOutOfOrderWait)
+    }
+
     private static func audioQueuePressureProfile(
         sampleRate: Int,
         channels: Int
@@ -1427,29 +1451,37 @@ private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
     private let targetDepth: Int
     private let maximumDepth: Int
     private let maximumDrainBatch: Int
+    private let outOfOrderWait: TimeInterval
     private(set) var lockedPayloadType: Int?
     private var expectedSequence: UInt16?
+    private var pendingGapSequence: UInt16?
+    private var pendingGapStartUptime: TimeInterval?
     private var packetsBySequence: [UInt16: ShadowClientRealtimeAudioSessionRuntime.RTPPacket] = [:]
 
     init(
         targetDepth: Int,
         maximumDepth: Int,
-        maximumDrainBatch: Int = 8
+        maximumDrainBatch: Int = 8,
+        outOfOrderWait: TimeInterval = ShadowClientRealtimeSessionDefaults.audioJitterBufferOutOfOrderWaitSeconds
     ) {
         self.targetDepth = max(2, targetDepth)
         self.maximumDepth = max(self.targetDepth, maximumDepth)
         self.maximumDrainBatch = max(1, maximumDrainBatch)
+        self.outOfOrderWait = max(0, outOfOrderWait)
     }
 
     mutating func reset(preferredPayloadType: Int?) {
         lockedPayloadType = preferredPayloadType
         expectedSequence = nil
+        pendingGapSequence = nil
+        pendingGapStartUptime = nil
         packetsBySequence.removeAll(keepingCapacity: false)
     }
 
     mutating func enqueue(
         _ packet: ShadowClientRealtimeAudioSessionRuntime.RTPPacket,
-        preferredPayloadType: Int
+        preferredPayloadType: Int,
+        nowUptime: TimeInterval
     ) -> [ShadowClientRealtimeAudioSessionRuntime.RTPPacket] {
         if lockedPayloadType == nil {
             lockedPayloadType = preferredPayloadType
@@ -1467,17 +1499,31 @@ private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
         while readyPackets.count < maximumDrainBatch, let expected = expectedSequence {
             if let nextPacket = packetsBySequence.removeValue(forKey: expected) {
                 readyPackets.append(nextPacket)
+                clearPendingGapWaitIfTracking(sequence: expected)
                 expectedSequence = expected &+ 1
                 continue
             }
 
-            let canSkipMissingSequence =
-                !readyPackets.isEmpty || packetsBySequence.count >= targetDepth
-            guard canSkipMissingSequence,
+            let severeOverflow = packetsBySequence.count >= maximumDepth
+            let waitElapsed = pendingGapWaitElapsed(
+                expectedSequence: expected,
+                nowUptime: nowUptime
+            )
+            let shouldSkipMissingSequence =
+                ShadowClientRealtimeAudioSessionRuntime.shouldSkipMissingAudioSequence(
+                    bufferedPacketCount: packetsBySequence.count,
+                    targetDepth: targetDepth,
+                    waitElapsed: waitElapsed,
+                    requiredOutOfOrderWait: outOfOrderWait,
+                    isSevereOverflow: severeOverflow
+                )
+            guard shouldSkipMissingSequence,
                   let nextSequence = nextAvailableSequence(after: expected)
             else {
+                markPendingGapWait(expectedSequence: expected, nowUptime: nowUptime)
                 break
             }
+            clearPendingGapWaitState()
             expectedSequence = nextSequence
         }
 
@@ -1512,20 +1558,24 @@ private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
 
         guard !packetsBySequence.isEmpty else {
             expectedSequence = nil
+            clearPendingGapWaitState()
             return
         }
         if let expected = expectedSequence,
            packetsBySequence[expected] != nil
         {
+            synchronizePendingGapWaitState()
             return
         }
         if let expected = expectedSequence,
            let nextSequence = nextAvailableSequence(after: expected)
         {
             expectedSequence = nextSequence
+            synchronizePendingGapWaitState()
             return
         }
         expectedSequence = packetsBySequence.keys.min()
+        synchronizePendingGapWaitState()
     }
 
     private func orderedBufferedSequences() -> [UInt16] {
@@ -1561,6 +1611,52 @@ private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
         to: UInt16
     ) -> UInt16 {
         to &- from
+    }
+
+    private mutating func markPendingGapWait(
+        expectedSequence: UInt16,
+        nowUptime: TimeInterval
+    ) {
+        if pendingGapSequence != expectedSequence {
+            pendingGapSequence = expectedSequence
+            pendingGapStartUptime = nowUptime
+        } else if pendingGapStartUptime == nil {
+            pendingGapStartUptime = nowUptime
+        }
+    }
+
+    private mutating func clearPendingGapWaitIfTracking(sequence: UInt16) {
+        guard pendingGapSequence == sequence else {
+            return
+        }
+        clearPendingGapWaitState()
+    }
+
+    private mutating func clearPendingGapWaitState() {
+        pendingGapSequence = nil
+        pendingGapStartUptime = nil
+    }
+
+    private mutating func synchronizePendingGapWaitState() {
+        guard let expectedSequence, pendingGapSequence == expectedSequence else {
+            clearPendingGapWaitState()
+            return
+        }
+        if pendingGapStartUptime == nil {
+            pendingGapStartUptime = ProcessInfo.processInfo.systemUptime
+        }
+    }
+
+    private func pendingGapWaitElapsed(
+        expectedSequence: UInt16,
+        nowUptime: TimeInterval
+    ) -> TimeInterval? {
+        guard pendingGapSequence == expectedSequence,
+              let pendingGapStartUptime
+        else {
+            return nil
+        }
+        return max(0, nowUptime - pendingGapStartUptime)
     }
 }
 
