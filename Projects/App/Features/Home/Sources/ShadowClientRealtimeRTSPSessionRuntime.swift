@@ -88,34 +88,39 @@ private actor ShadowClientVideoDecodeQueue {
 
 private actor ShadowClientVideoPacketQueue {
     private static let idlePollInterval: Duration = .milliseconds(2)
+    private static let dropLogInterval = 120
 
     private let capacity: Int
     private var bufferedPackets: [ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket?]
     private var headIndex = 0
     private var bufferedCount = 0
     private var closed = false
+    private var droppedOldestCount = 0
 
     init(capacity: Int) {
         self.capacity = max(4, capacity)
         self.bufferedPackets = Array(repeating: nil, count: self.capacity)
     }
 
-    func enqueue(_ packet: ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket) -> Bool {
+    func enqueue(_ packet: ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket) -> Int? {
         guard !closed else {
-            return false
+            return nil
         }
 
-        var droppedOldest = false
+        var droppedCountForLog: Int?
         if bufferedCount >= capacity {
             bufferedPackets[headIndex] = nil
             headIndex = (headIndex + 1) % capacity
             bufferedCount -= 1
-            droppedOldest = true
+            droppedOldestCount += 1
+            if droppedOldestCount == 1 || droppedOldestCount.isMultiple(of: Self.dropLogInterval) {
+                droppedCountForLog = droppedOldestCount
+            }
         }
         let tailIndex = (headIndex + bufferedCount) % capacity
         bufferedPackets[tailIndex] = packet
         bufferedCount += 1
-        return droppedOldest
+        return droppedCountForLog
     }
 
     func next() async -> ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket? {
@@ -143,6 +148,7 @@ private actor ShadowClientVideoPacketQueue {
         bufferedPackets = Array(repeating: nil, count: capacity)
         headIndex = 0
         bufferedCount = 0
+        droppedOldestCount = 0
     }
 }
 
@@ -199,7 +205,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var hasRenderedFirstFrame = false
     private var hasPublishedRenderingState = false
     private var frameAssemblyLogCount = 0
-    private var videoPacketQueueDropCount = 0
 
     public init(
         surfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init(),
@@ -276,7 +281,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         hasRenderedFirstFrame = false
         hasPublishedRenderingState = false
         frameAssemblyLogCount = 0
-        videoPacketQueueDropCount = 0
 
         await MainActor.run {
             sessionSurfaceContext.reset()
@@ -398,7 +402,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         hasRenderedFirstFrame = false
         hasPublishedRenderingState = false
         frameAssemblyLogCount = 0
-        videoPacketQueueDropCount = 0
         await MainActor.run {
             surfaceContext.reset()
         }
@@ -416,15 +419,18 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         payloadType: Int,
         packetQueue: ShadowClientVideoPacketQueue
     ) async {
+        let runtimeLogger = logger
         do {
             try await client.receiveInterleavedVideoPackets(
                 payloadType: payloadType
             ) { payload, marker in
-                let droppedOldest = await packetQueue.enqueue(
+                let droppedCountForLog = await packetQueue.enqueue(
                     .init(payload: payload, marker: marker)
                 )
-                if droppedOldest {
-                    await self.recordVideoPacketQueueDrop()
+                if let droppedCountForLog {
+                    runtimeLogger.notice(
+                        "Video receive queue dropped oldest packet due to sustained ingress pressure (count=\(droppedCountForLog, privacy: .public))"
+                    )
                 }
             }
         } catch {
@@ -530,15 +536,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             await videoDecodeQueue.close()
         }
         self.videoDecodeQueue = nil
-    }
-
-    private func recordVideoPacketQueueDrop() {
-        videoPacketQueueDropCount += 1
-        if videoPacketQueueDropCount == 1 || videoPacketQueueDropCount.isMultiple(of: 120) {
-            logger.notice(
-                "Video receive queue dropped oldest packet due to sustained ingress pressure (count=\(self.videoPacketQueueDropCount, privacy: .public))"
-            )
-        }
     }
 
     private func failStreamingSession(message: String) async {
@@ -683,7 +680,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         if let rtspClient {
             await rtspClient.requestVideoRecoveryFrame()
         }
-        await transitionSurfaceState(.waitingForFirstFrame)
+        if !hasRenderedFirstFrame {
+            await transitionSurfaceState(.waitingForFirstFrame)
+        }
         return false
     }
 
@@ -751,7 +750,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         if let rtspClient {
             await rtspClient.requestVideoRecoveryFrame()
         }
-        await transitionSurfaceState(.waitingForFirstFrame)
+        if !hasRenderedFirstFrame {
+            await transitionSurfaceState(.waitingForFirstFrame)
+        }
         return true
     }
 
@@ -839,7 +840,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         lastDecodeSubmitUptime = now
         lastDecodedFrameOutputUptime = now
-        await transitionSurfaceState(.waitingForFirstFrame)
+        if !hasRenderedFirstFrame {
+            await transitionSurfaceState(.waitingForFirstFrame)
+        }
         return true
     }
 
