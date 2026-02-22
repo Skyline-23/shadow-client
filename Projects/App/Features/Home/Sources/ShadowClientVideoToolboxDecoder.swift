@@ -189,7 +189,9 @@ public actor ShadowClientVideoToolboxDecoder {
         )
         self.decodePresentationTimeScale = normalizedPresentationTimeScale
         maximumInFlightDecodeRequests = Self.recommendedMaximumInFlightDecodeRequests(
-            for: Int(normalizedPresentationTimeScale)
+            for: Int(normalizedPresentationTimeScale),
+            frameWidth: ShadowClientStreamingLaunchBounds.defaultWidth,
+            frameHeight: ShadowClientStreamingLaunchBounds.defaultHeight
         )
         decodePacingPenalty = 0
     }
@@ -212,6 +214,8 @@ public actor ShadowClientVideoToolboxDecoder {
         )
         if let fps {
             setDecodePresentationTimeScale(fps: fps)
+        } else {
+            recalculateDecodeConcurrencyBudget()
         }
     }
 
@@ -221,21 +225,13 @@ public actor ShadowClientVideoToolboxDecoder {
             CMTimeScale(boundedFPS)
         )
         decodePresentationTimeScale = normalizedPresentationTimeScale
-        maximumInFlightDecodeRequests = Self.recommendedMaximumInFlightDecodeRequests(
-            for: Int(normalizedPresentationTimeScale)
-        )
-        clampDecodePacingPenalty()
-        clampDecodeSubmitPacingMultiplier()
+        recalculateDecodeConcurrencyBudget()
     }
 
     public func setDecodePresentationTimeScale(_ timescale: CMTimeScale) {
         let normalizedPresentationTimeScale = Self.normalizedPresentationTimeScale(timescale)
         decodePresentationTimeScale = normalizedPresentationTimeScale
-        maximumInFlightDecodeRequests = Self.recommendedMaximumInFlightDecodeRequests(
-            for: Int(normalizedPresentationTimeScale)
-        )
-        clampDecodePacingPenalty()
-        clampDecodeSubmitPacingMultiplier()
+        recalculateDecodeConcurrencyBudget()
     }
 
     public func applyLaunchSettings(_ settings: ShadowClientGameStreamLaunchSettings) {
@@ -256,21 +252,24 @@ public actor ShadowClientVideoToolboxDecoder {
 
     public func reportQueueSaturationSignal() {
         lastDecoderInstabilitySignalUptime = ProcessInfo.processInfo.systemUptime
-        decodePacingPenalty = max(0, decodePacingPenalty - 2)
+        let reliefStrength = queuePressureReliefStrength()
+        decodePacingPenalty = max(0, decodePacingPenalty - reliefStrength)
+        let minimumReliefMultiplier = queuePressureReliefMinimumMultiplier()
         decodeSubmitPacingMultiplier = max(
-            minimumDecodeSubmitPacingMultiplier(),
-            decodeSubmitPacingMultiplier - (ShadowClientVideoDecoderDefaults.decodePacingMultiplierStep * 2)
+            minimumReliefMultiplier,
+            decodeSubmitPacingMultiplier - (ShadowClientVideoDecoderDefaults.decodePacingMultiplierStep * Double(reliefStrength))
         )
     }
 
     public func reportDecoderInstabilitySignal() {
         let now = ProcessInfo.processInfo.systemUptime
         lastDecoderInstabilitySignalUptime = now
+        let severity = decoderInstabilitySeverity()
         let maximumPenalty = maximumDecodePacingPenalty()
-        decodePacingPenalty = min(maximumPenalty, decodePacingPenalty + 1)
+        decodePacingPenalty = min(maximumPenalty, decodePacingPenalty + severity)
         decodeSubmitPacingMultiplier = min(
             ShadowClientVideoDecoderDefaults.decodePacingMaximumMultiplier,
-            decodeSubmitPacingMultiplier + ShadowClientVideoDecoderDefaults.decodePacingMultiplierStep
+            decodeSubmitPacingMultiplier + (ShadowClientVideoDecoderDefaults.decodePacingMultiplierStep * Double(severity))
         )
         clampDecodeSubmitPacingMultiplier()
     }
@@ -542,6 +541,20 @@ public actor ShadowClientVideoToolboxDecoder {
         decodeSlotCounter.release()
     }
 
+    private func recalculateDecodeConcurrencyBudget() {
+        let dimensions = preferredOutputDimensions ?? CMVideoDimensions(
+            width: Int32(ShadowClientStreamingLaunchBounds.defaultWidth),
+            height: Int32(ShadowClientStreamingLaunchBounds.defaultHeight)
+        )
+        maximumInFlightDecodeRequests = Self.recommendedMaximumInFlightDecodeRequests(
+            for: Int(decodePresentationTimeScale),
+            frameWidth: Int(dimensions.width),
+            frameHeight: Int(dimensions.height)
+        )
+        clampDecodePacingPenalty()
+        clampDecodeSubmitPacingMultiplier()
+    }
+
     private func effectiveMaximumInFlightDecodeRequests() -> Int {
         let minimumInFlight = max(1, ShadowClientVideoDecoderDefaults.minimumInFlightDecodeRequests)
         return max(
@@ -610,6 +623,57 @@ public actor ShadowClientVideoToolboxDecoder {
         1.0 / Double(max(1, decodePresentationTimeScale))
     }
 
+    private func currentDecodeWorkloadScale() -> Double {
+        let dimensions = preferredOutputDimensions ?? CMVideoDimensions(
+            width: Int32(ShadowClientStreamingLaunchBounds.defaultWidth),
+            height: Int32(ShadowClientStreamingLaunchBounds.defaultHeight)
+        )
+        let normalizedWidth = max(ShadowClientStreamingLaunchBounds.minimumWidth, Int(dimensions.width))
+        let normalizedHeight = max(ShadowClientStreamingLaunchBounds.minimumHeight, Int(dimensions.height))
+        let normalizedFPS = max(Int(decodePresentationTimeScale), ShadowClientStreamingLaunchBounds.minimumFPS)
+        let baselinePixelsPerSecond = Double(
+            ShadowClientStreamingLaunchBounds.defaultWidth *
+                ShadowClientStreamingLaunchBounds.defaultHeight *
+                ShadowClientStreamingLaunchBounds.defaultFPS
+        )
+        let pixelsPerSecond = Double(normalizedWidth * normalizedHeight * normalizedFPS)
+        return max(0.25, pixelsPerSecond / max(1.0, baselinePixelsPerSecond))
+    }
+
+    private func queuePressureReliefStrength() -> Int {
+        let scale = currentDecodeWorkloadScale()
+        if scale >= 3.0 {
+            return 1
+        }
+        if scale >= 1.5 {
+            return 2
+        }
+        return 3
+    }
+
+    private func queuePressureReliefMinimumMultiplier() -> Double {
+        let scale = currentDecodeWorkloadScale()
+        let defaultMinimum = minimumDecodeSubmitPacingMultiplier()
+        if scale >= 3.0 {
+            return max(1.0, defaultMinimum)
+        }
+        if scale >= 1.5 {
+            return max(0.9, defaultMinimum)
+        }
+        return defaultMinimum
+    }
+
+    private func decoderInstabilitySeverity() -> Int {
+        let scale = currentDecodeWorkloadScale()
+        if scale >= 3.0 {
+            return 3
+        }
+        if scale >= 1.5 {
+            return 2
+        }
+        return 1
+    }
+
     private func currentTargetSubmitIntervalSeconds() -> TimeInterval {
         currentFrameIntervalSeconds() * max(
             minimumDecodeSubmitPacingMultiplier(),
@@ -633,16 +697,36 @@ public actor ShadowClientVideoToolboxDecoder {
 
     static func recommendedMaximumInFlightDecodeRequests(
         for fps: Int,
+        frameWidth: Int,
+        frameHeight: Int,
         activeProcessorCount: Int
     ) -> Int {
         let minimumInFlight = max(1, ShadowClientVideoDecoderDefaults.minimumInFlightDecodeRequests)
         let maximumInFlight = max(minimumInFlight, ShadowClientVideoDecoderDefaults.maximumInFlightDecodeRequests)
         let normalizedFPS = max(fps, ShadowClientStreamingLaunchBounds.minimumFPS)
-        let fpsScale = Double(normalizedFPS) / Double(ShadowClientStreamingLaunchBounds.defaultFPS)
+        let normalizedWidth = max(frameWidth, ShadowClientStreamingLaunchBounds.minimumWidth)
+        let normalizedHeight = max(frameHeight, ShadowClientStreamingLaunchBounds.minimumHeight)
+        let baselinePixelsPerSecond = Double(
+            ShadowClientStreamingLaunchBounds.defaultWidth *
+                ShadowClientStreamingLaunchBounds.defaultHeight *
+                ShadowClientStreamingLaunchBounds.defaultFPS
+        )
+        let requestedPixelsPerSecond = Double(normalizedWidth * normalizedHeight * normalizedFPS)
+        let workloadScale = max(0.25, requestedPixelsPerSecond / max(1.0, baselinePixelsPerSecond))
         let cpuScaleDivisor = max(1.0, ShadowClientVideoDecoderDefaults.inFlightDecodeCoreScalingDivisor)
         let cpuScale = max(1.0, Double(max(1, activeProcessorCount)) / cpuScaleDivisor)
+        let workloadPenalty = pow(workloadScale, 0.85)
+        let highWorkloadAdjustment: Double
+        if workloadScale >= 3.0 {
+            highWorkloadAdjustment = 0.75
+        } else if workloadScale >= 2.0 {
+            highWorkloadAdjustment = 0.85
+        } else {
+            highWorkloadAdjustment = 1.0
+        }
         let recommendedInFlight = Int(
-            (Double(minimumInFlight) * fpsScale * cpuScale).rounded(.toNearestOrAwayFromZero)
+            ((Double(minimumInFlight) * cpuScale / workloadPenalty) * highWorkloadAdjustment)
+                .rounded(.toNearestOrAwayFromZero)
         )
         return min(
             maximumInFlight,
@@ -650,9 +734,36 @@ public actor ShadowClientVideoToolboxDecoder {
         )
     }
 
+    static func recommendedMaximumInFlightDecodeRequests(
+        for fps: Int,
+        frameWidth: Int,
+        frameHeight: Int
+    ) -> Int {
+        recommendedMaximumInFlightDecodeRequests(
+            for: fps,
+            frameWidth: frameWidth,
+            frameHeight: frameHeight,
+            activeProcessorCount: ProcessInfo.processInfo.activeProcessorCount
+        )
+    }
+
+    static func recommendedMaximumInFlightDecodeRequests(
+        for fps: Int,
+        activeProcessorCount: Int
+    ) -> Int {
+        recommendedMaximumInFlightDecodeRequests(
+            for: fps,
+            frameWidth: ShadowClientStreamingLaunchBounds.defaultWidth,
+            frameHeight: ShadowClientStreamingLaunchBounds.defaultHeight,
+            activeProcessorCount: activeProcessorCount
+        )
+    }
+
     private static func recommendedMaximumInFlightDecodeRequests(for fps: Int) -> Int {
         recommendedMaximumInFlightDecodeRequests(
             for: fps,
+            frameWidth: ShadowClientStreamingLaunchBounds.defaultWidth,
+            frameHeight: ShadowClientStreamingLaunchBounds.defaultHeight,
             activeProcessorCount: ProcessInfo.processInfo.activeProcessorCount
         )
     }

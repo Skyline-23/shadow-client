@@ -16,21 +16,34 @@ func videoToolboxDecoderInFlightPolicyRespectsConfiguredBounds() {
     #expect(maximum <= ShadowClientVideoDecoderDefaults.maximumInFlightDecodeRequests)
 }
 
-@Test("VideoToolbox decoder in-flight policy increases with fps and available cores")
-func videoToolboxDecoderInFlightPolicyIncreasesWithFpsAndCores() {
+@Test("VideoToolbox decoder in-flight policy scales down under heavier frame workloads")
+func videoToolboxDecoderInFlightPolicyScalesDownForHeavierWorkload() {
     let baseline = ShadowClientVideoToolboxDecoder.recommendedMaximumInFlightDecodeRequests(
         for: 60,
-        activeProcessorCount: 4
+        frameWidth: 1_920,
+        frameHeight: 1_080,
+        activeProcessorCount: 8
     )
-    let higherFPS = ShadowClientVideoToolboxDecoder.recommendedMaximumInFlightDecodeRequests(
+    let higherFPSAtSameResolution = ShadowClientVideoToolboxDecoder.recommendedMaximumInFlightDecodeRequests(
         for: 120,
-        activeProcessorCount: 4
+        frameWidth: 1_920,
+        frameHeight: 1_080,
+        activeProcessorCount: 8
+    )
+    let ultraHD = ShadowClientVideoToolboxDecoder.recommendedMaximumInFlightDecodeRequests(
+        for: 60,
+        frameWidth: 3_840,
+        frameHeight: 2_160,
+        activeProcessorCount: 8
     )
     let higherCoreCount = ShadowClientVideoToolboxDecoder.recommendedMaximumInFlightDecodeRequests(
         for: 60,
+        frameWidth: 1_920,
+        frameHeight: 1_080,
         activeProcessorCount: 12
     )
 
-    #expect(higherFPS >= baseline)
+    #expect(higherFPSAtSameResolution <= baseline)
+    #expect(ultraHD <= baseline)
     #expect(higherCoreCount >= baseline)
 }

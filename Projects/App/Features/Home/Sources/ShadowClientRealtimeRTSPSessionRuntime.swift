@@ -930,7 +930,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         videoDecodeQueueDropCount += droppedCount
 
         if videoDecodeQueueDropCount == droppedCount || videoDecodeQueueDropCount.isMultiple(of: 12) {
-            await decoder.reportQueueSaturationSignal()
+            await decoder.reportDecoderInstabilitySignal()
             logger.notice(
                 "Video decode queue backpressure detected for codec \(String(describing: codec), privacy: .public) (source=\(source, privacy: .public), dropped-oldest=\(self.videoDecodeQueueDropCount, privacy: .public))"
             )
@@ -989,7 +989,15 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         let previousDropCount = videoReceiveQueueDropCount
         videoReceiveQueueDropCount += droppedCount
-        await decoder.reportQueueSaturationSignal()
+        if videoReceiveQueueDropCount == droppedCount ||
+            Self.didCounterCrossIntervalBoundary(
+                previous: previousDropCount,
+                current: videoReceiveQueueDropCount,
+                interval: ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureSignalInterval
+            )
+        {
+            await decoder.reportQueueSaturationSignal()
+        }
 
         if Self.didCounterCrossIntervalBoundary(
             previous: previousDropCount,
