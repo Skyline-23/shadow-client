@@ -148,6 +148,7 @@ private actor ShadowClientVideoPacketQueue {
     private var bufferedCount = 0
     private var closed = false
     private var droppedOldestCount = 0
+    private var droppedSinceLastPressureSignal = 0
     private var waitingContinuations: [CheckedContinuation<ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket?, Never>] = []
 
     init(capacity: Int) {
@@ -158,35 +159,59 @@ private actor ShadowClientVideoPacketQueue {
     struct EnqueueResult: Sendable {
         let droppedOldest: Bool
         let droppedCountForLog: Int?
+        let droppedCountForPressureSignal: Int?
     }
 
     func enqueue(_ packet: ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket) -> EnqueueResult {
         guard !closed else {
-            return .init(droppedOldest: false, droppedCountForLog: nil)
+            return .init(
+                droppedOldest: false,
+                droppedCountForLog: nil,
+                droppedCountForPressureSignal: nil
+            )
         }
 
         if !waitingContinuations.isEmpty {
             let continuation = waitingContinuations.removeFirst()
             continuation.resume(returning: packet)
-            return .init(droppedOldest: false, droppedCountForLog: nil)
+            return .init(
+                droppedOldest: false,
+                droppedCountForLog: nil,
+                droppedCountForPressureSignal: nil
+            )
         }
 
         var droppedOldest = false
         var droppedCountForLog: Int?
+        var droppedCountForPressureSignal: Int?
         if bufferedCount >= capacity {
             bufferedPackets[headIndex] = nil
             headIndex = (headIndex + 1) % capacity
             bufferedCount -= 1
             droppedOldest = true
             droppedOldestCount += 1
+            droppedSinceLastPressureSignal += 1
             if droppedOldestCount == 1 || droppedOldestCount.isMultiple(of: Self.dropLogInterval) {
                 droppedCountForLog = droppedOldestCount
+            }
+            if droppedOldestCount == 1 {
+                droppedCountForPressureSignal = 1
+                droppedSinceLastPressureSignal = 0
+            } else if droppedSinceLastPressureSignal >=
+                ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureSignalInterval
+            {
+                droppedCountForPressureSignal = droppedSinceLastPressureSignal
+                droppedSinceLastPressureSignal = 0
             }
         }
         let tailIndex = (headIndex + bufferedCount) % capacity
         bufferedPackets[tailIndex] = packet
         bufferedCount += 1
-        return .init(droppedOldest: droppedOldest, droppedCountForLog: droppedCountForLog)
+        return .init(
+            droppedOldest: droppedOldest,
+            droppedCountForLog: droppedCountForLog,
+            droppedCountForPressureSignal: droppedCountForPressureSignal
+        )
     }
 
     func next() async -> ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket? {
@@ -215,6 +240,7 @@ private actor ShadowClientVideoPacketQueue {
         headIndex = 0
         bufferedCount = 0
         droppedOldestCount = 0
+        droppedSinceLastPressureSignal = 0
         let continuations = waitingContinuations
         waitingContinuations.removeAll(keepingCapacity: false)
         for continuation in continuations {
@@ -227,6 +253,7 @@ private actor ShadowClientVideoPacketQueue {
         headIndex = 0
         bufferedCount = 0
         droppedOldestCount = 0
+        droppedSinceLastPressureSignal = 0
     }
 
     func trimToMostRecent(maxBufferedPackets: Int) -> Int {
@@ -539,8 +566,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                         "Video receive queue dropped oldest packet due to sustained ingress pressure (count=\(droppedCountForLog, privacy: .public))"
                     )
                 }
-                if enqueueResult.droppedOldest {
-                    await self.handleVideoReceiveQueueBackpressure(codec: codec)
+                if let droppedCountForPressureSignal = enqueueResult.droppedCountForPressureSignal {
+                    await self.handleVideoReceiveQueueBackpressure(
+                        codec: codec,
+                        droppedCount: droppedCountForPressureSignal
+                    )
                 }
             }
         } catch {
@@ -800,7 +830,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
     }
 
-    private func handleVideoReceiveQueueBackpressure(codec: ShadowClientVideoCodec) async {
+    private func handleVideoReceiveQueueBackpressure(
+        codec: ShadowClientVideoCodec,
+        droppedCount: Int = 1
+    ) async {
+        guard droppedCount > 0 else {
+            return
+        }
         let now = ProcessInfo.processInfo.systemUptime
         if firstVideoReceiveQueueDropUptime == 0 ||
             now - firstVideoReceiveQueueDropUptime > ShadowClientRealtimeSessionDefaults.videoReceiveQueueDropWindowSeconds
@@ -808,15 +844,15 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             firstVideoReceiveQueueDropUptime = now
             videoReceiveQueueDropCount = 0
         }
-        videoReceiveQueueDropCount += 1
+        let previousDropCount = videoReceiveQueueDropCount
+        videoReceiveQueueDropCount += droppedCount
+        await decoder.reportQueueSaturationSignal()
 
-        if videoReceiveQueueDropCount == 1 ||
-            videoReceiveQueueDropCount.isMultiple(of: ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureSignalInterval)
-        {
-            await decoder.reportQueueSaturationSignal()
-        }
-
-        if videoReceiveQueueDropCount.isMultiple(of: ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureTrimInterval),
+        if Self.didCounterCrossIntervalBoundary(
+            previous: previousDropCount,
+            current: videoReceiveQueueDropCount,
+            interval: ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureTrimInterval
+        ),
            let videoPacketQueue
         {
             let trimmedCount = await videoPacketQueue.trimToMostRecent(
@@ -1324,6 +1360,19 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         return (now - lastDecodedFrameOutputUptime) <
             ShadowClientRealtimeSessionDefaults.decoderOutputStallSuppressionGraceSeconds
+    }
+
+    static func didCounterCrossIntervalBoundary(
+        previous: Int,
+        current: Int,
+        interval: Int
+    ) -> Bool {
+        guard interval > 0, current > previous else {
+            return false
+        }
+        let previousBucket = previous / interval
+        let currentBucket = current / interval
+        return currentBucket > previousBucket
     }
 
     static func isTransientInputSendError(_ error: Error) -> Bool {

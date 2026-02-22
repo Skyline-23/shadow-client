@@ -821,6 +821,49 @@ func realtimeRuntimeDoesNotSuppressStallRecoveryAfterIngressPressureGraceWindow(
     #expect(!shouldSuppress)
 }
 
+@Test("Realtime runtime counter boundary helper detects interval crossing")
+func realtimeRuntimeCounterBoundaryHelperDetectsIntervalCrossing() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.didCounterCrossIntervalBoundary(
+            previous: 23,
+            current: 24,
+            interval: 24
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.didCounterCrossIntervalBoundary(
+            previous: 24,
+            current: 48,
+            interval: 24
+        )
+    )
+}
+
+@Test("Realtime runtime counter boundary helper ignores non-crossing and invalid intervals")
+func realtimeRuntimeCounterBoundaryHelperIgnoresNonCrossing() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.didCounterCrossIntervalBoundary(
+            previous: 24,
+            current: 47,
+            interval: 24
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.didCounterCrossIntervalBoundary(
+            previous: 48,
+            current: 48,
+            interval: 24
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.didCounterCrossIntervalBoundary(
+            previous: 10,
+            current: 20,
+            interval: 0
+        )
+    )
+}
+
 @Test("Realtime runtime treats canceled input send errors as transient and does not reset control channel")
 func realtimeRuntimeInputSendClassifierTreatsCanceledAsTransient() {
     let nwCanceled = NSError(domain: "Network.NWError", code: 89)

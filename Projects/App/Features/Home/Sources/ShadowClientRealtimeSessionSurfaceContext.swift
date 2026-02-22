@@ -45,6 +45,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     @Published public private(set) var estimatedVideoBitrateKbps: Int?
     @Published public private(set) var audioOutputState: ShadowClientRealtimeAudioOutputState = .idle
     @Published public private(set) var preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
+    private var lastControlRoundTripPublishUptime: TimeInterval = 0
 
     public let frameStore: ShadowClientRealtimeSessionFrameStore
 
@@ -61,6 +62,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         estimatedVideoBitrateKbps = nil
         audioOutputState = .idle
         preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
+        lastControlRoundTripPublishUptime = 0
     }
 
     public func transition(to state: RenderState) {
@@ -68,7 +70,28 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     }
 
     public func updateControlRoundTripMs(_ milliseconds: Int?) {
-        controlRoundTripMs = milliseconds.map { max(0, $0) }
+        let normalized = milliseconds.map { max(0, $0) }
+        if normalized == controlRoundTripMs {
+            return
+        }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        if let current = controlRoundTripMs,
+           let next = normalized
+        {
+            let withinPublishInterval =
+                (now - lastControlRoundTripPublishUptime) <
+                ShadowClientRealtimeSessionDefaults.controlRoundTripPublishMinimumIntervalSeconds
+            let smallDelta =
+                abs(next - current) <=
+                ShadowClientRealtimeSessionDefaults.controlRoundTripPublishDeltaThresholdMs
+            if withinPublishInterval && smallDelta {
+                return
+            }
+        }
+
+        controlRoundTripMs = normalized
+        lastControlRoundTripPublishUptime = now
     }
 
     public func updateActiveVideoCodec(_ codec: ShadowClientVideoCodec?) {
@@ -95,11 +118,18 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     public func updateAudioOutputState(
         _ state: ShadowClientRealtimeAudioOutputState
     ) {
+        if audioOutputState == state {
+            return
+        }
         audioOutputState = state
     }
 
     public func updatePreferredRenderFPS(_ fps: Int) {
-        preferredRenderFPS = Self.normalizedRenderFPS(fps)
+        let normalized = Self.normalizedRenderFPS(fps)
+        if preferredRenderFPS == normalized {
+            return
+        }
+        preferredRenderFPS = normalized
     }
 
     private static func normalizedRenderFPS(_ fps: Int) -> Int {

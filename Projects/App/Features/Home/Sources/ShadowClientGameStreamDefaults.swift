@@ -98,6 +98,8 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let decoderOutputStallRecoveryWindowSeconds: TimeInterval = 8.0
     public static let av1MaxDecoderOutputStallRecoveries = 2
     public static let decoderOutputStallSuppressionGraceSeconds: TimeInterval = 2.4
+    public static let controlRoundTripPublishMinimumIntervalSeconds: TimeInterval = 1.0 / 30.0
+    public static let controlRoundTripPublishDeltaThresholdMs = 2
 }
 
 public enum ShadowClientRTSPRequestDefaults {
