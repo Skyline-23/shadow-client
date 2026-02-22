@@ -577,6 +577,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 return
             }
             if dequeueResult.droppedCount > 0 {
+                await decoder.reportBackpressureSignal()
                 await handleVideoDecodeQueueBackpressure(
                     codec: accessUnit.codec,
                     droppedCount: dequeueResult.droppedCount,
@@ -736,6 +737,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         videoDecodeQueueDropCount += droppedCount
 
         if videoDecodeQueueDropCount == droppedCount || videoDecodeQueueDropCount.isMultiple(of: 12) {
+            await decoder.reportBackpressureSignal()
             logger.notice(
                 "Video decode queue backpressure detected for codec \(String(describing: codec), privacy: .public) (source=\(source, privacy: .public), dropped-oldest=\(self.videoDecodeQueueDropCount, privacy: .public))"
             )
@@ -864,6 +866,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         decoderFailureCount = 0
         firstDecoderFailureUptime = 0
         hasLoggedDecodedFrameMetadata = false
+        await decoder.reportBackpressureSignal()
 
         if firstDecoderRecoveryAttemptUptime == 0 ||
             now - firstDecoderRecoveryAttemptUptime > ShadowClientRealtimeSessionDefaults.decoderRecoveryAttemptWindowSeconds
@@ -959,6 +962,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         decoderOutputStallRecoveryCount += 1
         lastDecoderOutputStallRecoveryUptime = now
+        await decoder.reportBackpressureSignal()
 
         if codec == .av1,
            decoderOutputStallRecoveryCount >=

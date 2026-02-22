@@ -53,6 +53,9 @@ public enum ShadowClientVideoDecoderDefaults {
     public static let minimumInFlightDecodeRequests = 2
     public static let maximumInFlightDecodeRequests = 12
     public static let inFlightDecodeCoreScalingDivisor = 4.0
+    public static let decodePacingMaximumMultiplier = 2.0
+    public static let decodePacingMultiplierStep = 0.15
+    public static let decodePacingRecoveryFrameWindow = 8
     public static let inFlightDecodeWaitStep: Duration = .milliseconds(1)
 }
 
