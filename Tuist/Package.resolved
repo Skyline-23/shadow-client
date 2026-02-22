@@ -1,5 +1,5 @@
 {
-  "originHash" : "e5f01ee0c4803534494ae809cf335236a86383896438c4ebf9edc1e9365ce468",
+  "originHash" : "c9b14a66f2a6f3519d58f24185da0ee88a992c4cf11d0ad0cdd5db01b4b0c427",
   "pins" : [
     {
       "identity" : "swift-syntax",
@@ -22,10 +22,10 @@
     {
       "identity" : "swiftopus",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Skyline-23/SwiftOpus.git",
+      "location" : "git@github.com:Skyline-23/SwiftOpus.git",
       "state" : {
-        "revision" : "d8b02ebe1e64e252eafe9e3c86d7aa5224be9eae",
-        "version" : "0.1.0"
+        "revision" : "560d8e9dc8f582112c4f4a2ed92db35bdd3fca55",
+        "version" : "0.2.0"
       }
     }
   ],
