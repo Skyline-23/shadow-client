@@ -838,6 +838,39 @@ func av1DepacketizerSkipsPacketsWithoutPictureDataFlag() {
     }
 }
 
+@Test("AV1 depacketizer ignores FEC parity shards from Sunshine payload stream")
+func av1DepacketizerIgnoresFECParityShards() {
+    var depacketizer = ShadowClientAV1RTPDepacketizer()
+    let frameIndex: UInt32 = 66
+
+    let sofPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 510,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF,
+        payloadBytes: [0xAA, 0xBB],
+        includeFrameHeaderWithLastPayloadLength: moonlightFrameHeaderSize + 3
+    )
+    let parityPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 511,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData,
+        payloadBytes: [0x99, 0x88, 0x77],
+        fecInfo: (1 << 22) | (1 << 12)
+    )
+    let eofPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 512,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagEOF,
+        payloadBytes: [0xCC, 0xDD, 0xEE]
+    )
+
+    #expect(depacketizer.ingest(payload: sofPacket, marker: false) == nil)
+    #expect(depacketizer.ingest(payload: parityPacket, marker: false) == nil)
+    let frame = depacketizer.ingest(payload: eofPacket, marker: true)
+
+    #expect(frame == Data([0xAA, 0xBB, 0xCC, 0xDD, 0xEE]))
+}
+
 @Test("Realtime runtime AV1 access-unit validator accepts basic size-delimited OBU payloads")
 func realtimeRuntimeAv1AccessUnitValidatorAcceptsBasicObuSequence() {
     // OBU temporal delimiter (type=2, size=0) + OBU frame (type=6, size=1, payload=0x00)
@@ -1471,7 +1504,8 @@ private func makeSyntheticNVVideoPacket(
     frameIndex: UInt32,
     flags: UInt8,
     payloadBytes: [UInt8],
-    includeFrameHeaderWithLastPayloadLength lastPayloadLength: UInt16? = nil
+    includeFrameHeaderWithLastPayloadLength lastPayloadLength: UInt16? = nil,
+    fecInfo: UInt32 = 0
 ) -> Data {
     var packetPayload = Data()
     if let lastPayloadLength {
@@ -1486,7 +1520,7 @@ private func makeSyntheticNVVideoPacket(
     packet.append(0x00) // extraFlags
     packet.append(0x10) // multiFecFlags
     packet.append(0x00) // multiFecBlocks (current block 0, last block 0)
-    packet.append(contentsOf: littleEndianBytes(UInt32(0))) // fecInfo
+    packet.append(contentsOf: littleEndianBytes(fecInfo)) // fecInfo
     packet.append(packetPayload)
     return packet
 }

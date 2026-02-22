@@ -27,6 +27,8 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         let flags: UInt8
         let fecCurrentBlockNumber: UInt8
         let fecLastBlockNumber: UInt8
+        let fecShardIndex: UInt32
+        let fecDataShardCount: UInt32
         let payload: Data
     }
 
@@ -76,6 +78,13 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         guard let packet = parseVideoPacket(from: payload) else {
             dropFrameState()
             return .droppedCorruptFrame
+        }
+
+        // Moonlight consumes only data shards in the depacketizer stage.
+        // FEC parity shards are handled by a dedicated FEC queue, so they must not
+        // participate in frame continuity or AU assembly here.
+        if packet.fecDataShardCount > 0, packet.fecShardIndex >= packet.fecDataShardCount {
+            return .noFrame
         }
 
         let relevantFlags = packet.flags & Self.allowedFlags
@@ -194,10 +203,13 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         let multiFecBlocksIndex = payload.startIndex + 11
         let flags = payload[flagsIndex]
         let multiFecBlocks = payload[multiFecBlocksIndex]
+        let fecInfo = readUInt32LE(payload, at: 12) ?? 0
 
         let streamPacketIndex = (streamPacketIndexRaw >> 8) & Self.streamPacketIndexMask
         let fecCurrentBlockNumber = (multiFecBlocks >> 4) & 0x03
         let fecLastBlockNumber = (multiFecBlocks >> 6) & 0x03
+        let fecShardIndex = (fecInfo & 0x003F_F000) >> 12
+        let fecDataShardCount = (fecInfo & 0xFFC0_0000) >> 22
         let packetPayload = payload.dropFirst(Self.nvVideoPacketHeaderSize)
 
         return ParsedPacket(
@@ -206,6 +218,8 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
             flags: flags,
             fecCurrentBlockNumber: fecCurrentBlockNumber,
             fecLastBlockNumber: fecLastBlockNumber,
+            fecShardIndex: fecShardIndex,
+            fecDataShardCount: fecDataShardCount,
             payload: packetPayload
         )
     }
