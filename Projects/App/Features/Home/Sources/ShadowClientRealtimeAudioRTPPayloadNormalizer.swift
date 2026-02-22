@@ -6,6 +6,7 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
         let payload: Data
         let normalizationKey: String?
         let normalizationMessage: String?
+        let isMoonlightAudioFECPayload: Bool
     }
 
     static func normalize(
@@ -19,7 +20,8 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
                 payloadType: payloadType,
                 payload: payload,
                 normalizationKey: nil,
-                normalizationMessage: nil
+                normalizationMessage: nil,
+                isMoonlightAudioFECPayload: false
             )
         }
 
@@ -34,7 +36,8 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
                 payloadType: payloadType,
                 payload: payload,
                 normalizationKey: "rtp-audio-fec:\(wrapperPayloadType)",
-                normalizationMessage: "Classified RTP payload type \(wrapperPayloadType) as Moonlight audio FEC shard"
+                normalizationMessage: "Classified RTP payload type \(wrapperPayloadType) as Moonlight audio FEC shard",
+                isMoonlightAudioFECPayload: true
             )
         }
 
@@ -46,7 +49,8 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
                 payloadType: primaryPayloadType,
                 payload: primaryPayload,
                 normalizationKey: "rtp-audio-red:\(wrapperPayloadType)->\(primaryPayloadType)",
-                normalizationMessage: "Unwrapped RTP RED wrapper \(wrapperPayloadType) to primary payload type \(primaryPayloadType)"
+                normalizationMessage: "Unwrapped RTP RED wrapper \(wrapperPayloadType) to primary payload type \(primaryPayloadType)",
+                isMoonlightAudioFECPayload: false
             )
         }
 
@@ -54,7 +58,8 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
             payloadType: payloadType,
             payload: payload,
             normalizationKey: nil,
-            normalizationMessage: nil
+            normalizationMessage: nil,
+            isMoonlightAudioFECPayload: false
         )
     }
 

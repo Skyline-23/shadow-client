@@ -146,6 +146,9 @@ public struct ShadowClientAppShellView: View {
             updateActiveSessionProcessActivity(isActive: isActive)
             ShadowClientRemoteSessionOrientationCoordinator.updateSessionState(isActive: isActive)
         }
+        .onChange(of: sessionSurfaceContext.renderState, initial: false) { _, newState in
+            remoteDesktopRuntime.handleSessionRenderStateTransition(newState)
+        }
         .onChange(of: gamepadInputConfiguration, initial: true) { _, configuration in
             gamepadInputRuntime.updateConfiguration(configuration)
         }
@@ -1290,6 +1293,7 @@ public struct ShadowClientAppShellView: View {
                     ShadowClientRealtimeSessionSurfaceView(
                         context: sessionSurfaceContext
                     )
+                    .ignoresSafeArea()
                     .accessibilityIdentifier("shadow.remote.session.surface")
                     .accessibilityLabel("Remote Session Surface")
 
@@ -1315,6 +1319,7 @@ public struct ShadowClientAppShellView: View {
                     } onSessionTerminateCommand: {
                         remoteDesktopRuntime.clearActiveSession()
                     }
+                    .ignoresSafeArea()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.clear)
                 }
@@ -1345,6 +1350,7 @@ public struct ShadowClientAppShellView: View {
                     .allowsHitTesting(false)
                 }
             }
+            .ignoresSafeArea()
         }
     }
 

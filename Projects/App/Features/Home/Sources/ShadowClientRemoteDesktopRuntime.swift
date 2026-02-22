@@ -870,6 +870,12 @@ private enum ShadowClientRemoteDesktopCommand: Sendable {
     case refreshSelectedHostApps
 }
 
+private struct ShadowClientLaunchRequestContext: Sendable {
+    let appID: Int
+    let appTitle: String?
+    let settings: ShadowClientGameStreamLaunchSettings
+}
+
 public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @Published public private(set) var hosts: [ShadowClientRemoteHostDescriptor] = []
     @Published public private(set) var apps: [ShadowClientRemoteAppDescriptor] = []
@@ -903,6 +909,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var pendingSelectedHostID: String?
     private var lastKnownSessionURL: String?
     private var persistentCodecFallback: ShadowClientVideoCodecPreference?
+    private var lastLaunchRequestContext: ShadowClientLaunchRequestContext?
+    private var runtimeCodecRecoveryInProgress = false
 
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
@@ -1230,6 +1238,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let sessionConnectionClient = sessionConnectionClient
         let launchedAppTitle = appTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let launchSettingsToUse = launchSettingsApplyingPersistentFallback(settings)
+        lastLaunchRequestContext = .init(
+            appID: appID,
+            appTitle: launchedAppTitle,
+            settings: launchSettingsToUse
+        )
         launchTask = Task {
             do {
                 await sessionConnectionClient.disconnect()
@@ -1326,6 +1339,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     guard self.launchGeneration == currentLaunchGeneration else {
                         return
                     }
+                    runtimeCodecRecoveryInProgress = false
 
                     activeSession = ShadowClientActiveRemoteSession(
                         host: selectedHost.host,
@@ -1361,6 +1375,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     guard self.launchGeneration == currentLaunchGeneration else {
                         return
                     }
+                    runtimeCodecRecoveryInProgress = false
                     launchState = .failed(
                         Self.userFacingLaunchFailureMessage(
                             error,
@@ -1387,6 +1402,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         activeSession = nil
         lastKnownSessionURL = nil
+        lastLaunchRequestContext = nil
+        runtimeCodecRecoveryInProgress = false
         launchState = .idle
 
         let sessionConnectionClient = sessionConnectionClient
@@ -1400,6 +1417,17 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @MainActor
     public func sendInput(_ event: ShadowClientRemoteInputEvent) {
         commandContinuation.yield(.sendInput(event))
+    }
+
+    @MainActor
+    public func handleSessionRenderStateTransition(
+        _ state: ShadowClientRealtimeSessionSurfaceContext.RenderState
+    ) {
+        guard case let .failed(message) = state else {
+            return
+        }
+
+        attemptRuntimeCodecRecovery(afterFailureMessage: message)
     }
 
     @MainActor
@@ -1494,6 +1522,55 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             }
         }
         return false
+    }
+
+    @MainActor
+    private func attemptRuntimeCodecRecovery(afterFailureMessage message: String) {
+        guard !runtimeCodecRecoveryInProgress else {
+            return
+        }
+        guard case .launched = launchState else {
+            return
+        }
+        guard let activeSession,
+              let launchRequest = lastLaunchRequestContext,
+              launchRequest.appID == activeSession.appID
+        else {
+            return
+        }
+
+        let normalizedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedMessage.isEmpty else {
+            return
+        }
+
+        let decoderFailure = ShadowClientGameStreamError.requestFailed(normalizedMessage)
+        guard Self.shouldRetryCodecFallback(connectError: decoderFailure) else {
+            return
+        }
+
+        let fallbackSettings = Self.forcedLaunchSettings(
+            from: launchRequest.settings,
+            connectError: decoderFailure
+        )
+        guard fallbackSettings.preferredCodec != launchRequest.settings.preferredCodec else {
+            return
+        }
+
+        runtimeCodecRecoveryInProgress = true
+        lastLaunchRequestContext = .init(
+            appID: launchRequest.appID,
+            appTitle: launchRequest.appTitle,
+            settings: fallbackSettings
+        )
+        logger.notice(
+            "Session runtime failed after launch; attempting codec recovery relaunch \(launchRequest.settings.preferredCodec.rawValue, privacy: .public)->\(fallbackSettings.preferredCodec.rawValue, privacy: .public)"
+        )
+        launchSelectedApp(
+            appID: launchRequest.appID,
+            appTitle: launchRequest.appTitle,
+            settings: fallbackSettings
+        )
     }
 
     private static func validatedSessionURL(
