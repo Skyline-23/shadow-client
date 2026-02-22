@@ -24,8 +24,8 @@ struct ShadowClientVideoQueuePressurePolicy: Equatable, Sendable {
         case .trimUsingLastPacketLength:
             return .init(
                 allowsDepacketizerPacketShedding: false,
-                allowsDecodeQueueProducerTrim: false,
-                allowsDecodeQueueConsumerTrim: false
+                allowsDecodeQueueProducerTrim: true,
+                allowsDecodeQueueConsumerTrim: true
             )
         }
     }

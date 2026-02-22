@@ -1166,6 +1166,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 maxBufferedPackets: videoReceiveQueuePressureTrimToRecentPackets
             )
             if trimmedCount > 0 {
+                // Trimming can drop packet heads in the middle of an access unit.
+                // Reset depacketizer state so next frame assembly restarts on a clean boundary.
+                shadowClientNVDepacketizer.reset()
                 logger.notice(
                     "Video receive queue pressure trim dropped \(trimmedCount, privacy: .public) stale packets for codec \(String(describing: codec), privacy: .public)"
                 )

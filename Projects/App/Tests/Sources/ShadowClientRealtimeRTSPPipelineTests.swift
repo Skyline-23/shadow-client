@@ -755,6 +755,40 @@ func av1DepacketizerSupportsSinglePacketSofEofFrame() {
     #expect(frame == framePayload)
 }
 
+@Test("AV1 depacketizer reset clears partial frame assembly after queue trim")
+func av1DepacketizerResetClearsPartialFrameAssembly() {
+    var depacketizer = ShadowClientAV1RTPDepacketizer()
+
+    let partialFrameSOF = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 600,
+        frameIndex: 77,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF,
+        payloadBytes: [0x11, 0x22, 0x33],
+        includeFrameHeaderWithLastPayloadLength: 2
+    )
+    let staleFrameEOF = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 601,
+        frameIndex: 77,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagEOF,
+        payloadBytes: [0x44, 0x55]
+    )
+
+    #expect(depacketizer.ingest(payload: partialFrameSOF, marker: false) == nil)
+    depacketizer.reset()
+    #expect(depacketizer.ingest(payload: staleFrameEOF, marker: true) == nil)
+
+    let cleanFramePayload = Data([0x99, 0xAA, 0xBB])
+    let cleanFramePacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 602,
+        frameIndex: 78,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF | nvVideoPacketFlagEOF,
+        payloadBytes: Array(cleanFramePayload),
+        includeFrameHeaderWithLastPayloadLength: moonlightFrameHeaderSize + UInt16(cleanFramePayload.count)
+    )
+
+    #expect(depacketizer.ingest(payload: cleanFramePacket, marker: true) == cleanFramePayload)
+}
+
 @Test("AV1 depacketizer handles sliced packet buffers without index trap")
 func av1DepacketizerHandlesSlicedPacketBuffers() {
     var depacketizer = ShadowClientAV1RTPDepacketizer()
@@ -863,8 +897,8 @@ func realtimeRuntimeVideoQueuePressurePolicyClassifier() {
     #expect(annexBPolicy.allowsDecodeQueueProducerTrim)
     #expect(annexBPolicy.allowsDecodeQueueConsumerTrim)
     #expect(!strictBoundaryPolicy.allowsDepacketizerPacketShedding)
-    #expect(!strictBoundaryPolicy.allowsDecodeQueueProducerTrim)
-    #expect(!strictBoundaryPolicy.allowsDecodeQueueConsumerTrim)
+    #expect(strictBoundaryPolicy.allowsDecodeQueueProducerTrim)
+    #expect(strictBoundaryPolicy.allowsDecodeQueueConsumerTrim)
 }
 
 @Test("Realtime runtime decode-queue recovery classifier suppresses producer trim/shed loops")
