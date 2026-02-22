@@ -501,6 +501,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var videoDecodeQueueProducerSheddingHighWatermark = ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerSheddingHighWatermark
     private var videoDecodeQueueProducerTrimToRecentUnits = ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerTrimToRecentUnits
     private var videoDepacketizerDecodeQueueShedHighWatermark = ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueShedHighWatermark
+    private var videoQueuePressurePolicy = ShadowClientVideoQueuePressurePolicy.conservative
     private var videoReceiveQueuePressureSignalInterval = ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureSignalInterval
     private var videoReceiveQueuePressureTrimInterval = ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureTrimInterval
     private var videoReceiveQueuePressureTrimToRecentPackets = ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureTrimToRecentPackets
@@ -635,9 +636,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             remoteInputKeyID: resolvedVideoConfiguration.remoteInputKeyID
         )
 
-        shadowClientNVDepacketizer.configureTailTruncationStrategy(
-            Self.depacketizerTailTruncationStrategy(for: track.codec)
-        )
+        let depacketizerTailStrategy = Self.depacketizerTailTruncationStrategy(for: track.codec)
+        shadowClientNVDepacketizer.configureTailTruncationStrategy(depacketizerTailStrategy)
+        videoQueuePressurePolicy = .fromTailTruncationStrategy(depacketizerTailStrategy)
         shadowClientNVDepacketizer.reset()
         await MainActor.run {
             surfaceContext.updateActiveVideoCodec(track.codec)
@@ -699,6 +700,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         rtspClient = nil
 
         await decoder.resetForRecovery()
+        videoQueuePressurePolicy = .conservative
         activeVideoConfiguration = nil
         hasLoggedDecodedFrameMetadata = false
         videoStatsWindowStartUptime = 0
@@ -823,14 +825,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             }
 
             packetsSinceDecodeQueueProbe += 1
-            if codec != .av1,
+            if videoQueuePressurePolicy.allowsDepacketizerPacketShedding,
                packetsSinceDecodeQueueProbe >=
                 videoDepacketizerDecodeQueueProbeIntervalPackets
             {
                 packetsSinceDecodeQueueProbe = 0
                 let bufferedDecodeUnits = await videoDecodeQueue?.bufferedUnitCount() ?? 0
                 if Self.shouldShedDepacketizerWork(
-                    codec: codec,
+                    allowsPacketLevelShedding: videoQueuePressurePolicy.allowsDepacketizerPacketShedding,
                     bufferedDecodeUnits: bufferedDecodeUnits,
                     highWatermark: videoDepacketizerDecodeQueueShedHighWatermark
                 ) {
@@ -1019,7 +1021,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     )
                 )
                 let bufferedUnitCount = await videoDecodeQueue.bufferedUnitCount()
-                if codec != .av1,
+                if videoQueuePressurePolicy.allowsDecodeQueueProducerTrim,
                    bufferedUnitCount >= producerSheddingHighWatermark
                 {
                     let producerTrimTarget = max(
@@ -2235,14 +2237,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     }
 
     static func shouldShedDepacketizerWork(
-        codec: ShadowClientVideoCodec,
+        allowsPacketLevelShedding: Bool,
         bufferedDecodeUnits: Int,
         highWatermark: Int = ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueShedHighWatermark
     ) -> Bool {
-        // Packet-level shedding is too destructive for AV1 because it can break
-        // access-unit continuity. AV1 pressure relief should happen at decode-unit
-        // boundaries (producer/consumer trims), not depacketizer packet drops.
-        if codec == .av1 {
+        guard allowsPacketLevelShedding else {
             return false
         }
         return bufferedDecodeUnits >= max(1, highWatermark)
