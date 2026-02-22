@@ -1495,11 +1495,16 @@ struct ShadowClientRTPVideoReorderBuffer: Sendable {
             return
         }
 
-        let orderedByDistance = packetsBySequence.keys.sorted { lhs, rhs in
-            sequenceDistance(from: expectedSequence, to: lhs) <
-                sequenceDistance(from: expectedSequence, to: rhs)
+        var nearestSequence: UInt16?
+        var nearestDistance = UInt16.max
+        for sequence in packetsBySequence.keys {
+            let distance = sequenceDistance(from: expectedSequence, to: sequence)
+            if nearestSequence == nil || distance < nearestDistance {
+                nearestSequence = sequence
+                nearestDistance = distance
+            }
         }
-        self.expectedSequence = orderedByDistance.first
+        self.expectedSequence = nearestSequence
     }
 
     private mutating func trimOverflow() {
@@ -1509,12 +1514,23 @@ struct ShadowClientRTPVideoReorderBuffer: Sendable {
             return
         }
 
-        let keysByDistance = packetsBySequence.keys.sorted { lhs, rhs in
-            sequenceDistance(from: expectedSequence, to: lhs) <
-                sequenceDistance(from: expectedSequence, to: rhs)
+        var overflow = packetsBySequence.count - maximumDepth
+        while overflow > 0 {
+            var farthestSequence: UInt16?
+            var farthestDistance: UInt16 = 0
+            for sequence in packetsBySequence.keys {
+                let distance = sequenceDistance(from: expectedSequence, to: sequence)
+                if farthestSequence == nil || distance > farthestDistance {
+                    farthestSequence = sequence
+                    farthestDistance = distance
+                }
+            }
+            guard let farthestSequence else {
+                break
+            }
+            packetsBySequence.removeValue(forKey: farthestSequence)
+            overflow -= 1
         }
-        let keysToKeep = Set(keysByDistance.prefix(maximumDepth))
-        packetsBySequence = packetsBySequence.filter { keysToKeep.contains($0.key) }
     }
 
     private func sequenceDistance(from start: UInt16, to end: UInt16) -> UInt16 {
