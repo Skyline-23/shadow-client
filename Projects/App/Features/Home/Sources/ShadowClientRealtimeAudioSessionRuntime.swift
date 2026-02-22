@@ -525,18 +525,19 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         1,
                         queuePressureProfile.decodeSheddingLowWatermarkSlots
                     )
-                    let packetsToDecodeStartIndex: Int
-                    if availableOutputSlots <= decodeSheddingLowWatermark,
-                       readyPackets.count > availableOutputSlots
-                    {
-                        let shedCount = readyPackets.count - availableOutputSlots
-                        packetsToDecodeStartIndex = readyPackets.count - availableOutputSlots
-                        registerOutputQueuePressureDrop(shedCount, "producer-shed")
-                    } else {
-                        packetsToDecodeStartIndex = 0
+                    let decodeWindow = Self.audioReadyPacketDecodeWindow(
+                        readyPacketCount: readyPackets.count,
+                        availableOutputSlots: availableOutputSlots,
+                        decodeSheddingLowWatermarkSlots: decodeSheddingLowWatermark
+                    )
+                    if decodeWindow.droppedPacketCount > 0 {
+                        registerOutputQueuePressureDrop(
+                            decodeWindow.droppedPacketCount,
+                            "producer-tail-shed"
+                        )
                     }
 
-                    for packetIndex in packetsToDecodeStartIndex ..< readyPackets.count {
+                    for packetIndex in decodeWindow.decodeStartIndex ..< decodeWindow.decodeEndIndex {
                         let readyPacket = readyPackets[packetIndex]
                         do {
                             guard remainingOutputSlots > 0 else {
@@ -1337,6 +1338,34 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             return nil
         }
         return observed
+    }
+
+    internal static func audioReadyPacketDecodeWindow(
+        readyPacketCount: Int,
+        availableOutputSlots: Int,
+        decodeSheddingLowWatermarkSlots: Int
+    ) -> (
+        decodeStartIndex: Int,
+        decodeEndIndex: Int,
+        droppedPacketCount: Int
+    ) {
+        guard readyPacketCount > 0 else {
+            return (0, 0, 0)
+        }
+        guard availableOutputSlots > 0 else {
+            return (0, 0, readyPacketCount)
+        }
+
+        let normalizedLowWatermark = max(1, decodeSheddingLowWatermarkSlots)
+        let decodeCount = min(readyPacketCount, availableOutputSlots)
+        if availableOutputSlots <= normalizedLowWatermark,
+           readyPacketCount > decodeCount
+        {
+            // Keep in-order continuity under pressure by decoding oldest ready
+            // packets first and shedding newest overflow packets.
+            return (0, decodeCount, readyPacketCount - decodeCount)
+        }
+        return (0, readyPacketCount, 0)
     }
 
     internal static func shouldSkipMissingAudioSequence(

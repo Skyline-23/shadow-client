@@ -256,6 +256,32 @@ func audioJitterSkipPolicyDoesNotSkipBelowTargetDepth() {
     #expect(!shouldSkip)
 }
 
+@Test("Audio decode window keeps oldest packets under output queue pressure")
+func audioDecodeWindowKeepsOldestPacketsUnderOutputQueuePressure() {
+    let window = ShadowClientRealtimeAudioSessionRuntime.audioReadyPacketDecodeWindow(
+        readyPacketCount: 8,
+        availableOutputSlots: 2,
+        decodeSheddingLowWatermarkSlots: 2
+    )
+
+    #expect(window.decodeStartIndex == 0)
+    #expect(window.decodeEndIndex == 2)
+    #expect(window.droppedPacketCount == 6)
+}
+
+@Test("Audio decode window decodes all packets when output queue has headroom")
+func audioDecodeWindowDecodesAllPacketsWithHeadroom() {
+    let window = ShadowClientRealtimeAudioSessionRuntime.audioReadyPacketDecodeWindow(
+        readyPacketCount: 6,
+        availableOutputSlots: 4,
+        decodeSheddingLowWatermarkSlots: 2
+    )
+
+    #expect(window.decodeStartIndex == 0)
+    #expect(window.decodeEndIndex == 6)
+    #expect(window.droppedPacketCount == 0)
+}
+
 @Test("Custom audio decoder registry prioritizes preferred providers")
 func customAudioDecoderRegistryPrioritizesPreferredProviders() throws {
     ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()

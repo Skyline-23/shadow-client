@@ -57,7 +57,9 @@ public struct ShadowClientAppShellView: View {
     @State private var sessionDiagnosticsHistory = ShadowClientSessionDiagnosticsHistory(
         maxSamples: ShadowClientUIRuntimeDefaults.diagnosticsHUDSampleHistoryLimit
     )
-    @State private var lastRoundTripHistoryAppendUptime: TimeInterval = 0
+    @State private var roundTripHistoryRateLimiter = ShadowClientUptimeRateLimiter(
+        minimumIntervalSeconds: 0.05
+    )
     @State private var launchFailureAlertMessage = ""
     @State private var isLaunchFailureAlertPresented = false
     @State private var gamepadInputRuntime = ShadowClientGamepadInputPassthroughRuntime()
@@ -137,22 +139,10 @@ public struct ShadowClientAppShellView: View {
             guard !isActive else {
                 return
             }
+            roundTripHistoryRateLimiter.reset()
             sessionDiagnosticsHistory = .init(
                 maxSamples: ShadowClientUIRuntimeDefaults.diagnosticsHUDSampleHistoryLimit
             )
-        }
-        .onChange(of: sessionSurfaceContext.controlRoundTripMs, initial: false) { _, newRoundTripMs in
-            guard remoteDesktopRuntime.activeSession != nil else {
-                return
-            }
-            let now = ProcessInfo.processInfo.systemUptime
-            guard now - lastRoundTripHistoryAppendUptime >= 0.05 else {
-                return
-            }
-            lastRoundTripHistoryAppendUptime = now
-            Task { @MainActor in
-                sessionDiagnosticsHistory.appendControlRoundTripMs(newRoundTripMs)
-            }
         }
         .onChange(of: remoteDesktopRuntime.activeSession != nil, initial: true) { _, isActive in
             gamepadInputRuntime.setSessionActive(isActive)
@@ -2026,6 +2016,13 @@ public struct ShadowClientAppShellView: View {
                     settingsDiagnosticsModel = model
                     if remoteDesktopRuntime.activeSession != nil {
                         sessionDiagnosticsHistory.append(model)
+                        if roundTripHistoryRateLimiter.shouldEmit(
+                            nowUptime: ProcessInfo.processInfo.systemUptime
+                        ) {
+                            sessionDiagnosticsHistory.appendControlRoundTripMs(
+                                sessionSurfaceContext.controlRoundTripMs
+                            )
+                        }
                     }
                 }
             }
@@ -2236,6 +2233,29 @@ public struct ShadowClientAppShellView: View {
                 refreshRemoteDesktopCatalog()
             }
         }
+    }
+}
+
+private final class ShadowClientUptimeRateLimiter {
+    private let minimumIntervalSeconds: TimeInterval
+    private var lastEmissionUptime: TimeInterval = 0
+
+    init(minimumIntervalSeconds: TimeInterval) {
+        self.minimumIntervalSeconds = max(0, minimumIntervalSeconds)
+    }
+
+    func shouldEmit(nowUptime: TimeInterval) -> Bool {
+        if lastEmissionUptime == 0 ||
+            nowUptime - lastEmissionUptime >= minimumIntervalSeconds
+        {
+            lastEmissionUptime = nowUptime
+            return true
+        }
+        return false
+    }
+
+    func reset() {
+        lastEmissionUptime = 0
     }
 }
 

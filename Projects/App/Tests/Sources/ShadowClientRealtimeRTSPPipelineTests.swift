@@ -621,6 +621,32 @@ func av1DepacketizerReassemblesSofEofPacketsUsingLastPayloadLength() {
     #expect(frame == Data([0xAA, 0xBB, 0xCC, 0xDD, 0xEE]))
 }
 
+@Test("AV1 depacketizer publishes completed-frame metadata for sync gate diagnostics")
+func av1DepacketizerPublishesCompletedFrameMetadata() {
+    var depacketizer = ShadowClientAV1RTPDepacketizer()
+    let framePayload = Data([0x41, 0x42, 0x43])
+    let packet = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 190,
+        frameIndex: 52,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF | nvVideoPacketFlagEOF,
+        payloadBytes: Array(framePayload),
+        includeFrameHeaderWithLastPayloadLength: moonlightFrameHeaderSize + UInt16(framePayload.count),
+        frameHeaderFrameType: 2
+    )
+
+    let frame = depacketizer.ingest(payload: packet, marker: true)
+    let metadata = depacketizer.consumeLastCompletedFrameMetadata()
+
+    #expect(frame == framePayload)
+    #expect(metadata?.frameIndex == 52)
+    #expect(metadata?.firstStreamPacketIndex == 190)
+    #expect(metadata?.frameHeaderType == 0x01)
+    #expect(metadata?.frameType == 2)
+    #expect(metadata?.frameHeaderSize == Int(moonlightFrameHeaderSize))
+    #expect(metadata?.lastPacketPayloadLength == moonlightFrameHeaderSize + UInt16(framePayload.count))
+    #expect(depacketizer.consumeLastCompletedFrameMetadata() == nil)
+}
+
 @Test("Moonlight NV depacketizer passthrough strategy ignores invalid lastPayloadLength for H264/H265")
 func moonlightNvDepacketizerPassthroughIgnoresInvalidLastPayloadLength() {
     var depacketizer = ShadowClientMoonlightNVRTPDepacketizer(
@@ -1499,6 +1525,59 @@ func realtimeRuntimeAV1FatalDecoderErrorsForceFallback() {
     )
 }
 
+@Test("Realtime runtime AV1 recoverable decode errors do not force immediate fallback")
+func realtimeRuntimeAV1RecoverableDecodeErrorsDoNotForceImmediateFallback() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldForceAV1Fallback(
+            forDecoderError: ShadowClientVideoToolboxDecoderError.decodeFailed(-12909)
+        )
+    )
+}
+
+@Test("Realtime runtime AV1 decode failure status extraction reports decode status")
+func realtimeRuntimeAV1DecodeFailureStatusExtractionReportsDecodeStatus() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.av1DecodeFailureStatus(
+            from: ShadowClientVideoToolboxDecoderError.decodeFailed(-12909)
+        ) == -12909
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.av1DecodeFailureStatus(
+            from: ShadowClientVideoToolboxDecoderError.missingParameterSets
+        ) == nil
+    )
+}
+
+@Test("Realtime runtime AV1 sync-frame classifier only accepts IDR frame type")
+func realtimeRuntimeAV1SyncFrameClassifierOnlyAcceptsIDR() {
+    #expect(ShadowClientRealtimeRTSPSessionRuntime.isAV1SyncFrameType(2))
+    #expect(!ShadowClientRealtimeRTSPSessionRuntime.isAV1SyncFrameType(1))
+    #expect(!ShadowClientRealtimeRTSPSessionRuntime.isAV1SyncFrameType(5))
+    #expect(!ShadowClientRealtimeRTSPSessionRuntime.isAV1SyncFrameType(nil))
+}
+
+@Test("Realtime runtime keeps decoder failure history when successful decode occurs inside failure window")
+func realtimeRuntimeKeepsDecoderFailureHistoryWithinWindow() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldClearDecoderFailureHistoryOnSuccessfulDecode(
+            now: 12.0,
+            firstFailureUptime: 11.2,
+            windowSeconds: 1.5
+        )
+    )
+}
+
+@Test("Realtime runtime clears decoder failure history when successful decode occurs after failure window")
+func realtimeRuntimeClearsDecoderFailureHistoryOutsideWindow() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldClearDecoderFailureHistoryOnSuccessfulDecode(
+            now: 14.0,
+            firstFailureUptime: 11.0,
+            windowSeconds: 1.5
+        )
+    )
+}
+
 @Test("Realtime runtime AV1 transient decoder errors do not force fallback")
 func realtimeRuntimeAV1TransientDecoderErrorsDoNotForceFallback() {
     #expect(
@@ -1526,6 +1605,7 @@ private func makeSyntheticNVVideoPacket(
     includeFrameHeaderWithLastPayloadLength lastPayloadLength: UInt16? = nil,
     frameHeaderSize: UInt16 = moonlightFrameHeaderSize,
     frameHeaderFirstByte: UInt8 = 0x01,
+    frameHeaderFrameType: UInt8 = 0x01,
     fecInfo: UInt32 = 0
 ) -> Data {
     var packetPayload = Data()
@@ -1534,7 +1614,8 @@ private func makeSyntheticNVVideoPacket(
             moonlightFrameHeader(
                 lastPayloadLength: lastPayloadLength,
                 frameHeaderSize: frameHeaderSize,
-                firstByte: frameHeaderFirstByte
+                firstByte: frameHeaderFirstByte,
+                frameType: frameHeaderFrameType
             )
         )
     }
@@ -1555,12 +1636,13 @@ private func makeSyntheticNVVideoPacket(
 private func moonlightFrameHeader(
     lastPayloadLength: UInt16,
     frameHeaderSize: UInt16 = moonlightFrameHeaderSize,
-    firstByte: UInt8 = 0x01
+    firstByte: UInt8 = 0x01,
+    frameType: UInt8 = 0x01
 ) -> Data {
     let resolvedHeaderSize = max(Int(frameHeaderSize), 8)
     var header = Data(repeating: 0, count: resolvedHeaderSize)
     header[0] = firstByte
-    header[3] = 0x01
+    header[3] = frameType
     let lastPayloadLengthBytes = littleEndianBytes(lastPayloadLength)
     header[4] = lastPayloadLengthBytes[0]
     header[5] = lastPayloadLengthBytes[1]

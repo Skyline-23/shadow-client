@@ -447,6 +447,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         let codec: ShadowClientVideoCodec
         let parameterSets: [Data]
         let data: Data
+        let depacketizerMetadata: ShadowClientAV1RTPDepacketizer.AssembledFrameMetadata?
+    }
+
+    private struct AV1DecodeSubmissionContext: Sendable {
+        let accessUnitBytes: Int
+        let decodeQueueBacklog: Int
+        let depacketizerMetadata: ShadowClientAV1RTPDepacketizer.AssembledFrameMetadata?
     }
 
     struct VideoQueuePressureProfile: Equatable, Sendable {
@@ -520,6 +527,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var pendingVideoRecoveryRequest = false
     private var videoRenderSubmitDropCount = 0
     private var lastObservedDecodeQueueBacklog = 0
+    private var awaitingAV1SyncFrame = false
+    private var av1SyncGateDroppedFrameCount = 0
+    private var lastAV1DecodeSubmissionContext: AV1DecodeSubmissionContext?
     private var videoReceiveQueueCapacity = ShadowClientRealtimeSessionDefaults.videoReceiveQueueCapacity
     private var videoDecodeQueueCapacity = ShadowClientRealtimeSessionDefaults.videoDecodeQueueCapacity
     private var videoDecodeQueueConsumerMaxBufferedUnits = ShadowClientRealtimeSessionDefaults.videoDecodeQueueConsumerMaxBufferedUnits
@@ -624,6 +634,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         pendingVideoRecoveryRequest = false
         videoRenderSubmitDropCount = 0
         lastObservedDecodeQueueBacklog = 0
+        awaitingAV1SyncFrame = false
+        av1SyncGateDroppedFrameCount = 0
+        lastAV1DecodeSubmissionContext = nil
         configureQueuePressureProfile(for: resolvedVideoConfiguration)
 
         await MainActor.run {
@@ -669,6 +682,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         )
         videoQueuePressurePolicy = .fromTailTruncationStrategy(depacketizerTailStrategy)
         shadowClientNVDepacketizer.reset()
+        awaitingAV1SyncFrame = track.codec == .av1
+        av1SyncGateDroppedFrameCount = 0
+        lastAV1DecodeSubmissionContext = nil
         await MainActor.run {
             surfaceContext.updateActiveVideoCodec(track.codec)
         }
@@ -772,6 +788,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         pendingVideoRecoveryRequest = false
         videoRenderSubmitDropCount = 0
         lastObservedDecodeQueueBacklog = 0
+        awaitingAV1SyncFrame = false
+        av1SyncGateDroppedFrameCount = 0
+        lastAV1DecodeSubmissionContext = nil
         resetQueuePressureProfile()
         await MainActor.run {
             surfaceContext.reset()
@@ -923,6 +942,15 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
             do {
                 lastObservedDecodeQueueBacklog = dequeueResult.remainingBufferedCount
+                if accessUnit.codec == .av1 {
+                    lastAV1DecodeSubmissionContext = .init(
+                        accessUnitBytes: accessUnit.data.count,
+                        decodeQueueBacklog: dequeueResult.remainingBufferedCount,
+                        depacketizerMetadata: accessUnit.depacketizerMetadata
+                    )
+                } else {
+                    lastAV1DecodeSubmissionContext = nil
+                }
                 try await decodeFrame(
                     accessUnit: accessUnit.data,
                     codec: accessUnit.codec,
@@ -930,14 +958,23 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     remainingDecodeQueueBacklog: dequeueResult.remainingBufferedCount
                 )
                 lastDecodeSubmitUptime = ProcessInfo.processInfo.systemUptime
-                decoderFailureCount = 0
-                firstDecoderFailureUptime = 0
+                if Self.shouldClearDecoderFailureHistoryOnSuccessfulDecode(
+                    now: lastDecodeSubmitUptime,
+                    firstFailureUptime: firstDecoderFailureUptime,
+                    windowSeconds: ShadowClientRealtimeSessionDefaults.decoderFailureWindowSeconds
+                ) {
+                    decoderFailureCount = 0
+                    firstDecoderFailureUptime = 0
+                }
                 if accessUnit.codec == .av1 {
                     av1DepacketizerRecoveryCount = 0
                     firstAV1DepacketizerRecoveryUptime = 0
                 }
             } catch {
                 logger.error("\(String(describing: accessUnit.codec), privacy: .public) decode failed: \(error.localizedDescription, privacy: .public)")
+                if accessUnit.codec == .av1 {
+                    logAV1DecodeFailureContext(error: error)
+                }
                 if await handleDecoderFailure(codec: accessUnit.codec, error: error) {
                     continue
                 }
@@ -994,6 +1031,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         if codec == .av1 {
             shadowClientNVDepacketizer.reset()
+            awaitingAV1SyncFrame = true
+            av1SyncGateDroppedFrameCount = 0
+            lastAV1DecodeSubmissionContext = nil
         }
     }
 
@@ -1004,6 +1044,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         depacketizeTask = nil
         stallMonitorTask?.cancel()
         stallMonitorTask = nil
+        awaitingAV1SyncFrame = false
+        av1SyncGateDroppedFrameCount = 0
+        lastAV1DecodeSubmissionContext = nil
         await transitionSurfaceState(.failed(message))
         await closeVideoPacketQueue()
         await closeVideoDecodeQueue()
@@ -1029,6 +1072,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             }
             return
         case let .frame(frame):
+            let frameMetadata = shadowClientNVDepacketizer.consumeLastCompletedFrameMetadata()
             frameAssemblyLogCount &+= 1
             if frameAssemblyLogCount == 1 ||
                 frameAssemblyLogCount.isMultiple(of: ShadowClientRealtimeSessionDefaults.videoFrameAssemblyLogInterval)
@@ -1039,6 +1083,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             firstDepacketizerCorruptionUptime = 0
 
             updateRuntimeVideoStats(frameBytes: frame.count)
+            if codec == .av1,
+               !(await shouldAdmitAV1FrameToDecoderQueue(frameMetadata: frameMetadata))
+            {
+                return
+            }
             if codec == .av1,
                !Self.isLikelyValidAV1AccessUnit(frame)
             {
@@ -1081,7 +1130,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     .init(
                         codec: codec,
                         parameterSets: initialParameterSets,
-                        data: frame
+                        data: frame,
+                        depacketizerMetadata: frameMetadata
                     )
                 )
                 if droppedOldest {
@@ -1092,6 +1142,63 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 }
             }
         }
+    }
+
+    private func shouldAdmitAV1FrameToDecoderQueue(
+        frameMetadata: ShadowClientAV1RTPDepacketizer.AssembledFrameMetadata?
+    ) async -> Bool {
+        guard awaitingAV1SyncFrame else {
+            return true
+        }
+
+        let frameType = frameMetadata?.frameType
+        if Self.isAV1SyncFrameType(frameType) {
+            let droppedBeforeSync = av1SyncGateDroppedFrameCount
+            awaitingAV1SyncFrame = false
+            av1SyncGateDroppedFrameCount = 0
+            let frameIndexDescription = Self.optionalUInt32Description(frameMetadata?.frameIndex)
+            let frameTypeDescription = Self.optionalUInt8Description(frameType)
+            logger.notice(
+                "AV1 sync gate acquired IDR frame index=\(frameIndexDescription, privacy: .public) type=\(frameTypeDescription, privacy: .public) dropped-before-sync=\(droppedBeforeSync, privacy: .public)"
+            )
+            return true
+        }
+
+        av1SyncGateDroppedFrameCount += 1
+        if av1SyncGateDroppedFrameCount == 1 ||
+            av1SyncGateDroppedFrameCount.isMultiple(of: 60)
+        {
+            let frameIndexDescription = Self.optionalUInt32Description(frameMetadata?.frameIndex)
+            let frameTypeDescription = Self.optionalUInt8Description(frameType)
+            logger.notice(
+                "AV1 sync gate dropping non-sync frame index=\(frameIndexDescription, privacy: .public) type=\(frameTypeDescription, privacy: .public) dropped=\(self.av1SyncGateDroppedFrameCount, privacy: .public)"
+            )
+        }
+        _ = await requestVideoRecoveryFrame(
+            for: .av1,
+            reason: "av1-sync-gate",
+            minimumInterval: 0.35
+        )
+        return false
+    }
+
+    private func logAV1DecodeFailureContext(error: any Error) {
+        guard let context = lastAV1DecodeSubmissionContext else {
+            return
+        }
+
+        let status = Self.av1DecodeFailureStatus(from: error)
+        let metadata = context.depacketizerMetadata
+        let statusDescription = Self.optionalOSStatusDescription(status)
+        let frameIndexDescription = Self.optionalUInt32Description(metadata?.frameIndex)
+        let streamPacketDescription = Self.optionalUInt32Description(metadata?.firstStreamPacketIndex)
+        let frameTypeDescription = Self.optionalUInt8Description(metadata?.frameType)
+        let headerTypeDescription = Self.optionalUInt8Description(metadata?.frameHeaderType)
+        let headerSizeDescription = Self.optionalIntDescription(metadata?.frameHeaderSize)
+        let lastPayloadLengthDescription = Self.optionalUInt16Description(metadata?.lastPacketPayloadLength)
+        logger.error(
+            "AV1 decode failure context status=\(statusDescription, privacy: .public) frame-bytes=\(context.accessUnitBytes, privacy: .public) decode-backlog=\(context.decodeQueueBacklog, privacy: .public) frame-index=\(frameIndexDescription, privacy: .public) stream-packet=\(streamPacketDescription, privacy: .public) frame-type=\(frameTypeDescription, privacy: .public) header-type=\(headerTypeDescription, privacy: .public) header-size=\(headerSizeDescription, privacy: .public) last-payload-len=\(lastPayloadLengthDescription, privacy: .public)"
+        )
     }
 
     private func handleVideoDecodeQueueBackpressure(
@@ -1161,7 +1268,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             "Video decode queue remained saturated for codec \(String(describing: codec), privacy: .public); requesting recovery frame to resynchronize"
         )
         await flushVideoPipelineForRecovery(codec: codec)
-        await requestVideoRecoveryFrame(reason: "decode-queue-saturation")
+        await requestVideoRecoveryFrame(
+            for: codec,
+            reason: "decode-queue-saturation"
+        )
     }
 
     private func handleVideoReceiveQueueBackpressure(
@@ -1236,7 +1346,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             "Video receive queue remained saturated for codec \(String(describing: codec), privacy: .public); fast-forwarding pipeline and requesting recovery frame"
         )
         await flushVideoPipelineForRecovery(codec: codec)
-        await requestVideoRecoveryFrame(reason: "receive-queue-saturation")
+        await requestVideoRecoveryFrame(
+            for: codec,
+            reason: "receive-queue-saturation"
+        )
     }
 
     private func isVideoPipelineUnderIngressPressure(now: TimeInterval) -> Bool {
@@ -1314,7 +1427,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         logger.error("Video depacketizer detected sustained stream discontinuity for codec \(String(describing: codec), privacy: .public); requesting recovery frame")
         await flushVideoPipelineForRecovery(codec: codec)
-        await requestVideoRecoveryFrame(reason: "depacketizer-discontinuity")
+        await requestVideoRecoveryFrame(
+            for: codec,
+            reason: "depacketizer-discontinuity"
+        )
         if !hasRenderedFirstFrame {
             await transitionSurfaceState(.waitingForFirstFrame)
         }
@@ -1347,7 +1463,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
         if hasRenderedFirstFrame, decoderFailureCount == 1 {
             logger.notice(
-                "Video decoder dropped one frame for codec \(String(describing: codec), privacy: .public); awaiting recovery before forcing reset"
+                "Video decoder dropped one frame for codec \(String(describing: codec), privacy: .public); requesting recovery frame before hard reset"
+            )
+            _ = await requestVideoRecoveryFrame(
+                for: codec,
+                reason: "decoder-single-frame-drop",
+                minimumInterval: 0.35
             )
             return true
         }
@@ -1394,7 +1515,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 yuv444Enabled: configuration.enableYUV444
             )
         }
-        await requestVideoRecoveryFrame(reason: "decoder-recovery")
+        await requestVideoRecoveryFrame(
+            for: codec,
+            reason: "decoder-recovery"
+        )
         if !hasRenderedFirstFrame {
             await transitionSurfaceState(.waitingForFirstFrame)
         }
@@ -1412,6 +1536,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 logger.error(
                     "\(String(describing: codec), privacy: .public) decode failed: \(pendingDecodeFailure.localizedDescription, privacy: .public)"
                 )
+                if codec == .av1 {
+                    logAV1DecodeFailureContext(error: pendingDecodeFailure)
+                }
                 if await handleDecoderFailure(codec: codec, error: pendingDecodeFailure) {
                     continue
                 }
@@ -1587,7 +1714,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             logger.notice(
                 "Video decoder output stalled for codec \(String(describing: codec), privacy: .public) under queue pressure; requesting recovery frame without decoder reset"
             )
-            _ = await requestVideoRecoveryFrame(reason: "decoder-output-stall-pressure")
+            _ = await requestVideoRecoveryFrame(
+                for: codec,
+                reason: "decoder-output-stall-pressure"
+            )
             lastDecodeSubmitUptime = now
             return true
         }
@@ -1602,7 +1732,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 logger.notice(
                     "Video decoder output stalled for codec \(String(describing: codec), privacy: .public) while queue pressure signal is active; extending soft recovery window and skipping decoder reset"
                 )
-                _ = await requestVideoRecoveryFrame(reason: "decoder-output-stall-pressure-extended")
+                _ = await requestVideoRecoveryFrame(
+                    for: codec,
+                    reason: "decoder-output-stall-pressure-extended"
+                )
                 lastDecodeSubmitUptime = now
                 return true
             }
@@ -1637,7 +1770,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 )
             }
         }
-        await requestVideoRecoveryFrame(reason: "decoder-output-stall")
+        await requestVideoRecoveryFrame(
+            for: codec,
+            reason: "decoder-output-stall"
+        )
         lastDecodeSubmitUptime = now
         lastDecodedFrameOutputUptime = now
         if !hasRenderedFirstFrame {
@@ -1692,6 +1828,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         pixelBuffer: CVPixelBuffer
     ) async {
         let now = ProcessInfo.processInfo.systemUptime
+        if codec == .av1 {
+            awaitingAV1SyncFrame = false
+            av1SyncGateDroppedFrameCount = 0
+            lastAV1DecodeSubmissionContext = nil
+        }
         recordDecodedFrameOutputUptime()
         if shouldDropDecodedFrameForRenderPacing(now: now) {
             return
@@ -1965,6 +2106,21 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
     @discardableResult
     private func requestVideoRecoveryFrame(
+        for codec: ShadowClientVideoCodec,
+        reason: String,
+        minimumInterval: TimeInterval = ShadowClientRealtimeSessionDefaults.videoRecoveryFrameRequestCooldownSeconds
+    ) async -> Bool {
+        if codec == .av1 {
+            awaitingAV1SyncFrame = true
+        }
+        return await requestVideoRecoveryFrame(
+            reason: reason,
+            minimumInterval: minimumInterval
+        )
+    }
+
+    @discardableResult
+    private func requestVideoRecoveryFrame(
         reason: String,
         minimumInterval: TimeInterval = ShadowClientRealtimeSessionDefaults.videoRecoveryFrameRequestCooldownSeconds
     ) async -> Bool {
@@ -2046,9 +2202,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             case .missingAV1CodecConfiguration,
                  .unsupportedCodec,
                  .cannotCreateFormatDescription,
-                 .cannotCreateDecoder,
-                 .decodeFailed:
+                 .cannotCreateDecoder:
                 return true
+            case let .decodeFailed(status):
+                return !isRecoverableAV1DecodeFailureStatus(status)
             }
         }
 
@@ -2066,6 +2223,73 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             "osstatus -12903",
         ]
         return fatalSignatures.contains(where: normalized.contains)
+    }
+
+    static func isRecoverableAV1DecodeFailureStatus(_ status: OSStatus) -> Bool {
+        // -12909 is commonly reported for transient malformed/partial frame submissions.
+        // Keep AV1 recovery path active before forcing codec fallback.
+        let recoverableStatuses: Set<OSStatus> = [-12909]
+        return recoverableStatuses.contains(status)
+    }
+
+    static func av1DecodeFailureStatus(from error: any Error) -> OSStatus? {
+        guard let decoderError = error as? ShadowClientVideoToolboxDecoderError else {
+            return nil
+        }
+        if case let .decodeFailed(status) = decoderError {
+            return status
+        }
+        return nil
+    }
+
+    static func isAV1SyncFrameType(_ frameType: UInt8?) -> Bool {
+        frameType == 2
+    }
+
+    private static func optionalOSStatusDescription(_ status: OSStatus?) -> String {
+        guard let status else {
+            return "unknown"
+        }
+        return String(status)
+    }
+
+    private static func optionalUInt32Description(_ value: UInt32?) -> String {
+        guard let value else {
+            return "unknown"
+        }
+        return String(value)
+    }
+
+    private static func optionalUInt16Description(_ value: UInt16?) -> String {
+        guard let value else {
+            return "unknown"
+        }
+        return String(value)
+    }
+
+    private static func optionalUInt8Description(_ value: UInt8?) -> String {
+        guard let value else {
+            return "unknown"
+        }
+        return String(value)
+    }
+
+    private static func optionalIntDescription(_ value: Int?) -> String {
+        guard let value else {
+            return "unknown"
+        }
+        return String(value)
+    }
+
+    static func shouldClearDecoderFailureHistoryOnSuccessfulDecode(
+        now: TimeInterval,
+        firstFailureUptime: TimeInterval,
+        windowSeconds: TimeInterval
+    ) -> Bool {
+        guard firstFailureUptime > 0 else {
+            return false
+        }
+        return now - firstFailureUptime > windowSeconds
     }
 
     private static func dynamicRangeMode(
