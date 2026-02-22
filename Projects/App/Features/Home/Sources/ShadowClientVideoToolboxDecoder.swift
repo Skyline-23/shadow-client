@@ -579,9 +579,15 @@ public actor ShadowClientVideoToolboxDecoder {
     }
 
     private func waitForDecodeSlot() async throws {
+        var spinAttempts = 0
         while !decodeSlotCounter.tryAcquire(limit: effectiveMaximumInFlightDecodeRequests()) {
             try Task.checkCancellation()
-            try await Task.sleep(for: ShadowClientVideoDecoderDefaults.inFlightDecodeWaitStep)
+            spinAttempts += 1
+            if spinAttempts <= 2 {
+                await Task.yield()
+                continue
+            }
+            try await Task.sleep(for: currentInFlightDecodeWaitStep())
         }
     }
 
@@ -690,23 +696,29 @@ public actor ShadowClientVideoToolboxDecoder {
 
     private func queuePressureReliefStrength() -> Int {
         let scale = currentDecodeWorkloadScale()
+        if scale >= 5.0 {
+            return 5
+        }
         if scale >= 3.0 {
-            return 1
+            return 4
         }
         if scale >= 1.5 {
-            return 2
+            return 3
         }
-        return 3
+        return 2
     }
 
     private func queuePressureReliefMinimumMultiplier() -> Double {
         let scale = currentDecodeWorkloadScale()
         let defaultMinimum = minimumDecodeSubmitPacingMultiplier()
+        if scale >= 5.0 {
+            return max(0.70, defaultMinimum)
+        }
         if scale >= 3.0 {
-            return max(1.0, defaultMinimum)
+            return max(0.75, defaultMinimum)
         }
         if scale >= 1.5 {
-            return max(0.9, defaultMinimum)
+            return max(0.85, defaultMinimum)
         }
         return defaultMinimum
     }
@@ -727,6 +739,15 @@ public actor ShadowClientVideoToolboxDecoder {
             minimumDecodeSubmitPacingMultiplier(),
             decodeSubmitPacingMultiplier
         )
+    }
+
+    private func currentInFlightDecodeWaitStep() -> Duration {
+        let frameIntervalSeconds = currentFrameIntervalSeconds()
+        let waitSeconds = min(
+            0.0015,
+            max(0.0002, frameIntervalSeconds * 0.05)
+        )
+        return .nanoseconds(Int((waitSeconds * 1_000_000_000).rounded(.up)))
     }
 
     private func minimumDecodeSubmitPacingMultiplier() -> Double {
@@ -762,18 +783,26 @@ public actor ShadowClientVideoToolboxDecoder {
         let requestedPixelsPerSecond = Double(normalizedWidth * normalizedHeight * normalizedFPS)
         let workloadScale = max(0.25, requestedPixelsPerSecond / max(1.0, baselinePixelsPerSecond))
         let cpuScaleDivisor = max(1.0, ShadowClientVideoDecoderDefaults.inFlightDecodeCoreScalingDivisor)
-        let cpuScale = max(1.0, Double(max(1, activeProcessorCount)) / cpuScaleDivisor)
-        let workloadPenalty = pow(workloadScale, 0.85)
-        let highWorkloadAdjustment: Double
-        if workloadScale >= 3.0 {
-            highWorkloadAdjustment = 0.75
-        } else if workloadScale >= 2.0 {
-            highWorkloadAdjustment = 0.85
-        } else {
-            highWorkloadAdjustment = 1.0
-        }
+        let cpuScale = min(
+            ShadowClientVideoDecoderDefaults.inFlightDecodeMaximumCoreScale,
+            max(1.0, Double(max(1, activeProcessorCount)) / cpuScaleDivisor)
+        )
+        let workloadGrowth = max(
+            1.0,
+            pow(
+                workloadScale,
+                ShadowClientVideoDecoderDefaults.inFlightDecodeWorkloadGrowthExponent
+            )
+        )
+        let fpsBoost = max(
+            1.0,
+            pow(
+                Double(normalizedFPS) / Double(max(1, ShadowClientStreamingLaunchBounds.defaultFPS)),
+                ShadowClientVideoDecoderDefaults.inFlightDecodeFPSBoostExponent
+            )
+        )
         let recommendedInFlight = Int(
-            ((Double(minimumInFlight) * cpuScale / workloadPenalty) * highWorkloadAdjustment)
+            (Double(minimumInFlight) * cpuScale * workloadGrowth * fpsBoost)
                 .rounded(.toNearestOrAwayFromZero)
         )
         return min(

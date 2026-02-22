@@ -16,8 +16,8 @@ func videoToolboxDecoderInFlightPolicyRespectsConfiguredBounds() {
     #expect(maximum <= ShadowClientVideoDecoderDefaults.maximumInFlightDecodeRequests)
 }
 
-@Test("VideoToolbox decoder in-flight policy scales down under heavier frame workloads")
-func videoToolboxDecoderInFlightPolicyScalesDownForHeavierWorkload() {
+@Test("VideoToolbox decoder in-flight policy scales up under heavier frame workloads")
+func videoToolboxDecoderInFlightPolicyScalesUpForHeavierWorkload() {
     let baseline = ShadowClientVideoToolboxDecoder.recommendedMaximumInFlightDecodeRequests(
         for: 60,
         frameWidth: 1_920,
@@ -43,7 +43,7 @@ func videoToolboxDecoderInFlightPolicyScalesDownForHeavierWorkload() {
         activeProcessorCount: 12
     )
 
-    #expect(higherFPSAtSameResolution <= baseline)
-    #expect(ultraHD <= baseline)
+    #expect(higherFPSAtSameResolution >= baseline)
+    #expect(ultraHD >= baseline)
     #expect(higherCoreCount >= baseline)
 }

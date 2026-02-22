@@ -34,6 +34,13 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         let payload: Data
     }
 
+    fileprivate struct AudioQueuePressureProfile: Sendable {
+        let pressureSignalInterval: Int
+        let pressureTrimInterval: Int
+        let pressureTrimToRecentPackets: Int
+        let decodeSheddingLowWatermarkSlots: Int
+    }
+
     private let logger = Logger(
         subsystem: "com.skyline23.shadow-client",
         category: "RealtimeAudio"
@@ -129,7 +136,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             )
             startReceiveLoop(
                 over: udpConnection,
-                preferredPayloadType: resolvedTrack.rtpPayloadType
+                preferredPayloadType: resolvedTrack.rtpPayloadType,
+                sampleRate: resolvedTrack.sampleRate,
+                channels: resolvedTrack.channelCount
             )
             updateState(
                 .playing(
@@ -177,7 +186,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
 
     private func startReceiveLoop(
         over connection: NWConnection,
-        preferredPayloadType: Int
+        preferredPayloadType: Int,
+        sampleRate: Int,
+        channels: Int
     ) {
         receiveTask = Task { [weak self] in
             guard let self else {
@@ -187,10 +198,13 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var currentPayloadType = preferredPayloadType
             var loggedUnexpectedPayloadTypes = Set<Int>()
             var consecutiveDroppedOutputBuffers = 0
-            var consecutiveDroppedOutputQueueBuffers = 0
             var consecutiveDecryptFailures = 0
             var outputQueuePressureDropCount = 0
             var firstOutputQueuePressureDropUptime: TimeInterval = 0
+            let queuePressureProfile = Self.audioQueuePressureProfile(
+                sampleRate: sampleRate,
+                channels: channels
+            )
 
             let registerOutputQueuePressureDrop: (Int, String) -> Void = { droppedCount, reason in
                 guard droppedCount > 0 else {
@@ -211,7 +225,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     Self.didCounterCrossIntervalBoundary(
                         previous: previousDropCount,
                         current: outputQueuePressureDropCount,
-                        interval: ShadowClientRealtimeSessionDefaults.audioOutputQueuePressureSignalInterval
+                        interval: queuePressureProfile.pressureSignalInterval
                     )
                 {
                     self.logger.error(
@@ -222,10 +236,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 if Self.didCounterCrossIntervalBoundary(
                     previous: previousDropCount,
                     current: outputQueuePressureDropCount,
-                    interval: ShadowClientRealtimeSessionDefaults.audioOutputQueuePressureTrimInterval
+                    interval: queuePressureProfile.pressureTrimInterval
                 ) {
                     let trimmedCount = self.jitterBuffer.trimToMostRecent(
-                        maxBufferedPackets: ShadowClientRealtimeSessionDefaults.audioOutputQueuePressureTrimToRecentPackets
+                        maxBufferedPackets: queuePressureProfile.pressureTrimToRecentPackets
                     )
                     if trimmedCount > 0 {
                         self.logger.notice(
@@ -280,7 +294,6 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     }
                     let availableOutputSlots = audioOutput.availableEnqueueSlots
                     if availableOutputSlots <= 0 {
-                        consecutiveDroppedOutputQueueBuffers += readyPackets.count
                         registerOutputQueuePressureDrop(readyPackets.count, "skip-decode")
                         continue
                     }
@@ -288,27 +301,26 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     var remainingOutputSlots = availableOutputSlots
                     let decodeSheddingLowWatermark = max(
                         1,
-                        ShadowClientRealtimeSessionDefaults.audioOutputQueueDecodeSheddingLowWatermarkSlots
+                        queuePressureProfile.decodeSheddingLowWatermarkSlots
                     )
-                    let packetsToDecode: [RTPPacket]
+                    let packetsToDecodeStartIndex: Int
                     if availableOutputSlots <= decodeSheddingLowWatermark,
                        readyPackets.count > availableOutputSlots
                     {
                         let shedCount = readyPackets.count - availableOutputSlots
-                        packetsToDecode = Array(readyPackets.suffix(availableOutputSlots))
-                        consecutiveDroppedOutputQueueBuffers += shedCount
+                        packetsToDecodeStartIndex = readyPackets.count - availableOutputSlots
                         registerOutputQueuePressureDrop(shedCount, "producer-shed")
                     } else {
-                        packetsToDecode = readyPackets
+                        packetsToDecodeStartIndex = 0
                     }
 
-                    for readyPacket in packetsToDecode {
+                    for packetIndex in packetsToDecodeStartIndex ..< readyPackets.count {
+                        let readyPacket = readyPackets[packetIndex]
                         do {
                             guard let decoder else {
                                 continue
                             }
                             guard remainingOutputSlots > 0 else {
-                                consecutiveDroppedOutputQueueBuffers += 1
                                 registerOutputQueuePressureDrop(1, "guard-no-slots")
                                 continue
                             }
@@ -368,14 +380,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 }
                                 consecutiveDroppedOutputBuffers = 0
                                 if audioOutput.enqueue(pcmBuffer: pcmBuffer) == false {
-                                    consecutiveDroppedOutputQueueBuffers += 1
                                     registerOutputQueuePressureDrop(1, "drop-decoded-buffer")
                                     continue
                                 }
                                 remainingOutputSlots = max(0, remainingOutputSlots - 1)
-                                consecutiveDroppedOutputQueueBuffers = 0
-                                outputQueuePressureDropCount = 0
-                                firstOutputQueuePressureDropUptime = 0
                             }
                         } catch {
                             let message = "Audio decode failed: \(error.localizedDescription)"
@@ -724,6 +732,46 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             return nil
         }
         return observed
+    }
+
+    private static func audioQueuePressureProfile(
+        sampleRate: Int,
+        channels: Int
+    ) -> AudioQueuePressureProfile {
+        let normalizedSampleRate = max(8_000, sampleRate)
+        let normalizedChannels = max(1, channels)
+        let estimatedPacketsPerSecond = max(
+            25,
+            Int((Double(normalizedSampleRate) / 960.0).rounded(.up))
+        )
+        let pressureSignalInterval = max(
+            ShadowClientRealtimeSessionDefaults.audioOutputQueuePressureSignalInterval,
+            estimatedPacketsPerSecond / 2
+        )
+        let pressureTrimInterval = max(
+            ShadowClientRealtimeSessionDefaults.audioOutputQueuePressureTrimInterval,
+            estimatedPacketsPerSecond
+        )
+        let pressureTrimToRecentPackets = max(
+            4,
+            min(
+                16,
+                max(
+                    ShadowClientRealtimeSessionDefaults.audioOutputQueuePressureTrimToRecentPackets,
+                    estimatedPacketsPerSecond / 8
+                )
+            )
+        )
+        let decodeSheddingLowWatermarkSlots = max(
+            ShadowClientRealtimeSessionDefaults.audioOutputQueueDecodeSheddingLowWatermarkSlots,
+            normalizedChannels > 2 ? 3 : 2
+        )
+        return .init(
+            pressureSignalInterval: pressureSignalInterval,
+            pressureTrimInterval: pressureTrimInterval,
+            pressureTrimToRecentPackets: pressureTrimToRecentPackets,
+            decodeSheddingLowWatermarkSlots: decodeSheddingLowWatermarkSlots
+        )
     }
 
     public static func preferredOpusChannelCountForNegotiation(
