@@ -101,6 +101,34 @@ private final class ShadowClientRealtimeDecoderOutputBridge: @unchecked Sendable
     }
 }
 
+private final class ShadowClientRealtimeDecoderOutputCallbackContext: @unchecked Sendable {
+    private let bridge: ShadowClientRealtimeDecoderOutputBridge
+    private let onDecodeCompleted: @Sendable () async -> Void
+
+    init(
+        bridge: ShadowClientRealtimeDecoderOutputBridge,
+        onDecodeCompleted: @escaping @Sendable () async -> Void
+    ) {
+        self.bridge = bridge
+        self.onDecodeCompleted = onDecodeCompleted
+    }
+
+    func handleCallback(
+        status: OSStatus,
+        imageBuffer: CVImageBuffer?
+    ) {
+        Task(priority: .high) {
+            await onDecodeCompleted()
+            guard status == noErr,
+                  let pixelBuffer = imageBuffer
+            else {
+                return
+            }
+            bridge.emit(pixelBuffer)
+        }
+    }
+}
+
 private struct ShadowClientDecoderSendablePixelBuffer: @unchecked Sendable {
     let value: CVPixelBuffer
 }
@@ -112,9 +140,12 @@ public actor ShadowClientVideoToolboxDecoder {
     private var formatDescription: CMFormatDescription?
     private var session: VTDecompressionSession?
     private var outputBridge: ShadowClientRealtimeDecoderOutputBridge?
+    private var outputCallbackContext: ShadowClientRealtimeDecoderOutputCallbackContext?
     private var frameIndex: Int64 = 0
     private var preferredOutputDimensions: CMVideoDimensions?
     private var decodePresentationTimeScale: CMTimeScale
+    private var maximumInFlightDecodeRequests: Int
+    private var inFlightDecodeRequests = 0
     private var av1FallbackHDR = false
     private var av1FallbackYUV444 = false
     private var av1CodecConfigurationOrigin: ShadowClientAV1CodecConfigurationOrigin?
@@ -124,7 +155,13 @@ public actor ShadowClientVideoToolboxDecoder {
             ShadowClientVideoDecoderDefaults.defaultDecodePresentationTimeScale
         )
     ) {
-        self.decodePresentationTimeScale = Self.normalizedPresentationTimeScale(decodePresentationTimeScale)
+        let normalizedPresentationTimeScale = Self.normalizedPresentationTimeScale(
+            decodePresentationTimeScale
+        )
+        self.decodePresentationTimeScale = normalizedPresentationTimeScale
+        maximumInFlightDecodeRequests = Self.recommendedMaximumInFlightDecodeRequests(
+            for: Int(normalizedPresentationTimeScale)
+        )
     }
 
     public func reset() {
@@ -150,13 +187,21 @@ public actor ShadowClientVideoToolboxDecoder {
 
     public func setDecodePresentationTimeScale(fps: Int) {
         let boundedFPS = min(max(fps, 1), Int(Int32.max))
-        decodePresentationTimeScale = Self.normalizedPresentationTimeScale(
+        let normalizedPresentationTimeScale = Self.normalizedPresentationTimeScale(
             CMTimeScale(boundedFPS)
+        )
+        decodePresentationTimeScale = normalizedPresentationTimeScale
+        maximumInFlightDecodeRequests = Self.recommendedMaximumInFlightDecodeRequests(
+            for: Int(normalizedPresentationTimeScale)
         )
     }
 
     public func setDecodePresentationTimeScale(_ timescale: CMTimeScale) {
-        decodePresentationTimeScale = Self.normalizedPresentationTimeScale(timescale)
+        let normalizedPresentationTimeScale = Self.normalizedPresentationTimeScale(timescale)
+        decodePresentationTimeScale = normalizedPresentationTimeScale
+        maximumInFlightDecodeRequests = Self.recommendedMaximumInFlightDecodeRequests(
+            for: Int(normalizedPresentationTimeScale)
+        )
     }
 
     public func applyLaunchSettings(_ settings: ShadowClientGameStreamLaunchSettings) {
@@ -180,7 +225,7 @@ public actor ShadowClientVideoToolboxDecoder {
         codec newCodec: ShadowClientVideoCodec,
         parameterSets explicitParameterSets: [Data],
         onFrame: @escaping @Sendable (CVPixelBuffer) async -> Void
-    ) throws {
+    ) async throws {
         if codec != newCodec {
             reset()
             codec = newCodec
@@ -235,28 +280,35 @@ public actor ShadowClientVideoToolboxDecoder {
             throw ShadowClientVideoToolboxDecoderError.missingParameterSets
         }
 
-        let pts = CMTime(value: frameIndex, timescale: decodePresentationTimeScale)
-        frameIndex += 1
-        let sampleBuffer = try makeSampleBuffer(
-            payload: samplePayload,
-            formatDescription: formatDescription,
-            presentationTimeStamp: pts
-        )
+        try await waitForDecodeSlot()
+        do {
+            let pts = CMTime(value: frameIndex, timescale: decodePresentationTimeScale)
+            frameIndex += 1
+            let sampleBuffer = try makeSampleBuffer(
+                payload: samplePayload,
+                formatDescription: formatDescription,
+                presentationTimeStamp: pts
+            )
 
-        var flagsOut = VTDecodeInfoFlags()
-        let flags: VTDecodeFrameFlags = [
-            ._EnableAsynchronousDecompression,
-            ._1xRealTimePlayback,
-        ]
-        let status = VTDecompressionSessionDecodeFrame(
-            session,
-            sampleBuffer: sampleBuffer,
-            flags: flags,
-            frameRefcon: nil,
-            infoFlagsOut: &flagsOut
-        )
-        guard status == noErr else {
-            throw ShadowClientVideoToolboxDecoderError.decodeFailed(status)
+            var flagsOut = VTDecodeInfoFlags()
+            let flags: VTDecodeFrameFlags = [
+                ._EnableAsynchronousDecompression,
+                ._1xRealTimePlayback,
+            ]
+            let status = VTDecompressionSessionDecodeFrame(
+                session,
+                sampleBuffer: sampleBuffer,
+                flags: flags,
+                frameRefcon: nil,
+                infoFlagsOut: &flagsOut
+            )
+            guard status == noErr else {
+                releaseDecodeSlot()
+                throw ShadowClientVideoToolboxDecoderError.decodeFailed(status)
+            }
+        } catch {
+            releaseDecodeSlot()
+            throw error
         }
     }
 
@@ -282,23 +334,30 @@ public actor ShadowClientVideoToolboxDecoder {
         )
 
         let bridge = ShadowClientRealtimeDecoderOutputBridge(onFrame: onFrame)
+        let callbackContext = ShadowClientRealtimeDecoderOutputCallbackContext(
+            bridge: bridge,
+            onDecodeCompleted: { [decoder = self] in
+                await decoder.didCompleteDecodeRequest()
+            }
+        )
         outputBridge = bridge
+        outputCallbackContext = callbackContext
         var callbackRecord = VTDecompressionOutputCallbackRecord(
             decompressionOutputCallback: { refCon, _, status, _, imageBuffer, _, _ in
-                guard status == noErr,
-                      let imageBuffer,
-                      let refCon
-                else {
+                guard let refCon else {
                     return
                 }
 
-                let bridge = Unmanaged<ShadowClientRealtimeDecoderOutputBridge>
+                let callbackContext = Unmanaged<ShadowClientRealtimeDecoderOutputCallbackContext>
                     .fromOpaque(refCon)
                     .takeUnretainedValue()
-                bridge.emit(imageBuffer)
+                callbackContext.handleCallback(
+                    status: status,
+                    imageBuffer: imageBuffer
+                )
             },
             decompressionOutputRefCon: UnsafeMutableRawPointer(
-                Unmanaged.passUnretained(bridge).toOpaque()
+                Unmanaged.passUnretained(callbackContext).toOpaque()
             )
         )
 
@@ -385,8 +444,26 @@ public actor ShadowClientVideoToolboxDecoder {
         session = nil
         formatDescription = nil
         outputBridge = nil
+        outputCallbackContext = nil
         configuredParameterSets = []
         frameIndex = 0
+        inFlightDecodeRequests = 0
+    }
+
+    private func waitForDecodeSlot() async throws {
+        while inFlightDecodeRequests >= maximumInFlightDecodeRequests {
+            try Task.checkCancellation()
+            try await Task.sleep(for: ShadowClientVideoDecoderDefaults.inFlightDecodeWaitStep)
+        }
+        inFlightDecodeRequests += 1
+    }
+
+    private func releaseDecodeSlot() {
+        inFlightDecodeRequests = max(0, inFlightDecodeRequests - 1)
+    }
+
+    private func didCompleteDecodeRequest() {
+        releaseDecodeSlot()
     }
 
     private static func normalizedPresentationTimeScale(_ timescale: CMTimeScale) -> CMTimeScale {
@@ -394,6 +471,13 @@ public actor ShadowClientVideoToolboxDecoder {
             return CMTimeScale(ShadowClientVideoDecoderDefaults.defaultDecodePresentationTimeScale)
         }
         return timescale
+    }
+
+    private static func recommendedMaximumInFlightDecodeRequests(for fps: Int) -> Int {
+        if fps >= ShadowClientVideoDecoderDefaults.highFrameRateThresholdFPS {
+            return max(1, ShadowClientVideoDecoderDefaults.highFrameRateMaximumInFlightDecodeRequests)
+        }
+        return max(1, ShadowClientVideoDecoderDefaults.defaultMaximumInFlightDecodeRequests)
     }
 
     private static var defaultPixelBufferAttributes: [String: Any] {

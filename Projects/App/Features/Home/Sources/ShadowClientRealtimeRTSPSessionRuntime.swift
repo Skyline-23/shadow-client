@@ -364,6 +364,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
         await MainActor.run {
             sessionSurfaceContext.reset()
+            sessionSurfaceContext.updatePreferredRenderFPS(resolvedVideoConfiguration.fps)
             sessionSurfaceContext.transition(to: .connecting)
         }
 

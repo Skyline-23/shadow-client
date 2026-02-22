@@ -40,7 +40,7 @@ struct ShadowClientRealtimeSessionSurfaceRepresentable: NSViewRepresentable {
         view.framebufferOnly = false
         view.isPaused = false
         view.enableSetNeedsDisplay = false
-        view.preferredFramesPerSecond = ShadowClientStreamingLaunchBounds.defaultFPS
+        view.preferredFramesPerSecond = surfaceContext.preferredRenderFPS
         view.delegate = renderer
         context.coordinator.renderer = renderer
         return view
@@ -49,6 +49,9 @@ struct ShadowClientRealtimeSessionSurfaceRepresentable: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         if let view = nsView as? MTKView {
             view.isPaused = false
+            if view.preferredFramesPerSecond != surfaceContext.preferredRenderFPS {
+                view.preferredFramesPerSecond = surfaceContext.preferredRenderFPS
+            }
         } else {
             nsView.wantsLayer = true
             nsView.layer?.backgroundColor = NSColor.black.cgColor
@@ -79,7 +82,10 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         self.commandQueue = commandQueue
         self.ciContext = CIContext(
             mtlCommandQueue: commandQueue,
-            options: [.cacheIntermediates: false]
+            options: [
+                .cacheIntermediates: false,
+                .useSoftwareRenderer: false,
+            ]
         )
         super.init()
     }

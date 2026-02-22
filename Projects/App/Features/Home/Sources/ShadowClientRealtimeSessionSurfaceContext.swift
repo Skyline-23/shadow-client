@@ -44,6 +44,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     @Published public private(set) var estimatedVideoFPS: Double?
     @Published public private(set) var estimatedVideoBitrateKbps: Int?
     @Published public private(set) var audioOutputState: ShadowClientRealtimeAudioOutputState = .idle
+    @Published public private(set) var preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
 
     public let frameStore: ShadowClientRealtimeSessionFrameStore
 
@@ -59,6 +60,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         estimatedVideoFPS = nil
         estimatedVideoBitrateKbps = nil
         audioOutputState = .idle
+        preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
     }
 
     public func transition(to state: RenderState) {
@@ -94,6 +96,18 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         _ state: ShadowClientRealtimeAudioOutputState
     ) {
         audioOutputState = state
+    }
+
+    public func updatePreferredRenderFPS(_ fps: Int) {
+        preferredRenderFPS = Self.normalizedRenderFPS(fps)
+    }
+
+    private static func normalizedRenderFPS(_ fps: Int) -> Int {
+        let minimumFPS = 1
+        return min(
+            max(fps, minimumFPS),
+            ShadowClientVideoDecoderDefaults.maximumPreferredRenderFPS
+        )
     }
 }
 
