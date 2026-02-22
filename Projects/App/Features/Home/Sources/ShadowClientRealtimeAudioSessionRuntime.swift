@@ -225,6 +225,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var currentPayloadType = preferredPayloadType
             var loggedUnexpectedPayloadTypes = Set<Int>()
             var loggedPayloadNormalizationKeys = Set<String>()
+            var unexpectedPayloadTypeCounts: [Int: Int] = [:]
             var hasLockedPayloadType = false
             var pendingPayloadTypeCandidate: Int?
             var pendingPayloadTypeCandidateCount = 0
@@ -413,9 +414,18 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 )
                             }
                         } else {
-                            if loggedUnexpectedPayloadTypes.insert(packet.payloadType).inserted {
+                            let previousUnexpectedCount = unexpectedPayloadTypeCounts[packet.payloadType, default: 0]
+                            let currentUnexpectedCount = previousUnexpectedCount + 1
+                            unexpectedPayloadTypeCounts[packet.payloadType] = currentUnexpectedCount
+                            if loggedUnexpectedPayloadTypes.insert(packet.payloadType).inserted ||
+                                Self.didCounterCrossIntervalBoundary(
+                                    previous: previousUnexpectedCount,
+                                    current: currentUnexpectedCount,
+                                    interval: ShadowClientRealtimeSessionDefaults.audioUnexpectedPayloadTypeLogInterval
+                                )
+                            {
                                 logger.notice(
-                                    "Ignoring RTP audio payload type \(packet.payloadType, privacy: .public) (expected \(currentPayloadType, privacy: .public))"
+                                    "Audio RTP payload mismatch summary: expected=\(currentPayloadType, privacy: .public), observed=\(packet.payloadType, privacy: .public), count=\(currentUnexpectedCount, privacy: .public)"
                                 )
                             }
                         }

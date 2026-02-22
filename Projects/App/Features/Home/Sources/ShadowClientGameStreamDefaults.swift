@@ -111,6 +111,8 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let videoReceiveQueuePressureSignalInterval = 24
     public static let videoReceiveQueuePressureTrimInterval = 60
     public static let videoReceiveQueuePressureTrimToRecentPackets = 48
+    public static let videoFrameAssemblyLogInterval = 1_800
+    public static let videoDecodeQueueBackpressureLogInterval = 120
     public static let videoDecodeQueueProducerSheddingHighWatermark = 10
     public static let videoDepacketizerDecodeQueueProbeIntervalPackets = 4
     public static let videoDepacketizerDecodeQueueShedHighWatermark = 10
@@ -150,7 +152,7 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let videoRecoveryFramePendingTimeoutSeconds: TimeInterval = 2.0
     public static let videoRecoveryFrameRequestUnderPressureCooldownSeconds: TimeInterval = 3.5
     public static let videoRenderSubmitPacingToleranceRatio: Double = 0.80
-    public static let videoRenderSubmitDropLogInterval = 240
+    public static let videoRenderSubmitDropSummaryInterval = 600
     public static let audioOutputQueueDropWindowSeconds: TimeInterval = 1.0
     public static let audioOutputQueuePressureSignalInterval = 24
     public static let audioOutputQueuePressureTrimInterval = 60
@@ -159,6 +161,7 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let audioOutputQueueSaturationBurstThreshold = 6
     public static let audioOutputQueueDecodeCooldown: Duration = .milliseconds(8)
     public static let audioPayloadTypeAdaptationObservationThreshold = 3
+    public static let audioUnexpectedPayloadTypeLogInterval = 240
     public static let audioDecodeFailureAbortThreshold = 240
     public static let audioDecodeFailureLogInterval = 25
     public static let controlRoundTripPublishMinimumIntervalSeconds: TimeInterval = 1.0 / 30.0

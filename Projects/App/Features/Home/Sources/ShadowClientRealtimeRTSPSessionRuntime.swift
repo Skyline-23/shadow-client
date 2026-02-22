@@ -1001,7 +1001,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             return
         case let .frame(frame):
             frameAssemblyLogCount &+= 1
-            if frameAssemblyLogCount <= 5 || frameAssemblyLogCount.isMultiple(of: 180) {
+            if frameAssemblyLogCount == 1 ||
+                frameAssemblyLogCount.isMultiple(of: ShadowClientRealtimeSessionDefaults.videoFrameAssemblyLogInterval)
+            {
                 logger.notice("ShadowClient NV frame assembled for codec \(String(describing: codec), privacy: .public): \(frame.count, privacy: .public) bytes")
             }
             depacketizerCorruptionCount = 0
@@ -1082,9 +1084,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         if source == "consumer-trim" {
             lastVideoDecodeQueueConsumerTrimUptime = now
         }
+        let previousDecodeQueueDropCount = videoDecodeQueueDropCount
         videoDecodeQueueDropCount += droppedCount
 
-        if videoDecodeQueueDropCount == droppedCount || videoDecodeQueueDropCount.isMultiple(of: 12) {
+        if Self.didCounterCrossIntervalBoundary(
+            previous: previousDecodeQueueDropCount,
+            current: videoDecodeQueueDropCount,
+            interval: ShadowClientRealtimeSessionDefaults.videoDecodeQueueBackpressureLogInterval
+        ) {
             // Queue pressure is a throughput signal, not a decoder-instability signal.
             // Keep VT feed aggressive under backlog and reserve instability for real decode faults/stalls.
             await decoder.reportQueueSaturationSignal()
@@ -1670,10 +1677,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             return false
         }
 
+        let previousRenderSubmitDropCount = videoRenderSubmitDropCount
         videoRenderSubmitDropCount += 1
-        if videoRenderSubmitDropCount == 1 ||
-            videoRenderSubmitDropCount.isMultiple(of: ShadowClientRealtimeSessionDefaults.videoRenderSubmitDropLogInterval)
-        {
+        if Self.didCounterCrossIntervalBoundary(
+            previous: previousRenderSubmitDropCount,
+            current: videoRenderSubmitDropCount,
+            interval: ShadowClientRealtimeSessionDefaults.videoRenderSubmitDropSummaryInterval
+        ) {
             logger.notice(
                 "Video render submit pacing dropped decoded frame to match session FPS (count=\(self.videoRenderSubmitDropCount, privacy: .public))"
             )
