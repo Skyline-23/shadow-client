@@ -1,15 +1,6 @@
 {
-  "originHash" : "02f8cec21b7b6c113fdc425b6a803bab5106e088c141dc2864d3cf6b8f7e5e27",
+  "originHash" : "e5f01ee0c4803534494ae809cf335236a86383896438c4ebf9edc1e9365ce468",
   "pins" : [
-    {
-      "identity" : "opus-swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ybrid/opus-swift.git",
-      "state" : {
-        "revision" : "92e76803ce7efc8e8903433cfd5f7f68938534ba",
-        "version" : "0.8.0"
-      }
-    },
     {
       "identity" : "swift-syntax",
       "kind" : "remoteSourceControl",
@@ -26,6 +17,15 @@
       "state" : {
         "revision" : "18c42c19cac3fafd61cab1156d4088664b7424ae",
         "version" : "6.0.3"
+      }
+    },
+    {
+      "identity" : "swiftopus",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Skyline-23/SwiftOpus.git",
+      "state" : {
+        "revision" : "d8b02ebe1e64e252eafe9e3c86d7aa5224be9eae",
+        "version" : "0.1.0"
       }
     }
   ],
