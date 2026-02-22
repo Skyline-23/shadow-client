@@ -434,6 +434,40 @@ func rtpPayloadParserSupportsSlicedDataInput() throws {
     #expect(parsed.payload.startIndex == 0)
 }
 
+@Test("RTSP video payload adoption rejects audio payload-type candidates")
+func rtspVideoPayloadAdoptionRejectsAudioPayloadTypeCandidates() {
+    let audioTrack = ShadowClientRTSPAudioTrackDescriptor(
+        codec: .opus,
+        rtpPayloadType: 97,
+        sampleRate: 48_000,
+        channelCount: 2,
+        controlURL: nil,
+        formatParameters: [:]
+    )
+
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
+            observedPayloadType: 97,
+            currentPayloadType: 98,
+            audioPayloadType: audioTrack.rtpPayloadType
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
+            observedPayloadType: ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType,
+            currentPayloadType: 98,
+            audioPayloadType: audioTrack.rtpPayloadType
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
+            observedPayloadType: 0,
+            currentPayloadType: 98,
+            audioPayloadType: audioTrack.rtpPayloadType
+        )
+    )
+}
+
 @Test("Video RTP reorder buffer reorders nearby out-of-order packets")
 func videoRtpReorderBufferReordersNearbyPackets() {
     var reorderBuffer = ShadowClientRTPVideoReorderBuffer(
@@ -535,6 +569,31 @@ func h264DepacketizerFuA() {
     #expect(output != nil)
     #expect(output?.annexBAccessUnit.starts(with: Data([0x00, 0x00, 0x00, 0x01, 0x65])) == true)
     #expect(output?.annexBAccessUnit.count == 4 + 1 + 7)
+}
+
+@Test("H265 depacketizer splits AP payload into individual NAL units")
+func h265DepacketizerAggregationPacket() {
+    var depacketizer = ShadowClientH265RTPDepacketizer()
+    let firstNAL = Data([0x42, 0x01, 0xAA])
+    let secondNAL = Data([0x44, 0x01, 0xBB, 0xCC])
+
+    var packet = Data([
+        0x60, 0x01, // nal_type=48 (AP)
+        0x00, 0x03, // first NAL length
+    ])
+    packet.append(firstNAL)
+    packet.append(contentsOf: [
+        0x00, 0x04, // second NAL length
+    ])
+    packet.append(secondNAL)
+
+    let output = depacketizer.ingest(payload: packet, marker: true)
+
+    var expected = Data([0x00, 0x00, 0x00, 0x01])
+    expected.append(firstNAL)
+    expected.append(contentsOf: [0x00, 0x00, 0x00, 0x01])
+    expected.append(secondNAL)
+    #expect(output == expected)
 }
 
 @Test("AV1 depacketizer reassembles SOF/EOF packets and truncates EOF payload using lastPayloadLength")
@@ -763,32 +822,47 @@ func realtimeRuntimeAv1AccessUnitValidatorRejectsMalformedPayloads() {
     #expect(!ShadowClientRealtimeRTSPSessionRuntime.isLikelyValidAV1AccessUnit(invalidSize))
 }
 
-@Test("Realtime runtime depacketizer shedding activates for any codec when decode queue crosses watermark")
+@Test("Realtime runtime depacketizer shedding follows packet-shedding policy")
 func realtimeRuntimeDepacketizerSheddingClassifier() {
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime.shouldShedDepacketizerWork(
-            codec: .av1,
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldShedDepacketizerWork(
+            allowsPacketLevelShedding: false,
             bufferedDecodeUnits: ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueShedHighWatermark
         )
     )
     #expect(
         !ShadowClientRealtimeRTSPSessionRuntime.shouldShedDepacketizerWork(
-            codec: .av1,
+            allowsPacketLevelShedding: false,
             bufferedDecodeUnits: ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueShedHighWatermark - 1
         )
     )
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime.shouldShedDepacketizerWork(
-            codec: .h265,
+            allowsPacketLevelShedding: true,
             bufferedDecodeUnits: ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueShedHighWatermark + 8
         )
     )
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime.shouldShedDepacketizerWork(
-            codec: .h264,
+            allowsPacketLevelShedding: true,
             bufferedDecodeUnits: ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueShedHighWatermark + 4
         )
     )
+}
+
+@Test("Video queue pressure policy maps from depacketizer tail strategy")
+func realtimeRuntimeVideoQueuePressurePolicyClassifier() {
+    let annexBPolicy = ShadowClientVideoQueuePressurePolicy.fromTailTruncationStrategy(
+        .passthroughForAnnexBCodecs
+    )
+    let strictBoundaryPolicy = ShadowClientVideoQueuePressurePolicy.fromTailTruncationStrategy(
+        .trimUsingLastPacketLength
+    )
+
+    #expect(annexBPolicy.allowsDepacketizerPacketShedding)
+    #expect(annexBPolicy.allowsDecodeQueueProducerTrim)
+    #expect(!strictBoundaryPolicy.allowsDepacketizerPacketShedding)
+    #expect(!strictBoundaryPolicy.allowsDecodeQueueProducerTrim)
 }
 
 @Test("Realtime runtime decode-queue recovery classifier suppresses producer trim/shed loops")
@@ -971,6 +1045,79 @@ func realtimeRuntimeStallDetectorRequiresFirstRenderedFrame() {
     #expect(!shouldRecover)
 }
 
+@Test("Realtime runtime expands stall threshold when queue pressure and consumer-trim pressure are both active")
+func realtimeRuntimeStallThresholdExpansionUnderPressure() {
+    let baseThreshold =
+        ShadowClientRealtimeSessionDefaults.decoderOutputStallThresholdSeconds
+    let expandedThreshold =
+        ShadowClientRealtimeRTSPSessionRuntime.effectiveDecoderOutputStallThresholdSeconds(
+            baseThreshold: baseThreshold,
+            isPipelineUnderIngressPressure: true,
+            hasRecentConsumerTrimPressure: true
+        )
+    let baseActiveWindow =
+        ShadowClientRealtimeSessionDefaults.decoderOutputStallActiveDecodeWindowSeconds
+    let expandedActiveWindow =
+        ShadowClientRealtimeRTSPSessionRuntime.effectiveDecoderOutputStallActiveDecodeWindowSeconds(
+            baseWindow: baseActiveWindow,
+            isPipelineUnderIngressPressure: true,
+            hasRecentConsumerTrimPressure: true
+        )
+
+    #expect(expandedThreshold > baseThreshold)
+    #expect(expandedActiveWindow > baseActiveWindow)
+}
+
+@Test("Realtime runtime stall detector honors expanded thresholds under pressure")
+func realtimeRuntimeStallDetectorHonorsExpandedThresholds() {
+    let expandedThreshold =
+        ShadowClientRealtimeRTSPSessionRuntime.effectiveDecoderOutputStallThresholdSeconds(
+            isPipelineUnderIngressPressure: true,
+            hasRecentConsumerTrimPressure: true
+        )
+    let expandedActiveWindow =
+        ShadowClientRealtimeRTSPSessionRuntime.effectiveDecoderOutputStallActiveDecodeWindowSeconds(
+            isPipelineUnderIngressPressure: true,
+            hasRecentConsumerTrimPressure: true
+        )
+
+    let shouldRecover = ShadowClientRealtimeRTSPSessionRuntime.shouldTriggerDecoderOutputStallRecovery(
+        hasRenderedFirstFrame: true,
+        now: 100.0,
+        lastDecodeSubmitUptime: 100.0 - (expandedActiveWindow * 0.8),
+        lastDecodedFrameOutputUptime: 100.0 - (expandedThreshold * 0.8),
+        activeDecodeWindowSeconds: expandedActiveWindow,
+        stallThresholdSeconds: expandedThreshold
+    )
+
+    #expect(!shouldRecover)
+}
+
+@Test("Realtime runtime raises stall candidate threshold under queue pressure")
+func realtimeRuntimeStallCandidateThresholdExpansionUnderPressure() {
+    let baseThreshold = ShadowClientRealtimeRTSPSessionRuntime
+        .effectiveDecoderOutputStallCandidateThreshold(
+            isPipelineUnderIngressPressure: false,
+            hasRecentConsumerTrimPressure: false
+        )
+    let pressureThreshold = ShadowClientRealtimeRTSPSessionRuntime
+        .effectiveDecoderOutputStallCandidateThreshold(
+            isPipelineUnderIngressPressure: true,
+            hasRecentConsumerTrimPressure: false
+        )
+    let consumerTrimThreshold = ShadowClientRealtimeRTSPSessionRuntime
+        .effectiveDecoderOutputStallCandidateThreshold(
+            isPipelineUnderIngressPressure: true,
+            hasRecentConsumerTrimPressure: true
+        )
+
+    #expect(baseThreshold == ShadowClientRealtimeSessionDefaults.decoderOutputStallCandidateThreshold)
+    #expect(pressureThreshold == ShadowClientRealtimeSessionDefaults.decoderOutputStallCandidateThresholdUnderPressure)
+    #expect(consumerTrimThreshold == ShadowClientRealtimeSessionDefaults.decoderOutputStallCandidateThresholdConsumerTrim)
+    #expect(baseThreshold < pressureThreshold)
+    #expect(pressureThreshold < consumerTrimThreshold)
+}
+
 @Test("Realtime runtime suppresses stall recovery while ingress pressure is active within grace window")
 func realtimeRuntimeSuppressesStallRecoveryForIngressPressure() {
     let shouldSuppress = ShadowClientRealtimeRTSPSessionRuntime.shouldSuppressDecoderOutputStallRecovery(
@@ -991,6 +1138,55 @@ func realtimeRuntimeDoesNotSuppressStallRecoveryAfterIngressPressureSuppressionC
     )
 
     #expect(!shouldSuppress)
+}
+
+@Test("Realtime runtime decode queue recovery gate ignores consumer-trim pressure source")
+func realtimeRuntimeDecodeQueueRecoveryGateIgnoresConsumerTrim() {
+    let shouldTrigger = ShadowClientRealtimeRTSPSessionRuntime.shouldTriggerDecodeQueueRecovery(
+        source: "consumer-trim"
+    )
+
+    #expect(!shouldTrigger)
+}
+
+@Test("Realtime runtime marks queue pressure signal as recent inside configured window")
+func realtimeRuntimeRecentQueuePressureSignalWindowMatchesExpectation() {
+    let isRecent = ShadowClientRealtimeRTSPSessionRuntime.isRecentQueuePressureSignal(
+        now: 100.0,
+        lastSignalUptime: 98.0,
+        windowSeconds: 2.5
+    )
+    let isStale = ShadowClientRealtimeRTSPSessionRuntime.isRecentQueuePressureSignal(
+        now: 100.0,
+        lastSignalUptime: 96.0,
+        windowSeconds: 2.5
+    )
+
+    #expect(isRecent)
+    #expect(!isStale)
+}
+
+@Test("Realtime runtime prefers soft decoder output-stall recovery while queue pressure remains active")
+func realtimeRuntimePrefersSoftDecoderOutputStallRecoveryUnderQueuePressure() {
+    let shouldUseSoftRecovery = ShadowClientRealtimeRTSPSessionRuntime.shouldUseSoftDecoderOutputStallRecovery(
+        isPipelineUnderIngressPressure: true,
+        recoveryAttemptCount: 2,
+        softRecoveryAttemptLimit: 2
+    )
+    let shouldUseSoftRecoveryAfterLimit = ShadowClientRealtimeRTSPSessionRuntime.shouldUseSoftDecoderOutputStallRecovery(
+        isPipelineUnderIngressPressure: true,
+        recoveryAttemptCount: 3,
+        softRecoveryAttemptLimit: 2
+    )
+    let shouldUseSoftRecoveryWithoutPressure = ShadowClientRealtimeRTSPSessionRuntime.shouldUseSoftDecoderOutputStallRecovery(
+        isPipelineUnderIngressPressure: false,
+        recoveryAttemptCount: 1,
+        softRecoveryAttemptLimit: 2
+    )
+
+    #expect(shouldUseSoftRecovery)
+    #expect(!shouldUseSoftRecoveryAfterLimit)
+    #expect(!shouldUseSoftRecoveryWithoutPressure)
 }
 
 @Test("Realtime runtime counter boundary helper detects interval crossing")
@@ -1144,6 +1340,30 @@ func realtimeRuntimeInputSendClassifierResetsForFatalErrors() {
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(
             NWError.posix(.EPIPE)
+        )
+    )
+}
+
+@Test("Realtime runtime render submit pacing drops frame when publishing faster than session fps")
+func realtimeRuntimeRenderSubmitPacingDropsWhenOverBudget() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldDropRenderSubmitForSessionFPS(
+            now: 10.005,
+            lastRenderedFramePublishUptime: 10.0,
+            sessionFPS: 60,
+            pacingToleranceRatio: 0.90
+        )
+    )
+}
+
+@Test("Realtime runtime render submit pacing allows frame when cadence budget is met")
+func realtimeRuntimeRenderSubmitPacingAllowsWhenBudgetMet() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldDropRenderSubmitForSessionFPS(
+            now: 10.030,
+            lastRenderedFramePublishUptime: 10.0,
+            sessionFPS: 60,
+            pacingToleranceRatio: 0.90
         )
     )
 }

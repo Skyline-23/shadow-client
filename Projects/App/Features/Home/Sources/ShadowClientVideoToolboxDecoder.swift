@@ -202,10 +202,14 @@ public actor ShadowClientVideoToolboxDecoder {
     }
 
     public func reset() {
-        invalidateDecoderSessionForReconfiguration()
+        resetForRecovery()
         latestParameterSets = []
         av1CodecConfigurationOrigin = nil
         codec = nil
+    }
+
+    public func resetForRecovery() {
+        invalidateDecoderSessionForReconfiguration()
     }
 
     public func setPreferredOutputDimensions(
