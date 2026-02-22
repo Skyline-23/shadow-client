@@ -198,7 +198,7 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         let streamPacketIndex = (streamPacketIndexRaw >> 8) & Self.streamPacketIndexMask
         let fecCurrentBlockNumber = (multiFecBlocks >> 4) & 0x03
         let fecLastBlockNumber = (multiFecBlocks >> 6) & 0x03
-        let packetPayload = Data(payload.dropFirst(Self.nvVideoPacketHeaderSize))
+        let packetPayload = payload.dropFirst(Self.nvVideoPacketHeaderSize)
 
         return ParsedPacket(
             frameIndex: frameIndex,
@@ -327,7 +327,7 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         guard expectedPayloadLength <= payload.count else {
             return nil
         }
-        return Data(payload.prefix(expectedPayloadLength))
+        return payload.prefix(expectedPayloadLength)
     }
 
     private func readUInt16LE(_ data: Data, at offset: Int) -> UInt16? {
@@ -362,7 +362,7 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         var index = payload.startIndex + 1
         while index <= searchLimit {
             if hasAnnexBStartCode(in: payload, at: index) {
-                return Data(payload[index...])
+                return payload[index...]
             }
             index += 1
         }

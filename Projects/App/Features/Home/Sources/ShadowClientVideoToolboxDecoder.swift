@@ -103,11 +103,11 @@ private final class ShadowClientRealtimeDecoderOutputBridge: @unchecked Sendable
 
 private final class ShadowClientRealtimeDecoderOutputCallbackContext: @unchecked Sendable {
     private let bridge: ShadowClientRealtimeDecoderOutputBridge
-    private let onDecodeCompleted: @Sendable () async -> Void
+    private let onDecodeCompleted: @Sendable () -> Void
 
     init(
         bridge: ShadowClientRealtimeDecoderOutputBridge,
-        onDecodeCompleted: @escaping @Sendable () async -> Void
+        onDecodeCompleted: @escaping @Sendable () -> Void
     ) {
         self.bridge = bridge
         self.onDecodeCompleted = onDecodeCompleted
@@ -117,20 +117,45 @@ private final class ShadowClientRealtimeDecoderOutputCallbackContext: @unchecked
         status: OSStatus,
         imageBuffer: CVImageBuffer?
     ) {
-        Task(priority: .high) {
-            await onDecodeCompleted()
-            guard status == noErr,
-                  let pixelBuffer = imageBuffer
-            else {
-                return
-            }
-            bridge.emit(pixelBuffer)
+        onDecodeCompleted()
+        guard status == noErr,
+              let pixelBuffer = imageBuffer
+        else {
+            return
         }
+        bridge.emit(pixelBuffer)
     }
 }
 
 private struct ShadowClientDecoderSendablePixelBuffer: @unchecked Sendable {
     let value: CVPixelBuffer
+}
+
+private final class ShadowClientDecodeSlotCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var inFlightRequests = 0
+
+    func tryAcquire(limit: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard inFlightRequests < limit else {
+            return false
+        }
+        inFlightRequests += 1
+        return true
+    }
+
+    func release() {
+        lock.lock()
+        inFlightRequests = max(0, inFlightRequests - 1)
+        lock.unlock()
+    }
+
+    func reset() {
+        lock.lock()
+        inFlightRequests = 0
+        lock.unlock()
+    }
 }
 
 public actor ShadowClientVideoToolboxDecoder {
@@ -145,7 +170,7 @@ public actor ShadowClientVideoToolboxDecoder {
     private var preferredOutputDimensions: CMVideoDimensions?
     private var decodePresentationTimeScale: CMTimeScale
     private var maximumInFlightDecodeRequests: Int
-    private var inFlightDecodeRequests = 0
+    private let decodeSlotCounter = ShadowClientDecodeSlotCounter()
     private var decodePacingPenalty = 0
     private var decodeSubmitPacingMultiplier = 1.0
     private var lastDecodeSubmitUptime: TimeInterval = 0
@@ -362,10 +387,11 @@ public actor ShadowClientVideoToolboxDecoder {
         )
 
         let bridge = ShadowClientRealtimeDecoderOutputBridge(onFrame: onFrame)
+        let decodeSlotCounter = self.decodeSlotCounter
         let callbackContext = ShadowClientRealtimeDecoderOutputCallbackContext(
             bridge: bridge,
-            onDecodeCompleted: { [decoder = self] in
-                await decoder.didCompleteDecodeRequest()
+            onDecodeCompleted: {
+                decodeSlotCounter.release()
             }
         )
         outputBridge = bridge
@@ -475,7 +501,7 @@ public actor ShadowClientVideoToolboxDecoder {
         outputCallbackContext = nil
         configuredParameterSets = []
         frameIndex = 0
-        inFlightDecodeRequests = 0
+        decodeSlotCounter.reset()
         decodePacingPenalty = 0
         decodeSubmitPacingMultiplier = 1.0
         lastDecodeSubmitUptime = 0
@@ -502,19 +528,14 @@ public actor ShadowClientVideoToolboxDecoder {
     }
 
     private func waitForDecodeSlot() async throws {
-        while inFlightDecodeRequests >= effectiveMaximumInFlightDecodeRequests() {
+        while !decodeSlotCounter.tryAcquire(limit: effectiveMaximumInFlightDecodeRequests()) {
             try Task.checkCancellation()
             try await Task.sleep(for: ShadowClientVideoDecoderDefaults.inFlightDecodeWaitStep)
         }
-        inFlightDecodeRequests += 1
     }
 
     private func releaseDecodeSlot() {
-        inFlightDecodeRequests = max(0, inFlightDecodeRequests - 1)
-    }
-
-    private func didCompleteDecodeRequest() {
-        releaseDecodeSlot()
+        decodeSlotCounter.release()
     }
 
     private func effectiveMaximumInFlightDecodeRequests() -> Int {
