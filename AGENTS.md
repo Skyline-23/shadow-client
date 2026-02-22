@@ -8,6 +8,7 @@ Tuist manifests live at repo root: `Project.swift`, `Tuist.swift`, and `Tuist/Pa
 - `Modules/ShadowClientCore`, `Modules/ShadowClientStreaming`, `Modules/ShadowClientInput`, `Modules/ShadowClientUI`, `Modules/ShadowClientFeatureHome`: layered modules with `Sources/` and `Tests/`.
 - `external/moonlight-qt-master/`: upstream client reference (Moonlight) only, never a runtime dependency.
 - `external/Sunshine/`: upstream server reference (Sunshine) only, never a runtime dependency.
+- `~/Downloads/SwiftOpus/` (`/Users/skyline23/Downloads/SwiftOpus`): standalone SwiftOpus source-of-truth repository for Opus wrapper development.
 - For protocol development, keep `external/Sunshine/` synced to the target Sunshine pre-release tag used in validation.
 `HomeFeatureBuilder` snapshots must include mapped session configuration.
 
@@ -53,6 +54,7 @@ Use subagents in parallel for non-trivial work with disjoint ownership, then mer
 - During streaming protocol/audio/video/input implementation, always cross-check behavior against both upstream references in `external/`:
   - client reference: `external/moonlight-qt-master/`
   - server reference: `external/Sunshine/`
+- For Opus wrapper/API compatibility work, use local standalone repository `~/Downloads/SwiftOpus/` and commit SwiftOpus changes there.
 - Treat `external/` trees as research baselines only (never runtime-linked dependencies).
 - Before changing RTSP/RTP/codec negotiation logic, verify assumptions in upstream source and reflect the matched behavior in tests.
 
