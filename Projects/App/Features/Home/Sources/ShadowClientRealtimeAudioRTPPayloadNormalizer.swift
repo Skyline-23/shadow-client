@@ -1,8 +1,6 @@
 import Foundation
 
 struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
-    static let wrapperPayloadPrefixNormalizationKey = "rtp-wrapper-prefixed-primary"
-
     struct Result: Sendable {
         let payloadType: Int
         let payload: Data
@@ -25,29 +23,18 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
             )
         }
 
-        if let redPrimary = extractRTPREDPrimaryPayload(from: payload),
-           redPrimary.payloadType != wrapperPayloadType,
-           (96 ... 127).contains(redPrimary.payloadType)
+        // Sunshine sends RTP PT127 as audio FEC shards, not decodable Opus payload.
+        // Keep PT127 packets as-is so the runtime can skip decode on this type.
+        if isLikelyMoonlightAudioFECPayload(
+            payload,
+            expectedPrimaryPayloadType: preferredPayloadType
+        )
         {
             return .init(
-                payloadType: redPrimary.payloadType,
-                payload: redPrimary.payload,
-                normalizationKey: "rtp-red:\(wrapperPayloadType)->\(redPrimary.payloadType)",
-                normalizationMessage: "Unwrapped RTP RED payload type \(wrapperPayloadType) to primary payload type \(redPrimary.payloadType)"
-            )
-        }
-
-        if let prefixedPrimary = extractWrapperPrefixedPrimaryPayload(
-            from: payload,
-            preferredPayloadType: preferredPayloadType
-        ),
-           preferredPayloadType != wrapperPayloadType
-        {
-            return .init(
-                payloadType: preferredPayloadType,
-                payload: prefixedPrimary,
-                normalizationKey: "\(wrapperPayloadPrefixNormalizationKey):\(wrapperPayloadType)->\(preferredPayloadType)",
-                normalizationMessage: "Unwrapped RTP payload type \(wrapperPayloadType) wrapper prefix to primary payload type \(preferredPayloadType)"
+                payloadType: payloadType,
+                payload: payload,
+                normalizationKey: "rtp-audio-fec:\(wrapperPayloadType)",
+                normalizationMessage: "Classified RTP payload type \(wrapperPayloadType) as Moonlight audio FEC shard"
             )
         }
 
@@ -57,6 +44,26 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
             normalizationKey: nil,
             normalizationMessage: nil
         )
+    }
+
+    static func isLikelyMoonlightAudioFECPayload(
+        _ payload: Data,
+        expectedPrimaryPayloadType: Int
+    ) -> Bool {
+        // AUDIO_FEC_HEADER layout used by Moonlight/Sunshine:
+        // shardIndex(1), payloadType(1), baseSequence(2), baseTimestamp(4), ssrc(4)
+        guard payload.count >= 12 else {
+            return false
+        }
+        let shardIndex = Int(payload[payload.startIndex])
+        let payloadType = Int(payload[payload.startIndex + 1] & 0x7F)
+        guard shardIndex >= 0, shardIndex < 8 else {
+            return false
+        }
+        guard (96 ... 127).contains(payloadType) else {
+            return false
+        }
+        return payloadType == expectedPrimaryPayloadType
     }
 
     static func extractRTPREDPrimaryPayload(
@@ -129,54 +136,4 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
         return (primaryHeader.payloadType, primaryPayload)
     }
 
-    private static func extractWrapperPrefixedPrimaryPayload(
-        from payload: Data,
-        preferredPayloadType: Int
-    ) -> Data? {
-        guard payload.count > 1 else {
-            return nil
-        }
-
-        let firstByte = payload[payload.startIndex]
-        let embeddedPayloadType = Int(firstByte & 0x7F)
-        guard embeddedPayloadType == preferredPayloadType else {
-            return nil
-        }
-
-        if (firstByte & 0x80) != 0 {
-            guard payload.count > 4 else {
-                return nil
-            }
-            let candidate = Data(payload.dropFirst(4))
-            guard isLikelyDirectOpusPayload(candidate) else {
-                return nil
-            }
-            return candidate
-        }
-
-        let candidate = Data(payload.dropFirst(1))
-        guard isLikelyDirectOpusPayload(candidate) else {
-            return nil
-        }
-        return candidate
-    }
-
-    private static func isLikelyDirectOpusPayload(_ payload: Data) -> Bool {
-        guard !payload.isEmpty, payload.count <= 1_500 else {
-            return false
-        }
-        let toc = payload[payload.startIndex]
-        switch toc & 0x03 {
-        case 0, 1, 2:
-            return true
-        case 3:
-            guard payload.count >= 2 else {
-                return false
-            }
-            let encodedFrameCount = Int(payload[payload.startIndex + 1] & 0x3F)
-            return encodedFrameCount > 0 && encodedFrameCount <= 48
-        default:
-            return false
-        }
-    }
 }

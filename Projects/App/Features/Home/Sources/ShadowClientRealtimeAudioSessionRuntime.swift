@@ -346,17 +346,23 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                     payloadTypeMismatchPressure >= payloadAdaptationObservationThreshold
                             )
                         if lockIsExpired {
-                            let previousPayloadType = currentPayloadType
-                            currentPayloadType = packet.payloadType
-                            hasLockedPayloadType = false
                             pendingPayloadTypeCandidate = nil
                             pendingPayloadTypeCandidateCount = 0
                             consecutivePayloadTypeMismatchCount = 0
                             payloadTypeMismatchPressure = 0
-                            jitterBuffer.reset(preferredPayloadType: currentPayloadType)
-                            logger.notice(
-                                "Adapting RTP audio payload type from \(previousPayloadType, privacy: .public) to \(currentPayloadType, privacy: .public) after lock expiry due to sustained mismatch"
-                            )
+                            hasLockedPayloadType = false
+                            if let nextPayloadType = Self.payloadTypePreference(
+                                observed: packet.payloadType,
+                                current: currentPayloadType,
+                                hasLockedPayloadType: false
+                            ) {
+                                let previousPayloadType = currentPayloadType
+                                currentPayloadType = nextPayloadType
+                                jitterBuffer.reset(preferredPayloadType: currentPayloadType)
+                                logger.notice(
+                                    "Adapting RTP audio payload type from \(previousPayloadType, privacy: .public) to \(currentPayloadType, privacy: .public) after lock expiry due to sustained mismatch"
+                                )
+                            }
                             continue
                         }
                         let adaptationLockActive = hasLockedPayloadType && !lockIsExpired

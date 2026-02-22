@@ -112,18 +112,24 @@ func redPayloadExtractionSkipsRedundantBlocks() {
     #expect(extracted?.payload == Data([0xCC, 0xDD, 0xEE]))
 }
 
-@Test("RTP payload normalizer unwraps RED wrapper packets")
-func rtpPayloadNormalizerUnwrapsREDWrapperPackets() {
+@Test("RTP payload normalizer classifies Moonlight audio FEC payloads")
+func rtpPayloadNormalizerClassifiesMoonlightAudioFECPayloads() {
     let normalized = ShadowClientRealtimeAudioRTPPayloadNormalizer.normalize(
         payloadType: 127,
-        payload: Data([97, 0x11, 0x22, 0x33]),
+        payload: Data([
+            0x00, // fecShardIndex
+            0x61, // payloadType=97
+            0x00, 0x20, // baseSequenceNumber
+            0x00, 0x00, 0x03, 0xE8, // baseTimestamp
+            0x00, 0x00, 0x00, 0x01, // ssrc
+            0x11, 0x22, 0x33, 0x44, // parity payload
+        ]),
         preferredPayloadType: 97,
         wrapperPayloadType: 127
     )
 
-    #expect(normalized.payloadType == 97)
-    #expect(normalized.payload == Data([0x11, 0x22, 0x33]))
-    #expect(normalized.normalizationKey == "rtp-red:127->97")
+    #expect(normalized.payloadType == 127)
+    #expect(normalized.normalizationKey == "rtp-audio-fec:127")
 }
 
 @Test("RTP payload normalizer does not treat ambiguous PT127 payload as direct Opus")
@@ -140,8 +146,8 @@ func rtpPayloadNormalizerDoesNotTreatAmbiguousPT127AsDirectOpus() {
     #expect(normalized.normalizationKey == nil)
 }
 
-@Test("RTP payload normalizer unwraps single-byte prefixed PT127 wrapper")
-func rtpPayloadNormalizerUnwrapsSingleBytePrefixedWrapper() {
+@Test("RTP payload normalizer keeps non-FEC PT127 payload unchanged")
+func rtpPayloadNormalizerKeepsNonFECPayloadUnchanged() {
     let normalized = ShadowClientRealtimeAudioRTPPayloadNormalizer.normalize(
         payloadType: 127,
         payload: Data([97, 0xF8, 0xAA, 0xBB]),
@@ -149,29 +155,31 @@ func rtpPayloadNormalizerUnwrapsSingleBytePrefixedWrapper() {
         wrapperPayloadType: 127
     )
 
-    #expect(normalized.payloadType == 97)
-    #expect(normalized.payload == Data([0xF8, 0xAA, 0xBB]))
-    #expect(
-        normalized.normalizationKey ==
-            "\(ShadowClientRealtimeAudioRTPPayloadNormalizer.wrapperPayloadPrefixNormalizationKey):127->97"
-    )
+    #expect(normalized.payloadType == 127)
+    #expect(normalized.payload == Data([97, 0xF8, 0xAA, 0xBB]))
+    #expect(normalized.normalizationKey == nil)
 }
 
-@Test("RTP payload normalizer unwraps four-byte prefixed PT127 wrapper")
-func rtpPayloadNormalizerUnwrapsFourBytePrefixedWrapper() {
-    let normalized = ShadowClientRealtimeAudioRTPPayloadNormalizer.normalize(
-        payloadType: 127,
-        payload: Data([0xE1, 0x00, 0x04, 0x02, 0xF8, 0xAA, 0xBB]),
-        preferredPayloadType: 97,
-        wrapperPayloadType: 127
+@Test("Moonlight audio FEC payload classifier validates header fields")
+func moonlightAudioFECClassifierValidatesHeaderFields() {
+    let valid = ShadowClientRealtimeAudioRTPPayloadNormalizer.isLikelyMoonlightAudioFECPayload(
+        Data([0x01, 0x61, 0x00, 0x10, 0x00, 0x00, 0x01, 0x00, 0, 0, 0, 1, 0xAA]),
+        expectedPrimaryPayloadType: 97
     )
+    let invalidShardIndex = ShadowClientRealtimeAudioRTPPayloadNormalizer
+        .isLikelyMoonlightAudioFECPayload(
+            Data([0x7F, 0x61, 0x00, 0x10, 0x00, 0x00, 0x01, 0x00, 0, 0, 0, 1, 0xAA]),
+            expectedPrimaryPayloadType: 97
+        )
+    let invalidPrimaryPayloadType = ShadowClientRealtimeAudioRTPPayloadNormalizer
+        .isLikelyMoonlightAudioFECPayload(
+            Data([0x01, 0x62, 0x00, 0x10, 0x00, 0x00, 0x01, 0x00, 0, 0, 0, 1, 0xAA]),
+            expectedPrimaryPayloadType: 97
+        )
 
-    #expect(normalized.payloadType == 97)
-    #expect(normalized.payload == Data([0xF8, 0xAA, 0xBB]))
-    #expect(
-        normalized.normalizationKey ==
-            "\(ShadowClientRealtimeAudioRTPPayloadNormalizer.wrapperPayloadPrefixNormalizationKey):127->97"
-    )
+    #expect(valid)
+    #expect(!invalidShardIndex)
+    #expect(!invalidPrimaryPayloadType)
 }
 
 @Test("Custom audio decoder registry prioritizes preferred providers")
