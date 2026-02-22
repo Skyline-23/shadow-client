@@ -664,6 +664,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
         let depacketizerTailStrategy = Self.depacketizerTailTruncationStrategy(for: track.codec)
         shadowClientNVDepacketizer.configureTailTruncationStrategy(depacketizerTailStrategy)
+        shadowClientNVDepacketizer.configureFrameHeaderProfile(
+            appVersion: resolvedVideoConfiguration.serverAppVersion
+        )
         videoQueuePressurePolicy = .fromTailTruncationStrategy(depacketizerTailStrategy)
         shadowClientNVDepacketizer.reset()
         await MainActor.run {

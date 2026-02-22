@@ -871,6 +871,25 @@ func av1DepacketizerIgnoresFECParityShards() {
     #expect(frame == Data([0xAA, 0xBB, 0xCC, 0xDD, 0xEE]))
 }
 
+@Test("AV1 depacketizer applies Sunshine 7.1.446 frame header profile for 0x81 packets")
+func av1DepacketizerUsesVersionAware41ByteHeader() {
+    var depacketizer = ShadowClientAV1RTPDepacketizer()
+    depacketizer.configureFrameHeaderProfile(appVersion: "7.1.446.0")
+    let framePayload = Data([0xAA, 0xBB, 0xCC])
+    let packet = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 513,
+        frameIndex: 67,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF | nvVideoPacketFlagEOF,
+        payloadBytes: Array(framePayload),
+        includeFrameHeaderWithLastPayloadLength: 41 + UInt16(framePayload.count),
+        frameHeaderSize: 41,
+        frameHeaderFirstByte: 0x81
+    )
+
+    let frame = depacketizer.ingest(payload: packet, marker: true)
+    #expect(frame == framePayload)
+}
+
 @Test("Realtime runtime AV1 access-unit validator accepts basic size-delimited OBU payloads")
 func realtimeRuntimeAv1AccessUnitValidatorAcceptsBasicObuSequence() {
     // OBU temporal delimiter (type=2, size=0) + OBU frame (type=6, size=1, payload=0x00)
@@ -1505,11 +1524,19 @@ private func makeSyntheticNVVideoPacket(
     flags: UInt8,
     payloadBytes: [UInt8],
     includeFrameHeaderWithLastPayloadLength lastPayloadLength: UInt16? = nil,
+    frameHeaderSize: UInt16 = moonlightFrameHeaderSize,
+    frameHeaderFirstByte: UInt8 = 0x01,
     fecInfo: UInt32 = 0
 ) -> Data {
     var packetPayload = Data()
     if let lastPayloadLength {
-        packetPayload.append(moonlightFrameHeader(lastPayloadLength: lastPayloadLength))
+        packetPayload.append(
+            moonlightFrameHeader(
+                lastPayloadLength: lastPayloadLength,
+                frameHeaderSize: frameHeaderSize,
+                firstByte: frameHeaderFirstByte
+            )
+        )
     }
     packetPayload.append(contentsOf: payloadBytes)
 
@@ -1525,8 +1552,15 @@ private func makeSyntheticNVVideoPacket(
     return packet
 }
 
-private func moonlightFrameHeader(lastPayloadLength: UInt16) -> Data {
-    var header = Data([0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00])
+private func moonlightFrameHeader(
+    lastPayloadLength: UInt16,
+    frameHeaderSize: UInt16 = moonlightFrameHeaderSize,
+    firstByte: UInt8 = 0x01
+) -> Data {
+    let resolvedHeaderSize = max(Int(frameHeaderSize), 8)
+    var header = Data(repeating: 0, count: resolvedHeaderSize)
+    header[0] = firstByte
+    header[3] = 0x01
     let lastPayloadLengthBytes = littleEndianBytes(lastPayloadLength)
     header[4] = lastPayloadLengthBytes[0]
     header[5] = lastPayloadLengthBytes[1]

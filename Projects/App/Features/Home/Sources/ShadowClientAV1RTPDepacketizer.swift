@@ -37,6 +37,27 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         let lastPacketPayloadLength: UInt16
     }
 
+    private struct ServerAppVersion: Comparable {
+        let major: Int
+        let minor: Int
+        let patch: Int
+
+        static func < (lhs: ServerAppVersion, rhs: ServerAppVersion) -> Bool {
+            if lhs.major != rhs.major {
+                return lhs.major < rhs.major
+            }
+            if lhs.minor != rhs.minor {
+                return lhs.minor < rhs.minor
+            }
+            return lhs.patch < rhs.patch
+        }
+    }
+
+    private enum FrameHeaderSelectionMode {
+        case heuristic
+        case fixed(defaultSize: Int, headerSizeForExtendedPrefix: Int?)
+    }
+
     private var currentFrame = Data()
     private var decodingFrame = false
     private var currentFrameIndex: UInt32 = 0
@@ -44,6 +65,7 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
     private var lastPacketInStream: UInt32?
     private var lastPacketPayloadLength: UInt16 = 0
     private var tailTruncationStrategy: TailTruncationStrategy
+    private var frameHeaderSelectionMode: FrameHeaderSelectionMode = .heuristic
 
     public init(tailTruncationStrategy: TailTruncationStrategy = .trimUsingLastPacketLength) {
         self.tailTruncationStrategy = tailTruncationStrategy
@@ -52,6 +74,10 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
     public mutating func configureTailTruncationStrategy(_ strategy: TailTruncationStrategy) {
         tailTruncationStrategy = strategy
         lastPacketPayloadLength = 0
+    }
+
+    public mutating func configureFrameHeaderProfile(appVersion: String?) {
+        frameHeaderSelectionMode = Self.frameHeaderSelectionMode(for: appVersion)
     }
 
     public mutating func reset() {
@@ -299,6 +325,26 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
     }
 
     private func selectFrameHeaderSize(for payload: Data) -> Int {
+        switch frameHeaderSelectionMode {
+        case .heuristic:
+            return selectFrameHeaderSizeUsingHeuristics(for: payload)
+        case let .fixed(defaultSize, headerSizeForExtendedPrefix):
+            if let headerSizeForExtendedPrefix {
+                guard let firstByte = payload.first else {
+                    return 0
+                }
+                if firstByte == 0x01 {
+                    return payload.count >= 8 ? 8 : 0
+                }
+                if firstByte == 0x81 {
+                    return payload.count >= headerSizeForExtendedPrefix ? headerSizeForExtendedPrefix : 0
+                }
+            }
+            return payload.count >= defaultSize ? defaultSize : 0
+        }
+    }
+
+    private func selectFrameHeaderSizeUsingHeuristics(for payload: Data) -> Int {
         guard let firstByte = payload.first else {
             return 0
         }
@@ -327,6 +373,44 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
             return 12
         }
         return payload.count >= 8 ? 8 : 0
+    }
+
+    private static func frameHeaderSelectionMode(for appVersion: String?) -> FrameHeaderSelectionMode {
+        guard let version = parseServerAppVersion(appVersion), version.major >= 5 else {
+            return .heuristic
+        }
+
+        if version >= .init(major: 7, minor: 1, patch: 450) {
+            return .fixed(defaultSize: 8, headerSizeForExtendedPrefix: 44)
+        }
+        if version >= .init(major: 7, minor: 1, patch: 446) {
+            return .fixed(defaultSize: 8, headerSizeForExtendedPrefix: 41)
+        }
+        if version >= .init(major: 7, minor: 1, patch: 415) {
+            return .fixed(defaultSize: 8, headerSizeForExtendedPrefix: 24)
+        }
+        if version >= .init(major: 7, minor: 1, patch: 350) {
+            return .fixed(defaultSize: 8, headerSizeForExtendedPrefix: nil)
+        }
+        if version >= .init(major: 7, minor: 1, patch: 320) {
+            return .fixed(defaultSize: 12, headerSizeForExtendedPrefix: nil)
+        }
+        return .fixed(defaultSize: 8, headerSizeForExtendedPrefix: nil)
+    }
+
+    private static func parseServerAppVersion(_ raw: String?) -> ServerAppVersion? {
+        guard let raw else {
+            return nil
+        }
+        let numericComponents = raw.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        guard numericComponents.count >= 3 else {
+            return nil
+        }
+        return .init(
+            major: numericComponents[0],
+            minor: numericComponents[1],
+            patch: numericComponents[2]
+        )
     }
 
     private func truncateLastPacketPayload(

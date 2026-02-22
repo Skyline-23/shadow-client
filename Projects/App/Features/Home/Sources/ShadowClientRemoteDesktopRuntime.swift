@@ -253,6 +253,7 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
     public let enableYUV444: Bool
     public let remoteInputKey: Data?
     public let remoteInputKeyID: UInt32?
+    public let serverAppVersion: String?
 
     public init(
         width: Int,
@@ -264,7 +265,8 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
         enableSurroundAudio: Bool = false,
         enableYUV444: Bool = false,
         remoteInputKey: Data? = nil,
-        remoteInputKeyID: UInt32? = nil
+        remoteInputKeyID: UInt32? = nil,
+        serverAppVersion: String? = nil
     ) {
         self.width = max(ShadowClientStreamingLaunchBounds.minimumWidth, width)
         self.height = max(ShadowClientStreamingLaunchBounds.minimumHeight, height)
@@ -279,6 +281,7 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
         self.enableYUV444 = enableYUV444
         self.remoteInputKey = remoteInputKey
         self.remoteInputKeyID = remoteInputKeyID
+        self.serverAppVersion = serverAppVersion
     }
 }
 
@@ -1256,7 +1259,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         appTitle: resolvedTitle,
                         settings: settings,
                         remoteInputKey: initialLaunchResult.remoteInputKey,
-                        remoteInputKeyID: initialLaunchResult.remoteInputKeyID
+                        remoteInputKeyID: initialLaunchResult.remoteInputKeyID,
+                        serverAppVersion: selectedHost.appVersion
                     )
                 } catch {
                     guard Self.shouldRetryForcedLaunch(
@@ -1289,7 +1293,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         appTitle: resolvedTitle,
                         settings: forcedLaunchSettings,
                         remoteInputKey: forcedLaunchResult.remoteInputKey,
-                        remoteInputKeyID: forcedLaunchResult.remoteInputKeyID
+                        remoteInputKeyID: forcedLaunchResult.remoteInputKeyID,
+                        serverAppVersion: selectedHost.appVersion
                     )
 
                     connectedLaunchResult = forcedLaunchResult
@@ -1544,7 +1549,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         appTitle: String,
         settings: ShadowClientGameStreamLaunchSettings,
         remoteInputKey: Data?,
-        remoteInputKeyID: UInt32?
+        remoteInputKeyID: UInt32?,
+        serverAppVersion: String?
     ) async throws {
         let codecCandidates = codecFallbackCandidates(for: settings.preferredCodec)
         var firstCodecFallbackError: (any Error)?
@@ -1559,7 +1565,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         from: settings,
                         preferredCodec: codecCandidate,
                         remoteInputKey: remoteInputKey,
-                        remoteInputKeyID: remoteInputKeyID
+                        remoteInputKeyID: remoteInputKeyID,
+                        serverAppVersion: serverAppVersion
                     )
                 )
                 return
@@ -1781,7 +1788,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         from settings: ShadowClientGameStreamLaunchSettings,
         preferredCodec: ShadowClientVideoCodecPreference,
         remoteInputKey: Data?,
-        remoteInputKeyID: UInt32?
+        remoteInputKeyID: UInt32?,
+        serverAppVersion: String?
     ) -> ShadowClientRemoteSessionVideoConfiguration {
         return .init(
             width: settings.width,
@@ -1793,7 +1801,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             enableSurroundAudio: settings.enableSurroundAudio,
             enableYUV444: settings.enableYUV444,
             remoteInputKey: remoteInputKey,
-            remoteInputKeyID: remoteInputKeyID
+            remoteInputKeyID: remoteInputKeyID,
+            serverAppVersion: serverAppVersion
         )
     }
 
