@@ -1404,6 +1404,63 @@ func realtimeRuntimeRenderSubmitPacingAllowsWhenBudgetMet() {
     )
 }
 
+@Test("Realtime runtime AV1 stall fallback triggers when recovery limit is exceeded")
+func realtimeRuntimeAV1StallFallbackTriggersOnRecoveryLimit() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldForceAV1FallbackForDecoderOutputStall(
+            recoveryAttemptCount: 4,
+            maxRecoveryAttempts: 4,
+            pressureFallbackTriggered: false
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldForceAV1FallbackForDecoderOutputStall(
+            recoveryAttemptCount: 3,
+            maxRecoveryAttempts: 4,
+            pressureFallbackTriggered: false
+        )
+    )
+}
+
+@Test("Realtime runtime AV1 stall fallback triggers immediately on pressure fallback signal")
+func realtimeRuntimeAV1StallFallbackTriggersOnPressureSignal() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldForceAV1FallbackForDecoderOutputStall(
+            recoveryAttemptCount: 1,
+            maxRecoveryAttempts: 4,
+            pressureFallbackTriggered: true
+        )
+    )
+}
+
+@Test("Realtime runtime AV1 fatal decoder errors force fallback")
+func realtimeRuntimeAV1FatalDecoderErrorsForceFallback() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldForceAV1Fallback(
+            forDecoderError: ShadowClientVideoToolboxDecoderError.decodeFailed(-12903)
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldForceAV1Fallback(
+            forDecoderError: ShadowClientVideoToolboxDecoderError.cannotCreateDecoder(-12915)
+        )
+    )
+}
+
+@Test("Realtime runtime AV1 transient decoder errors do not force fallback")
+func realtimeRuntimeAV1TransientDecoderErrorsDoNotForceFallback() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldForceAV1Fallback(
+            forDecoderError: ShadowClientVideoToolboxDecoderError.missingParameterSets
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldForceAV1Fallback(
+            forDecoderError: ShadowClientVideoToolboxDecoderError.missingFrameDimensions
+        )
+    )
+}
+
 private let nvVideoPacketFlagContainsPicData: UInt8 = 0x01
 private let nvVideoPacketFlagEOF: UInt8 = 0x02
 private let nvVideoPacketFlagSOF: UInt8 = 0x04
