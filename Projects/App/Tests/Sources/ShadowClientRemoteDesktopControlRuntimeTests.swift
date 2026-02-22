@@ -576,7 +576,7 @@ func remoteDesktopRuntimeFallsBackCodecAfterAv1RuntimeRecoveryFailure() async {
     let sessionConnector = FakeSessionConnectionClient(
         simulatedFailures: [
             ShadowClientGameStreamError.requestFailed(
-                "AV1 decode failed (decoder recovery exhausted). Runtime recovery exhausted; retry with HEVC fallback."
+                "AV1 decode failed (decoder recovery exhausted). Runtime recovery exhausted; retry with fallback codec."
             ),
         ]
     )
@@ -609,6 +609,71 @@ func remoteDesktopRuntimeFallsBackCodecAfterAv1RuntimeRecoveryFailure() async {
     } else {
         Issue.record("Expected launched state, got \(runtime.launchState)")
     }
+}
+
+@Test("Remote desktop runtime auto-relaunches with downgraded codec after post-launch decoder failure")
+@MainActor
+func remoteDesktopRuntimeAutoRelaunchesCodecAfterPostLaunchDecoderFailure() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.133": .init(
+                host: "192.168.0.133",
+                displayName: "Codec-Recovery-Host",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-CODEC-RECOVERY"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.133": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let sessionURL = "rtsp://192.168.0.133:48010/session"
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: sessionURL, verb: "launch")
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.133"], preferredHost: "192.168.0.133")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(
+            preferredCodec: .auto,
+            enableHDR: true,
+            enableSurroundAudio: true,
+            lowLatencyMode: false
+        )
+    )
+    await waitForLaunchState(runtime)
+
+    runtime.handleSessionRenderStateTransition(
+        .failed("AV1 decode failed (decoder recovery exhausted). Runtime recovery exhausted; retry with fallback codec.")
+    )
+
+    await waitForLaunchCalls(control, expectedCount: 2)
+    await waitForLaunchState(runtime, maxAttempts: 200)
+
+    let launchCalls = await control.launchCalls()
+    #expect(launchCalls.count == 2)
+    #expect(launchCalls[0].settings.preferredCodec == .auto)
+    #expect(launchCalls[1].settings.preferredCodec == .h265)
+    #expect(launchCalls[1].forceLaunch == false)
+
+    let codecHistory = await sessionConnector.videoConfigurations().map(\.preferredCodec)
+    #expect(codecHistory == [.auto, .h265])
 }
 
 @Test("Remote desktop runtime downgrades codec for forceLaunch after resume decoder failures")
@@ -1579,6 +1644,20 @@ private func waitForSessionInputCalls(
 ) async {
     for _ in 0..<maxAttempts {
         if await inputClient.inputCalls().count >= expectedCount {
+            return
+        }
+
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+private func waitForLaunchCalls(
+    _ control: FakeControlClient,
+    expectedCount: Int,
+    maxAttempts: Int = 50
+) async {
+    for _ in 0..<maxAttempts {
+        if await control.launchCalls().count >= expectedCount {
             return
         }
 
