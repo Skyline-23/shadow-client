@@ -149,6 +149,8 @@ private actor ShadowClientVideoPacketQueue {
     private var closed = false
     private var droppedOldestCount = 0
     private var droppedSinceLastPressureSignal = 0
+    private var droppingIncomingUntilFrameBoundary = false
+    private var droppedIncomingPacketCount = 0
     private var waitingContinuations: [CheckedContinuation<ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket?, Never>] = []
 
     init(capacity: Int) {
@@ -160,6 +162,7 @@ private actor ShadowClientVideoPacketQueue {
         let droppedOldest: Bool
         let droppedCountForLog: Int?
         let droppedCountForPressureSignal: Int?
+        let droppedIncomingCountForLog: Int?
     }
 
     func enqueue(_ packet: ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket) -> EnqueueResult {
@@ -167,7 +170,30 @@ private actor ShadowClientVideoPacketQueue {
             return .init(
                 droppedOldest: false,
                 droppedCountForLog: nil,
-                droppedCountForPressureSignal: nil
+                droppedCountForPressureSignal: nil,
+                droppedIncomingCountForLog: nil
+            )
+        }
+
+        if droppingIncomingUntilFrameBoundary {
+            droppedIncomingPacketCount += 1
+            let droppedIncomingCountForLog: Int?
+            if droppedIncomingPacketCount == 1 ||
+                droppedIncomingPacketCount.isMultiple(of: ShadowClientRealtimeSessionDefaults.videoReceiveQueueIngressDropLogInterval)
+            {
+                droppedIncomingCountForLog = droppedIncomingPacketCount
+            } else {
+                droppedIncomingCountForLog = nil
+            }
+            if packet.marker {
+                droppingIncomingUntilFrameBoundary = false
+                droppedIncomingPacketCount = 0
+            }
+            return .init(
+                droppedOldest: false,
+                droppedCountForLog: nil,
+                droppedCountForPressureSignal: nil,
+                droppedIncomingCountForLog: droppedIncomingCountForLog
             )
         }
 
@@ -177,7 +203,8 @@ private actor ShadowClientVideoPacketQueue {
             return .init(
                 droppedOldest: false,
                 droppedCountForLog: nil,
-                droppedCountForPressureSignal: nil
+                droppedCountForPressureSignal: nil,
+                droppedIncomingCountForLog: nil
             )
         }
 
@@ -203,6 +230,10 @@ private actor ShadowClientVideoPacketQueue {
                 droppedCountForPressureSignal = droppedSinceLastPressureSignal
                 droppedSinceLastPressureSignal = 0
             }
+            if !packet.marker {
+                droppingIncomingUntilFrameBoundary = true
+                droppedIncomingPacketCount = 0
+            }
         }
         let tailIndex = (headIndex + bufferedCount) % capacity
         bufferedPackets[tailIndex] = packet
@@ -210,7 +241,8 @@ private actor ShadowClientVideoPacketQueue {
         return .init(
             droppedOldest: droppedOldest,
             droppedCountForLog: droppedCountForLog,
-            droppedCountForPressureSignal: droppedCountForPressureSignal
+            droppedCountForPressureSignal: droppedCountForPressureSignal,
+            droppedIncomingCountForLog: nil
         )
     }
 
@@ -241,6 +273,8 @@ private actor ShadowClientVideoPacketQueue {
         bufferedCount = 0
         droppedOldestCount = 0
         droppedSinceLastPressureSignal = 0
+        droppingIncomingUntilFrameBoundary = false
+        droppedIncomingPacketCount = 0
         let continuations = waitingContinuations
         waitingContinuations.removeAll(keepingCapacity: false)
         for continuation in continuations {
@@ -254,6 +288,8 @@ private actor ShadowClientVideoPacketQueue {
         bufferedCount = 0
         droppedOldestCount = 0
         droppedSinceLastPressureSignal = 0
+        droppingIncomingUntilFrameBoundary = false
+        droppedIncomingPacketCount = 0
     }
 
     func trimToMostRecent(maxBufferedPackets: Int) -> Int {
@@ -566,6 +602,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                         "Video receive queue dropped oldest packet due to sustained ingress pressure (count=\(droppedCountForLog, privacy: .public))"
                     )
                 }
+                if let droppedIncomingCountForLog = enqueueResult.droppedIncomingCountForLog {
+                    runtimeLogger.notice(
+                        "Video receive queue ingress shedding active for codec \(String(describing: codec), privacy: .public) (dropped-packets=\(droppedIncomingCountForLog, privacy: .public))"
+                    )
+                }
                 if let droppedCountForPressureSignal = enqueueResult.droppedCountForPressureSignal {
                     await self.handleVideoReceiveQueueBackpressure(
                         codec: codec,
@@ -591,9 +632,41 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         parameterSets: [Data],
         packetQueue: ShadowClientVideoPacketQueue
     ) async {
+        var packetsSinceDecodeQueueProbe = 0
+        var droppingPacketsUntilFrameBoundary = false
+
         while !Task.isCancelled {
             guard let packet = await packetQueue.next() else {
                 break
+            }
+
+            if droppingPacketsUntilFrameBoundary {
+                if packet.marker {
+                    droppingPacketsUntilFrameBoundary = false
+                }
+                continue
+            }
+
+            packetsSinceDecodeQueueProbe += 1
+            if packetsSinceDecodeQueueProbe >=
+                ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueProbeIntervalPackets
+            {
+                packetsSinceDecodeQueueProbe = 0
+                let bufferedDecodeUnits = await videoDecodeQueue?.bufferedUnitCount() ?? 0
+                if Self.shouldShedDepacketizerWork(
+                    codec: codec,
+                    bufferedDecodeUnits: bufferedDecodeUnits
+                ) {
+                    await handleVideoDecodeQueueBackpressure(
+                        codec: codec,
+                        droppedCount: 1,
+                        source: "depacketize-shed"
+                    )
+                    if packet.marker == false {
+                        droppingPacketsUntilFrameBoundary = true
+                    }
+                    continue
+                }
             }
 
             do {
@@ -1486,6 +1559,17 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
 
         return true
+    }
+
+    static func shouldShedDepacketizerWork(
+        codec: ShadowClientVideoCodec,
+        bufferedDecodeUnits: Int
+    ) -> Bool {
+        guard codec == .av1 else {
+            return false
+        }
+        return bufferedDecodeUnits >=
+            ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueShedHighWatermark
     }
 
     private static func decodeLEB128(

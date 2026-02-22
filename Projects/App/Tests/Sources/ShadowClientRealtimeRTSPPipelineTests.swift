@@ -763,6 +763,28 @@ func realtimeRuntimeAv1AccessUnitValidatorRejectsMalformedPayloads() {
     #expect(!ShadowClientRealtimeRTSPSessionRuntime.isLikelyValidAV1AccessUnit(invalidSize))
 }
 
+@Test("Realtime runtime depacketizer shedding activates only for AV1 when decode queue crosses watermark")
+func realtimeRuntimeDepacketizerSheddingClassifier() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldShedDepacketizerWork(
+            codec: .av1,
+            bufferedDecodeUnits: ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueShedHighWatermark
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldShedDepacketizerWork(
+            codec: .av1,
+            bufferedDecodeUnits: ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueShedHighWatermark - 1
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldShedDepacketizerWork(
+            codec: .h265,
+            bufferedDecodeUnits: ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueShedHighWatermark + 8
+        )
+    )
+}
+
 @Test("Realtime runtime stall detector triggers recovery when decode submits continue without frame output")
 func realtimeRuntimeStallDetectorTriggersRecoveryForActiveDecodePath() {
     let shouldRecover = ShadowClientRealtimeRTSPSessionRuntime.shouldTriggerDecoderOutputStallRecovery(

@@ -79,10 +79,13 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let videoReceiveQueueDropWindowSeconds: TimeInterval = 1.0
     public static let videoReceiveQueueDropRecoveryThreshold = 180
     public static let videoReceiveQueueRecoveryCooldownSeconds: TimeInterval = 0.75
+    public static let videoReceiveQueueIngressDropLogInterval = 240
     public static let videoReceiveQueuePressureSignalInterval = 24
     public static let videoReceiveQueuePressureTrimInterval = 60
     public static let videoReceiveQueuePressureTrimToRecentPackets = 96
     public static let videoDecodeQueueProducerSheddingHighWatermark = 6
+    public static let videoDepacketizerDecodeQueueProbeIntervalPackets = 8
+    public static let videoDepacketizerDecodeQueueShedHighWatermark = 10
     public static let depacketizerCorruptionWindowSeconds: TimeInterval = 2.0
     public static let depacketizerCorruptionThreshold = 5
     public static let depacketizerRecoveryCooldownSeconds: TimeInterval = 1.5
