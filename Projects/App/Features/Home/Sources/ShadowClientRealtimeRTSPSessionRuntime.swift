@@ -703,6 +703,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 client: client,
                 codec: track.codec,
                 payloadType: track.rtpPayloadType,
+                videoPayloadCandidates: Set(track.candidateRTPPayloadTypes),
                 packetQueue: packetQueue
             )
         }
@@ -802,12 +803,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         client: ShadowClientRTSPInterleavedClient,
         codec: ShadowClientVideoCodec,
         payloadType: Int,
+        videoPayloadCandidates: Set<Int>,
         packetQueue: ShadowClientVideoPacketQueue
     ) async {
         let runtimeLogger = logger
         do {
             try await client.receiveInterleavedVideoPackets(
-                payloadType: payloadType
+                payloadType: payloadType,
+                videoPayloadCandidates: videoPayloadCandidates
             ) { payload, marker in
                 let enqueueResult = await packetQueue.enqueue(
                     .init(payload: payload, marker: marker)
@@ -2146,8 +2149,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                  .cannotCreateFormatDescription,
                  .cannotCreateDecoder:
                 return true
-            case let .decodeFailed(status):
-                return !isRecoverableDecodeFailureStatus(status)
+            case .decodeFailed:
+                // Treat runtime decode failures as recoverable and let the bounded
+                // recovery budget decide abort timing. This avoids immediate
+                // fatal teardown on transient VT statuses during active playback.
+                return false
             }
         }
 
@@ -2156,12 +2162,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             return false
         }
         let fatalSignatures = [
-            "hardware decode failed",
             "could not create hardware decoder session",
             "could not create video format description",
             "decoder codec is not supported",
-            "vt-ds",
-            "osstatus -12903",
         ]
         return fatalSignatures.contains(where: normalized.contains)
     }
@@ -2620,7 +2623,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     static func shouldAdoptVideoPayloadType(
         observedPayloadType: Int,
         currentPayloadType: Int,
-        audioPayloadType: Int?
+        audioPayloadType: Int?,
+        videoPayloadCandidates: Set<Int>
     ) -> Bool {
         guard observedPayloadType != currentPayloadType else {
             return false
@@ -2633,7 +2637,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         {
             return false
         }
-        return true
+        guard (96 ... 127).contains(observedPayloadType) else {
+            return false
+        }
+        return videoPayloadCandidates.contains(observedPayloadType)
     }
 
     static func queuePressureProfile(
@@ -3341,6 +3348,7 @@ private actor ShadowClientRTSPInterleavedClient {
         let track = ShadowClientRTSPVideoTrackDescriptor(
             codec: announceCodec,
             rtpPayloadType: parsedTrack.rtpPayloadType,
+            candidateRTPPayloadTypes: parsedTrack.candidateRTPPayloadTypes,
             controlURL: parsedTrack.controlURL,
             parameterSets: announceCodec == parsedTrack.codec ? parsedTrack.parameterSets : []
         )
@@ -3784,6 +3792,7 @@ private actor ShadowClientRTSPInterleavedClient {
         return ShadowClientRTSPVideoTrackDescriptor(
             codec: codec,
             rtpPayloadType: payloadType,
+            candidateRTPPayloadTypes: [payloadType],
             controlURL: controlURL,
             parameterSets: []
         )
@@ -4133,6 +4142,7 @@ private actor ShadowClientRTSPInterleavedClient {
 
     func receiveInterleavedVideoPackets(
         payloadType: Int,
+        videoPayloadCandidates: Set<Int>,
         onVideoPacket: @escaping @Sendable (Data, Bool) async throws -> Void
     ) async throws {
         let audioTrack = audioTrackDescriptor
@@ -4141,6 +4151,7 @@ private actor ShadowClientRTSPInterleavedClient {
                 host: remoteHost,
                 port: videoServerPort,
                 payloadType: payloadType,
+                videoPayloadCandidates: videoPayloadCandidates,
                 audioTrack: audioTrack,
                 onVideoPacket: onVideoPacket
             )
@@ -4185,7 +4196,8 @@ private actor ShadowClientRTSPInterleavedClient {
                    ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
                        observedPayloadType: packet.payloadType,
                        currentPayloadType: effectivePayloadType,
-                       audioPayloadType: audioTrack?.rtpPayloadType
+                       audioPayloadType: audioTrack?.rtpPayloadType,
+                       videoPayloadCandidates: videoPayloadCandidates
                    )
                 {
                     logger.notice(
@@ -4223,6 +4235,7 @@ private actor ShadowClientRTSPInterleavedClient {
         host: NWEndpoint.Host,
         port: NWEndpoint.Port,
         payloadType: Int,
+        videoPayloadCandidates: Set<Int>,
         audioTrack: ShadowClientRTSPAudioTrackDescriptor?,
         onVideoPacket: @escaping @Sendable (Data, Bool) async throws -> Void
     ) async throws {
@@ -4387,7 +4400,8 @@ private actor ShadowClientRTSPInterleavedClient {
                ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
                    observedPayloadType: packet.payloadType,
                    currentPayloadType: effectivePayloadType,
-                   audioPayloadType: audioTrack?.rtpPayloadType
+                   audioPayloadType: audioTrack?.rtpPayloadType,
+                   videoPayloadCandidates: videoPayloadCandidates
                )
             {
                 logger.notice(

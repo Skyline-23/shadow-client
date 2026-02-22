@@ -130,6 +130,12 @@ func rtpPayloadNormalizerClassifiesMoonlightAudioFECPayloads() {
 
     #expect(normalized.payloadType == 127)
     #expect(normalized.normalizationKey == "rtp-audio-fec:127")
+    #expect(normalized.isMoonlightAudioFECPayload)
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldProcessPayloadMismatch(
+            for: normalized
+        )
+    )
 }
 
 @Test("RTP payload normalizer unwraps RED wrapper payload to primary payload")
@@ -152,6 +158,12 @@ func rtpPayloadNormalizerUnwrapsREDWrapperPayload() {
     #expect(normalized.payloadType == 97)
     #expect(normalized.payload == Data([0xCC, 0xDD, 0xEE]))
     #expect(normalized.normalizationKey == "rtp-audio-red:127->97")
+    #expect(!normalized.isMoonlightAudioFECPayload)
+    #expect(
+        ShadowClientRealtimeAudioSessionRuntime.shouldProcessPayloadMismatch(
+            for: normalized
+        )
+    )
 }
 
 @Test("RTP payload normalizer does not treat ambiguous PT127 payload as direct Opus")
@@ -166,6 +178,12 @@ func rtpPayloadNormalizerDoesNotTreatAmbiguousPT127AsDirectOpus() {
     #expect(normalized.payloadType == 127)
     #expect(normalized.payload == Data([0xF8, 0xAA, 0xBB]))
     #expect(normalized.normalizationKey == nil)
+    #expect(!normalized.isMoonlightAudioFECPayload)
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldProcessPayloadMismatch(
+            for: normalized
+        )
+    )
 }
 
 @Test("RTP payload normalizer unwraps RED primary payload for PT127 wrapper")
@@ -180,6 +198,7 @@ func rtpPayloadNormalizerUnwrapsREDPrimaryPayload() {
     #expect(normalized.payloadType == 97)
     #expect(normalized.payload == Data([0xF8, 0xAA, 0xBB]))
     #expect(normalized.normalizationKey == "rtp-audio-red:127->97")
+    #expect(!normalized.isMoonlightAudioFECPayload)
 }
 
 @Test("Moonlight audio FEC payload classifier validates header fields")

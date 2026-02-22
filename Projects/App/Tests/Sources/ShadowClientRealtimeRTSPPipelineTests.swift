@@ -434,8 +434,8 @@ func rtpPayloadParserSupportsSlicedDataInput() throws {
     #expect(parsed.payload.startIndex == 0)
 }
 
-@Test("RTSP video payload adoption rejects audio payload-type candidates")
-func rtspVideoPayloadAdoptionRejectsAudioPayloadTypeCandidates() {
+@Test("RTSP video payload adoption rejects non-video payload-type candidates")
+func rtspVideoPayloadAdoptionRejectsNonVideoPayloadTypeCandidates() {
     let audioTrack = ShadowClientRTSPAudioTrackDescriptor(
         codec: .opus,
         rtpPayloadType: 97,
@@ -449,21 +449,45 @@ func rtspVideoPayloadAdoptionRejectsAudioPayloadTypeCandidates() {
         !ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
             observedPayloadType: 97,
             currentPayloadType: 98,
-            audioPayloadType: audioTrack.rtpPayloadType
+            audioPayloadType: audioTrack.rtpPayloadType,
+            videoPayloadCandidates: Set([98])
         )
     )
     #expect(
         !ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
             observedPayloadType: ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType,
             currentPayloadType: 98,
-            audioPayloadType: audioTrack.rtpPayloadType
+            audioPayloadType: audioTrack.rtpPayloadType,
+            videoPayloadCandidates: Set([98])
         )
     )
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
             observedPayloadType: 0,
             currentPayloadType: 98,
-            audioPayloadType: audioTrack.rtpPayloadType
+            audioPayloadType: audioTrack.rtpPayloadType,
+            videoPayloadCandidates: Set([98])
+        )
+    )
+}
+
+@Test("RTSP video payload adoption accepts SDP advertised video payload candidate")
+func rtspVideoPayloadAdoptionAcceptsAdvertisedVideoPayloadCandidate() {
+    let audioTrack = ShadowClientRTSPAudioTrackDescriptor(
+        codec: .opus,
+        rtpPayloadType: 97,
+        sampleRate: 48_000,
+        channelCount: 2,
+        controlURL: nil,
+        formatParameters: [:]
+    )
+
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
+            observedPayloadType: 99,
+            currentPayloadType: 98,
+            audioPayloadType: audioTrack.rtpPayloadType,
+            videoPayloadCandidates: Set([98, 99])
         )
     )
 }
@@ -1523,16 +1547,25 @@ func realtimeRuntimeStallRecoveryAbortsOnRecoveryLimit() {
     )
 }
 
-@Test("Realtime runtime fatal decoder errors abort recovery")
-func realtimeRuntimeFatalDecoderErrorsAbortRecovery() {
+@Test("Realtime runtime fatal decoder initialization errors abort recovery")
+func realtimeRuntimeFatalDecoderInitializationErrorsAbortRecovery() {
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime.shouldAbortDecoderRecovery(
+            forDecoderError: ShadowClientVideoToolboxDecoderError.cannotCreateDecoder(-12915)
+        )
+    )
+}
+
+@Test("Realtime runtime decode-failed statuses stay on bounded recovery path")
+func realtimeRuntimeDecodeFailedStatusesStayOnBoundedRecoveryPath() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldAbortDecoderRecovery(
             forDecoderError: ShadowClientVideoToolboxDecoderError.decodeFailed(-12903)
         )
     )
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime.shouldAbortDecoderRecovery(
-            forDecoderError: ShadowClientVideoToolboxDecoderError.cannotCreateDecoder(-12915)
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldAbortDecoderRecovery(
+            forDecoderError: ShadowClientVideoToolboxDecoderError.decodeFailed(-12909)
         )
     )
 }

@@ -9,17 +9,29 @@ public enum ShadowClientVideoCodec: String, Equatable, Sendable {
 public struct ShadowClientRTSPVideoTrackDescriptor: Equatable, Sendable {
     public let codec: ShadowClientVideoCodec
     public let rtpPayloadType: Int
+    public let candidateRTPPayloadTypes: [Int]
     public let controlURL: String
     public let parameterSets: [Data]
 
     public init(
         codec: ShadowClientVideoCodec,
         rtpPayloadType: Int,
+        candidateRTPPayloadTypes: [Int] = [],
         controlURL: String,
         parameterSets: [Data]
     ) {
         self.codec = codec
         self.rtpPayloadType = rtpPayloadType
+        var normalizedCandidates = candidateRTPPayloadTypes.filter { (96 ... 127).contains($0) }
+        if !normalizedCandidates.contains(rtpPayloadType),
+           (96 ... 127).contains(rtpPayloadType)
+        {
+            normalizedCandidates.append(rtpPayloadType)
+        }
+        if normalizedCandidates.isEmpty {
+            normalizedCandidates = [rtpPayloadType]
+        }
+        self.candidateRTPPayloadTypes = normalizedCandidates
         self.controlURL = controlURL
         self.parameterSets = parameterSets
     }
@@ -210,10 +222,17 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             fallbackSessionURL: fallbackSessionURL
         )
         let parameters = fmtpByPayloadType[payloadType] ?? [:]
+        let payloadTypeCandidates = normalizedVideoPayloadTypeCandidates(
+            selectedPayloadType: payloadType,
+            advertisedPayloadTypes: advertisedPayloadTypes,
+            codecByPayloadType: codecByPayloadType,
+            fmtpByPayloadType: fmtpByPayloadType
+        )
 
         return ShadowClientRTSPVideoTrackDescriptor(
             codec: codec,
             rtpPayloadType: payloadType,
+            candidateRTPPayloadTypes: payloadTypeCandidates,
             controlURL: resolvedControlURL,
             parameterSets: parameterSets(for: codec, from: parameters)
         )
@@ -482,6 +501,36 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             }
         }
         return payloadTypes
+    }
+
+    private static func normalizedVideoPayloadTypeCandidates(
+        selectedPayloadType: Int,
+        advertisedPayloadTypes: [Int],
+        codecByPayloadType: [Int: ShadowClientVideoCodec],
+        fmtpByPayloadType: [Int: [String: String]]
+    ) -> [Int] {
+        var candidates: [Int] = []
+
+        func append(_ payloadType: Int) {
+            guard (96 ... 127).contains(payloadType) else {
+                return
+            }
+            if !candidates.contains(payloadType) {
+                candidates.append(payloadType)
+            }
+        }
+
+        append(selectedPayloadType)
+        for payloadType in advertisedPayloadTypes {
+            append(payloadType)
+        }
+        for payloadType in codecByPayloadType.keys.sorted() {
+            append(payloadType)
+        }
+        for payloadType in fmtpByPayloadType.keys.sorted() {
+            append(payloadType)
+        }
+        return candidates
     }
 
     private static func parseRTPMap(_ line: String) -> (payloadType: Int, codec: ShadowClientVideoCodec)? {

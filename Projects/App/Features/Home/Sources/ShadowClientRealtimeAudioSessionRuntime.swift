@@ -373,6 +373,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             .ignoredRTPControlPayloadType
                     )
 
+                    if !Self.shouldProcessPayloadMismatch(for: normalizedPayload) {
+                        continue
+                    }
+
                     if packet.payloadType != currentPayloadType {
                         consecutivePayloadTypeMismatchCount += 1
                         payloadTypeMismatchPressure = min(
@@ -1401,6 +1405,20 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             return nil
         }
         return observed
+    }
+
+    internal static func shouldProcessPayloadMismatch(
+        for normalizedPayload: ShadowClientRealtimeAudioRTPPayloadNormalizer.Result
+    ) -> Bool {
+        guard !normalizedPayload.isMoonlightAudioFECPayload else {
+            return false
+        }
+        guard normalizedPayload.payloadType != ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType else {
+            // Treat wrapper/control-like payload types as non-adaptive traffic.
+            // Valid RTP RED payloads are normalized to their primary payload type before this gate.
+            return false
+        }
+        return true
     }
 
     internal static func audioReadyPacketDecodeWindow(
