@@ -27,21 +27,34 @@ private final class MockCustomAudioDecoder: ShadowClientRealtimeCustomAudioDecod
     }
 }
 
-@Test("Payload type adaptation accepts dynamic payload type changes")
-func payloadTypeAdaptationAcceptsDynamicChanges() {
+@Test("Payload type adaptation accepts dynamic payload type changes before lock")
+func payloadTypeAdaptationAcceptsDynamicChangesBeforeLock() {
     let adapted = ShadowClientRealtimeAudioSessionRuntime.payloadTypePreference(
         observed: 98,
-        current: 97
+        current: 97,
+        hasLockedPayloadType: false
     )
 
     #expect(adapted == 98)
+}
+
+@Test("Payload type adaptation rejects payload type changes after lock")
+func payloadTypeAdaptationRejectsChangesAfterLock() {
+    let adapted = ShadowClientRealtimeAudioSessionRuntime.payloadTypePreference(
+        observed: 98,
+        current: 97,
+        hasLockedPayloadType: true
+    )
+
+    #expect(adapted == nil)
 }
 
 @Test("Payload type adaptation ignores matching payload types")
 func payloadTypeAdaptationIgnoresMatching() {
     let adapted = ShadowClientRealtimeAudioSessionRuntime.payloadTypePreference(
         observed: 97,
-        current: 97
+        current: 97,
+        hasLockedPayloadType: false
     )
 
     #expect(adapted == nil)
@@ -51,20 +64,52 @@ func payloadTypeAdaptationIgnoresMatching() {
 func payloadTypeAdaptationRejectsControlValues() {
     let adapted = ShadowClientRealtimeAudioSessionRuntime.payloadTypePreference(
         observed: 72,
-        current: 97
+        current: 97,
+        hasLockedPayloadType: false
     )
 
     #expect(adapted == nil)
 }
 
-@Test("Payload type adaptation ignores negotiated control payload type")
-func payloadTypeAdaptationIgnoresNegotiatedControlPayloadType() {
+@Test("Payload type adaptation rejects PT127 RED wrapper payload type")
+func payloadTypeAdaptationRejectsPT127REDWrapper() {
     let adapted = ShadowClientRealtimeAudioSessionRuntime.payloadTypePreference(
         observed: ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType,
-        current: 97
+        current: 97,
+        hasLockedPayloadType: false
     )
 
     #expect(adapted == nil)
+}
+
+@Test("RTP RED payload extraction returns primary payload for single block packet")
+func redPayloadExtractionReturnsPrimaryPayloadForSingleBlockPacket() {
+    let redPayload = Data([97, 0x11, 0x22, 0x33])
+    let extracted = ShadowClientRealtimeAudioSessionRuntime.extractRTPREDPrimaryPayload(
+        from: redPayload
+    )
+
+    #expect(extracted?.payloadType == 97)
+    #expect(extracted?.payload == Data([0x11, 0x22, 0x33]))
+}
+
+@Test("RTP RED payload extraction skips redundant blocks and returns primary payload")
+func redPayloadExtractionSkipsRedundantBlocks() {
+    let redPayload = Data([
+        0xE1, // F=1, PT=97 (redundant)
+        0x00, // timestamp offset high bits
+        0x04, // timestamp offset low bits + block length high bits
+        0x02, // block length low bits (2 bytes)
+        0x61, // F=0, PT=97 (primary)
+        0xAA, 0xBB, // redundant block payload
+        0xCC, 0xDD, 0xEE, // primary payload
+    ])
+    let extracted = ShadowClientRealtimeAudioSessionRuntime.extractRTPREDPrimaryPayload(
+        from: redPayload
+    )
+
+    #expect(extracted?.payloadType == 97)
+    #expect(extracted?.payload == Data([0xCC, 0xDD, 0xEE]))
 }
 
 @Test("Custom audio decoder registry prioritizes preferred providers")

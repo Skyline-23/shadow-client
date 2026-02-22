@@ -172,7 +172,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             )
             let encryptionLabel = payloadDecryptor == nil ? "disabled" : "enabled"
             logger.notice(
-                "Audio runtime started codec=\(resolvedTrack.codec.label, privacy: .public) payloadType=\(resolvedTrack.rtpPayloadType, privacy: .public) sampleRate=\(resolvedTrack.sampleRate, privacy: .public) channels=\(resolvedTrack.channelCount, privacy: .public) encryption=\(encryptionLabel, privacy: .public) decoder=\(decoderImplementationName, privacy: .public)"
+                "Audio runtime started codec=\(resolvedTrack.codec.label, privacy: .public) payloadType=\(resolvedTrack.rtpPayloadType, privacy: .public) sampleRate=\(resolvedTrack.sampleRate, privacy: .public) channels=\(resolvedTrack.channelCount, privacy: .public) encryption=\(encryptionLabel, privacy: .public) decoder=\(decoderImplementationName, privacy: .public) output=\(activeOutput.debugFormatDescription, privacy: .public)"
             )
         } catch {
             let message = "Audio transport failed to start: \(error.localizedDescription)"
@@ -224,8 +224,15 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
 
             var currentPayloadType = preferredPayloadType
             var loggedUnexpectedPayloadTypes = Set<Int>()
+            var loggedUnwrappedREDPayloadTypes = Set<Int>()
+            var hasLockedPayloadType = false
+            var pendingPayloadTypeCandidate: Int?
+            var pendingPayloadTypeCandidateCount = 0
+            var consecutivePayloadTypeMismatchCount = 0
+            var payloadTypeMismatchPressure = 0
             var consecutiveDroppedOutputBuffers = 0
             var consecutiveDecryptFailures = 0
+            var consecutiveDecodeFailures = 0
             var outputQueuePressureDropCount = 0
             var firstOutputQueuePressureDropUptime: TimeInterval = 0
             var consecutiveOutputQueueSaturationCount = 0
@@ -240,6 +247,18 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 ShadowClientRealtimeSessionDefaults.audioOutputQueueSaturationBurstThreshold
             )
             let decodeCooldown = ShadowClientRealtimeSessionDefaults.audioOutputQueueDecodeCooldown
+            let payloadAdaptationObservationThreshold = max(
+                1,
+                ShadowClientRealtimeSessionDefaults.audioPayloadTypeAdaptationObservationThreshold
+            )
+            let decodeFailureAbortThreshold = max(
+                1,
+                ShadowClientRealtimeSessionDefaults.audioDecodeFailureAbortThreshold
+            )
+            let decodeFailureLogInterval = max(
+                1,
+                ShadowClientRealtimeSessionDefaults.audioDecodeFailureLogInterval
+            )
             let clock = ContinuousClock()
 
             let registerOutputQueuePressureDrop: (Int, String) -> Void = { droppedCount, reason in
@@ -292,29 +311,92 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         continue
                     }
 
-                    guard let packet = Self.parseRTPPacket(datagram) else {
+                    guard let parsedPacket = Self.parseRTPPacket(datagram) else {
                         continue
+                    }
+                    var packet = parsedPacket
+                    if packet.payloadType == ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType,
+                       let redPrimaryPayload = Self.extractRTPREDPrimaryPayload(from: packet.payload)
+                    {
+                        packet = RTPPacket(
+                            sequenceNumber: packet.sequenceNumber,
+                            timestamp: packet.timestamp,
+                            payloadType: redPrimaryPayload.payloadType,
+                            payload: redPrimaryPayload.payload
+                        )
+                        if loggedUnwrappedREDPayloadTypes.insert(packet.payloadType).inserted {
+                            logger.notice(
+                                "Unwrapped RTP RED payload type \(ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType, privacy: .public) to primary payload type \(packet.payloadType, privacy: .public)"
+                            )
+                        }
                     }
 
                     if packet.payloadType != currentPayloadType {
-                        if let nextPayloadType = Self.payloadTypePreference(
-                            observed: packet.payloadType,
-                            current: currentPayloadType
-                        ) {
+                        consecutivePayloadTypeMismatchCount += 1
+                        payloadTypeMismatchPressure = min(
+                            payloadAdaptationObservationThreshold * 4,
+                            payloadTypeMismatchPressure + 1
+                        )
+                        let lockIsExpired = hasLockedPayloadType &&
+                            (
+                                consecutivePayloadTypeMismatchCount >= payloadAdaptationObservationThreshold ||
+                                    payloadTypeMismatchPressure >= payloadAdaptationObservationThreshold
+                            )
+                        if lockIsExpired {
                             let previousPayloadType = currentPayloadType
-                            currentPayloadType = nextPayloadType
+                            currentPayloadType = packet.payloadType
+                            hasLockedPayloadType = false
+                            pendingPayloadTypeCandidate = nil
+                            pendingPayloadTypeCandidateCount = 0
+                            consecutivePayloadTypeMismatchCount = 0
+                            payloadTypeMismatchPressure = 0
                             jitterBuffer.reset(preferredPayloadType: currentPayloadType)
                             logger.notice(
-                                "Adapting RTP audio payload type from \(previousPayloadType, privacy: .public) to \(currentPayloadType, privacy: .public)"
+                                "Adapting RTP audio payload type from \(previousPayloadType, privacy: .public) to \(currentPayloadType, privacy: .public) after lock expiry due to sustained mismatch"
                             )
+                            continue
+                        }
+                        let adaptationLockActive = hasLockedPayloadType && !lockIsExpired
+                        if let nextPayloadType = Self.payloadTypePreference(
+                            observed: packet.payloadType,
+                            current: currentPayloadType,
+                            hasLockedPayloadType: adaptationLockActive
+                        ) {
+                            if pendingPayloadTypeCandidate == nextPayloadType {
+                                pendingPayloadTypeCandidateCount += 1
+                            } else {
+                                pendingPayloadTypeCandidate = nextPayloadType
+                                pendingPayloadTypeCandidateCount = 1
+                            }
+                            if pendingPayloadTypeCandidateCount >= payloadAdaptationObservationThreshold {
+                                let previousPayloadType = currentPayloadType
+                                currentPayloadType = nextPayloadType
+                                hasLockedPayloadType = false
+                                pendingPayloadTypeCandidate = nil
+                                pendingPayloadTypeCandidateCount = 0
+                                consecutivePayloadTypeMismatchCount = 0
+                                payloadTypeMismatchPressure = 0
+                                jitterBuffer.reset(preferredPayloadType: currentPayloadType)
+                                logger.notice(
+                                    "Adapting RTP audio payload type from \(previousPayloadType, privacy: .public) to \(currentPayloadType, privacy: .public) after \(payloadAdaptationObservationThreshold, privacy: .public) consecutive candidate packets"
+                                )
+                            }
                         } else {
                             if loggedUnexpectedPayloadTypes.insert(packet.payloadType).inserted {
                                 logger.notice(
                                     "Ignoring RTP audio payload type \(packet.payloadType, privacy: .public) (expected \(currentPayloadType, privacy: .public))"
                                 )
                             }
-                            continue
                         }
+                        continue
+                    }
+                    hasLockedPayloadType = true
+                    pendingPayloadTypeCandidate = nil
+                    pendingPayloadTypeCandidateCount = 0
+                    consecutivePayloadTypeMismatchCount = 0
+                    payloadTypeMismatchPressure = max(0, payloadTypeMismatchPressure - 1)
+                    if !loggedUnexpectedPayloadTypes.isEmpty {
+                        loggedUnexpectedPayloadTypes.removeAll(keepingCapacity: true)
                     }
 
                     let readyPackets = jitterBuffer.enqueue(
@@ -336,6 +418,23 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     if availableOutputSlots <= 0 {
                         consecutiveOutputQueueSaturationCount += 1
                         registerOutputQueuePressureDrop(readyPackets.count, "skip-decode")
+                        if consecutiveOutputQueueSaturationCount == decodeSaturationBurstThreshold ||
+                            (
+                                consecutiveOutputQueueSaturationCount > decodeSaturationBurstThreshold &&
+                                    consecutiveOutputQueueSaturationCount.isMultiple(
+                                        of: decodeSaturationBurstThreshold * 2
+                                    )
+                            )
+                        {
+                            if audioOutput.recoverPlaybackUnderPressure() {
+                                logger.notice(
+                                    "Audio output playback recovered after sustained queue saturation"
+                                )
+                                consecutiveOutputQueueSaturationCount = 0
+                                decodeCooldownDeadline = nil
+                                continue
+                            }
+                        }
                         if consecutiveOutputQueueSaturationCount >= decodeSaturationBurstThreshold {
                             consecutiveOutputQueueSaturationCount = 0
                             decodeCooldownDeadline = clock.now + decodeCooldown
@@ -413,36 +512,35 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             if let pcmBuffer = try decoder.decode(
                                 payload: decodePayload
                             ) {
-                                guard ShadowClientRealtimeAudioPCMBufferGuard.isSafeForPlayback(
-                                    pcmBuffer
-                                ) else {
-                                    consecutiveDroppedOutputBuffers += 1
-                                    if consecutiveDroppedOutputBuffers == 1 ||
-                                        consecutiveDroppedOutputBuffers.isMultiple(of: 25)
-                                    {
-                                        logger.error(
-                                            "Sanitizing suspicious decoded audio buffer (count=\(consecutiveDroppedOutputBuffers, privacy: .public))"
-                                        )
-                                    }
-                                    ShadowClientRealtimeAudioPCMBufferGuard.replaceWithSilence(
+                                consecutiveDecodeFailures = 0
+                                if decoder.requiresPlaybackSafetyGuard {
+                                    guard ShadowClientRealtimeAudioPCMBufferGuard.isSafeForPlayback(
                                         pcmBuffer
-                                    )
-                                    if audioOutput.enqueue(pcmBuffer: pcmBuffer) == false {
-                                        registerOutputQueuePressureDrop(1, "drop-suspicious-buffer")
-                                    } else {
-                                        remainingOutputSlots = max(0, remainingOutputSlots - 1)
-                                    }
-                                    if consecutiveDroppedOutputBuffers >= 150 {
-                                        let message = "Audio decoder produced repeated suspicious PCM buffers."
-                                        logger.error("\(message, privacy: .public)")
-                                        handleReceiveLoopTermination(
-                                            over: connection,
-                                            output: audioOutput,
-                                            state: .decoderFailed(message)
+                                    ) else {
+                                        consecutiveDroppedOutputBuffers += 1
+                                        if consecutiveDroppedOutputBuffers == 1 ||
+                                            consecutiveDroppedOutputBuffers.isMultiple(of: 25)
+                                        {
+                                            logger.error(
+                                                "Sanitizing suspicious decoded audio buffer (count=\(consecutiveDroppedOutputBuffers, privacy: .public), format=\(String(describing: pcmBuffer.format.commonFormat), privacy: .public), channels=\(pcmBuffer.format.channelCount, privacy: .public), frames=\(pcmBuffer.frameLength, privacy: .public))"
+                                            )
+                                        }
+                                        ShadowClientRealtimeAudioPCMBufferGuard.replaceWithSilence(
+                                            pcmBuffer
                                         )
-                                        return
+                                        if audioOutput.enqueue(pcmBuffer: pcmBuffer) == false {
+                                            registerOutputQueuePressureDrop(1, "drop-suspicious-buffer")
+                                        } else {
+                                            remainingOutputSlots = max(0, remainingOutputSlots - 1)
+                                        }
+                                        if consecutiveDroppedOutputBuffers >= 150 {
+                                            logger.error(
+                                                "Audio decoder produced repeated suspicious PCM buffers; continuing with sanitized output to keep session alive."
+                                            )
+                                            consecutiveDroppedOutputBuffers = 0
+                                        }
+                                        continue
                                     }
-                                    continue
                                 }
                                 consecutiveDroppedOutputBuffers = 0
                                 if audioOutput.enqueue(pcmBuffer: pcmBuffer) == false {
@@ -452,14 +550,27 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 remainingOutputSlots = max(0, remainingOutputSlots - 1)
                             }
                         } catch {
-                            let message = "Audio decode failed: \(error.localizedDescription)"
-                            logger.error("\(message, privacy: .public)")
-                            handleReceiveLoopTermination(
-                                over: connection,
-                                output: audioOutput,
-                                state: .decoderFailed(message)
-                            )
-                            return
+                            consecutiveDecodeFailures += 1
+                            if consecutiveDecodeFailures == 1 ||
+                                consecutiveDecodeFailures.isMultiple(of: decodeFailureLogInterval)
+                            {
+                                logger.error(
+                                    "Audio decode failed (count=\(consecutiveDecodeFailures, privacy: .public)): \(error.localizedDescription, privacy: .public)"
+                                )
+                            }
+                            registerOutputQueuePressureDrop(1, "decode-error-drop")
+                            if consecutiveDecodeFailures >= decodeFailureAbortThreshold {
+                                let message =
+                                    "Audio decode repeatedly failed (\(consecutiveDecodeFailures))."
+                                logger.error("\(message, privacy: .public)")
+                                handleReceiveLoopTermination(
+                                    over: connection,
+                                    output: audioOutput,
+                                    state: .decoderFailed(message)
+                                )
+                                return
+                            }
+                            continue
                         }
                     }
                 } catch {
@@ -813,17 +924,91 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         return currentBoundary > previousBoundary
     }
 
+    internal static func extractRTPREDPrimaryPayload(
+        from payload: Data
+    ) -> (payloadType: Int, payload: Data)? {
+        guard !payload.isEmpty else {
+            return nil
+        }
+
+        struct REDBlockHeader: Sendable {
+            let payloadType: Int
+            let blockLength: Int?
+        }
+
+        var headers: [REDBlockHeader] = []
+        var index = payload.startIndex
+        while index < payload.endIndex {
+            let headerByte = payload[index]
+            index += 1
+
+            let hasFollowingREDHeaders = (headerByte & 0x80) != 0
+            let payloadType = Int(headerByte & 0x7F)
+            if hasFollowingREDHeaders {
+                guard (payload.endIndex - index) >= 3 else {
+                    return nil
+                }
+                let byte2 = payload[index + 1]
+                let byte3 = payload[index + 2]
+                index += 3
+                let blockLength = (Int(byte2 & 0x03) << 8) | Int(byte3)
+                headers.append(
+                    .init(
+                        payloadType: payloadType,
+                        blockLength: blockLength
+                    )
+                )
+            } else {
+                headers.append(
+                    .init(
+                        payloadType: payloadType,
+                        blockLength: nil
+                    )
+                )
+                break
+            }
+        }
+
+        guard let primaryHeader = headers.last else {
+            return nil
+        }
+
+        var payloadIndex = index
+        for header in headers.dropLast() {
+            guard let blockLength = header.blockLength else {
+                return nil
+            }
+            guard payloadIndex + blockLength <= payload.endIndex else {
+                return nil
+            }
+            payloadIndex += blockLength
+        }
+
+        guard payloadIndex < payload.endIndex else {
+            return nil
+        }
+        let primaryPayload = Data(payload[payloadIndex ..< payload.endIndex])
+        guard !primaryPayload.isEmpty else {
+            return nil
+        }
+        return (primaryHeader.payloadType, primaryPayload)
+    }
+
     internal static func payloadTypePreference(
         observed: Int,
-        current: Int
+        current: Int,
+        hasLockedPayloadType: Bool
     ) -> Int? {
         guard observed != current else {
             return nil
         }
-        guard (96 ... 127).contains(observed) else {
+        guard !hasLockedPayloadType else {
             return nil
         }
         guard observed != ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType else {
+            return nil
+        }
+        guard (96 ... 127).contains(observed) else {
             return nil
         }
         return observed
@@ -1038,7 +1223,12 @@ private protocol ShadowClientRealtimeAudioPacketDecoding {
     var sampleRate: Int { get }
     var channels: Int { get }
     var outputFormat: AVAudioFormat { get }
+    var requiresPlaybackSafetyGuard: Bool { get }
     func decode(payload: Data) throws -> AVAudioPCMBuffer?
+}
+
+private extension ShadowClientRealtimeAudioPacketDecoding {
+    var requiresPlaybackSafetyGuard: Bool { true }
 }
 
 private enum ShadowClientRealtimeAudioDecoderFactory {
@@ -1158,6 +1348,10 @@ private final class ShadowClientRealtimeCustomDecoderAdapter: ShadowClientRealti
 
     var outputFormat: AVAudioFormat {
         base.outputFormat
+    }
+
+    var requiresPlaybackSafetyGuard: Bool {
+        base.requiresPlaybackSafetyGuard
     }
 
     func decode(payload: Data) throws -> AVAudioPCMBuffer? {
@@ -1389,8 +1583,11 @@ private final class ShadowClientRealtimeAudioEngineOutput {
     private static let minimumQueuedBufferCount = 16
 
     private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
-    private let engineStateLock = NSLock()
+    private var player = AVAudioPlayerNode()
+    private let engineQueue = DispatchQueue(
+        label: "com.skyline23.shadow-client.audio-engine-output",
+        qos: .userInitiated
+    )
     private let format: AVAudioFormat
     private let maximumQueuedBufferCount: Int
     private let queuedBufferLock = NSLock()
@@ -1408,24 +1605,50 @@ private final class ShadowClientRealtimeAudioEngineOutput {
             Self.minimumQueuedBufferCount,
             maximumQueuedBufferCount
         )
-        guard configureGraphLocked() else {
+        var initializationState = 0
+        engineQueue.sync {
+            guard configureGraphLocked() else {
+                initializationState = 1
+                return
+            }
+            guard ensureEngineRunningLocked() else {
+                initializationState = 2
+                return
+            }
+            guard replacePlayerNodeLocked() else {
+                initializationState = 1
+                return
+            }
+            guard ensureEngineRunningLocked() else {
+                initializationState = 2
+                return
+            }
+            guard startPlayerLocked() else {
+                initializationState = 3
+                return
+            }
+        }
+        if initializationState == 1 {
             throw NSError(
                 domain: "ShadowClientRealtimeAudioEngineOutput",
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "Audio player node could not be attached to engine."]
             )
         }
-        engine.prepare()
-        try engine.start()
-        guard player.engine === engine else {
+        if initializationState == 2 {
             throw NSError(
                 domain: "ShadowClientRealtimeAudioEngineOutput",
                 code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Audio engine could not start."]
+            )
+        }
+        if initializationState == 3 {
+            throw NSError(
+                domain: "ShadowClientRealtimeAudioEngineOutput",
+                code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "Audio player node is not attached to engine."]
             )
         }
-        player.play()
-        isStarted = true
     }
 
     func enqueue(pcmBuffer: AVAudioPCMBuffer) -> Bool {
@@ -1437,54 +1660,25 @@ private final class ShadowClientRealtimeAudioEngineOutput {
         queuedBufferCount += 1
         queuedBufferLock.unlock()
 
-        engineStateLock.lock()
-        defer { engineStateLock.unlock() }
-
-        guard !isTerminated else {
-            didConsumeQueuedBuffer()
-            return false
-        }
-
-        if player.engine !== engine || !isGraphConfigured {
-            guard configureGraphLocked() else {
+        return engineQueue.sync {
+            guard !isTerminated else {
                 didConsumeQueuedBuffer()
                 return false
             }
-            isStarted = false
-        }
 
-        if !engine.isRunning {
-            engine.prepare()
-            try? engine.start()
-            guard engine.isRunning else {
+            guard ensurePlaybackReadyLocked() else {
                 didConsumeQueuedBuffer()
                 return false
             }
-            isStarted = false
-        }
 
-        if !isStarted || !player.isPlaying {
-            // AVAudioEngine route/interrupt transitions can leave player state stale
-            // while this runtime is still alive. Rebind before calling play().
-            guard configureGraphLocked() else {
-                didConsumeQueuedBuffer()
-                return false
+            player.scheduleBuffer(
+                pcmBuffer,
+                completionCallbackType: .dataConsumed
+            ) { [weak self] _ in
+                self?.didConsumeQueuedBuffer()
             }
-            guard player.engine === engine else {
-                didConsumeQueuedBuffer()
-                return false
-            }
-            player.play()
-            isStarted = true
+            return true
         }
-
-        player.scheduleBuffer(
-            pcmBuffer,
-            completionCallbackType: .dataConsumed
-        ) { [weak self] _ in
-            self?.didConsumeQueuedBuffer()
-        }
-        return true
     }
 
     var hasEnqueueCapacity: Bool {
@@ -1502,26 +1696,46 @@ private final class ShadowClientRealtimeAudioEngineOutput {
     }
 
     func stop() {
-        engineStateLock.lock()
-        if isTerminated {
-            engineStateLock.unlock()
-            return
+        engineQueue.sync {
+            if isTerminated {
+                return
+            }
+            isTerminated = true
+            let currentPlayer = player
+            currentPlayer.stop()
+            if currentPlayer.engine === engine {
+                engine.disconnectNodeOutput(currentPlayer)
+                engine.detach(currentPlayer)
+            }
+            engine.stop()
+            engine.reset()
+            isGraphConfigured = false
+            isStarted = false
         }
-        isTerminated = true
-        player.stop()
-        if player.engine === engine {
-            engine.disconnectNodeOutput(player)
-            engine.detach(player)
-        }
-        engine.stop()
-        engine.reset()
-        isGraphConfigured = false
-        isStarted = false
-        engineStateLock.unlock()
 
         queuedBufferLock.lock()
         queuedBufferCount = 0
         queuedBufferLock.unlock()
+    }
+
+    func recoverPlaybackUnderPressure() -> Bool {
+        engineQueue.sync {
+            guard !isTerminated else {
+                return false
+            }
+            guard rebuildGraphAndStartLocked() else {
+                return false
+            }
+            queuedBufferLock.lock()
+            queuedBufferCount = 0
+            queuedBufferLock.unlock()
+            return true
+        }
+    }
+
+    var debugFormatDescription: String {
+        let interleaving = format.isInterleaved ? "interleaved" : "planar"
+        return "\(String(describing: format.commonFormat))/\(format.channelCount)ch/\(Int(format.sampleRate))Hz/\(interleaving)"
     }
 
     private func didConsumeQueuedBuffer() {
@@ -1551,6 +1765,87 @@ private final class ShadowClientRealtimeAudioEngineOutput {
         )
         isGraphConfigured = true
         return true
+    }
+
+    private func ensureEngineRunningLocked() -> Bool {
+        if engine.isRunning {
+            return true
+        }
+
+        engine.prepare()
+        try? engine.start()
+        return engine.isRunning
+    }
+
+    private func startPlayerLocked() -> Bool {
+        guard player.engine === engine else {
+            return false
+        }
+        guard engine.attachedNodes.contains(player) else {
+            return false
+        }
+        guard ensureEngineRunningLocked() else {
+            return false
+        }
+        if !player.isPlaying {
+            player.play()
+        }
+        isStarted = player.isPlaying
+        return isStarted
+    }
+
+    private func replacePlayerNodeLocked() -> Bool {
+        let previousPlayer = player
+        previousPlayer.stop()
+        if previousPlayer.engine === engine {
+            engine.disconnectNodeOutput(previousPlayer)
+            engine.detach(previousPlayer)
+        }
+
+        let newPlayer = AVAudioPlayerNode()
+        engine.attach(newPlayer)
+        engine.connect(
+            newPlayer,
+            to: engine.mainMixerNode,
+            format: format
+        )
+        player = newPlayer
+        isGraphConfigured = true
+        isStarted = false
+        return newPlayer.engine === engine
+    }
+
+    private func ensurePlaybackReadyLocked() -> Bool {
+        if player.engine !== engine || !isGraphConfigured || !engine.attachedNodes.contains(player) {
+            return rebuildGraphAndStartLocked()
+        }
+
+        guard ensureEngineRunningLocked() else {
+            return false
+        }
+
+        if player.isPlaying {
+            isStarted = true
+            return true
+        }
+
+        // If playback unexpectedly stops, rebuild the graph before replaying to avoid
+        // AVAudioPlayerNode assertions from stale/detached engine state.
+        return rebuildGraphAndStartLocked()
+    }
+
+    private func rebuildGraphAndStartLocked() -> Bool {
+        isStarted = false
+        if !configureGraphLocked() {
+            return false
+        }
+        if !replacePlayerNodeLocked() {
+            return false
+        }
+        if !ensureEngineRunningLocked() {
+            return false
+        }
+        return startPlayerLocked()
     }
 }
 
