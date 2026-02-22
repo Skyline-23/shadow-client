@@ -2247,6 +2247,20 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         return bufferedDecodeUnits >= max(1, highWatermark)
     }
 
+    static func shouldShedDepacketizerWork(
+        codec: ShadowClientVideoCodec,
+        bufferedDecodeUnits: Int,
+        highWatermark: Int = ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueShedHighWatermark
+    ) -> Bool {
+        let tailStrategy = depacketizerTailTruncationStrategy(for: codec)
+        let policy = ShadowClientVideoQueuePressurePolicy.fromTailTruncationStrategy(tailStrategy)
+        return shouldShedDepacketizerWork(
+            allowsPacketLevelShedding: policy.allowsDepacketizerPacketShedding,
+            bufferedDecodeUnits: bufferedDecodeUnits,
+            highWatermark: highWatermark
+        )
+    }
+
     static func shouldTriggerDecodeQueueRecovery(source: String) -> Bool {
         switch source {
         case "producer-shed", "producer-trim":
