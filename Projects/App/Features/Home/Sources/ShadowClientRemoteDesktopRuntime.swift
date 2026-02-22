@@ -656,6 +656,10 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
 }
 
 private actor ShadowClientRemoteInputSendQueue {
+    private static let baseCooldownNanoseconds: UInt64 = 50_000_000
+    private static let maximumCooldownNanoseconds: UInt64 = 800_000_000
+    private static let maximumCooldownExponent = 5
+
     private struct PendingInput: Sendable {
         var event: ShadowClientRemoteInputEvent
         let host: String
@@ -668,9 +672,12 @@ private actor ShadowClientRemoteInputSendQueue {
         String
     ) async throws -> Void
     private let onSendError: @Sendable (Error) -> Void
+    private let shouldCooldownAfterError: @Sendable (Error) -> Bool
     private var pendingInputs: [PendingInput] = []
     private var pendingHeadIndex = 0
     private var isDraining = false
+    private var cooldownDeadlineUptimeNanoseconds: UInt64?
+    private var cooldownExponent = 0
 
     init(
         send: @escaping @Sendable (
@@ -678,10 +685,12 @@ private actor ShadowClientRemoteInputSendQueue {
             String,
             String
         ) async throws -> Void,
-        onSendError: @escaping @Sendable (Error) -> Void
+        onSendError: @escaping @Sendable (Error) -> Void,
+        shouldCooldownAfterError: @escaping @Sendable (Error) -> Bool = { _ in false }
     ) {
         self.send = send
         self.onSendError = onSendError
+        self.shouldCooldownAfterError = shouldCooldownAfterError
     }
 
     func enqueue(
@@ -705,21 +714,61 @@ private actor ShadowClientRemoteInputSendQueue {
     func clear() {
         pendingInputs.removeAll(keepingCapacity: false)
         pendingHeadIndex = 0
+        cooldownDeadlineUptimeNanoseconds = nil
+        cooldownExponent = 0
     }
 
     private func drainLoop() async {
         while pendingHeadIndex < pendingInputs.count {
+            await sleepForCooldownIfNeeded()
             let next = pendingInputs[pendingHeadIndex]
             pendingHeadIndex += 1
             do {
                 try await send(next.event, next.host, next.sessionURL)
+                cooldownDeadlineUptimeNanoseconds = nil
+                cooldownExponent = 0
             } catch {
                 onSendError(error)
+                if shouldCooldownAfterError(error) {
+                    cooldownExponent = min(
+                        cooldownExponent + 1,
+                        Self.maximumCooldownExponent
+                    )
+                    let shift = max(0, cooldownExponent - 1)
+                    let uncappedCooldown = Self.baseCooldownNanoseconds &<< UInt64(shift)
+                    let cooldownNanoseconds = min(
+                        uncappedCooldown,
+                        Self.maximumCooldownNanoseconds
+                    )
+                    cooldownDeadlineUptimeNanoseconds = DispatchTime.now().uptimeNanoseconds &+ cooldownNanoseconds
+                } else {
+                    cooldownDeadlineUptimeNanoseconds = nil
+                    cooldownExponent = 0
+                }
             }
         }
         pendingInputs.removeAll(keepingCapacity: false)
         pendingHeadIndex = 0
         isDraining = false
+    }
+
+    private func sleepForCooldownIfNeeded() async {
+        guard let cooldownDeadlineUptimeNanoseconds else {
+            return
+        }
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard cooldownDeadlineUptimeNanoseconds > now else {
+            self.cooldownDeadlineUptimeNanoseconds = nil
+            return
+        }
+
+        let delay = cooldownDeadlineUptimeNanoseconds - now
+        do {
+            try await Task.sleep(nanoseconds: delay)
+        } catch {
+            // Preserve cancellation semantics for caller loop.
+        }
+        self.cooldownDeadlineUptimeNanoseconds = nil
     }
 
     private func compactPendingInputsIfNeeded() {
@@ -836,6 +885,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     return
                 }
                 logger.debug("Remote input send failed: \(error.localizedDescription, privacy: .public)")
+            },
+            shouldCooldownAfterError: { error in
+                Self.shouldThrottleInputSendAfterError(error)
             }
         )
         self.pinProvider = pinProvider
@@ -1375,6 +1427,21 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return true
         }
 
+        return false
+    }
+
+    private static func shouldThrottleInputSendAfterError(_ error: Error) -> Bool {
+        if shouldSuppressInputSendError(error) {
+            return true
+        }
+        if let runtimeError = error as? ShadowClientRealtimeSessionRuntimeError {
+            switch runtimeError {
+            case .connectionClosed:
+                return true
+            default:
+                break
+            }
+        }
         return false
     }
 
