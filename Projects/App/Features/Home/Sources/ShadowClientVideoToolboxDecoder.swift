@@ -47,6 +47,10 @@ private final class ShadowClientRealtimeDecoderOutputBridge: @unchecked Sendable
     private var latestPixelBuffer: CVPixelBuffer?
     private var isDelivering = false
     private var activeDeliveryTask: Task<Void, Never>?
+    private var pendingDeliveryWorkItem: DispatchWorkItem?
+    private var targetFrameIntervalSeconds: TimeInterval =
+        1.0 / Double(max(1, ShadowClientStreamingLaunchBounds.defaultFPS))
+    private var lastDeliveredFrameUptime: TimeInterval = 0
 
     init(onFrame: @escaping @Sendable (CVPixelBuffer) async -> Void) {
         self.onFrame = onFrame
@@ -54,6 +58,7 @@ private final class ShadowClientRealtimeDecoderOutputBridge: @unchecked Sendable
 
     deinit {
         activeDeliveryTask?.cancel()
+        pendingDeliveryWorkItem?.cancel()
     }
 
     func emit(_ pixelBuffer: CVPixelBuffer) {
@@ -70,9 +75,22 @@ private final class ShadowClientRealtimeDecoderOutputBridge: @unchecked Sendable
     func stop() {
         activeDeliveryTask?.cancel()
         activeDeliveryTask = nil
+        pendingDeliveryWorkItem?.cancel()
+        pendingDeliveryWorkItem = nil
         deliveryQueue.async { [weak self] in
             self?.latestPixelBuffer = nil
             self?.isDelivering = false
+            self?.lastDeliveredFrameUptime = 0
+        }
+    }
+
+    func setTargetFramesPerSecond(_ fps: Int) {
+        let normalizedFPS = max(1, fps)
+        deliveryQueue.async { [weak self] in
+            guard let self else {
+                return
+            }
+            self.targetFrameIntervalSeconds = 1.0 / Double(normalizedFPS)
         }
     }
 
@@ -82,6 +100,16 @@ private final class ShadowClientRealtimeDecoderOutputBridge: @unchecked Sendable
         else {
             return
         }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        let nextEligibleDeliveryUptime = lastDeliveredFrameUptime + targetFrameIntervalSeconds
+        if lastDeliveredFrameUptime > 0,
+           now < nextEligibleDeliveryUptime
+        {
+            scheduleDeferredDelivery(after: max(0, nextEligibleDeliveryUptime - now))
+            return
+        }
+
         latestPixelBuffer = nil
         isDelivering = true
         let sendablePixelBuffer = ShadowClientDecoderSendablePixelBuffer(value: pixelBuffer)
@@ -94,10 +122,27 @@ private final class ShadowClientRealtimeDecoderOutputBridge: @unchecked Sendable
                 guard let self else {
                     return
                 }
+                self.lastDeliveredFrameUptime = ProcessInfo.processInfo.systemUptime
                 self.isDelivering = false
                 self.scheduleDeliveryIfNeeded()
             }
         }
+    }
+
+    private func scheduleDeferredDelivery(after delay: TimeInterval) {
+        guard pendingDeliveryWorkItem == nil else {
+            return
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+            self.pendingDeliveryWorkItem = nil
+            self.scheduleDeliveryIfNeeded()
+        }
+        pendingDeliveryWorkItem = workItem
+        deliveryQueue.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 }
 
@@ -225,12 +270,14 @@ public actor ShadowClientVideoToolboxDecoder {
             CMTimeScale(boundedFPS)
         )
         decodePresentationTimeScale = normalizedPresentationTimeScale
+        outputBridge?.setTargetFramesPerSecond(Int(normalizedPresentationTimeScale))
         recalculateDecodeConcurrencyBudget()
     }
 
     public func setDecodePresentationTimeScale(_ timescale: CMTimeScale) {
         let normalizedPresentationTimeScale = Self.normalizedPresentationTimeScale(timescale)
         decodePresentationTimeScale = normalizedPresentationTimeScale
+        outputBridge?.setTargetFramesPerSecond(Int(normalizedPresentationTimeScale))
         recalculateDecodeConcurrencyBudget()
     }
 
@@ -397,6 +444,7 @@ public actor ShadowClientVideoToolboxDecoder {
                 decodeSlotCounter.release()
             }
         )
+        bridge.setTargetFramesPerSecond(Int(decodePresentationTimeScale))
         outputBridge = bridge
         outputCallbackContext = callbackContext
         var callbackRecord = VTDecompressionOutputCallbackRecord(
