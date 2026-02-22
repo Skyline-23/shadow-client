@@ -1405,6 +1405,23 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 return
             }
 
+            if let pendingDecodeFailure = await decoder.consumePendingDecodeFailure() {
+                logger.error(
+                    "\(String(describing: codec), privacy: .public) decode failed: \(pendingDecodeFailure.localizedDescription, privacy: .public)"
+                )
+                if await handleDecoderFailure(codec: codec, error: pendingDecodeFailure) {
+                    continue
+                }
+                if codec == .av1 {
+                    await failStreamingSession(
+                        message: Self.av1RuntimeFallbackMessage(reason: "decoder recovery exhausted")
+                    )
+                    return
+                }
+                await failStreamingSession(message: pendingDecodeFailure.localizedDescription)
+                return
+            }
+
             let now = ProcessInfo.processInfo.systemUptime
             let isPipelineUnderIngressPressure =
                 isVideoPipelineUnderIngressPressure(now: now) || pendingVideoRecoveryRequest

@@ -109,13 +109,16 @@ private final class ShadowClientRealtimeDecoderOutputBridge: @unchecked Sendable
 private final class ShadowClientRealtimeDecoderOutputCallbackContext: @unchecked Sendable {
     private let bridge: ShadowClientRealtimeDecoderOutputBridge
     private let onDecodeCompleted: @Sendable () -> Void
+    private let onDecodeFailed: @Sendable (OSStatus) -> Void
 
     init(
         bridge: ShadowClientRealtimeDecoderOutputBridge,
-        onDecodeCompleted: @escaping @Sendable () -> Void
+        onDecodeCompleted: @escaping @Sendable () -> Void,
+        onDecodeFailed: @escaping @Sendable (OSStatus) -> Void
     ) {
         self.bridge = bridge
         self.onDecodeCompleted = onDecodeCompleted
+        self.onDecodeFailed = onDecodeFailed
     }
 
     func handleCallback(
@@ -123,9 +126,11 @@ private final class ShadowClientRealtimeDecoderOutputCallbackContext: @unchecked
         imageBuffer: CVImageBuffer?
     ) {
         onDecodeCompleted()
-        guard status == noErr,
-              let pixelBuffer = imageBuffer
-        else {
+        guard status == noErr else {
+            onDecodeFailed(status)
+            return
+        }
+        guard let pixelBuffer = imageBuffer else {
             return
         }
         bridge.emit(pixelBuffer)
@@ -163,6 +168,34 @@ private final class ShadowClientDecodeSlotCounter: @unchecked Sendable {
     }
 }
 
+private final class ShadowClientRealtimeDecoderFailureSignal: @unchecked Sendable {
+    private let lock = NSLock()
+    private var latestFailureStatus: OSStatus?
+
+    func record(status: OSStatus) {
+        guard status != noErr else {
+            return
+        }
+        lock.lock()
+        latestFailureStatus = status
+        lock.unlock()
+    }
+
+    func consume() -> OSStatus? {
+        lock.lock()
+        defer { lock.unlock() }
+        let status = latestFailureStatus
+        latestFailureStatus = nil
+        return status
+    }
+
+    func reset() {
+        lock.lock()
+        latestFailureStatus = nil
+        lock.unlock()
+    }
+}
+
 public actor ShadowClientVideoToolboxDecoder {
     private var codec: ShadowClientVideoCodec?
     private var latestParameterSets: [Data] = []
@@ -180,6 +213,7 @@ public actor ShadowClientVideoToolboxDecoder {
     private var decodeSubmitPacingMultiplier = 1.0
     private var lastDecodeSubmitUptime: TimeInterval = 0
     private var lastDecoderInstabilitySignalUptime: TimeInterval = 0
+    private let decodeFailureSignal = ShadowClientRealtimeDecoderFailureSignal()
     private var av1FallbackHDR = false
     private var av1FallbackYUV444 = false
     private var av1CodecConfigurationOrigin: ShadowClientAV1CodecConfigurationOrigin?
@@ -283,6 +317,13 @@ public actor ShadowClientVideoToolboxDecoder {
             decodeSubmitPacingMultiplier + (ShadowClientVideoDecoderDefaults.decodePacingMultiplierStep * Double(severity))
         )
         clampDecodeSubmitPacingMultiplier()
+    }
+
+    public func consumePendingDecodeFailure() -> ShadowClientVideoToolboxDecoderError? {
+        guard let status = decodeFailureSignal.consume() else {
+            return nil
+        }
+        return .decodeFailed(status)
     }
 
     public func decode(
@@ -403,10 +444,14 @@ public actor ShadowClientVideoToolboxDecoder {
 
         let bridge = ShadowClientRealtimeDecoderOutputBridge(onFrame: onFrame)
         let decodeSlotCounter = self.decodeSlotCounter
+        let decodeFailureSignal = self.decodeFailureSignal
         let callbackContext = ShadowClientRealtimeDecoderOutputCallbackContext(
             bridge: bridge,
             onDecodeCompleted: {
                 decodeSlotCounter.release()
+            },
+            onDecodeFailed: { status in
+                decodeFailureSignal.record(status: status)
             }
         )
         bridge.setTargetFramesPerSecond(Int(decodePresentationTimeScale))
@@ -518,6 +563,7 @@ public actor ShadowClientVideoToolboxDecoder {
         configuredParameterSets = []
         frameIndex = 0
         decodeSlotCounter.reset()
+        decodeFailureSignal.reset()
         decodePacingPenalty = 0
         decodeSubmitPacingMultiplier = 1.0
         lastDecodeSubmitUptime = 0
