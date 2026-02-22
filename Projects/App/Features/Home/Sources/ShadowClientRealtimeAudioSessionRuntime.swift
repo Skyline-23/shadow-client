@@ -230,12 +230,30 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         continue
                     }
 
+                    guard let audioOutput = output else {
+                        continue
+                    }
+                    let availableOutputSlots = audioOutput.availableEnqueueSlots
+                    if availableOutputSlots <= 0 {
+                        consecutiveDroppedOutputQueueBuffers += readyPackets.count
+                        if consecutiveDroppedOutputQueueBuffers == readyPackets.count ||
+                            consecutiveDroppedOutputQueueBuffers.isMultiple(of: 25)
+                        {
+                            logger.error(
+                                "Skipping audio decode due to output queue saturation (count=\(consecutiveDroppedOutputQueueBuffers, privacy: .public))"
+                            )
+                        }
+                        continue
+                    }
+
+                    var remainingOutputSlots = availableOutputSlots
+
                     for readyPacket in readyPackets {
                         do {
-                            guard let audioOutput = output else {
+                            guard let decoder else {
                                 continue
                             }
-                            guard audioOutput.hasEnqueueCapacity else {
+                            guard remainingOutputSlots > 0 else {
                                 consecutiveDroppedOutputQueueBuffers += 1
                                 if consecutiveDroppedOutputQueueBuffers == 1 ||
                                     consecutiveDroppedOutputQueueBuffers.isMultiple(of: 25)
@@ -244,9 +262,6 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                         "Skipping audio decode due to output queue saturation (count=\(consecutiveDroppedOutputQueueBuffers, privacy: .public))"
                                     )
                                 }
-                                continue
-                            }
-                            guard let decoder else {
                                 continue
                             }
                             let decodePayload: Data
@@ -315,6 +330,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                     }
                                     continue
                                 }
+                                remainingOutputSlots = max(0, remainingOutputSlots - 1)
                                 consecutiveDroppedOutputQueueBuffers = 0
                             }
                         } catch {
@@ -1343,6 +1359,13 @@ private final class ShadowClientRealtimeAudioEngineOutput {
         let hasCapacity = queuedBufferCount < Self.maximumQueuedBufferCount
         queuedBufferLock.unlock()
         return hasCapacity
+    }
+
+    var availableEnqueueSlots: Int {
+        queuedBufferLock.lock()
+        let available = max(0, Self.maximumQueuedBufferCount - queuedBufferCount)
+        queuedBufferLock.unlock()
+        return available
     }
 
     func stop() {
