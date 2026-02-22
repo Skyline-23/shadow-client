@@ -6,7 +6,9 @@ Tuist manifests live at repo root: `Project.swift`, `Tuist.swift`, and `Tuist/Pa
 - `Projects/App/Features/Home`: app shell, Home surface, settings toggles, and `ControllerFeedbackStatusPanel`.
 - `Projects/App/Tests`: test suites.
 - `Modules/ShadowClientCore`, `Modules/ShadowClientStreaming`, `Modules/ShadowClientInput`, `Modules/ShadowClientUI`, `Modules/ShadowClientFeatureHome`: layered modules with `Sources/` and `Tests/`.
-- `external/moonlight-qt-master/`: upstream reference only (gitignored), never a runtime dependency.
+- `external/moonlight-qt-master/`: upstream client reference (Moonlight) only, never a runtime dependency.
+- `external/Sunshine/`: upstream server reference (Sunshine) only, never a runtime dependency.
+- For protocol development, keep `external/Sunshine/` synced to the target Sunshine pre-release tag used in validation.
 `HomeFeatureBuilder` snapshots must include mapped session configuration.
 
 ## Build, Test, and Development Commands
@@ -46,6 +48,13 @@ PRs must include scope, commands run, iOS/macOS/tvOS coverage, and measurable la
 
 ## Agent Execution Rules
 Use subagents in parallel for non-trivial work with disjoint ownership, then merge after tests pass. Update `AGENTS.md` whenever architecture priorities or execution rules change.
+
+### Upstream Protocol Reference (Required)
+- During streaming protocol/audio/video/input implementation, always cross-check behavior against both upstream references in `external/`:
+  - client reference: `external/moonlight-qt-master/`
+  - server reference: `external/Sunshine/`
+- Treat `external/` trees as research baselines only (never runtime-linked dependencies).
+- Before changing RTSP/RTP/codec negotiation logic, verify assumptions in upstream source and reflect the matched behavior in tests.
 
 ### Subagent Lifecycle Discipline
 - Keep subagents ownership-scoped (one concern per agent) and run in parallel only for disjoint files/tasks.
