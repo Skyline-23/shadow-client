@@ -27,17 +27,12 @@ extension ShadowClientRealtimeSessionRuntimeError: LocalizedError {
 }
 
 private actor ShadowClientVideoDecodeQueue {
-    private struct Waiter {
-        let id: Int64
-        let continuation: CheckedContinuation<ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?, Never>
-    }
+    private static let idlePollInterval: Duration = .milliseconds(2)
 
     private let capacity: Int
     private var bufferedUnits: [ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?]
     private var headIndex = 0
     private var bufferedCount = 0
-    private var waiters: [Waiter] = []
-    private var nextWaiterID: Int64 = 0
     private var closed = false
 
     init(capacity: Int) {
@@ -47,12 +42,6 @@ private actor ShadowClientVideoDecodeQueue {
 
     func enqueue(_ accessUnit: ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit) -> Bool {
         guard !closed else {
-            return false
-        }
-
-        if !waiters.isEmpty {
-            let waiter = waiters.removeFirst()
-            waiter.continuation.resume(returning: accessUnit)
             return false
         }
 
@@ -70,37 +59,20 @@ private actor ShadowClientVideoDecodeQueue {
     }
 
     func next() async -> ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit? {
-        if bufferedCount > 0 {
-            let unit = bufferedUnits[headIndex]
-            bufferedUnits[headIndex] = nil
-            headIndex = (headIndex + 1) % capacity
-            bufferedCount -= 1
-            return unit
-        }
-        if closed {
-            return nil
-        }
-
-        let waiterID = nextWaiterID
-        nextWaiterID &+= 1
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                if Task.isCancelled || closed {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                waiters.append(
-                    Waiter(
-                        id: waiterID,
-                        continuation: continuation
-                    )
-                )
+        while !Task.isCancelled {
+            if bufferedCount > 0 {
+                let unit = bufferedUnits[headIndex]
+                bufferedUnits[headIndex] = nil
+                headIndex = (headIndex + 1) % capacity
+                bufferedCount -= 1
+                return unit
             }
-        } onCancel: {
-            Task {
-                await self.cancelWaiter(waiterID: waiterID)
+            if closed {
+                return nil
             }
+            try? await Task.sleep(for: Self.idlePollInterval)
         }
+        return nil
     }
 
     func close() {
@@ -111,33 +83,16 @@ private actor ShadowClientVideoDecodeQueue {
         bufferedUnits = Array(repeating: nil, count: capacity)
         headIndex = 0
         bufferedCount = 0
-        for waiter in waiters {
-            waiter.continuation.resume(returning: nil)
-        }
-        waiters.removeAll(keepingCapacity: false)
-    }
-
-    private func cancelWaiter(waiterID: Int64) {
-        guard let waiterIndex = waiters.firstIndex(where: { $0.id == waiterID }) else {
-            return
-        }
-        let waiter = waiters.remove(at: waiterIndex)
-        waiter.continuation.resume(returning: nil)
     }
 }
 
 private actor ShadowClientVideoPacketQueue {
-    private struct Waiter {
-        let id: Int64
-        let continuation: CheckedContinuation<ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket?, Never>
-    }
+    private static let idlePollInterval: Duration = .milliseconds(2)
 
     private let capacity: Int
     private var bufferedPackets: [ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket?]
     private var headIndex = 0
     private var bufferedCount = 0
-    private var waiters: [Waiter] = []
-    private var nextWaiterID: Int64 = 0
     private var closed = false
 
     init(capacity: Int) {
@@ -147,12 +102,6 @@ private actor ShadowClientVideoPacketQueue {
 
     func enqueue(_ packet: ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket) -> Bool {
         guard !closed else {
-            return false
-        }
-
-        if !waiters.isEmpty {
-            let waiter = waiters.removeFirst()
-            waiter.continuation.resume(returning: packet)
             return false
         }
 
@@ -170,37 +119,20 @@ private actor ShadowClientVideoPacketQueue {
     }
 
     func next() async -> ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket? {
-        if bufferedCount > 0 {
-            let packet = bufferedPackets[headIndex]
-            bufferedPackets[headIndex] = nil
-            headIndex = (headIndex + 1) % capacity
-            bufferedCount -= 1
-            return packet
-        }
-        if closed {
-            return nil
-        }
-
-        let waiterID = nextWaiterID
-        nextWaiterID &+= 1
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                if Task.isCancelled || closed {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                waiters.append(
-                    Waiter(
-                        id: waiterID,
-                        continuation: continuation
-                    )
-                )
+        while !Task.isCancelled {
+            if bufferedCount > 0 {
+                let packet = bufferedPackets[headIndex]
+                bufferedPackets[headIndex] = nil
+                headIndex = (headIndex + 1) % capacity
+                bufferedCount -= 1
+                return packet
             }
-        } onCancel: {
-            Task {
-                await self.cancelWaiter(waiterID: waiterID)
+            if closed {
+                return nil
             }
+            try? await Task.sleep(for: Self.idlePollInterval)
         }
+        return nil
     }
 
     func close() {
@@ -211,18 +143,6 @@ private actor ShadowClientVideoPacketQueue {
         bufferedPackets = Array(repeating: nil, count: capacity)
         headIndex = 0
         bufferedCount = 0
-        for waiter in waiters {
-            waiter.continuation.resume(returning: nil)
-        }
-        waiters.removeAll(keepingCapacity: false)
-    }
-
-    private func cancelWaiter(waiterID: Int64) {
-        guard let waiterIndex = waiters.firstIndex(where: { $0.id == waiterID }) else {
-            return
-        }
-        let waiter = waiters.remove(at: waiterIndex)
-        waiter.continuation.resume(returning: nil)
     }
 }
 
