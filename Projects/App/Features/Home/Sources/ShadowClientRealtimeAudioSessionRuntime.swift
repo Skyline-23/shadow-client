@@ -438,26 +438,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     consecutivePayloadTypeMismatchCount = 0
                     payloadTypeMismatchPressure = max(0, payloadTypeMismatchPressure - 1)
 
-                    let readyPackets = jitterBuffer.enqueue(
-                        packet,
-                        preferredPayloadType: currentPayloadType,
-                        nowUptime: ProcessInfo.processInfo.systemUptime
-                    )
-                    if readyPackets.isEmpty {
-                        continue
-                    }
-
-                    if let cooldownDeadline = decodeCooldownDeadline {
-                        if clock.now < cooldownDeadline {
-                            registerOutputQueuePressureDrop(readyPackets.count, "decode-cooldown")
-                            continue
-                        }
-                        decodeCooldownDeadline = nil
-                    }
-                    let availableOutputSlots = audioOutput.availableEnqueueSlots
-                    if availableOutputSlots <= 0 {
+                    @discardableResult
+                    func handleOutputQueueSaturation(dropCount: Int) -> Bool {
                         consecutiveOutputQueueSaturationCount += 1
-                        registerOutputQueuePressureDrop(readyPackets.count, "skip-decode")
+                        registerOutputQueuePressureDrop(max(1, dropCount), "skip-decode")
                         if consecutiveOutputQueueSaturationCount == decodeSaturationBurstThreshold ||
                             (
                                 consecutiveOutputQueueSaturationCount > decodeSaturationBurstThreshold &&
@@ -472,7 +456,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 )
                                 consecutiveOutputQueueSaturationCount = 0
                                 decodeCooldownDeadline = nil
-                                continue
+                                return true
                             }
                         }
                         if consecutiveOutputQueueSaturationCount >= decodeSaturationBurstThreshold {
@@ -489,6 +473,48 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                     "Audio decode cooldown activated due to sustained output queue saturation (count=\(outputQueueDecodeCooldownActivationCount, privacy: .public), trimmed=\(trimmedCount, privacy: .public))"
                                 )
                             }
+                        }
+                        return false
+                    }
+
+                    let nowUptime = ProcessInfo.processInfo.systemUptime
+                    let preDrainAvailableOutputSlots = audioOutput.availableEnqueueSlots
+                    let isDecodeCooldownActive: Bool
+                    if let cooldownDeadline = decodeCooldownDeadline {
+                        isDecodeCooldownActive = clock.now < cooldownDeadline
+                    } else {
+                        isDecodeCooldownActive = false
+                    }
+                    let readyPacketDrainLimit: Int? =
+                        (isDecodeCooldownActive || preDrainAvailableOutputSlots <= 0) ? 0 : nil
+                    let readyPackets = jitterBuffer.enqueue(
+                        packet,
+                        preferredPayloadType: currentPayloadType,
+                        nowUptime: nowUptime,
+                        maximumReadyPackets: readyPacketDrainLimit
+                    )
+                    if readyPackets.isEmpty {
+                        if isDecodeCooldownActive {
+                            registerOutputQueuePressureDrop(1, "decode-cooldown-hold")
+                        } else if preDrainAvailableOutputSlots <= 0 {
+                            if handleOutputQueueSaturation(dropCount: 1) {
+                                continue
+                            }
+                        }
+                        continue
+                    }
+
+                    if let cooldownDeadline = decodeCooldownDeadline {
+                        if clock.now < cooldownDeadline {
+                            registerOutputQueuePressureDrop(readyPackets.count, "decode-cooldown")
+                            continue
+                        }
+                        decodeCooldownDeadline = nil
+                    }
+                    let availableOutputSlots = audioOutput.availableEnqueueSlots
+                    if availableOutputSlots <= 0 {
+                        if handleOutputQueueSaturation(dropCount: readyPackets.count) {
+                            continue
                         }
                         continue
                     }
@@ -1481,7 +1507,8 @@ private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
     mutating func enqueue(
         _ packet: ShadowClientRealtimeAudioSessionRuntime.RTPPacket,
         preferredPayloadType: Int,
-        nowUptime: TimeInterval
+        nowUptime: TimeInterval,
+        maximumReadyPackets: Int? = nil
     ) -> [ShadowClientRealtimeAudioSessionRuntime.RTPPacket] {
         if lockedPayloadType == nil {
             lockedPayloadType = preferredPayloadType
@@ -1495,8 +1522,12 @@ private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
             expectedSequence = packet.sequenceNumber
         }
 
+        let readyPacketLimit = min(
+            maximumDrainBatch,
+            max(0, maximumReadyPackets ?? maximumDrainBatch)
+        )
         var readyPackets: [ShadowClientRealtimeAudioSessionRuntime.RTPPacket] = []
-        while readyPackets.count < maximumDrainBatch, let expected = expectedSequence {
+        while readyPackets.count < readyPacketLimit, let expected = expectedSequence {
             if let nextPacket = packetsBySequence.removeValue(forKey: expected) {
                 readyPackets.append(nextPacket)
                 clearPendingGapWaitIfTracking(sequence: expected)
