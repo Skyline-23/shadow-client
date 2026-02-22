@@ -404,9 +404,6 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     pendingPayloadTypeCandidateCount = 0
                     consecutivePayloadTypeMismatchCount = 0
                     payloadTypeMismatchPressure = max(0, payloadTypeMismatchPressure - 1)
-                    if !loggedUnexpectedPayloadTypes.isEmpty {
-                        loggedUnexpectedPayloadTypes.removeAll(keepingCapacity: true)
-                    }
 
                     let readyPackets = jitterBuffer.enqueue(
                         packet,
@@ -1112,34 +1109,26 @@ private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
         }
 
         var readyPackets: [ShadowClientRealtimeAudioSessionRuntime.RTPPacket] = []
-        while readyPackets.count < maximumDrainBatch,
-              let expectedSequence,
-              let nextPacket = packetsBySequence.removeValue(forKey: expectedSequence)
-        {
-            readyPackets.append(nextPacket)
-            self.expectedSequence = expectedSequence &+ 1
-        }
-
-        if readyPackets.isEmpty, packetsBySequence.count >= targetDepth {
-            let sortedSequenceNumbers = packetsBySequence.keys.sorted()
-            if let firstSequence = sortedSequenceNumbers.first {
-                expectedSequence = firstSequence
-                while readyPackets.count < maximumDrainBatch,
-                      let expectedSequence,
-                      let nextPacket = packetsBySequence.removeValue(forKey: expectedSequence)
-                {
-                    readyPackets.append(nextPacket)
-                    self.expectedSequence = expectedSequence &+ 1
-                }
+        while readyPackets.count < maximumDrainBatch, let expected = expectedSequence {
+            if let nextPacket = packetsBySequence.removeValue(forKey: expected) {
+                readyPackets.append(nextPacket)
+                expectedSequence = expected &+ 1
+                continue
             }
+
+            let canSkipMissingSequence =
+                !readyPackets.isEmpty || packetsBySequence.count >= targetDepth
+            guard canSkipMissingSequence,
+                  let nextSequence = nextAvailableSequence(after: expected)
+            else {
+                break
+            }
+            expectedSequence = nextSequence
         }
 
         if packetsBySequence.count > maximumDepth {
-            let sortedSequenceNumbers = packetsBySequence.keys.sorted()
             let overflowCount = packetsBySequence.count - maximumDepth
-            for sequence in sortedSequenceNumbers.prefix(overflowCount) {
-                packetsBySequence.removeValue(forKey: sequence)
-            }
+            removeOldestBufferedPackets(count: overflowCount)
         }
 
         return readyPackets
@@ -1151,15 +1140,72 @@ private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
             return 0
         }
 
-        let sortedSequenceNumbers = packetsBySequence.keys.sorted()
         let overflowCount = packetsBySequence.count - normalizedLimit
-        for sequence in sortedSequenceNumbers.prefix(overflowCount) {
+        removeOldestBufferedPackets(count: overflowCount)
+        return overflowCount
+    }
+
+    private mutating func removeOldestBufferedPackets(count: Int) {
+        guard count > 0, !packetsBySequence.isEmpty else {
+            return
+        }
+
+        let orderedSequences = orderedBufferedSequences()
+        for sequence in orderedSequences.prefix(count) {
             packetsBySequence.removeValue(forKey: sequence)
         }
-        if let earliestSequence = packetsBySequence.keys.min() {
-            expectedSequence = earliestSequence
+
+        guard !packetsBySequence.isEmpty else {
+            expectedSequence = nil
+            return
         }
-        return overflowCount
+        if let expected = expectedSequence,
+           packetsBySequence[expected] != nil
+        {
+            return
+        }
+        if let expected = expectedSequence,
+           let nextSequence = nextAvailableSequence(after: expected)
+        {
+            expectedSequence = nextSequence
+            return
+        }
+        expectedSequence = packetsBySequence.keys.min()
+    }
+
+    private func orderedBufferedSequences() -> [UInt16] {
+        guard let expected = expectedSequence else {
+            return packetsBySequence.keys.sorted()
+        }
+        return packetsBySequence.keys.sorted { lhs, rhs in
+            let lhsDistance = Self.sequenceDistanceForward(from: expected, to: lhs)
+            let rhsDistance = Self.sequenceDistanceForward(from: expected, to: rhs)
+            if lhsDistance == rhsDistance {
+                return lhs < rhs
+            }
+            return lhsDistance < rhsDistance
+        }
+    }
+
+    private func nextAvailableSequence(after expected: UInt16) -> UInt16? {
+        guard !packetsBySequence.isEmpty else {
+            return nil
+        }
+        return packetsBySequence.keys.min { lhs, rhs in
+            let lhsDistance = Self.sequenceDistanceForward(from: expected, to: lhs)
+            let rhsDistance = Self.sequenceDistanceForward(from: expected, to: rhs)
+            if lhsDistance == rhsDistance {
+                return lhs < rhs
+            }
+            return lhsDistance < rhsDistance
+        }
+    }
+
+    private static func sequenceDistanceForward(
+        from: UInt16,
+        to: UInt16
+    ) -> UInt16 {
+        to &- from
     }
 }
 

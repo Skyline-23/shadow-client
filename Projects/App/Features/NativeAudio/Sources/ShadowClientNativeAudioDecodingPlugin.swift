@@ -38,7 +38,8 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
 
     private let decoder: OpusDecoder
     private let maximumSamplesPerChannel: Int
-    private let expectedFrameSizesPerChannel: Set<Int>
+    private let minimumSamplesPerChannelStep: Int
+    private let maximumDecodedSamplesPerChannel: Int
     private let decodeLock = NSLock()
     private var int16DecodeScratch: [Int16]
     private let int16ToFloatScale = 1.0 / Float(Int16.max)
@@ -72,7 +73,11 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
         )
         decoder = try OpusDecoder(configuration: configuration)
         maximumSamplesPerChannel = configuration.maximumSamplesPerChannel
-        expectedFrameSizesPerChannel = Self.expectedFrameSizesPerChannel(sampleRate: sampleRate)
+        minimumSamplesPerChannelStep = max(1, sampleRate / 400)
+        maximumDecodedSamplesPerChannel = min(
+            maximumSamplesPerChannel,
+            minimumSamplesPerChannelStep * 48
+        )
         int16DecodeScratch = [Int16](
             repeating: 0,
             count: max(1, maximumSamplesPerChannel * max(1, channels))
@@ -98,7 +103,7 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
         guard !payload.isEmpty else {
             return nil
         }
-        guard isLikelyValidOpusPayload(payload) else {
+        guard payload.count <= 4_096 else {
             return nil
         }
 
@@ -116,7 +121,7 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
             guard decodedFrameCount <= maximumSamplesPerChannel else {
                 return nil
             }
-            guard expectedFrameSizesPerChannel.contains(decodedFrameCount) else {
+            guard isLikelySupportedFrameCount(decodedFrameCount) else {
                 return nil
             }
 
@@ -144,35 +149,13 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
         }
     }
 
-    private func isLikelyValidOpusPayload(_ payload: Data) -> Bool {
-        guard !payload.isEmpty else {
+    private func isLikelySupportedFrameCount(_ decodedFrameCount: Int) -> Bool {
+        guard decodedFrameCount > 0 else {
             return false
         }
-        guard payload.count <= 1_500 else {
+        guard decodedFrameCount <= maximumDecodedSamplesPerChannel else {
             return false
         }
-
-        let toc = payload[payload.startIndex]
-        switch toc & 0x03 {
-        case 0, 1, 2:
-            return true
-        case 3:
-            guard payload.count >= 2 else {
-                return false
-            }
-            let encodedFrameCount = Int(payload[payload.startIndex + 1] & 0x3F)
-            return encodedFrameCount > 0 && encodedFrameCount <= 48
-        default:
-            return false
-        }
-    }
-
-    private static func expectedFrameSizesPerChannel(sampleRate: Int) -> Set<Int> {
-        let durationsMs = [2.5, 5.0, 10.0, 20.0, 40.0, 60.0]
-        return Set(
-            durationsMs.map { duration in
-                max(1, Int((Double(sampleRate) * (duration / 1_000.0)).rounded()))
-            }
-        )
+        return decodedFrameCount.isMultiple(of: minimumSamplesPerChannelStep)
     }
 }
