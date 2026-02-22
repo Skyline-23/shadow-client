@@ -27,13 +27,12 @@ extension ShadowClientRealtimeSessionRuntimeError: LocalizedError {
 }
 
 private actor ShadowClientVideoDecodeQueue {
-    private static let idlePollInterval: Duration = .milliseconds(2)
-
     private let capacity: Int
     private var bufferedUnits: [ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?]
     private var headIndex = 0
     private var bufferedCount = 0
     private var closed = false
+    private var waitingContinuations: [CheckedContinuation<ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?, Never>] = []
 
     init(capacity: Int) {
         self.capacity = max(2, capacity)
@@ -42,6 +41,12 @@ private actor ShadowClientVideoDecodeQueue {
 
     func enqueue(_ accessUnit: ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit) -> Bool {
         guard !closed else {
+            return false
+        }
+
+        if !waitingContinuations.isEmpty {
+            let continuation = waitingContinuations.removeFirst()
+            continuation.resume(returning: accessUnit)
             return false
         }
 
@@ -59,20 +64,20 @@ private actor ShadowClientVideoDecodeQueue {
     }
 
     func next() async -> ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit? {
-        while !Task.isCancelled {
-            if bufferedCount > 0 {
-                let unit = bufferedUnits[headIndex]
-                bufferedUnits[headIndex] = nil
-                headIndex = (headIndex + 1) % capacity
-                bufferedCount -= 1
-                return unit
-            }
-            if closed {
-                return nil
-            }
-            try? await Task.sleep(for: Self.idlePollInterval)
+        if bufferedCount > 0 {
+            let unit = bufferedUnits[headIndex]
+            bufferedUnits[headIndex] = nil
+            headIndex = (headIndex + 1) % capacity
+            bufferedCount -= 1
+            return unit
         }
-        return nil
+        if closed {
+            return nil
+        }
+
+        return await withCheckedContinuation { continuation in
+            waitingContinuations.append(continuation)
+        }
     }
 
     func close() {
@@ -83,11 +88,15 @@ private actor ShadowClientVideoDecodeQueue {
         bufferedUnits = Array(repeating: nil, count: capacity)
         headIndex = 0
         bufferedCount = 0
+        let continuations = waitingContinuations
+        waitingContinuations.removeAll(keepingCapacity: false)
+        for continuation in continuations {
+            continuation.resume(returning: nil)
+        }
     }
 }
 
 private actor ShadowClientVideoPacketQueue {
-    private static let idlePollInterval: Duration = .milliseconds(2)
     private static let dropLogInterval = 120
 
     private let capacity: Int
@@ -96,6 +105,7 @@ private actor ShadowClientVideoPacketQueue {
     private var bufferedCount = 0
     private var closed = false
     private var droppedOldestCount = 0
+    private var waitingContinuations: [CheckedContinuation<ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket?, Never>] = []
 
     init(capacity: Int) {
         self.capacity = max(4, capacity)
@@ -104,6 +114,12 @@ private actor ShadowClientVideoPacketQueue {
 
     func enqueue(_ packet: ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket) -> Int? {
         guard !closed else {
+            return nil
+        }
+
+        if !waitingContinuations.isEmpty {
+            let continuation = waitingContinuations.removeFirst()
+            continuation.resume(returning: packet)
             return nil
         }
 
@@ -124,20 +140,20 @@ private actor ShadowClientVideoPacketQueue {
     }
 
     func next() async -> ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket? {
-        while !Task.isCancelled {
-            if bufferedCount > 0 {
-                let packet = bufferedPackets[headIndex]
-                bufferedPackets[headIndex] = nil
-                headIndex = (headIndex + 1) % capacity
-                bufferedCount -= 1
-                return packet
-            }
-            if closed {
-                return nil
-            }
-            try? await Task.sleep(for: Self.idlePollInterval)
+        if bufferedCount > 0 {
+            let packet = bufferedPackets[headIndex]
+            bufferedPackets[headIndex] = nil
+            headIndex = (headIndex + 1) % capacity
+            bufferedCount -= 1
+            return packet
         }
-        return nil
+        if closed {
+            return nil
+        }
+
+        return await withCheckedContinuation { continuation in
+            waitingContinuations.append(continuation)
+        }
     }
 
     func close() {
@@ -149,6 +165,11 @@ private actor ShadowClientVideoPacketQueue {
         headIndex = 0
         bufferedCount = 0
         droppedOldestCount = 0
+        let continuations = waitingContinuations
+        waitingContinuations.removeAll(keepingCapacity: false)
+        for continuation in continuations {
+            continuation.resume(returning: nil)
+        }
     }
 }
 
