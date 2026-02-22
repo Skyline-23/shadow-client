@@ -80,6 +80,39 @@ private actor ShadowClientVideoDecodeQueue {
         }
     }
 
+    func nextWithBackpressureTrim(
+        maxBufferedUnits: Int
+    ) async -> (unit: ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?, droppedCount: Int) {
+        let boundedMaxBufferedUnits = max(1, min(maxBufferedUnits, capacity))
+        var droppedCount = 0
+        if bufferedCount > boundedMaxBufferedUnits {
+            droppedCount = bufferedCount - boundedMaxBufferedUnits
+            var dropsRemaining = droppedCount
+            while dropsRemaining > 0 {
+                bufferedUnits[headIndex] = nil
+                headIndex = (headIndex + 1) % capacity
+                bufferedCount -= 1
+                dropsRemaining -= 1
+            }
+        }
+
+        if bufferedCount > 0 {
+            let unit = bufferedUnits[headIndex]
+            bufferedUnits[headIndex] = nil
+            headIndex = (headIndex + 1) % capacity
+            bufferedCount -= 1
+            return (unit, droppedCount)
+        }
+        if closed {
+            return (nil, droppedCount)
+        }
+
+        let unit = await withCheckedContinuation { continuation in
+            waitingContinuations.append(continuation)
+        }
+        return (unit, droppedCount)
+    }
+
     func close() {
         guard !closed else {
             return
@@ -93,6 +126,12 @@ private actor ShadowClientVideoDecodeQueue {
         for continuation in continuations {
             continuation.resume(returning: nil)
         }
+    }
+
+    func removeAll() {
+        bufferedUnits = Array(repeating: nil, count: capacity)
+        headIndex = 0
+        bufferedCount = 0
     }
 }
 
@@ -112,22 +151,29 @@ private actor ShadowClientVideoPacketQueue {
         self.bufferedPackets = Array(repeating: nil, count: self.capacity)
     }
 
-    func enqueue(_ packet: ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket) -> Int? {
+    struct EnqueueResult: Sendable {
+        let droppedOldest: Bool
+        let droppedCountForLog: Int?
+    }
+
+    func enqueue(_ packet: ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket) -> EnqueueResult {
         guard !closed else {
-            return nil
+            return .init(droppedOldest: false, droppedCountForLog: nil)
         }
 
         if !waitingContinuations.isEmpty {
             let continuation = waitingContinuations.removeFirst()
             continuation.resume(returning: packet)
-            return nil
+            return .init(droppedOldest: false, droppedCountForLog: nil)
         }
 
+        var droppedOldest = false
         var droppedCountForLog: Int?
         if bufferedCount >= capacity {
             bufferedPackets[headIndex] = nil
             headIndex = (headIndex + 1) % capacity
             bufferedCount -= 1
+            droppedOldest = true
             droppedOldestCount += 1
             if droppedOldestCount == 1 || droppedOldestCount.isMultiple(of: Self.dropLogInterval) {
                 droppedCountForLog = droppedOldestCount
@@ -136,7 +182,7 @@ private actor ShadowClientVideoPacketQueue {
         let tailIndex = (headIndex + bufferedCount) % capacity
         bufferedPackets[tailIndex] = packet
         bufferedCount += 1
-        return droppedCountForLog
+        return .init(droppedOldest: droppedOldest, droppedCountForLog: droppedCountForLog)
     }
 
     func next() async -> ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket? {
@@ -170,6 +216,13 @@ private actor ShadowClientVideoPacketQueue {
         for continuation in continuations {
             continuation.resume(returning: nil)
         }
+    }
+
+    func removeAll() {
+        bufferedPackets = Array(repeating: nil, count: capacity)
+        headIndex = 0
+        bufferedCount = 0
+        droppedOldestCount = 0
     }
 }
 
@@ -226,6 +279,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var hasRenderedFirstFrame = false
     private var hasPublishedRenderingState = false
     private var frameAssemblyLogCount = 0
+    private var videoReceiveQueueDropCount = 0
+    private var firstVideoReceiveQueueDropUptime: TimeInterval = 0
+    private var lastVideoReceiveQueueRecoveryUptime: TimeInterval = 0
 
     public init(
         surfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init(),
@@ -302,6 +358,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         hasRenderedFirstFrame = false
         hasPublishedRenderingState = false
         frameAssemblyLogCount = 0
+        videoReceiveQueueDropCount = 0
+        firstVideoReceiveQueueDropUptime = 0
+        lastVideoReceiveQueueRecoveryUptime = 0
 
         await MainActor.run {
             sessionSurfaceContext.reset()
@@ -357,6 +416,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         receiveTask = Task { [weak self] in
             await self?.runReceiveLoop(
                 client: client,
+                codec: track.codec,
                 payloadType: track.rtpPayloadType,
                 packetQueue: packetQueue
             )
@@ -423,6 +483,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         hasRenderedFirstFrame = false
         hasPublishedRenderingState = false
         frameAssemblyLogCount = 0
+        videoReceiveQueueDropCount = 0
+        firstVideoReceiveQueueDropUptime = 0
+        lastVideoReceiveQueueRecoveryUptime = 0
         await MainActor.run {
             surfaceContext.reset()
         }
@@ -437,6 +500,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
     private func runReceiveLoop(
         client: ShadowClientRTSPInterleavedClient,
+        codec: ShadowClientVideoCodec,
         payloadType: Int,
         packetQueue: ShadowClientVideoPacketQueue
     ) async {
@@ -445,13 +509,16 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             try await client.receiveInterleavedVideoPackets(
                 payloadType: payloadType
             ) { payload, marker in
-                let droppedCountForLog = await packetQueue.enqueue(
+                let enqueueResult = await packetQueue.enqueue(
                     .init(payload: payload, marker: marker)
                 )
-                if let droppedCountForLog {
+                if let droppedCountForLog = enqueueResult.droppedCountForLog {
                     runtimeLogger.notice(
                         "Video receive queue dropped oldest packet due to sustained ingress pressure (count=\(droppedCountForLog, privacy: .public))"
                     )
+                }
+                if enqueueResult.droppedOldest {
+                    await self.handleVideoReceiveQueueBackpressure(codec: codec)
                 }
             }
         } catch {
@@ -504,8 +571,16 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
     private func runDecodeLoop() async {
         while !Task.isCancelled {
-            guard let accessUnit = await dequeueVideoAccessUnit() else {
+            let dequeueResult = await dequeueVideoAccessUnit()
+            guard let accessUnit = dequeueResult.accessUnit else {
                 return
+            }
+            if dequeueResult.droppedCount > 0 {
+                await handleVideoDecodeQueueBackpressure(
+                    codec: accessUnit.codec,
+                    droppedCount: dequeueResult.droppedCount,
+                    source: "consumer-trim"
+                )
             }
 
             do {
@@ -538,11 +613,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
     }
 
-    private func dequeueVideoAccessUnit() async -> VideoAccessUnit? {
+    private func dequeueVideoAccessUnit() async -> (accessUnit: VideoAccessUnit?, droppedCount: Int) {
         guard let videoDecodeQueue else {
-            return nil
+            return (nil, 0)
         }
-        return await videoDecodeQueue.next()
+        let result = await videoDecodeQueue.nextWithBackpressureTrim(
+            maxBufferedUnits: ShadowClientRealtimeSessionDefaults.videoDecodeQueueConsumerMaxBufferedUnits
+        )
+        return (result.unit, result.droppedCount)
     }
 
     private func closeVideoPacketQueue() async {
@@ -557,6 +635,18 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             await videoDecodeQueue.close()
         }
         self.videoDecodeQueue = nil
+    }
+
+    private func flushVideoPipelineForRecovery(codec: ShadowClientVideoCodec) async {
+        if let videoPacketQueue {
+            await videoPacketQueue.removeAll()
+        }
+        if let videoDecodeQueue {
+            await videoDecodeQueue.removeAll()
+        }
+        if codec == .av1 {
+            shadowClientNVDepacketizer.reset()
+        }
     }
 
     private func failStreamingSession(message: String) async {
@@ -627,7 +717,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
     }
 
-    private func handleVideoDecodeQueueBackpressure(codec: ShadowClientVideoCodec) async {
+    private func handleVideoDecodeQueueBackpressure(
+        codec: ShadowClientVideoCodec,
+        droppedCount: Int = 1,
+        source: StaticString = "enqueue-overflow"
+    ) async {
+        guard droppedCount > 0 else {
+            return
+        }
         let now = ProcessInfo.processInfo.systemUptime
         if firstVideoDecodeQueueDropUptime == 0 ||
             now - firstVideoDecodeQueueDropUptime > ShadowClientRealtimeSessionDefaults.videoDecodeQueueDropWindowSeconds
@@ -635,17 +732,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             firstVideoDecodeQueueDropUptime = now
             videoDecodeQueueDropCount = 0
         }
-        videoDecodeQueueDropCount += 1
+        videoDecodeQueueDropCount += droppedCount
 
-        if videoDecodeQueueDropCount == 1 || videoDecodeQueueDropCount.isMultiple(of: 12) {
+        if videoDecodeQueueDropCount == droppedCount || videoDecodeQueueDropCount.isMultiple(of: 12) {
             logger.notice(
-                "Video decode queue backpressure detected for codec \(String(describing: codec), privacy: .public) (dropped-oldest=\(self.videoDecodeQueueDropCount, privacy: .public))"
+                "Video decode queue backpressure detected for codec \(String(describing: codec), privacy: .public) (source=\(source, privacy: .public), dropped-oldest=\(self.videoDecodeQueueDropCount, privacy: .public))"
             )
         }
 
-        guard codec == .av1 else {
-            return
-        }
         guard videoDecodeQueueDropCount >= ShadowClientRealtimeSessionDefaults.videoDecodeQueueDropRecoveryThreshold else {
             return
         }
@@ -656,7 +750,39 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastVideoDecodeQueueRecoveryUptime = now
         videoDecodeQueueDropCount = 0
         firstVideoDecodeQueueDropUptime = 0
-        logger.error("AV1 decode queue remained saturated; requesting recovery frame to resynchronize")
+        logger.error(
+            "Video decode queue remained saturated for codec \(String(describing: codec), privacy: .public); requesting recovery frame to resynchronize"
+        )
+        await flushVideoPipelineForRecovery(codec: codec)
+        if let rtspClient {
+            await rtspClient.requestVideoRecoveryFrame()
+        }
+    }
+
+    private func handleVideoReceiveQueueBackpressure(codec: ShadowClientVideoCodec) async {
+        let now = ProcessInfo.processInfo.systemUptime
+        if firstVideoReceiveQueueDropUptime == 0 ||
+            now - firstVideoReceiveQueueDropUptime > ShadowClientRealtimeSessionDefaults.videoReceiveQueueDropWindowSeconds
+        {
+            firstVideoReceiveQueueDropUptime = now
+            videoReceiveQueueDropCount = 0
+        }
+        videoReceiveQueueDropCount += 1
+
+        guard videoReceiveQueueDropCount >= ShadowClientRealtimeSessionDefaults.videoReceiveQueueDropRecoveryThreshold else {
+            return
+        }
+        guard now - lastVideoReceiveQueueRecoveryUptime >= ShadowClientRealtimeSessionDefaults.videoReceiveQueueRecoveryCooldownSeconds else {
+            return
+        }
+
+        lastVideoReceiveQueueRecoveryUptime = now
+        videoReceiveQueueDropCount = 0
+        firstVideoReceiveQueueDropUptime = 0
+        logger.error(
+            "Video receive queue remained saturated for codec \(String(describing: codec), privacy: .public); fast-forwarding pipeline and requesting recovery frame"
+        )
+        await flushVideoPipelineForRecovery(codec: codec)
         if let rtspClient {
             await rtspClient.requestVideoRecoveryFrame()
         }
@@ -698,6 +824,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             }
         }
         logger.error("Video depacketizer detected sustained stream discontinuity for codec \(String(describing: codec), privacy: .public); requesting recovery frame")
+        await flushVideoPipelineForRecovery(codec: codec)
         if let rtspClient {
             await rtspClient.requestVideoRecoveryFrame()
         }
@@ -756,6 +883,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         logger.error(
             "Video decoder entered recovery for codec \(String(describing: codec), privacy: .public); resetting decoder and requesting recovery frame"
         )
+        await flushVideoPipelineForRecovery(codec: codec)
         await decoder.reset()
         if let configuration = activeVideoConfiguration {
             await decoder.setPreferredOutputDimensions(
@@ -844,17 +972,23 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         logger.error(
             "Video decoder output stalled for codec \(String(describing: codec), privacy: .public); resetting decoder and requesting recovery frame"
         )
-        await decoder.reset()
-        if let configuration = activeVideoConfiguration {
-            await decoder.setPreferredOutputDimensions(
-                width: configuration.width,
-                height: configuration.height,
-                fps: configuration.fps
-            )
-            await decoder.configureAV1Fallback(
-                hdrEnabled: configuration.enableHDR,
-                yuv444Enabled: configuration.enableYUV444
-            )
+        await flushVideoPipelineForRecovery(codec: codec)
+
+        let shouldResetDecoder = codec != .av1 ||
+            decoderOutputStallRecoveryCount.isMultiple(of: 2)
+        if shouldResetDecoder {
+            await decoder.reset()
+            if let configuration = activeVideoConfiguration {
+                await decoder.setPreferredOutputDimensions(
+                    width: configuration.width,
+                    height: configuration.height,
+                    fps: configuration.fps
+                )
+                await decoder.configureAV1Fallback(
+                    hdrEnabled: configuration.enableHDR,
+                    yuv444Enabled: configuration.enableYUV444
+                )
+            }
         }
         if let rtspClient {
             await rtspClient.requestVideoRecoveryFrame()
