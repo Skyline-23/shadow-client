@@ -861,8 +861,10 @@ func realtimeRuntimeVideoQueuePressurePolicyClassifier() {
 
     #expect(annexBPolicy.allowsDepacketizerPacketShedding)
     #expect(annexBPolicy.allowsDecodeQueueProducerTrim)
+    #expect(annexBPolicy.allowsDecodeQueueConsumerTrim)
     #expect(!strictBoundaryPolicy.allowsDepacketizerPacketShedding)
     #expect(!strictBoundaryPolicy.allowsDecodeQueueProducerTrim)
+    #expect(!strictBoundaryPolicy.allowsDecodeQueueConsumerTrim)
 }
 
 @Test("Realtime runtime decode-queue recovery classifier suppresses producer trim/shed loops")

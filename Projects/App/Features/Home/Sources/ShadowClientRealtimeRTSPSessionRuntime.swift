@@ -81,7 +81,8 @@ private actor ShadowClientVideoDecodeQueue {
     }
 
     func nextWithBackpressureTrim(
-        maxBufferedUnits: Int
+        maxBufferedUnits: Int,
+        allowTrim: Bool = true
     ) async -> (
         unit: ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?,
         droppedCount: Int,
@@ -89,7 +90,7 @@ private actor ShadowClientVideoDecodeQueue {
     ) {
         let boundedMaxBufferedUnits = max(1, min(maxBufferedUnits, capacity))
         var droppedCount = 0
-        if bufferedCount > boundedMaxBufferedUnits {
+        if allowTrim, bufferedCount > boundedMaxBufferedUnits {
             droppedCount = bufferedCount - boundedMaxBufferedUnits
             var dropsRemaining = droppedCount
             while dropsRemaining > 0 {
@@ -933,8 +934,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         let now = ProcessInfo.processInfo.systemUptime
         let maxBufferedUnits = effectiveVideoDecodeQueueConsumerMaxBufferedUnits(now: now)
+        let allowConsumerTrim = videoQueuePressurePolicy.allowsDecodeQueueConsumerTrim
         let result = await videoDecodeQueue.nextWithBackpressureTrim(
-            maxBufferedUnits: maxBufferedUnits
+            maxBufferedUnits: maxBufferedUnits,
+            allowTrim: allowConsumerTrim
         )
         return (result.unit, result.droppedCount, result.remainingBufferedCount)
     }
@@ -1631,7 +1634,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         guard lastObservedDecodeQueueBacklog >= renderPacingBacklogThreshold else {
             return false
         }
-        guard isVideoPipelineUnderIngressPressure(now: now) || pendingVideoRecoveryRequest else {
+        guard isVideoPipelineUnderIngressPressure(now: now) else {
+            return false
+        }
+        guard !pendingVideoRecoveryRequest else {
             return false
         }
 
