@@ -414,6 +414,25 @@ func rtpPayloadParserAcceptsMoonlightExtensionLengthField() throws {
     #expect(parsed.payload == Data([0xAA, 0xBB, 0xCC, 0xDD]))
 }
 
+@Test("RTP payload parser supports sliced Data input with non-zero start index")
+func rtpPayloadParserSupportsSlicedDataInput() throws {
+    let packet = Data([
+        0x90, 0x00, 0x00, 0x01, // v=2, X=1, PT=0, sequence=1
+        0x00, 0x00, 0x00, 0x02, // timestamp
+        0x00, 0x00, 0x00, 0x03, // SSRC
+        0xBE, 0xDE, 0x00, 0x01, // extension header (1 word)
+        0xAA, 0xBB, 0xCC, 0xDD, // extension payload (4 bytes)
+    ])
+    let wrapped = Data([0xFE, 0xED]) + packet
+    let slicedPacket = wrapped[2..<wrapped.count]
+
+    let parsed = try ShadowClientRTPPacketPayloadParser.parse(slicedPacket)
+
+    #expect(parsed.sequenceNumber == 1)
+    #expect(parsed.payload == Data([0xAA, 0xBB, 0xCC, 0xDD]))
+    #expect(parsed.payload.startIndex == 0)
+}
+
 @Test("Video RTP reorder buffer reorders nearby out-of-order packets")
 func videoRtpReorderBufferReordersNearbyPackets() {
     var reorderBuffer = ShadowClientRTPVideoReorderBuffer(
@@ -674,6 +693,35 @@ func av1DepacketizerSupportsSinglePacketSofEofFrame() {
     let frame = depacketizer.ingest(payload: packet, marker: true)
 
     #expect(frame == framePayload)
+}
+
+@Test("AV1 depacketizer handles sliced packet buffers without index trap")
+func av1DepacketizerHandlesSlicedPacketBuffers() {
+    var depacketizer = ShadowClientAV1RTPDepacketizer()
+    let frameIndex: UInt32 = 91
+    let sofPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 700,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF,
+        payloadBytes: [0xAA, 0xBB],
+        includeFrameHeaderWithLastPayloadLength: 3
+    )
+    let eofPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 701,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagEOF,
+        payloadBytes: [0xCC, 0xDD, 0xEE, 0x00, 0x00]
+    )
+
+    let wrappedSOF = Data([0x11, 0x22]) + sofPacket
+    let wrappedEOF = Data([0x33, 0x44]) + eofPacket
+    let slicedSOF = wrappedSOF[2..<wrappedSOF.count]
+    let slicedEOF = wrappedEOF[2..<wrappedEOF.count]
+
+    #expect(depacketizer.ingest(payload: slicedSOF, marker: false) == nil)
+    let frame = depacketizer.ingest(payload: slicedEOF, marker: true)
+
+    #expect(frame == Data([0xAA, 0xBB, 0xCC, 0xDD, 0xEE]))
 }
 
 @Test("AV1 depacketizer ignores packets without picture-data flag")

@@ -185,10 +185,15 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
             return nil
         }
 
-        let streamPacketIndexRaw = readUInt32LE(payload, at: 0)
-        let frameIndex = readUInt32LE(payload, at: 4)
-        let flags = payload[8]
-        let multiFecBlocks = payload[11]
+        guard let streamPacketIndexRaw = readUInt32LE(payload, at: 0),
+              let frameIndex = readUInt32LE(payload, at: 4)
+        else {
+            return nil
+        }
+        let flagsIndex = payload.startIndex + 8
+        let multiFecBlocksIndex = payload.startIndex + 11
+        let flags = payload[flagsIndex]
+        let multiFecBlocks = payload[multiFecBlocksIndex]
 
         let streamPacketIndex = (streamPacketIndexRaw >> 8) & Self.streamPacketIndexMask
         let fecCurrentBlockNumber = (multiFecBlocks >> 4) & 0x03
@@ -266,7 +271,10 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         }
         let lastPayloadLength: UInt16
         if tailTruncationStrategy == .trimUsingLastPacketLength {
-            lastPayloadLength = readUInt16LE(payload, at: 4)
+            guard let parsedLength = readUInt16LE(payload, at: 4) else {
+                return nil
+            }
+            lastPayloadLength = parsedLength
         } else {
             lastPayloadLength = 0
         }
@@ -322,15 +330,23 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         return Data(payload.prefix(expectedPayloadLength))
     }
 
-    private func readUInt16LE(_ data: Data, at offset: Int) -> UInt16 {
-        return UInt16(data[offset]) | (UInt16(data[offset + 1]) << 8)
+    private func readUInt16LE(_ data: Data, at offset: Int) -> UInt16? {
+        guard offset >= 0, offset + 1 < data.count else {
+            return nil
+        }
+        let baseIndex = data.startIndex + offset
+        return UInt16(data[baseIndex]) | (UInt16(data[baseIndex + 1]) << 8)
     }
 
-    private func readUInt32LE(_ data: Data, at offset: Int) -> UInt32 {
-        return UInt32(data[offset]) |
-            (UInt32(data[offset + 1]) << 8) |
-            (UInt32(data[offset + 2]) << 16) |
-            (UInt32(data[offset + 3]) << 24)
+    private func readUInt32LE(_ data: Data, at offset: Int) -> UInt32? {
+        guard offset >= 0, offset + 3 < data.count else {
+            return nil
+        }
+        let baseIndex = data.startIndex + offset
+        return UInt32(data[baseIndex]) |
+            (UInt32(data[baseIndex + 1]) << 8) |
+            (UInt32(data[baseIndex + 2]) << 16) |
+            (UInt32(data[baseIndex + 3]) << 24)
     }
 
     private func trimLeadingBytesUntilAnnexBStartCode(_ payload: Data) -> Data {

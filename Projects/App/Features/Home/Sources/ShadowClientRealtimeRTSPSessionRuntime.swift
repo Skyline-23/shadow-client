@@ -1231,24 +1231,28 @@ enum ShadowClientRTPPacketPayloadParser {
     static func parse(
         _ payload: Data
     ) throws -> ShadowClientRTPPacketPayloadParseResult {
-        guard payload.count >= ShadowClientRTSPProtocolProfile.rtpMinimumHeaderLength else {
+        // Data slices may carry non-zero startIndex. Normalize once to keep direct
+        // integer indexing stable across parser/depacketizer boundaries.
+        let packetBytes = payload.startIndex == 0 ? payload : Data(payload)
+
+        guard packetBytes.count >= ShadowClientRTSPProtocolProfile.rtpMinimumHeaderLength else {
             throw ShadowClientRTPPacketPayloadParserError.invalidPacket
         }
 
-        let version = payload[0] >> ShadowClientRTSPProtocolProfile.rtpVersionShift
+        let version = packetBytes[0] >> ShadowClientRTSPProtocolProfile.rtpVersionShift
         guard version == ShadowClientRTSPProtocolProfile.rtpVersion else {
             throw ShadowClientRTPPacketPayloadParserError.invalidPacket
         }
 
-        let hasPadding = (payload[0] & ShadowClientRTSPProtocolProfile.rtpPaddingMask) != 0
-        let hasExtension = (payload[0] & ShadowClientRTSPProtocolProfile.rtpExtensionMask) != 0
-        let csrcCount = Int(payload[0] & ShadowClientRTSPProtocolProfile.rtpCSRCCountMask)
-        let marker = (payload[1] & ShadowClientRTSPProtocolProfile.rtpMarkerMask) != 0
-        let payloadType = Int(payload[1] & ShadowClientRTSPProtocolProfile.rtpPayloadTypeMask)
-        let sequenceNumber = (UInt16(payload[2]) << 8) | UInt16(payload[3])
+        let hasPadding = (packetBytes[0] & ShadowClientRTSPProtocolProfile.rtpPaddingMask) != 0
+        let hasExtension = (packetBytes[0] & ShadowClientRTSPProtocolProfile.rtpExtensionMask) != 0
+        let csrcCount = Int(packetBytes[0] & ShadowClientRTSPProtocolProfile.rtpCSRCCountMask)
+        let marker = (packetBytes[1] & ShadowClientRTSPProtocolProfile.rtpMarkerMask) != 0
+        let payloadType = Int(packetBytes[1] & ShadowClientRTSPProtocolProfile.rtpPayloadTypeMask)
+        let sequenceNumber = (UInt16(packetBytes[2]) << 8) | UInt16(packetBytes[3])
 
         var headerLength = ShadowClientRTSPProtocolProfile.rtpMinimumHeaderLength + csrcCount * 4
-        guard payload.count >= headerLength else {
+        guard packetBytes.count >= headerLength else {
             throw ShadowClientRTPPacketPayloadParserError.invalidPacket
         }
 
@@ -1257,14 +1261,14 @@ enum ShadowClientRTPPacketPayloadParser {
             // before NV packet data. The extension length field is not used in the same way
             // as generic RFC3550 streams, so we intentionally skip only these 4 bytes.
             headerLength += 4
-            guard payload.count >= headerLength else {
+            guard packetBytes.count >= headerLength else {
                 throw ShadowClientRTPPacketPayloadParserError.invalidPacket
             }
         }
 
-        var endIndex = payload.count
-        if hasPadding, let padding = payload.last {
-            endIndex = max(headerLength, payload.count - Int(padding))
+        var endIndex = packetBytes.count
+        if hasPadding, let padding = packetBytes.last {
+            endIndex = max(headerLength, packetBytes.count - Int(padding))
         }
         guard endIndex > headerLength else {
             throw ShadowClientRTPPacketPayloadParserError.invalidPacket
@@ -1274,7 +1278,7 @@ enum ShadowClientRTPPacketPayloadParser {
             sequenceNumber: sequenceNumber,
             marker: marker,
             payloadType: payloadType,
-            payload: payload[headerLength..<endIndex]
+            payload: Data(packetBytes[headerLength..<endIndex])
         )
     }
 }
