@@ -133,6 +133,10 @@ private actor ShadowClientVideoDecodeQueue {
         headIndex = 0
         bufferedCount = 0
     }
+
+    func bufferedUnitCount() -> Int {
+        bufferedCount
+    }
 }
 
 private actor ShadowClientVideoPacketQueue {
@@ -223,6 +227,23 @@ private actor ShadowClientVideoPacketQueue {
         headIndex = 0
         bufferedCount = 0
         droppedOldestCount = 0
+    }
+
+    func trimToMostRecent(maxBufferedPackets: Int) -> Int {
+        let boundedMaxBufferedPackets = max(1, min(maxBufferedPackets, capacity))
+        guard bufferedCount > boundedMaxBufferedPackets else {
+            return 0
+        }
+
+        let droppedCount = bufferedCount - boundedMaxBufferedPackets
+        var dropsRemaining = droppedCount
+        while dropsRemaining > 0 {
+            bufferedPackets[headIndex] = nil
+            headIndex = (headIndex + 1) % capacity
+            bufferedCount -= 1
+            dropsRemaining -= 1
+        }
+        return droppedCount
     }
 }
 
@@ -705,6 +726,23 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 return
             }
             if let videoDecodeQueue {
+                let producerSheddingHighWatermark = max(
+                    1,
+                    min(
+                        ShadowClientRealtimeSessionDefaults.videoDecodeQueueCapacity - 1,
+                        ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerSheddingHighWatermark
+                    )
+                )
+                let bufferedUnitCount = await videoDecodeQueue.bufferedUnitCount()
+                if bufferedUnitCount >= producerSheddingHighWatermark {
+                    await handleVideoDecodeQueueBackpressure(
+                        codec: codec,
+                        droppedCount: 1,
+                        source: "producer-shed"
+                    )
+                    return
+                }
+
                 let droppedOldest = await videoDecodeQueue.enqueue(
                     .init(
                         codec: codec,
@@ -772,6 +810,25 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         videoReceiveQueueDropCount += 1
 
+        if videoReceiveQueueDropCount == 1 ||
+            videoReceiveQueueDropCount.isMultiple(of: ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureSignalInterval)
+        {
+            await decoder.reportBackpressureSignal()
+        }
+
+        if videoReceiveQueueDropCount.isMultiple(of: ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureTrimInterval),
+           let videoPacketQueue
+        {
+            let trimmedCount = await videoPacketQueue.trimToMostRecent(
+                maxBufferedPackets: ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureTrimToRecentPackets
+            )
+            if trimmedCount > 0 {
+                logger.notice(
+                    "Video receive queue pressure trim dropped \(trimmedCount, privacy: .public) stale packets for codec \(String(describing: codec), privacy: .public)"
+                )
+            }
+        }
+
         guard videoReceiveQueueDropCount >= ShadowClientRealtimeSessionDefaults.videoReceiveQueueDropRecoveryThreshold else {
             return
         }
@@ -789,6 +846,22 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         if let rtspClient {
             await rtspClient.requestVideoRecoveryFrame()
         }
+    }
+
+    private func isVideoPipelineUnderIngressPressure(now: TimeInterval) -> Bool {
+        let receiveQueueUnderPressure = firstVideoReceiveQueueDropUptime > 0 &&
+            videoReceiveQueueDropCount > 0 &&
+            now - firstVideoReceiveQueueDropUptime <=
+            ShadowClientRealtimeSessionDefaults.videoReceiveQueueDropWindowSeconds
+        if receiveQueueUnderPressure {
+            return true
+        }
+
+        let decodeQueueUnderPressure = firstVideoDecodeQueueDropUptime > 0 &&
+            videoDecodeQueueDropCount > 0 &&
+            now - firstVideoDecodeQueueDropUptime <=
+            ShadowClientRealtimeSessionDefaults.videoDecodeQueueDropWindowSeconds
+        return decodeQueueUnderPressure
     }
 
     private func handleDepacketizerCorruption(codec: ShadowClientVideoCodec) async -> Bool {
@@ -924,6 +997,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 lastDecodedFrameOutputUptime: lastDecodedFrameOutputUptime
             )
             guard shouldRecover else {
+                continue
+            }
+
+            if Self.shouldSuppressDecoderOutputStallRecovery(
+                now: now,
+                lastDecodedFrameOutputUptime: lastDecodedFrameOutputUptime,
+                isPipelineUnderIngressPressure: isVideoPipelineUnderIngressPressure(now: now)
+            ) {
                 continue
             }
 
@@ -1228,6 +1309,21 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         return secondsSinceDecodedFrameOutput >=
             ShadowClientRealtimeSessionDefaults.decoderOutputStallThresholdSeconds
+    }
+
+    static func shouldSuppressDecoderOutputStallRecovery(
+        now: TimeInterval,
+        lastDecodedFrameOutputUptime: TimeInterval,
+        isPipelineUnderIngressPressure: Bool
+    ) -> Bool {
+        guard isPipelineUnderIngressPressure else {
+            return false
+        }
+        guard lastDecodedFrameOutputUptime > 0 else {
+            return false
+        }
+        return (now - lastDecodedFrameOutputUptime) <
+            ShadowClientRealtimeSessionDefaults.decoderOutputStallSuppressionGraceSeconds
     }
 
     static func isTransientInputSendError(_ error: Error) -> Bool {

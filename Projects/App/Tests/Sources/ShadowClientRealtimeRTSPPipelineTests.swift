@@ -799,6 +799,28 @@ func realtimeRuntimeStallDetectorRequiresFirstRenderedFrame() {
     #expect(!shouldRecover)
 }
 
+@Test("Realtime runtime suppresses stall recovery while ingress pressure is active within grace window")
+func realtimeRuntimeSuppressesStallRecoveryForIngressPressure() {
+    let shouldSuppress = ShadowClientRealtimeRTSPSessionRuntime.shouldSuppressDecoderOutputStallRecovery(
+        now: 100.0,
+        lastDecodedFrameOutputUptime: 98.2,
+        isPipelineUnderIngressPressure: true
+    )
+
+    #expect(shouldSuppress)
+}
+
+@Test("Realtime runtime does not suppress stall recovery after ingress-pressure grace window")
+func realtimeRuntimeDoesNotSuppressStallRecoveryAfterIngressPressureGraceWindow() {
+    let shouldSuppress = ShadowClientRealtimeRTSPSessionRuntime.shouldSuppressDecoderOutputStallRecovery(
+        now: 100.0,
+        lastDecodedFrameOutputUptime: 97.0,
+        isPipelineUnderIngressPressure: true
+    )
+
+    #expect(!shouldSuppress)
+}
+
 @Test("Realtime runtime treats canceled input send errors as transient and does not reset control channel")
 func realtimeRuntimeInputSendClassifierTreatsCanceledAsTransient() {
     let nwCanceled = NSError(domain: "Network.NWError", code: 89)
