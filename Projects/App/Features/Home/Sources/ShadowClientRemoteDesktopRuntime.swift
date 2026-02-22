@@ -659,11 +659,21 @@ private actor ShadowClientRemoteInputSendQueue {
     private static let baseCooldownNanoseconds: UInt64 = 50_000_000
     private static let maximumCooldownNanoseconds: UInt64 = 800_000_000
     private static let maximumCooldownExponent = 5
+    private static let maximumPendingInputs = 512
 
     private struct PendingInput: Sendable {
         var event: ShadowClientRemoteInputEvent
         let host: String
         let sessionURL: String
+
+        var isMotionLike: Bool {
+            switch event {
+            case .pointerMoved, .scroll:
+                return true
+            default:
+                return false
+            }
+        }
     }
 
     private let send: @Sendable (
@@ -700,6 +710,9 @@ private actor ShadowClientRemoteInputSendQueue {
     ) {
         compactPendingInputsIfNeeded()
         let pending = PendingInput(event: event, host: host, sessionURL: sessionURL)
+        if shouldDropForBackpressure(pending) {
+            return
+        }
         if !coalesceIntoTail(pending) {
             pendingInputs.append(pending)
         }
@@ -779,6 +792,35 @@ private actor ShadowClientRemoteInputSendQueue {
         }
         pendingInputs.removeFirst(pendingHeadIndex)
         pendingHeadIndex = 0
+    }
+
+    private func shouldDropForBackpressure(_ pending: PendingInput) -> Bool {
+        let pendingCount = pendingInputs.count - pendingHeadIndex
+        guard pendingCount >= Self.maximumPendingInputs else {
+            return false
+        }
+
+        if pending.isMotionLike {
+            return true
+        }
+        if dropOldestMotionEventIfAny() {
+            return false
+        }
+        if pendingHeadIndex < pendingInputs.count {
+            pendingHeadIndex += 1
+        }
+        return false
+    }
+
+    private func dropOldestMotionEventIfAny() -> Bool {
+        guard pendingHeadIndex < pendingInputs.count else {
+            return false
+        }
+        for index in pendingHeadIndex ..< pendingInputs.count where pendingInputs[index].isMotionLike {
+            pendingInputs.remove(at: index)
+            return true
+        }
+        return false
     }
 
     private func coalesceIntoTail(_ pending: PendingInput) -> Bool {
@@ -915,7 +957,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    private func process(command: ShadowClientRemoteDesktopCommand) {
+    private func process(command: ShadowClientRemoteDesktopCommand) async {
         switch command {
         case let .refreshHosts(candidates, preferredHost):
             performRefreshHosts(candidates: candidates, preferredHost: preferredHost)
@@ -930,7 +972,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         case .clearActiveSession:
             performClearActiveSession()
         case let .sendInput(event):
-            performSendInput(event)
+            await performSendInput(event)
         case let .openSessionFlow(host, appTitle):
             performOpenSessionFlow(host: host, appTitle: appTitle)
         case let .selectHost(hostID):
@@ -1349,7 +1391,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    private func performSendInput(_ event: ShadowClientRemoteInputEvent) {
+    private func performSendInput(_ event: ShadowClientRemoteInputEvent) async {
         guard let activeSession else {
             return
         }
@@ -1365,14 +1407,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         lastKnownSessionURL = sessionURL
         let host = activeSession.host
-        let inputSendQueue = inputSendQueue
-        Task {
-            await inputSendQueue.enqueue(
-                event: event,
-                host: host,
-                sessionURL: sessionURL
-            )
-        }
+        await inputSendQueue.enqueue(
+            event: event,
+            host: host,
+            sessionURL: sessionURL
+        )
     }
 
     private static func normalizedSessionURL(_ value: String?) -> String? {
