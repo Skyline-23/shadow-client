@@ -119,11 +119,14 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let depacketizerCorruptionWindowSeconds: TimeInterval = 2.0
     public static let depacketizerCorruptionThreshold = 5
     public static let depacketizerRecoveryCooldownSeconds: TimeInterval = 1.5
+    public static let depacketizerRecoveryAttemptWindowSeconds: TimeInterval = 8.0
+    public static let depacketizerMaxRecoveryAttempts = 3
     public static let av1DepacketizerRecoveryWindowSeconds: TimeInterval = 8.0
     public static let av1MaxDepacketizerRecoveries = 3
     public static let decoderFailureWindowSeconds: TimeInterval = 1.5
     public static let decoderRecoveryCooldownSeconds: TimeInterval = 0.75
     public static let decoderRecoveryAttemptWindowSeconds: TimeInterval = 8.0
+    public static let decoderMaxRecoveryAttempts = 3
     public static let av1MaxDecoderRecoveryAttempts = 2
     public static let decoderOutputStallThresholdSeconds: TimeInterval = 2.2
     public static let decoderOutputStallActiveDecodeWindowSeconds: TimeInterval = 0.45
@@ -137,6 +140,7 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let decoderOutputStallCandidateWindowSeconds: TimeInterval = 3.0
     public static let decoderOutputStallRecoveryCooldownSeconds: TimeInterval = 1.35
     public static let decoderOutputStallRecoveryWindowSeconds: TimeInterval = 8.0
+    public static let decoderMaxOutputStallRecoveries = 4
     public static let av1MaxDecoderOutputStallRecoveries = 4
     public static let av1DecoderOutputStallPressureWindowSeconds: TimeInterval = 6.0
     public static let av1DecoderOutputStallPressureEventsBeforeFallback = 2

@@ -135,16 +135,13 @@ public struct ShadowClientAppShellView: View {
             launchFailureAlertMessage = trimmed
             isLaunchFailureAlertPresented = true
         }
-        .onChange(of: remoteDesktopRuntime.activeSession != nil, initial: false) { _, isActive in
-            guard !isActive else {
-                return
-            }
-            roundTripHistoryRateLimiter.reset()
-            sessionDiagnosticsHistory = .init(
-                maxSamples: ShadowClientUIRuntimeDefaults.diagnosticsHUDSampleHistoryLimit
-            )
-        }
         .onChange(of: remoteDesktopRuntime.activeSession != nil, initial: true) { _, isActive in
+            if !isActive {
+                roundTripHistoryRateLimiter.reset()
+                sessionDiagnosticsHistory = .init(
+                    maxSamples: ShadowClientUIRuntimeDefaults.diagnosticsHUDSampleHistoryLimit
+                )
+            }
             gamepadInputRuntime.setSessionActive(isActive)
             updateActiveSessionProcessActivity(isActive: isActive)
             ShadowClientRemoteSessionOrientationCoordinator.updateSessionState(isActive: isActive)

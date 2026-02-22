@@ -497,6 +497,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var depacketizerCorruptionCount = 0
     private var firstDepacketizerCorruptionUptime: TimeInterval = 0
     private var lastDepacketizerRecoveryUptime: TimeInterval = 0
+    private var depacketizerRecoveryAttemptCount = 0
+    private var firstDepacketizerRecoveryAttemptUptime: TimeInterval = 0
     private var decoderFailureCount = 0
     private var firstDecoderFailureUptime: TimeInterval = 0
     private var lastDecoderRecoveryUptime: TimeInterval = 0
@@ -510,10 +512,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var lastDecodeSubmitUptime: TimeInterval = 0
     private var lastDecodedFrameOutputUptime: TimeInterval = 0
     private let decodedFrameCallbackSignal = ShadowClientRealtimeUptimeSignal()
-    private var av1DepacketizerRecoveryCount = 0
-    private var firstAV1DepacketizerRecoveryUptime: TimeInterval = 0
-    private var av1DecoderOutputStallPressureCount = 0
-    private var firstAV1DecoderOutputStallPressureUptime: TimeInterval = 0
     private var hasRenderedFirstFrame = false
     private var hasPublishedRenderingState = false
     private var frameAssemblyLogCount = 0
@@ -604,6 +602,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         depacketizerCorruptionCount = 0
         firstDepacketizerCorruptionUptime = 0
         lastDepacketizerRecoveryUptime = 0
+        depacketizerRecoveryAttemptCount = 0
+        firstDepacketizerRecoveryAttemptUptime = 0
         decoderFailureCount = 0
         firstDecoderFailureUptime = 0
         lastDecoderRecoveryUptime = 0
@@ -617,10 +617,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastDecodeSubmitUptime = 0
         lastDecodedFrameOutputUptime = 0
         decodedFrameCallbackSignal.reset()
-        av1DepacketizerRecoveryCount = 0
-        firstAV1DepacketizerRecoveryUptime = 0
-        av1DecoderOutputStallPressureCount = 0
-        firstAV1DecoderOutputStallPressureUptime = 0
         hasRenderedFirstFrame = false
         hasPublishedRenderingState = false
         frameAssemblyLogCount = 0
@@ -758,6 +754,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         depacketizerCorruptionCount = 0
         firstDepacketizerCorruptionUptime = 0
         lastDepacketizerRecoveryUptime = 0
+        depacketizerRecoveryAttemptCount = 0
+        firstDepacketizerRecoveryAttemptUptime = 0
         decoderFailureCount = 0
         firstDecoderFailureUptime = 0
         lastDecoderRecoveryUptime = 0
@@ -771,10 +769,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastDecodeSubmitUptime = 0
         lastDecodedFrameOutputUptime = 0
         decodedFrameCallbackSignal.reset()
-        av1DepacketizerRecoveryCount = 0
-        firstAV1DepacketizerRecoveryUptime = 0
-        av1DecoderOutputStallPressureCount = 0
-        firstAV1DecoderOutputStallPressureUptime = 0
         hasRenderedFirstFrame = false
         hasPublishedRenderingState = false
         frameAssemblyLogCount = 0
@@ -961,10 +955,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     decoderFailureCount = 0
                     firstDecoderFailureUptime = 0
                 }
-                if accessUnit.codec == .av1 {
-                    av1DepacketizerRecoveryCount = 0
-                    firstAV1DepacketizerRecoveryUptime = 0
-                }
+                depacketizerRecoveryAttemptCount = 0
+                firstDepacketizerRecoveryAttemptUptime = 0
             } catch {
                 logger.error("\(String(describing: accessUnit.codec), privacy: .public) decode failed: \(error.localizedDescription, privacy: .public)")
                 if accessUnit.codec == .av1 {
@@ -973,13 +965,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 if await handleDecoderFailure(codec: accessUnit.codec, error: error) {
                     continue
                 }
-                if accessUnit.codec == .av1 {
-                    await failStreamingSession(
-                        message: Self.av1RuntimeFallbackMessage(reason: "decoder recovery exhausted")
+                await failStreamingSession(
+                    message: Self.runtimeRecoveryExhaustedMessage(
+                        codec: accessUnit.codec,
+                        reason: "decoder recovery exhausted"
                     )
-                    return
-                }
-                await failStreamingSession(message: error.localizedDescription)
+                )
                 return
             }
         }
@@ -1024,8 +1015,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         if let videoDecodeQueue {
             await videoDecodeQueue.removeAll()
         }
+        shadowClientNVDepacketizer.reset()
         if codec == .av1 {
-            shadowClientNVDepacketizer.reset()
             awaitingAV1SyncFrame = true
             av1SyncGateDroppedFrameCount = 0
             lastAV1DecodeSubmissionContext = nil
@@ -1058,11 +1049,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         case .noFrame:
             return
         case .droppedCorruptFrame:
-            if await handleDepacketizerCorruption(codec: codec),
-               codec == .av1
-            {
+            if await handleDepacketizerCorruption(codec: codec) {
                 throw ShadowClientRealtimeSessionRuntimeError.transportFailure(
-                    Self.av1RuntimeFallbackMessage(reason: "depacketizer recovery exhausted")
+                    Self.runtimeRecoveryExhaustedMessage(
+                        codec: codec,
+                        reason: "depacketizer recovery exhausted"
+                    )
                 )
             }
             return
@@ -1182,7 +1174,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             return
         }
 
-        let status = Self.av1DecodeFailureStatus(from: error)
+        let status = Self.decodeFailureStatus(from: error)
         let metadata = context.depacketizerMetadata
         let statusDescription = Self.optionalOSStatusDescription(status)
         let frameIndexDescription = Self.optionalUInt32Description(metadata?.frameIndex)
@@ -1414,20 +1406,21 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastDepacketizerRecoveryUptime = now
         depacketizerCorruptionCount = 0
         firstDepacketizerCorruptionUptime = 0
-        if codec == .av1 {
-            if firstAV1DepacketizerRecoveryUptime == 0 ||
-                now - firstAV1DepacketizerRecoveryUptime > ShadowClientRealtimeSessionDefaults.av1DepacketizerRecoveryWindowSeconds
-            {
-                firstAV1DepacketizerRecoveryUptime = now
-                av1DepacketizerRecoveryCount = 0
-            }
-            av1DepacketizerRecoveryCount += 1
-            if av1DepacketizerRecoveryCount >= ShadowClientRealtimeSessionDefaults.av1MaxDepacketizerRecoveries {
-                logger.error(
-                    "AV1 depacketizer recovery attempts exceeded threshold; forcing HEVC fallback path"
-                )
-                return true
-            }
+        if firstDepacketizerRecoveryAttemptUptime == 0 ||
+            now - firstDepacketizerRecoveryAttemptUptime >
+            ShadowClientRealtimeSessionDefaults.depacketizerRecoveryAttemptWindowSeconds
+        {
+            firstDepacketizerRecoveryAttemptUptime = now
+            depacketizerRecoveryAttemptCount = 0
+        }
+        depacketizerRecoveryAttemptCount += 1
+        if depacketizerRecoveryAttemptCount >=
+            ShadowClientRealtimeSessionDefaults.depacketizerMaxRecoveryAttempts
+        {
+            logger.error(
+                "Video depacketizer recovery attempts exceeded threshold for codec \(String(describing: codec), privacy: .public); aborting runtime recovery"
+            )
+            return true
         }
         logger.error("Video depacketizer detected sustained stream discontinuity for codec \(String(describing: codec), privacy: .public); requesting recovery frame")
         await flushVideoPipelineForRecovery(codec: codec)
@@ -1445,14 +1438,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         codec: ShadowClientVideoCodec,
         error: any Error
     ) async -> Bool {
-        if codec == .av1, Self.shouldForceAV1Fallback(forDecoderError: error) {
+        if Self.shouldAbortDecoderRecovery(forDecoderError: error) {
             logger.error(
-                "AV1 decoder reported fatal failure; forcing HEVC fallback path"
+                "Video decoder reported fatal failure for codec \(String(describing: codec), privacy: .public); aborting runtime recovery"
             )
-            return false
-        }
-
-        if !hasRenderedFirstFrame, codec != .av1 {
             return false
         }
 
@@ -1494,11 +1483,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             decoderRecoveryAttemptCount = 0
         }
         decoderRecoveryAttemptCount += 1
-        if codec == .av1,
-           decoderRecoveryAttemptCount >= ShadowClientRealtimeSessionDefaults.av1MaxDecoderRecoveryAttempts
+        if decoderRecoveryAttemptCount >= ShadowClientRealtimeSessionDefaults.decoderMaxRecoveryAttempts
         {
             logger.error(
-                "AV1 decoder recovery attempts exceeded threshold; forcing HEVC fallback path"
+                "Video decoder recovery attempts exceeded threshold for codec \(String(describing: codec), privacy: .public); aborting runtime recovery"
             )
             return false
         }
@@ -1546,13 +1534,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 if await handleDecoderFailure(codec: codec, error: pendingDecodeFailure) {
                     continue
                 }
-                if codec == .av1 {
-                    await failStreamingSession(
-                        message: Self.av1RuntimeFallbackMessage(reason: "decoder recovery exhausted")
+                await failStreamingSession(
+                    message: Self.runtimeRecoveryExhaustedMessage(
+                        codec: codec,
+                        reason: "decoder recovery exhausted"
                     )
-                    return
-                }
-                await failStreamingSession(message: pendingDecodeFailure.localizedDescription)
+                )
                 return
             }
 
@@ -1619,14 +1606,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             ) {
                 continue
             }
-            if codec == .av1 {
-                await failStreamingSession(
-                    message: Self.av1RuntimeFallbackMessage(reason: "decoder output stalled")
-                )
-                return
-            }
             await failStreamingSession(
-                message: "Video decoder output stalled while transport remained active."
+                message: Self.runtimeRecoveryExhaustedMessage(
+                    codec: codec,
+                    reason: "decoder output stalled"
+                )
             )
             return
         }
@@ -1677,22 +1661,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         decoderOutputStallRecoveryCount += 1
         let underPressureSignal = isPipelineUnderIngressPressure || hasRecentConsumerTrimPressure
-        let av1PressureFallbackTriggered: Bool
-        if codec == .av1, underPressureSignal {
-            av1PressureFallbackTriggered = registerAV1DecoderOutputStallPressureEvent(now: now)
-        } else {
-            resetAV1DecoderOutputStallPressureTracking()
-            av1PressureFallbackTriggered = false
-        }
-        if codec == .av1,
-           Self.shouldForceAV1FallbackForDecoderOutputStall(
-               recoveryAttemptCount: decoderOutputStallRecoveryCount,
-               maxRecoveryAttempts: ShadowClientRealtimeSessionDefaults.av1MaxDecoderOutputStallRecoveries,
-               pressureFallbackTriggered: av1PressureFallbackTriggered
-           )
-        {
+        if Self.shouldAbortDecoderOutputStallRecovery(
+            recoveryAttemptCount: decoderOutputStallRecoveryCount,
+            maxRecoveryAttempts: ShadowClientRealtimeSessionDefaults.decoderMaxOutputStallRecoveries
+        ) {
             logger.error(
-                "AV1 decoder output stall recoveries exceeded threshold; forcing HEVC fallback path"
+                "Video decoder output stall recoveries exceeded threshold for codec \(String(describing: codec), privacy: .public); aborting runtime recovery"
             )
             return false
         }
@@ -1753,26 +1727,17 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         )
         resetVideoQueuePressureTracking()
         await flushVideoPipelineForRecovery(codec: codec)
-
-        let shouldResetDecoder = codec != .av1 ||
-            (
-                hasRecentConsumerTrimPressure
-                    ? decoderOutputStallRecoveryCount.isMultiple(of: 4)
-                    : decoderOutputStallRecoveryCount.isMultiple(of: 2)
+        await decoder.resetForRecovery()
+        if let configuration = activeVideoConfiguration {
+            await decoder.setPreferredOutputDimensions(
+                width: configuration.width,
+                height: configuration.height,
+                fps: configuration.fps
             )
-        if shouldResetDecoder {
-            await decoder.resetForRecovery()
-            if let configuration = activeVideoConfiguration {
-                await decoder.setPreferredOutputDimensions(
-                    width: configuration.width,
-                    height: configuration.height,
-                    fps: configuration.fps
-                )
-                await decoder.configureAV1Fallback(
-                    hdrEnabled: configuration.enableHDR,
-                    yuv444Enabled: configuration.enableYUV444
-                )
-            }
+            await decoder.configureAV1Fallback(
+                hdrEnabled: configuration.enableHDR,
+                yuv444Enabled: configuration.enableYUV444
+            )
         }
         await requestVideoRecoveryFrame(
             for: codec,
@@ -1784,24 +1749,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             await transitionSurfaceState(.waitingForFirstFrame)
         }
         return true
-    }
-
-    private func registerAV1DecoderOutputStallPressureEvent(now: TimeInterval) -> Bool {
-        if firstAV1DecoderOutputStallPressureUptime == 0 ||
-            now - firstAV1DecoderOutputStallPressureUptime >
-            ShadowClientRealtimeSessionDefaults.av1DecoderOutputStallPressureWindowSeconds
-        {
-            firstAV1DecoderOutputStallPressureUptime = now
-            av1DecoderOutputStallPressureCount = 0
-        }
-        av1DecoderOutputStallPressureCount += 1
-        return av1DecoderOutputStallPressureCount >=
-            ShadowClientRealtimeSessionDefaults.av1DecoderOutputStallPressureEventsBeforeFallback
-    }
-
-    private func resetAV1DecoderOutputStallPressureTracking() {
-        av1DecoderOutputStallPressureCount = 0
-        firstAV1DecoderOutputStallPressureUptime = 0
     }
 
     private func decodeFrame(
@@ -2090,7 +2037,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastDecodedFrameOutputUptime = ProcessInfo.processInfo.systemUptime
         decoderOutputStallCandidateCount = 0
         firstDecoderOutputStallCandidateUptime = 0
-        resetAV1DecoderOutputStallPressureTracking()
         resetVideoQueuePressureTracking()
         pendingVideoRecoveryRequest = false
     }
@@ -2183,22 +2129,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
     }
 
-    private static func av1RuntimeFallbackMessage(reason: String) -> String {
-        "AV1 decode failed (\(reason)). Runtime recovery exhausted; retry with HEVC fallback."
-    }
-
-    static func shouldForceAV1FallbackForDecoderOutputStall(
+    static func shouldAbortDecoderOutputStallRecovery(
         recoveryAttemptCount: Int,
-        maxRecoveryAttempts: Int = ShadowClientRealtimeSessionDefaults.av1MaxDecoderOutputStallRecoveries,
-        pressureFallbackTriggered: Bool
+        maxRecoveryAttempts: Int = ShadowClientRealtimeSessionDefaults.decoderMaxOutputStallRecoveries
     ) -> Bool {
-        if pressureFallbackTriggered {
-            return true
-        }
-        return recoveryAttemptCount >= max(1, maxRecoveryAttempts)
+        recoveryAttemptCount >= max(1, maxRecoveryAttempts)
     }
 
-    static func shouldForceAV1Fallback(forDecoderError error: any Error) -> Bool {
+    static func shouldAbortDecoderRecovery(forDecoderError error: any Error) -> Bool {
         if let decoderError = error as? ShadowClientVideoToolboxDecoderError {
             switch decoderError {
             case .missingParameterSets, .missingFrameDimensions, .cannotCreateSampleBuffer:
@@ -2209,7 +2147,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                  .cannotCreateDecoder:
                 return true
             case let .decodeFailed(status):
-                return !isRecoverableAV1DecodeFailureStatus(status)
+                return !isRecoverableDecodeFailureStatus(status)
             }
         }
 
@@ -2222,21 +2160,19 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             "could not create hardware decoder session",
             "could not create video format description",
             "decoder codec is not supported",
-            "av1 codec configuration record",
             "vt-ds",
             "osstatus -12903",
         ]
         return fatalSignatures.contains(where: normalized.contains)
     }
 
-    static func isRecoverableAV1DecodeFailureStatus(_ status: OSStatus) -> Bool {
+    static func isRecoverableDecodeFailureStatus(_ status: OSStatus) -> Bool {
         // -12909 is commonly reported for transient malformed/partial frame submissions.
-        // Keep AV1 recovery path active before forcing codec fallback.
         let recoverableStatuses: Set<OSStatus> = [-12909]
         return recoverableStatuses.contains(status)
     }
 
-    static func av1DecodeFailureStatus(from error: any Error) -> OSStatus? {
+    static func decodeFailureStatus(from error: any Error) -> OSStatus? {
         guard let decoderError = error as? ShadowClientVideoToolboxDecoderError else {
             return nil
         }
@@ -2244,6 +2180,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             return status
         }
         return nil
+    }
+
+    private static func runtimeRecoveryExhaustedMessage(
+        codec: ShadowClientVideoCodec,
+        reason: String
+    ) -> String {
+        "\(String(describing: codec).uppercased()) decode failed (\(reason)). Runtime recovery exhausted; retry with fallback codec."
     }
 
     static func isAV1SyncFrameType(_ frameType: UInt8?) -> Bool {

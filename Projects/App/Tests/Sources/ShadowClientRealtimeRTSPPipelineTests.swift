@@ -1507,67 +1507,54 @@ func realtimeRuntimeRenderSubmitPacingAllowsWhenBudgetMet() {
     )
 }
 
-@Test("Realtime runtime AV1 stall fallback triggers when recovery limit is exceeded")
-func realtimeRuntimeAV1StallFallbackTriggersOnRecoveryLimit() {
+@Test("Realtime runtime stall recovery aborts when recovery limit is exceeded")
+func realtimeRuntimeStallRecoveryAbortsOnRecoveryLimit() {
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime.shouldForceAV1FallbackForDecoderOutputStall(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldAbortDecoderOutputStallRecovery(
             recoveryAttemptCount: 4,
-            maxRecoveryAttempts: 4,
-            pressureFallbackTriggered: false
+            maxRecoveryAttempts: 4
         )
     )
     #expect(
-        !ShadowClientRealtimeRTSPSessionRuntime.shouldForceAV1FallbackForDecoderOutputStall(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldAbortDecoderOutputStallRecovery(
             recoveryAttemptCount: 3,
-            maxRecoveryAttempts: 4,
-            pressureFallbackTriggered: false
+            maxRecoveryAttempts: 4
         )
     )
 }
 
-@Test("Realtime runtime AV1 stall fallback triggers immediately on pressure fallback signal")
-func realtimeRuntimeAV1StallFallbackTriggersOnPressureSignal() {
+@Test("Realtime runtime fatal decoder errors abort recovery")
+func realtimeRuntimeFatalDecoderErrorsAbortRecovery() {
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime.shouldForceAV1FallbackForDecoderOutputStall(
-            recoveryAttemptCount: 1,
-            maxRecoveryAttempts: 4,
-            pressureFallbackTriggered: true
-        )
-    )
-}
-
-@Test("Realtime runtime AV1 fatal decoder errors force fallback")
-func realtimeRuntimeAV1FatalDecoderErrorsForceFallback() {
-    #expect(
-        ShadowClientRealtimeRTSPSessionRuntime.shouldForceAV1Fallback(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldAbortDecoderRecovery(
             forDecoderError: ShadowClientVideoToolboxDecoderError.decodeFailed(-12903)
         )
     )
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime.shouldForceAV1Fallback(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldAbortDecoderRecovery(
             forDecoderError: ShadowClientVideoToolboxDecoderError.cannotCreateDecoder(-12915)
         )
     )
 }
 
-@Test("Realtime runtime AV1 recoverable decode errors do not force immediate fallback")
-func realtimeRuntimeAV1RecoverableDecodeErrorsDoNotForceImmediateFallback() {
+@Test("Realtime runtime recoverable decode errors do not abort recovery")
+func realtimeRuntimeRecoverableDecodeErrorsDoNotAbortRecovery() {
     #expect(
-        !ShadowClientRealtimeRTSPSessionRuntime.shouldForceAV1Fallback(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldAbortDecoderRecovery(
             forDecoderError: ShadowClientVideoToolboxDecoderError.decodeFailed(-12909)
         )
     )
 }
 
-@Test("Realtime runtime AV1 decode failure status extraction reports decode status")
-func realtimeRuntimeAV1DecodeFailureStatusExtractionReportsDecodeStatus() {
+@Test("Realtime runtime decode failure status extraction reports decode status")
+func realtimeRuntimeDecodeFailureStatusExtractionReportsDecodeStatus() {
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime.av1DecodeFailureStatus(
+        ShadowClientRealtimeRTSPSessionRuntime.decodeFailureStatus(
             from: ShadowClientVideoToolboxDecoderError.decodeFailed(-12909)
         ) == -12909
     )
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime.av1DecodeFailureStatus(
+        ShadowClientRealtimeRTSPSessionRuntime.decodeFailureStatus(
             from: ShadowClientVideoToolboxDecoderError.missingParameterSets
         ) == nil
     )
@@ -1603,15 +1590,15 @@ func realtimeRuntimeClearsDecoderFailureHistoryOutsideWindow() {
     )
 }
 
-@Test("Realtime runtime AV1 transient decoder errors do not force fallback")
-func realtimeRuntimeAV1TransientDecoderErrorsDoNotForceFallback() {
+@Test("Realtime runtime transient decoder errors do not abort recovery")
+func realtimeRuntimeTransientDecoderErrorsDoNotAbortRecovery() {
     #expect(
-        !ShadowClientRealtimeRTSPSessionRuntime.shouldForceAV1Fallback(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldAbortDecoderRecovery(
             forDecoderError: ShadowClientVideoToolboxDecoderError.missingParameterSets
         )
     )
     #expect(
-        !ShadowClientRealtimeRTSPSessionRuntime.shouldForceAV1Fallback(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldAbortDecoderRecovery(
             forDecoderError: ShadowClientVideoToolboxDecoderError.missingFrameDimensions
         )
     )
