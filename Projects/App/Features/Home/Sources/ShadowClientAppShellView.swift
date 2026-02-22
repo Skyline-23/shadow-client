@@ -157,11 +157,15 @@ public struct ShadowClientAppShellView: View {
         .onChange(of: remoteDesktopRuntime.activeSession != nil, initial: true) { _, isActive in
             gamepadInputRuntime.setSessionActive(isActive)
             updateActiveSessionProcessActivity(isActive: isActive)
+            ShadowClientRemoteSessionOrientationCoordinator.updateSessionState(isActive: isActive)
         }
         .onChange(of: gamepadInputConfiguration, initial: true) { _, configuration in
             gamepadInputRuntime.updateConfiguration(configuration)
         }
         .onAppear {
+            ShadowClientRemoteSessionOrientationCoordinator.updateSessionState(
+                isActive: remoteDesktopRuntime.activeSession != nil
+            )
             gamepadInputRuntime.start { event in
                 remoteDesktopRuntime.sendInput(event)
             }
@@ -169,6 +173,7 @@ public struct ShadowClientAppShellView: View {
             gamepadInputRuntime.setSessionActive(remoteDesktopRuntime.activeSession != nil)
         }
         .onDisappear {
+            ShadowClientRemoteSessionOrientationCoordinator.updateSessionState(isActive: false)
             gamepadInputRuntime.stop()
             endActiveSessionProcessActivity()
             stopSettingsTelemetrySubscription()
