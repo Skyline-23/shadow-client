@@ -50,11 +50,10 @@ public enum ShadowClientStreamingLaunchBounds {
 public enum ShadowClientVideoDecoderDefaults {
     public static let defaultDecodePresentationTimeScale = ShadowClientStreamingLaunchBounds.defaultFPS
     public static let defaultPixelBufferPoolMinimumBufferCount = 8
-    public static let defaultMaximumInFlightDecodeRequests = 4
-    public static let highFrameRateMaximumInFlightDecodeRequests = 6
-    public static let highFrameRateThresholdFPS = 90
+    public static let minimumInFlightDecodeRequests = 2
+    public static let maximumInFlightDecodeRequests = 12
+    public static let inFlightDecodeCoreScalingDivisor = 4.0
     public static let inFlightDecodeWaitStep: Duration = .milliseconds(1)
-    public static let maximumPreferredRenderFPS = 120
 }
 
 public enum ShadowClientRealtimeSessionDefaults {

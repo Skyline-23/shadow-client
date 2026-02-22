@@ -103,11 +103,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     }
 
     private static func normalizedRenderFPS(_ fps: Int) -> Int {
-        let minimumFPS = 1
-        return min(
-            max(fps, minimumFPS),
-            ShadowClientVideoDecoderDefaults.maximumPreferredRenderFPS
-        )
+        max(fps, 1)
     }
 }
 

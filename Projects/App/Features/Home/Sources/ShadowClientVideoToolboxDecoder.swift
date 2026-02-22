@@ -474,10 +474,19 @@ public actor ShadowClientVideoToolboxDecoder {
     }
 
     private static func recommendedMaximumInFlightDecodeRequests(for fps: Int) -> Int {
-        if fps >= ShadowClientVideoDecoderDefaults.highFrameRateThresholdFPS {
-            return max(1, ShadowClientVideoDecoderDefaults.highFrameRateMaximumInFlightDecodeRequests)
-        }
-        return max(1, ShadowClientVideoDecoderDefaults.defaultMaximumInFlightDecodeRequests)
+        let minimumInFlight = max(1, ShadowClientVideoDecoderDefaults.minimumInFlightDecodeRequests)
+        let maximumInFlight = max(minimumInFlight, ShadowClientVideoDecoderDefaults.maximumInFlightDecodeRequests)
+        let normalizedFPS = max(fps, ShadowClientStreamingLaunchBounds.minimumFPS)
+        let fpsScale = Double(normalizedFPS) / Double(ShadowClientStreamingLaunchBounds.defaultFPS)
+        let cpuScaleDivisor = max(1.0, ShadowClientVideoDecoderDefaults.inFlightDecodeCoreScalingDivisor)
+        let cpuScale = max(1.0, Double(ProcessInfo.processInfo.activeProcessorCount) / cpuScaleDivisor)
+        let recommendedInFlight = Int(
+            (Double(minimumInFlight) * fpsScale * cpuScale).rounded(.toNearestOrAwayFromZero)
+        )
+        return min(
+            maximumInFlight,
+            max(minimumInFlight, recommendedInFlight)
+        )
     }
 
     private static var defaultPixelBufferAttributes: [String: Any] {
