@@ -189,6 +189,51 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var consecutiveDroppedOutputBuffers = 0
             var consecutiveDroppedOutputQueueBuffers = 0
             var consecutiveDecryptFailures = 0
+            var outputQueuePressureDropCount = 0
+            var firstOutputQueuePressureDropUptime: TimeInterval = 0
+
+            let registerOutputQueuePressureDrop: (Int, String) -> Void = { droppedCount, reason in
+                guard droppedCount > 0 else {
+                    return
+                }
+                let now = ProcessInfo.processInfo.systemUptime
+                if firstOutputQueuePressureDropUptime == 0 ||
+                    now - firstOutputQueuePressureDropUptime >
+                    ShadowClientRealtimeSessionDefaults.audioOutputQueueDropWindowSeconds
+                {
+                    firstOutputQueuePressureDropUptime = now
+                    outputQueuePressureDropCount = 0
+                }
+
+                let previousDropCount = outputQueuePressureDropCount
+                outputQueuePressureDropCount += droppedCount
+                if outputQueuePressureDropCount == droppedCount ||
+                    Self.didCounterCrossIntervalBoundary(
+                        previous: previousDropCount,
+                        current: outputQueuePressureDropCount,
+                        interval: ShadowClientRealtimeSessionDefaults.audioOutputQueuePressureSignalInterval
+                    )
+                {
+                    self.logger.error(
+                        "Audio output queue pressure detected (\(reason, privacy: .public), dropped=\(outputQueuePressureDropCount, privacy: .public))"
+                    )
+                }
+
+                if Self.didCounterCrossIntervalBoundary(
+                    previous: previousDropCount,
+                    current: outputQueuePressureDropCount,
+                    interval: ShadowClientRealtimeSessionDefaults.audioOutputQueuePressureTrimInterval
+                ) {
+                    let trimmedCount = self.jitterBuffer.trimToMostRecent(
+                        maxBufferedPackets: ShadowClientRealtimeSessionDefaults.audioOutputQueuePressureTrimToRecentPackets
+                    )
+                    if trimmedCount > 0 {
+                        self.logger.notice(
+                            "Audio jitter buffer pressure trim dropped \(trimmedCount, privacy: .public) stale packets"
+                        )
+                    }
+                }
+            }
             while !Task.isCancelled {
                 do {
                     guard let datagram = try await Self.receiveDatagram(over: connection),
@@ -236,32 +281,35 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     let availableOutputSlots = audioOutput.availableEnqueueSlots
                     if availableOutputSlots <= 0 {
                         consecutiveDroppedOutputQueueBuffers += readyPackets.count
-                        if consecutiveDroppedOutputQueueBuffers == readyPackets.count ||
-                            consecutiveDroppedOutputQueueBuffers.isMultiple(of: 25)
-                        {
-                            logger.error(
-                                "Skipping audio decode due to output queue saturation (count=\(consecutiveDroppedOutputQueueBuffers, privacy: .public))"
-                            )
-                        }
+                        registerOutputQueuePressureDrop(readyPackets.count, "skip-decode")
                         continue
                     }
 
                     var remainingOutputSlots = availableOutputSlots
+                    let decodeSheddingLowWatermark = max(
+                        1,
+                        ShadowClientRealtimeSessionDefaults.audioOutputQueueDecodeSheddingLowWatermarkSlots
+                    )
+                    let packetsToDecode: [RTPPacket]
+                    if availableOutputSlots <= decodeSheddingLowWatermark,
+                       readyPackets.count > availableOutputSlots
+                    {
+                        let shedCount = readyPackets.count - availableOutputSlots
+                        packetsToDecode = Array(readyPackets.suffix(availableOutputSlots))
+                        consecutiveDroppedOutputQueueBuffers += shedCount
+                        registerOutputQueuePressureDrop(shedCount, "producer-shed")
+                    } else {
+                        packetsToDecode = readyPackets
+                    }
 
-                    for readyPacket in readyPackets {
+                    for readyPacket in packetsToDecode {
                         do {
                             guard let decoder else {
                                 continue
                             }
                             guard remainingOutputSlots > 0 else {
                                 consecutiveDroppedOutputQueueBuffers += 1
-                                if consecutiveDroppedOutputQueueBuffers == 1 ||
-                                    consecutiveDroppedOutputQueueBuffers.isMultiple(of: 25)
-                                {
-                                    logger.error(
-                                        "Skipping audio decode due to output queue saturation (count=\(consecutiveDroppedOutputQueueBuffers, privacy: .public))"
-                                    )
-                                }
+                                registerOutputQueuePressureDrop(1, "guard-no-slots")
                                 continue
                             }
                             let decodePayload: Data
@@ -321,17 +369,13 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 consecutiveDroppedOutputBuffers = 0
                                 if audioOutput.enqueue(pcmBuffer: pcmBuffer) == false {
                                     consecutiveDroppedOutputQueueBuffers += 1
-                                    if consecutiveDroppedOutputQueueBuffers == 1 ||
-                                        consecutiveDroppedOutputQueueBuffers.isMultiple(of: 25)
-                                    {
-                                        logger.error(
-                                            "Dropping decoded audio buffer due to output queue saturation (count=\(consecutiveDroppedOutputQueueBuffers, privacy: .public))"
-                                        )
-                                    }
+                                    registerOutputQueuePressureDrop(1, "drop-decoded-buffer")
                                     continue
                                 }
                                 remainingOutputSlots = max(0, remainingOutputSlots - 1)
                                 consecutiveDroppedOutputQueueBuffers = 0
+                                outputQueuePressureDropCount = 0
+                                firstOutputQueuePressureDropUptime = 0
                             }
                         } catch {
                             let message = "Audio decode failed: \(error.localizedDescription)"
@@ -653,6 +697,19 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         )
     }
 
+    private static func didCounterCrossIntervalBoundary(
+        previous: Int,
+        current: Int,
+        interval: Int
+    ) -> Bool {
+        guard interval > 0 else {
+            return false
+        }
+        let previousBoundary = previous / interval
+        let currentBoundary = current / interval
+        return currentBoundary > previousBoundary
+    }
+
     internal static func payloadTypePreference(
         observed: Int,
         current: Int
@@ -802,6 +859,23 @@ private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
         }
 
         return readyPackets
+    }
+
+    mutating func trimToMostRecent(maxBufferedPackets: Int) -> Int {
+        let normalizedLimit = max(1, maxBufferedPackets)
+        guard packetsBySequence.count > normalizedLimit else {
+            return 0
+        }
+
+        let sortedSequenceNumbers = packetsBySequence.keys.sorted()
+        let overflowCount = packetsBySequence.count - normalizedLimit
+        for sequence in sortedSequenceNumbers.prefix(overflowCount) {
+            packetsBySequence.removeValue(forKey: sequence)
+        }
+        if let earliestSequence = packetsBySequence.keys.min() {
+            expectedSequence = earliestSequence
+        }
+        return overflowCount
     }
 }
 

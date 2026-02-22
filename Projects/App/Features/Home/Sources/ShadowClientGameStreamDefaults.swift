@@ -107,6 +107,11 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let decoderOutputStallSuppressionGraceSeconds: TimeInterval = 6.0
     public static let videoRecoveryFrameRequestCooldownSeconds: TimeInterval = 0.75
     public static let videoRecoveryFramePendingTimeoutSeconds: TimeInterval = 2.0
+    public static let audioOutputQueueDropWindowSeconds: TimeInterval = 1.0
+    public static let audioOutputQueuePressureSignalInterval = 24
+    public static let audioOutputQueuePressureTrimInterval = 60
+    public static let audioOutputQueuePressureTrimToRecentPackets = 8
+    public static let audioOutputQueueDecodeSheddingLowWatermarkSlots = 2
     public static let controlRoundTripPublishMinimumIntervalSeconds: TimeInterval = 1.0 / 30.0
     public static let controlRoundTripPublishDeltaThresholdMs = 2
 }
