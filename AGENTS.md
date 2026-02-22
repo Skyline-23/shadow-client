@@ -76,6 +76,14 @@ Use subagents in parallel for non-trivial work with disjoint ownership, then mer
 - For H264/H265 Moonlight NV RTP packets, use depacketizer tail strategy `.passthroughForAnnexBCodecs` (do not enforce `lastPacketPayloadLength` truncation).
 - Reserve `lastPacketPayloadLength` truncation for AV1/non-AnnexB streams only (`.trimUsingLastPacketLength`).
 - `ShadowClientAppShellView` must observe `sessionSurfaceContext` directly; relying only on `remoteDesktopRuntime` can leave session HUD stuck in `waitingForFirstFrame` even when frames render.
+- GPU-first hot path is mandatory:
+  - Prefer hardware VideoToolbox decode + Metal render path; avoid CPU-bound fallback paths in steady-state runtime.
+  - Avoid CPU spin/poll patterns in ingest/decode loops; use bounded queues and async backpressure.
+  - Avoid per-packet/per-frame unnecessary copies in transport/depacketize/decode boundaries where protocol safety permits.
+- Queue pressure policy must be adaptive, not static:
+  - Derive receive/decode queue sizing and trim thresholds from session bitrate/fps (and keep sane caps).
+  - Do not escalate queue-pressure recovery while decoded frames are still being produced (recovery escalation requires output-stall evidence).
+  - Decode-queue pressure must drive throughput relief (`queue saturation` signal), while `decoder instability` signal is reserved for real decoder failure/stall paths.
 
 ### Streaming Refactor Priority (Current)
 - Execute refactors in this exact order unless explicitly overridden by user:
@@ -118,6 +126,13 @@ Use subagents in parallel for non-trivial work with disjoint ownership, then mer
   - retune AV1 recovery thresholds/windows/cooldowns,
   - enforce fast and consistent HEVC switch trigger when AV1 recovery is exhausted.
   - status: `partial` (policy/tuning landed with fallback triggers, but consistency and immediacy under interaction/fullscreen stress still need improvement).
+- `perf(streaming): GPU-first queue/backpressure tuning`
+  - apply bitrate/fps-adaptive receive/decode queue profiles instead of fixed queue constants,
+  - tune VideoToolbox AV1/H26x in-flight decode budget adaptively from session resolution/fps (aggressive enough to prevent decode starvation under fullscreen/interaction bursts),
+  - gate queue-pressure recovery escalation on decoded-frame output stall (prevent recovery-request loops while rendering is healthy),
+  - keep decode throughput recovery and render cadence synchronized to session FPS to avoid decode↔render oscillation,
+  - apply the same pressure-shed policy family to audio output queue saturation (decode-side shedding + bounded queue policy) to avoid audio loop thrash.
+  - status: `in_progress` (adaptive queue profile + stall-gated recovery is the current active implementation step).
 - `fix(macos): fullscreen transition state machine`
   - state-machine fullscreen toggles (no retrigger during transition),
   - prevent capture/app-focus transitions from tearing down decoder/transport loops.
