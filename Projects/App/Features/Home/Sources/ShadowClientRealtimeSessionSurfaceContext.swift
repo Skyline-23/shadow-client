@@ -38,12 +38,19 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         case failed(String)
     }
 
+    public enum DynamicRangeMode: String, Equatable, Sendable {
+        case unknown
+        case sdr
+        case hdr
+    }
+
     @Published public private(set) var renderState: RenderState = .idle
     @Published public private(set) var controlRoundTripMs: Int?
     @Published public private(set) var activeVideoCodec: ShadowClientVideoCodec?
     @Published public private(set) var estimatedVideoFPS: Double?
     @Published public private(set) var estimatedVideoBitrateKbps: Int?
     @Published public private(set) var audioOutputState: ShadowClientRealtimeAudioOutputState = .idle
+    @Published public private(set) var activeDynamicRangeMode: DynamicRangeMode = .unknown
     @Published public private(set) var preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
     private var lastControlRoundTripPublishUptime: TimeInterval = 0
 
@@ -61,6 +68,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         estimatedVideoFPS = nil
         estimatedVideoBitrateKbps = nil
         audioOutputState = .idle
+        activeDynamicRangeMode = .unknown
         preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
         lastControlRoundTripPublishUptime = 0
     }
@@ -122,6 +130,13 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
             return
         }
         audioOutputState = state
+    }
+
+    public func updateActiveDynamicRangeMode(_ mode: DynamicRangeMode) {
+        if activeDynamicRangeMode == mode {
+            return
+        }
+        activeDynamicRangeMode = mode
     }
 
     public func updatePreferredRenderFPS(_ fps: Int) {

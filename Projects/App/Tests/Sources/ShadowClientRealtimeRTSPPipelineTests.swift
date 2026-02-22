@@ -799,28 +799,113 @@ func realtimeRuntimeDecodeQueueRecoveryClassifier() {
     #expect(ShadowClientRealtimeRTSPSessionRuntime.shouldTriggerDecodeQueueRecovery(source: "depacketize-shed"))
 }
 
-@Test("Realtime runtime producer-trim recovery helper respects threshold and cooldown")
-func realtimeRuntimeProducerTrimRecoveryHelper() {
+@Test("Realtime runtime queue pressure recovery escalation requires output stall when frames were already rendering")
+func realtimeRuntimeQueuePressureRecoveryEscalationRequiresOutputStall() {
     #expect(
-        !ShadowClientRealtimeRTSPSessionRuntime.shouldRequestProducerTrimRecovery(
-            dropCount: ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerTrimRecoveryDropThreshold - 1,
-            now: 10,
-            lastRecoveryUptime: 0
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateQueuePressureToRecovery(
+            now: 100,
+            lastDecodedFrameOutputUptime: 99.8,
+            minimumStallSeconds: ShadowClientRealtimeSessionDefaults.videoQueuePressureRecoveryMinimumOutputStallSeconds
         )
     )
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime.shouldRequestProducerTrimRecovery(
-            dropCount: ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerTrimRecoveryDropThreshold,
-            now: 10,
-            lastRecoveryUptime: 0
+        ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateQueuePressureToRecovery(
+            now: 100,
+            lastDecodedFrameOutputUptime: 99.0,
+            minimumStallSeconds: ShadowClientRealtimeSessionDefaults.videoQueuePressureRecoveryMinimumOutputStallSeconds
         )
     )
     #expect(
-        !ShadowClientRealtimeRTSPSessionRuntime.shouldRequestProducerTrimRecovery(
-            dropCount: ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerTrimRecoveryDropThreshold + 12,
-            now: 10,
-            lastRecoveryUptime: 9.2
+        ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateQueuePressureToRecovery(
+            now: 100,
+            lastDecodedFrameOutputUptime: 0,
+            minimumStallSeconds: ShadowClientRealtimeSessionDefaults.videoQueuePressureRecoveryMinimumOutputStallSeconds
         )
+    )
+}
+
+@Test("Realtime runtime queue pressure profile scales with bitrate and fps")
+func realtimeRuntimeQueuePressureProfileScalesWithWorkload() {
+    let baseline = ShadowClientRealtimeRTSPSessionRuntime.queuePressureProfile(
+        for: .init(
+            width: 1_920,
+            height: 1_080,
+            fps: 60,
+            bitrateKbps: 20_000
+        )
+    )
+    let heavy = ShadowClientRealtimeRTSPSessionRuntime.queuePressureProfile(
+        for: .init(
+            width: 3_840,
+            height: 2_160,
+            fps: 120,
+            bitrateKbps: 120_000
+        )
+    )
+
+    #expect(heavy.receiveQueueCapacity > baseline.receiveQueueCapacity)
+    #expect(heavy.receiveQueuePressureTrimToRecentPackets > baseline.receiveQueuePressureTrimToRecentPackets)
+    #expect(heavy.receiveQueueDropRecoveryThreshold > baseline.receiveQueueDropRecoveryThreshold)
+    #expect(heavy.receiveQueueIngressSheddingMaximumBurstPackets >= baseline.receiveQueueIngressSheddingMaximumBurstPackets)
+    #expect(heavy.decodeQueueCapacity >= baseline.decodeQueueCapacity)
+    #expect(heavy.decodeQueueConsumerMaxBufferedUnits >= baseline.decodeQueueConsumerMaxBufferedUnits)
+}
+
+@Test("Realtime runtime queue pressure profile caps receive queue growth for bitrate outliers")
+func realtimeRuntimeQueuePressureProfileCapsBitrateOutliers() {
+    let outlier = ShadowClientRealtimeRTSPSessionRuntime.queuePressureProfile(
+        for: .init(
+            width: 3_840,
+            height: 2_160,
+            fps: 120,
+            bitrateKbps: 500_000
+        )
+    )
+
+    let payloadBytes = max(
+        256,
+        ShadowClientRealtimeSessionDefaults.videoEstimatedPacketPayloadBytes
+    )
+    let naivePacketsPerSecond = Int(
+        (
+            (Double(500_000) * 1_000.0 / 8.0) / Double(payloadBytes)
+        ).rounded(.up)
+    )
+    let naiveCapacityAtMinimumWindow = min(
+        ShadowClientRealtimeSessionDefaults.videoReceiveQueueMaximumCapacity,
+        max(
+            ShadowClientRealtimeSessionDefaults.videoReceiveQueueCapacity,
+            Int(
+                (
+                    Double(naivePacketsPerSecond) *
+                        ShadowClientRealtimeSessionDefaults.videoReceiveQueueMinimumTargetWindowSeconds
+                ).rounded(.up)
+            )
+        )
+    )
+
+    #expect(outlier.receiveQueueCapacity < naiveCapacityAtMinimumWindow)
+    #expect(
+        outlier.receiveQueueCapacity <=
+            ShadowClientRealtimeSessionDefaults.videoReceiveQueueMaximumPacketsPerFrameEstimate *
+            ShadowClientRealtimeSessionDefaults.videoReceiveQueueMaximumFrameWindow
+    )
+}
+
+@Test("Realtime runtime queue profile probes decode pressure faster for packet-thin streams")
+func realtimeRuntimeQueuePressureProfileUsesFasterProbeForPacketThinStreams() {
+    let packetThin = ShadowClientRealtimeRTSPSessionRuntime.queuePressureProfile(
+        for: .init(
+            width: 1_280,
+            height: 720,
+            fps: 120,
+            bitrateKbps: 4_000
+        )
+    )
+
+    #expect(
+        packetThin.depacketizerDecodeQueueProbeIntervalPackets <
+            ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueProbeIntervalPackets
     )
 }
 
@@ -897,11 +982,11 @@ func realtimeRuntimeSuppressesStallRecoveryForIngressPressure() {
     #expect(shouldSuppress)
 }
 
-@Test("Realtime runtime does not suppress stall recovery after ingress-pressure grace window")
-func realtimeRuntimeDoesNotSuppressStallRecoveryAfterIngressPressureGraceWindow() {
+@Test("Realtime runtime does not suppress stall recovery after ingress-pressure suppression ceiling")
+func realtimeRuntimeDoesNotSuppressStallRecoveryAfterIngressPressureSuppressionCeiling() {
     let shouldSuppress = ShadowClientRealtimeRTSPSessionRuntime.shouldSuppressDecoderOutputStallRecovery(
         now: 100.0,
-        lastDecodedFrameOutputUptime: 97.0,
+        lastDecodedFrameOutputUptime: 87.0,
         isPipelineUnderIngressPressure: true
     )
 
@@ -959,7 +1044,9 @@ func realtimeRuntimeRecoveryRequestGateSuppressesPendingDuplicates() {
             lastRequestUptime: 9.6,
             isRequestPending: true,
             minimumInterval: 0.25,
-            pendingTimeout: 2.0
+            pendingTimeout: 2.0,
+            isPipelineUnderIngressPressure: false,
+            pressureMinimumInterval: 2.0
         )
     )
 }
@@ -972,7 +1059,9 @@ func realtimeRuntimeRecoveryRequestGateReopensAfterPendingTimeout() {
             lastRequestUptime: 7.0,
             isRequestPending: true,
             minimumInterval: 0.75,
-            pendingTimeout: 2.0
+            pendingTimeout: 2.0,
+            isPipelineUnderIngressPressure: false,
+            pressureMinimumInterval: 2.0
         )
     )
 }
@@ -985,7 +1074,35 @@ func realtimeRuntimeRecoveryRequestGateHonorsCooldown() {
             lastRequestUptime: 9.7,
             isRequestPending: false,
             minimumInterval: 0.5,
-            pendingTimeout: 2.0
+            pendingTimeout: 2.0,
+            isPipelineUnderIngressPressure: false,
+            pressureMinimumInterval: 2.0
+        )
+    )
+}
+
+@Test("Realtime runtime recovery request gate applies stronger cooldown during ingress pressure")
+func realtimeRuntimeRecoveryRequestGateHonorsIngressPressureCooldown() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldAllowVideoRecoveryFrameRequest(
+            now: 10.0,
+            lastRequestUptime: 8.6,
+            isRequestPending: false,
+            minimumInterval: 0.75,
+            pendingTimeout: 2.0,
+            isPipelineUnderIngressPressure: true,
+            pressureMinimumInterval: 2.0
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldAllowVideoRecoveryFrameRequest(
+            now: 10.0,
+            lastRequestUptime: 7.6,
+            isRequestPending: false,
+            minimumInterval: 0.75,
+            pendingTimeout: 2.0,
+            isPipelineUnderIngressPressure: true,
+            pressureMinimumInterval: 2.0
         )
     )
 }

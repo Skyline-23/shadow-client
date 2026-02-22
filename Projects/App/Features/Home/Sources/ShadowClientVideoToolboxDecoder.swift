@@ -47,10 +47,6 @@ private final class ShadowClientRealtimeDecoderOutputBridge: @unchecked Sendable
     private var latestPixelBuffer: CVPixelBuffer?
     private var isDelivering = false
     private var activeDeliveryTask: Task<Void, Never>?
-    private var pendingDeliveryWorkItem: DispatchWorkItem?
-    private var targetFrameIntervalSeconds: TimeInterval =
-        1.0 / Double(max(1, ShadowClientStreamingLaunchBounds.defaultFPS))
-    private var lastDeliveredFrameUptime: TimeInterval = 0
 
     init(onFrame: @escaping @Sendable (CVPixelBuffer) async -> Void) {
         self.onFrame = onFrame
@@ -58,7 +54,6 @@ private final class ShadowClientRealtimeDecoderOutputBridge: @unchecked Sendable
 
     deinit {
         activeDeliveryTask?.cancel()
-        pendingDeliveryWorkItem?.cancel()
     }
 
     func emit(_ pixelBuffer: CVPixelBuffer) {
@@ -75,38 +70,20 @@ private final class ShadowClientRealtimeDecoderOutputBridge: @unchecked Sendable
     func stop() {
         activeDeliveryTask?.cancel()
         activeDeliveryTask = nil
-        pendingDeliveryWorkItem?.cancel()
-        pendingDeliveryWorkItem = nil
         deliveryQueue.async { [weak self] in
             self?.latestPixelBuffer = nil
             self?.isDelivering = false
-            self?.lastDeliveredFrameUptime = 0
         }
     }
 
     func setTargetFramesPerSecond(_ fps: Int) {
-        let normalizedFPS = max(1, fps)
-        deliveryQueue.async { [weak self] in
-            guard let self else {
-                return
-            }
-            self.targetFrameIntervalSeconds = 1.0 / Double(normalizedFPS)
-        }
+        _ = fps
     }
 
     private func scheduleDeliveryIfNeeded() {
         guard !isDelivering,
               let pixelBuffer = latestPixelBuffer
         else {
-            return
-        }
-
-        let now = ProcessInfo.processInfo.systemUptime
-        let nextEligibleDeliveryUptime = lastDeliveredFrameUptime + targetFrameIntervalSeconds
-        if lastDeliveredFrameUptime > 0,
-           now < nextEligibleDeliveryUptime
-        {
-            scheduleDeferredDelivery(after: max(0, nextEligibleDeliveryUptime - now))
             return
         }
 
@@ -122,27 +99,10 @@ private final class ShadowClientRealtimeDecoderOutputBridge: @unchecked Sendable
                 guard let self else {
                     return
                 }
-                self.lastDeliveredFrameUptime = ProcessInfo.processInfo.systemUptime
                 self.isDelivering = false
                 self.scheduleDeliveryIfNeeded()
             }
         }
-    }
-
-    private func scheduleDeferredDelivery(after delay: TimeInterval) {
-        guard pendingDeliveryWorkItem == nil else {
-            return
-        }
-
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self else {
-                return
-            }
-            self.pendingDeliveryWorkItem = nil
-            self.scheduleDeliveryIfNeeded()
-        }
-        pendingDeliveryWorkItem = workItem
-        deliveryQueue.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 }
 
@@ -325,6 +285,7 @@ public actor ShadowClientVideoToolboxDecoder {
         accessUnit annexBAccessUnit: Data,
         codec newCodec: ShadowClientVideoCodec,
         parameterSets explicitParameterSets: [Data],
+        backlogHint: Int = 0,
         onFrame: @escaping @Sendable (CVPixelBuffer) async -> Void
     ) async throws {
         if codec != newCodec {
@@ -381,8 +342,8 @@ public actor ShadowClientVideoToolboxDecoder {
             throw ShadowClientVideoToolboxDecoderError.missingParameterSets
         }
 
-        try await waitForSubmitPacingWindow()
-        try await waitForDecodeSlot()
+        try await waitForSubmitPacingWindow(backlogHint: backlogHint)
+        try await waitForDecodeSlot(backlogHint: backlogHint)
         do {
             let pts = CMTime(value: frameIndex, timescale: decodePresentationTimeScale)
             frameIndex += 1
@@ -559,11 +520,21 @@ public actor ShadowClientVideoToolboxDecoder {
         lastDecoderInstabilitySignalUptime = 0
     }
 
-    private func waitForSubmitPacingWindow() async throws {
+    private func waitForSubmitPacingWindow(backlogHint: Int) async throws {
         let now = ProcessInfo.processInfo.systemUptime
         recoverDecodePacingIfStable(now: now)
         guard lastDecodeSubmitUptime > 0 else {
             return
+        }
+        let normalizedBacklogHint = max(0, backlogHint)
+        if normalizedBacklogHint > 0 {
+            let instabilityGraceSeconds = currentFrameIntervalSeconds() * 2.0
+            let shouldHonorPacingDespiteBacklog =
+                lastDecoderInstabilitySignalUptime > 0 &&
+                now - lastDecoderInstabilitySignalUptime < instabilityGraceSeconds
+            if !shouldHonorPacingDespiteBacklog {
+                return
+            }
         }
 
         let targetIntervalSeconds = currentTargetSubmitIntervalSeconds()
@@ -578,9 +549,11 @@ public actor ShadowClientVideoToolboxDecoder {
         }
     }
 
-    private func waitForDecodeSlot() async throws {
+    private func waitForDecodeSlot(backlogHint: Int) async throws {
         var spinAttempts = 0
-        while !decodeSlotCounter.tryAcquire(limit: effectiveMaximumInFlightDecodeRequests()) {
+        while !decodeSlotCounter.tryAcquire(
+            limit: effectiveMaximumInFlightDecodeRequests(backlogHint: backlogHint)
+        ) {
             try Task.checkCancellation()
             spinAttempts += 1
             if spinAttempts <= 2 {
@@ -609,12 +582,55 @@ public actor ShadowClientVideoToolboxDecoder {
         clampDecodeSubmitPacingMultiplier()
     }
 
-    private func effectiveMaximumInFlightDecodeRequests() -> Int {
+    private func effectiveMaximumInFlightDecodeRequests(backlogHint: Int = 0) -> Int {
         let minimumInFlight = max(1, ShadowClientVideoDecoderDefaults.minimumInFlightDecodeRequests)
-        return max(
+        let baseBudget = max(
             minimumInFlight,
             maximumInFlightDecodeRequests - decodePacingPenalty
         )
+        let backlogBoost = adaptiveBacklogInFlightBoost(backlogHint: backlogHint)
+        return min(
+            maximumInFlightDecodeRequests,
+            max(minimumInFlight, baseBudget + backlogBoost)
+        )
+    }
+
+    private func adaptiveBacklogInFlightBoost(backlogHint: Int) -> Int {
+        let normalizedBacklogHint = max(0, backlogHint)
+        guard normalizedBacklogHint > 0 else {
+            return 0
+        }
+
+        let divisor = max(1, ShadowClientVideoDecoderDefaults.inFlightDecodeBacklogBoostDivisor)
+        let maxBoost = max(0, ShadowClientVideoDecoderDefaults.inFlightDecodeMaximumBacklogBoost)
+        guard maxBoost > 0 else {
+            return 0
+        }
+
+        var boost = min(maxBoost, normalizedBacklogHint / divisor)
+        guard boost > 0 else {
+            return 0
+        }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        let instabilityGraceSeconds = currentFrameIntervalSeconds() * max(
+            1.0,
+            ShadowClientVideoDecoderDefaults.inFlightDecodeInstabilityGraceFrameWindow
+        )
+        let isRecentlyUnstable = lastDecoderInstabilitySignalUptime > 0 &&
+            now - lastDecoderInstabilitySignalUptime < instabilityGraceSeconds
+        if isRecentlyUnstable {
+            let dampingRatio = min(
+                1.0,
+                max(
+                    0.0,
+                    ShadowClientVideoDecoderDefaults.inFlightDecodeBacklogBoostInstabilityDampingRatio
+                )
+            )
+            boost = Int((Double(boost) * dampingRatio).rounded(.down))
+        }
+
+        return max(0, boost)
     }
 
     private func maximumDecodePacingPenalty() -> Int {

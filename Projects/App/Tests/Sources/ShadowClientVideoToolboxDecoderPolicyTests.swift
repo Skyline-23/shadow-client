@@ -47,3 +47,15 @@ func videoToolboxDecoderInFlightPolicyScalesUpForHeavierWorkload() {
     #expect(ultraHD >= baseline)
     #expect(higherCoreCount >= baseline)
 }
+
+@Test("VideoToolbox decoder in-flight policy remains aggressive for 4K120 workloads")
+func videoToolboxDecoderInFlightPolicyTargets4K120Workload() {
+    let workload4K120 = ShadowClientVideoToolboxDecoder.recommendedMaximumInFlightDecodeRequests(
+        for: 120,
+        frameWidth: 3_840,
+        frameHeight: 2_160,
+        activeProcessorCount: 8
+    )
+
+    #expect(workload4K120 >= 20)
+}

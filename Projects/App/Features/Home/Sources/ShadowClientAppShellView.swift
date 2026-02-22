@@ -150,7 +150,9 @@ public struct ShadowClientAppShellView: View {
                 return
             }
             lastRoundTripHistoryAppendUptime = now
-            sessionDiagnosticsHistory.appendControlRoundTripMs(newRoundTripMs)
+            Task { @MainActor in
+                sessionDiagnosticsHistory.appendControlRoundTripMs(newRoundTripMs)
+            }
         }
         .onChange(of: remoteDesktopRuntime.activeSession != nil, initial: true) { _, isActive in
             gamepadInputRuntime.setSessionActive(isActive)
@@ -1561,6 +1563,7 @@ public struct ShadowClientAppShellView: View {
 
                 HStack(spacing: 10) {
                     diagnosticsStatChip(label: "Codec", value: activeSessionVideoCodecLabel)
+                    diagnosticsStatChip(label: "HDR", value: diagnosticsHDRValue(model: model))
                     diagnosticsStatChip(label: "FPS", value: diagnosticsFPSValue())
                     diagnosticsStatChip(label: "Bitrate", value: diagnosticsBitrateValue())
                     diagnosticsStatChip(
@@ -1625,6 +1628,10 @@ public struct ShadowClientAppShellView: View {
                     .foregroundStyle(Color.mint.opacity(0.86))
 
                 HStack(spacing: 10) {
+                    diagnosticsStatChip(
+                        label: "HDR",
+                        value: diagnosticsHDRValue(model: nil)
+                    )
                     diagnosticsStatChip(
                         label: "Ping",
                         value: diagnosticsRoundTripValue(controlRoundTripMs)
@@ -1695,6 +1702,21 @@ public struct ShadowClientAppShellView: View {
             return "\(max(0, bitrate)) / \(effectiveBitrateKbps) kbps"
         }
         return "\(effectiveBitrateKbps) kbps"
+    }
+
+    private func diagnosticsHDRValue(model: SettingsDiagnosticsHUDModel?) -> String {
+        if let model {
+            return model.hdrVideoMode == .hdr10 ? "ON" : "OFF"
+        }
+
+        switch sessionSurfaceContext.activeDynamicRangeMode {
+        case .hdr:
+            return "ON"
+        case .sdr:
+            return "OFF"
+        case .unknown:
+            return "AUTO"
+        }
     }
 
     private func diagnosticsSparklineRow(

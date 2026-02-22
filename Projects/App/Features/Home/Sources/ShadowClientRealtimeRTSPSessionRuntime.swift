@@ -82,7 +82,11 @@ private actor ShadowClientVideoDecodeQueue {
 
     func nextWithBackpressureTrim(
         maxBufferedUnits: Int
-    ) async -> (unit: ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?, droppedCount: Int) {
+    ) async -> (
+        unit: ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?,
+        droppedCount: Int,
+        remainingBufferedCount: Int
+    ) {
         let boundedMaxBufferedUnits = max(1, min(maxBufferedUnits, capacity))
         var droppedCount = 0
         if bufferedCount > boundedMaxBufferedUnits {
@@ -101,16 +105,16 @@ private actor ShadowClientVideoDecodeQueue {
             bufferedUnits[headIndex] = nil
             headIndex = (headIndex + 1) % capacity
             bufferedCount -= 1
-            return (unit, droppedCount)
+            return (unit, droppedCount, bufferedCount)
         }
         if closed {
-            return (nil, droppedCount)
+            return (nil, droppedCount, 0)
         }
 
         let unit = await withCheckedContinuation { continuation in
             waitingContinuations.append(continuation)
         }
-        return (unit, droppedCount)
+        return (unit, droppedCount, 0)
     }
 
     func close() {
@@ -161,6 +165,7 @@ private actor ShadowClientVideoPacketQueue {
 
     private let capacity: Int
     private let pressureSignalInterval: Int
+    private let maxIngressSheddingBurstPackets: Int
     private var bufferedPackets: [ShadowClientRealtimeRTSPSessionRuntime.VideoTransportPacket?]
     private var headIndex = 0
     private var bufferedCount = 0
@@ -173,10 +178,12 @@ private actor ShadowClientVideoPacketQueue {
 
     init(
         capacity: Int,
-        pressureSignalInterval: Int = ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureSignalInterval
+        pressureSignalInterval: Int = ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureSignalInterval,
+        maxIngressSheddingBurstPackets: Int = ShadowClientRealtimeSessionDefaults.videoReceiveQueueIngressSheddingMaximumBurstPackets
     ) {
         self.capacity = max(4, capacity)
         self.pressureSignalInterval = max(1, pressureSignalInterval)
+        self.maxIngressSheddingBurstPackets = max(1, maxIngressSheddingBurstPackets)
         self.bufferedPackets = Array(repeating: nil, count: self.capacity)
     }
 
@@ -197,29 +204,43 @@ private actor ShadowClientVideoPacketQueue {
             )
         }
 
+        var ingressSheddingResumeCountForLog: Int?
         if droppingIncomingUntilFrameBoundary {
             droppedIncomingPacketCount += 1
-            let droppedIncomingCountForLog: Int?
-            if droppedIncomingPacketCount.isMultiple(
+            let shouldLogDroppedIncomingCount = droppedIncomingPacketCount.isMultiple(
                 of: ShadowClientRealtimeSessionDefaults.videoReceiveQueueIngressDropLogInterval
-            ) {
-                droppedIncomingCountForLog = droppedIncomingPacketCount
-            } else {
-                droppedIncomingCountForLog = nil
-            }
-            if ShadowClientRealtimeRTSPSessionRuntime.isLikelyVideoFrameBoundary(
+            )
+            let droppedIncomingCountForLog = shouldLogDroppedIncomingCount
+                ? droppedIncomingPacketCount
+                : nil
+            let reachedFrameBoundary = ShadowClientRealtimeRTSPSessionRuntime.isLikelyVideoFrameBoundary(
                 marker: packet.marker,
                 payload: packet.payload
-            ) {
+            )
+            let reachedIngressSheddingBurstLimit =
+                droppedIncomingPacketCount >= maxIngressSheddingBurstPackets
+            if reachedFrameBoundary || reachedIngressSheddingBurstLimit {
+                if reachedIngressSheddingBurstLimit {
+                    ingressSheddingResumeCountForLog = droppedIncomingPacketCount
+                }
                 droppingIncomingUntilFrameBoundary = false
                 droppedIncomingPacketCount = 0
+                if !reachedIngressSheddingBurstLimit {
+                    return .init(
+                        droppedOldest: false,
+                        droppedCountForLog: nil,
+                        droppedCountForPressureSignal: nil,
+                        droppedIncomingCountForLog: droppedIncomingCountForLog
+                    )
+                }
+            } else {
+                return .init(
+                    droppedOldest: false,
+                    droppedCountForLog: nil,
+                    droppedCountForPressureSignal: nil,
+                    droppedIncomingCountForLog: droppedIncomingCountForLog
+                )
             }
-            return .init(
-                droppedOldest: false,
-                droppedCountForLog: nil,
-                droppedCountForPressureSignal: nil,
-                droppedIncomingCountForLog: droppedIncomingCountForLog
-            )
         }
 
         if !waitingContinuations.isEmpty {
@@ -268,7 +289,7 @@ private actor ShadowClientVideoPacketQueue {
             droppedOldest: droppedOldest,
             droppedCountForLog: droppedCountForLog,
             droppedCountForPressureSignal: droppedCountForPressureSignal,
-            droppedIncomingCountForLog: nil
+            droppedIncomingCountForLog: ingressSheddingResumeCountForLog
         )
     }
 
@@ -324,15 +345,46 @@ private actor ShadowClientVideoPacketQueue {
             return 0
         }
 
-        let droppedCount = bufferedCount - boundedMaxBufferedPackets
+        var droppedCount = bufferedCount - boundedMaxBufferedPackets
         var dropsRemaining = droppedCount
         while dropsRemaining > 0 {
-            bufferedPackets[headIndex] = nil
-            headIndex = (headIndex + 1) % capacity
-            bufferedCount -= 1
+            dropHeadPacket()
             dropsRemaining -= 1
         }
+
+        // When we trim under pressure, advance to the next likely frame boundary so
+        // depacketization resumes from a clean frame start rather than a partial AU.
+        if droppedCount > 0, bufferedCount > 0 {
+            let alignmentDropBudget = min(
+                bufferedCount,
+                ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureTrimAlignmentMaximumExtraPackets
+            )
+            var alignmentDrops = 0
+            while alignmentDrops < alignmentDropBudget,
+                  let packet = bufferedPackets[headIndex]
+            {
+                dropHeadPacket()
+                alignmentDrops += 1
+                if ShadowClientRealtimeRTSPSessionRuntime.isLikelyVideoFrameBoundary(
+                    marker: packet.marker,
+                    payload: packet.payload
+                ) {
+                    break
+                }
+            }
+            droppedCount += alignmentDrops
+        }
+
         return droppedCount
+    }
+
+    private func dropHeadPacket() {
+        guard bufferedCount > 0 else {
+            return
+        }
+        bufferedPackets[headIndex] = nil
+        headIndex = (headIndex + 1) % capacity
+        bufferedCount -= 1
     }
 }
 
@@ -354,10 +406,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         let receiveQueuePressureTrimInterval: Int
         let receiveQueuePressureTrimToRecentPackets: Int
         let receiveQueueDropRecoveryThreshold: Int
+        let receiveQueueIngressSheddingMaximumBurstPackets: Int
         let decodeQueueCapacity: Int
         let decodeQueueConsumerMaxBufferedUnits: Int
         let decodeQueueProducerSheddingHighWatermark: Int
         let decodeQueueProducerTrimToRecentUnits: Int
+        let depacketizerDecodeQueueProbeIntervalPackets: Int
         let depacketizerDecodeQueueShedHighWatermark: Int
     }
 
@@ -403,7 +457,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var hasPublishedRenderingState = false
     private var frameAssemblyLogCount = 0
     private var lastRenderedFramePublishUptime: TimeInterval = 0
-    private var renderSubmitDropCount = 0
     private var videoReceiveQueueDropCount = 0
     private var firstVideoReceiveQueueDropUptime: TimeInterval = 0
     private var lastVideoReceiveQueueRecoveryUptime: TimeInterval = 0
@@ -419,6 +472,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var videoReceiveQueuePressureTrimInterval = ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureTrimInterval
     private var videoReceiveQueuePressureTrimToRecentPackets = ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureTrimToRecentPackets
     private var videoReceiveQueueDropRecoveryThreshold = ShadowClientRealtimeSessionDefaults.videoReceiveQueueDropRecoveryThreshold
+    private var videoReceiveQueueIngressSheddingMaximumBurstPackets = ShadowClientRealtimeSessionDefaults.videoReceiveQueueIngressSheddingMaximumBurstPackets
+    private var videoDepacketizerDecodeQueueProbeIntervalPackets = ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueProbeIntervalPackets
 
     public init(
         surfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init(),
@@ -496,7 +551,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         hasPublishedRenderingState = false
         frameAssemblyLogCount = 0
         lastRenderedFramePublishUptime = 0
-        renderSubmitDropCount = 0
         videoReceiveQueueDropCount = 0
         firstVideoReceiveQueueDropUptime = 0
         lastVideoReceiveQueueRecoveryUptime = 0
@@ -507,6 +561,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         await MainActor.run {
             sessionSurfaceContext.reset()
             sessionSurfaceContext.updatePreferredRenderFPS(resolvedVideoConfiguration.fps)
+            sessionSurfaceContext.updateActiveDynamicRangeMode(
+                resolvedVideoConfiguration.enableHDR ? .hdr : .sdr
+            )
             sessionSurfaceContext.transition(to: .connecting)
         }
 
@@ -549,7 +606,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         rtspClient = client
         let packetQueue = ShadowClientVideoPacketQueue(
             capacity: videoReceiveQueueCapacity,
-            pressureSignalInterval: videoReceiveQueuePressureSignalInterval
+            pressureSignalInterval: videoReceiveQueuePressureSignalInterval,
+            maxIngressSheddingBurstPackets: videoReceiveQueueIngressSheddingMaximumBurstPackets
         )
         videoPacketQueue = packetQueue
         let decodeQueue = ShadowClientVideoDecodeQueue(
@@ -628,7 +686,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         hasPublishedRenderingState = false
         frameAssemblyLogCount = 0
         lastRenderedFramePublishUptime = 0
-        renderSubmitDropCount = 0
         videoReceiveQueueDropCount = 0
         firstVideoReceiveQueueDropUptime = 0
         lastVideoReceiveQueueRecoveryUptime = 0
@@ -716,7 +773,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
             packetsSinceDecodeQueueProbe += 1
             if packetsSinceDecodeQueueProbe >=
-                ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueProbeIntervalPackets
+                videoDepacketizerDecodeQueueProbeIntervalPackets
             {
                 packetsSinceDecodeQueueProbe = 0
                 let bufferedDecodeUnits = await videoDecodeQueue?.bufferedUnitCount() ?? 0
@@ -784,7 +841,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 try await decodeFrame(
                     accessUnit: accessUnit.data,
                     codec: accessUnit.codec,
-                    parameterSets: accessUnit.parameterSets
+                    parameterSets: accessUnit.parameterSets,
+                    remainingDecodeQueueBacklog: dequeueResult.remainingBufferedCount
                 )
                 lastDecodeSubmitUptime = ProcessInfo.processInfo.systemUptime
                 decoderFailureCount = 0
@@ -810,14 +868,18 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
     }
 
-    private func dequeueVideoAccessUnit() async -> (accessUnit: VideoAccessUnit?, droppedCount: Int) {
+    private func dequeueVideoAccessUnit() async -> (
+        accessUnit: VideoAccessUnit?,
+        droppedCount: Int,
+        remainingBufferedCount: Int
+    ) {
         guard let videoDecodeQueue else {
-            return (nil, 0)
+            return (nil, 0, 0)
         }
         let result = await videoDecodeQueue.nextWithBackpressureTrim(
             maxBufferedUnits: videoDecodeQueueConsumerMaxBufferedUnits
         )
-        return (result.unit, result.droppedCount)
+        return (result.unit, result.droppedCount, result.remainingBufferedCount)
     }
 
     private func closeVideoPacketQueue() async {
@@ -983,7 +1045,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         ) else {
             return
         }
-        guard videoDecodeQueueDropCount >= ShadowClientRealtimeSessionDefaults.videoDecodeQueueDropRecoveryThreshold else {
+        let decodeQueueRecoveryThreshold = max(
+            ShadowClientRealtimeSessionDefaults.videoDecodeQueueDropRecoveryThreshold,
+            videoDecodeQueueConsumerMaxBufferedUnits * 3
+        )
+        guard videoDecodeQueueDropCount >= decodeQueueRecoveryThreshold else {
             return
         }
         guard now - lastVideoDecodeQueueRecoveryUptime >= ShadowClientRealtimeSessionDefaults.videoDecodeQueueRecoveryCooldownSeconds else {
@@ -1050,7 +1116,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         ) else {
             return
         }
-        guard videoReceiveQueueDropCount >= videoReceiveQueueDropRecoveryThreshold else {
+        let receiveQueueRecoveryThreshold = max(
+            videoReceiveQueueDropRecoveryThreshold,
+            videoReceiveQueuePressureTrimToRecentPackets * 2
+        )
+        guard videoReceiveQueueDropCount >= receiveQueueRecoveryThreshold else {
             return
         }
         guard now - lastVideoReceiveQueueRecoveryUptime >= ShadowClientRealtimeSessionDefaults.videoReceiveQueueRecoveryCooldownSeconds else {
@@ -1094,6 +1164,21 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         depacketizerCorruptionCount += 1
 
         guard depacketizerCorruptionCount >= ShadowClientRealtimeSessionDefaults.depacketizerCorruptionThreshold else {
+            return false
+        }
+
+        let pipelineUnderIngressPressure = isVideoPipelineUnderIngressPressure(now: now)
+        let depacketizerRecoveryMinimumStallSeconds = pipelineUnderIngressPressure
+            ? max(
+                ShadowClientRealtimeSessionDefaults.videoQueuePressureRecoveryMinimumOutputStallSeconds,
+                ShadowClientRealtimeSessionDefaults.videoQueuePressureRecoveryMinimumOutputStallSeconds * 2.0
+            )
+            : ShadowClientRealtimeSessionDefaults.videoQueuePressureRecoveryMinimumOutputStallSeconds
+        guard Self.shouldEscalateQueuePressureToRecovery(
+            now: now,
+            lastDecodedFrameOutputUptime: lastDecodedFrameOutputUptime,
+            minimumStallSeconds: depacketizerRecoveryMinimumStallSeconds
+        ) else {
             return false
         }
         guard now - lastDepacketizerRecoveryUptime >= ShadowClientRealtimeSessionDefaults.depacketizerRecoveryCooldownSeconds else {
@@ -1303,13 +1388,15 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private func decodeFrame(
         accessUnit: Data,
         codec: ShadowClientVideoCodec,
-        parameterSets: [Data]
+        parameterSets: [Data],
+        remainingDecodeQueueBacklog: Int
     ) async throws {
         let runtime = self
         try await decoder.decode(
             accessUnit: accessUnit,
             codec: codec,
-            parameterSets: parameterSets
+            parameterSets: parameterSets,
+            backlogHint: remainingDecodeQueueBacklog
         ) { pixelBuffer in
             let sendableFrame = ShadowClientSendablePixelBuffer(value: pixelBuffer)
             await runtime.handleDecodedFrameOutput(
@@ -1329,12 +1416,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             codec: codec,
             pixelBuffer: pixelBuffer
         )
-        guard shouldPublishRenderedFrame(now: now) else {
-            return
-        }
         surfaceContext.frameStore.update(pixelBuffer: pixelBuffer)
         lastRenderedFramePublishUptime = now
-        renderSubmitDropCount = 0
         if !hasPublishedRenderingState {
             hasPublishedRenderingState = true
             let sessionSurfaceContext = self.surfaceContext
@@ -1350,7 +1433,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         if state != .rendering {
             hasPublishedRenderingState = false
             lastRenderedFramePublishUptime = 0
-            renderSubmitDropCount = 0
         }
         let sessionSurfaceContext = self.surfaceContext
         await MainActor.run {
@@ -1389,13 +1471,15 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         videoReceiveQueuePressureTrimInterval = profile.receiveQueuePressureTrimInterval
         videoReceiveQueuePressureTrimToRecentPackets = profile.receiveQueuePressureTrimToRecentPackets
         videoReceiveQueueDropRecoveryThreshold = profile.receiveQueueDropRecoveryThreshold
+        videoReceiveQueueIngressSheddingMaximumBurstPackets = profile.receiveQueueIngressSheddingMaximumBurstPackets
         videoDecodeQueueCapacity = profile.decodeQueueCapacity
         videoDecodeQueueConsumerMaxBufferedUnits = profile.decodeQueueConsumerMaxBufferedUnits
         videoDecodeQueueProducerSheddingHighWatermark = profile.decodeQueueProducerSheddingHighWatermark
         videoDecodeQueueProducerTrimToRecentUnits = profile.decodeQueueProducerTrimToRecentUnits
+        videoDepacketizerDecodeQueueProbeIntervalPackets = profile.depacketizerDecodeQueueProbeIntervalPackets
         videoDepacketizerDecodeQueueShedHighWatermark = profile.depacketizerDecodeQueueShedHighWatermark
         logger.notice(
-            "Video queue profile configured receive-cap=\(profile.receiveQueueCapacity, privacy: .public) decode-cap=\(profile.decodeQueueCapacity, privacy: .public) trim-packets=\(profile.receiveQueuePressureTrimToRecentPackets, privacy: .public) decode-consumer-max=\(profile.decodeQueueConsumerMaxBufferedUnits, privacy: .public)"
+            "Video queue profile configured receive-cap=\(profile.receiveQueueCapacity, privacy: .public) decode-cap=\(profile.decodeQueueCapacity, privacy: .public) trim-packets=\(profile.receiveQueuePressureTrimToRecentPackets, privacy: .public) decode-consumer-max=\(profile.decodeQueueConsumerMaxBufferedUnits, privacy: .public) ingress-burst-cap=\(profile.receiveQueueIngressSheddingMaximumBurstPackets, privacy: .public) depacketize-probe=\(profile.depacketizerDecodeQueueProbeIntervalPackets, privacy: .public)"
         )
     }
 
@@ -1405,10 +1489,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         videoReceiveQueuePressureTrimInterval = ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureTrimInterval
         videoReceiveQueuePressureTrimToRecentPackets = ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureTrimToRecentPackets
         videoReceiveQueueDropRecoveryThreshold = ShadowClientRealtimeSessionDefaults.videoReceiveQueueDropRecoveryThreshold
+        videoReceiveQueueIngressSheddingMaximumBurstPackets = ShadowClientRealtimeSessionDefaults.videoReceiveQueueIngressSheddingMaximumBurstPackets
         videoDecodeQueueCapacity = ShadowClientRealtimeSessionDefaults.videoDecodeQueueCapacity
         videoDecodeQueueConsumerMaxBufferedUnits = ShadowClientRealtimeSessionDefaults.videoDecodeQueueConsumerMaxBufferedUnits
         videoDecodeQueueProducerSheddingHighWatermark = ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerSheddingHighWatermark
         videoDecodeQueueProducerTrimToRecentUnits = ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerTrimToRecentUnits
+        videoDepacketizerDecodeQueueProbeIntervalPackets = ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueProbeIntervalPackets
         videoDepacketizerDecodeQueueShedHighWatermark = ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueShedHighWatermark
     }
 
@@ -1439,39 +1525,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 bitrateKbps: bitrateKbps
             )
         }
-    }
-
-    private func shouldPublishRenderedFrame(now: TimeInterval) -> Bool {
-        guard hasPublishedRenderingState else {
-            return true
-        }
-        guard lastRenderedFramePublishUptime > 0 else {
-            return true
-        }
-
-        let targetFPS = max(
-            1,
-            activeVideoConfiguration?.fps ?? ShadowClientStreamingLaunchBounds.defaultFPS
-        )
-        let targetInterval = 1.0 / Double(targetFPS)
-        let pacingTolerance = min(
-            1.0,
-            max(0.1, ShadowClientRealtimeSessionDefaults.videoRenderSubmitPacingToleranceRatio)
-        )
-        let minimumPublishInterval = targetInterval * pacingTolerance
-        guard now - lastRenderedFramePublishUptime < minimumPublishInterval else {
-            return true
-        }
-
-        renderSubmitDropCount += 1
-        if renderSubmitDropCount == 1 ||
-            renderSubmitDropCount.isMultiple(of: ShadowClientRealtimeSessionDefaults.videoRenderSubmitDropLogInterval)
-        {
-            logger.notice(
-                "Video render submit pacing dropped decoded frame (count=\(self.renderSubmitDropCount, privacy: .public), fps=\(targetFPS, privacy: .public))"
-            )
-        }
-        return false
     }
 
     private func waitForInitialRenderState(timeout: Duration) async throws {
@@ -1533,12 +1586,22 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         logger.notice(
             "Decoded first frame metadata codec=\(String(describing: codec), privacy: .public) pixel-format=0x\(String(pixelFormat, radix: 16), privacy: .public) primaries=\(primaries, privacy: .public) transfer=\(transfer, privacy: .public) matrix=\(matrix, privacy: .public)"
         )
+
+        let resolvedDynamicRangeMode = Self.dynamicRangeMode(fromTransferFunction: transfer)
+        let sessionSurfaceContext = self.surfaceContext
+        Task { @MainActor in
+            sessionSurfaceContext.updateActiveDynamicRangeMode(resolvedDynamicRangeMode)
+        }
     }
 
     private func recordDecodedFrameOutputUptime() {
         lastDecodedFrameOutputUptime = ProcessInfo.processInfo.systemUptime
         decoderOutputStallRecoveryCount = 0
         firstDecoderOutputStallRecoveryUptime = 0
+        videoReceiveQueueDropCount = 0
+        firstVideoReceiveQueueDropUptime = 0
+        videoDecodeQueueDropCount = 0
+        firstVideoDecodeQueueDropUptime = 0
         pendingVideoRecoveryRequest = false
     }
 
@@ -1552,12 +1615,15 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
 
         let now = ProcessInfo.processInfo.systemUptime
+        let isPipelineUnderIngressPressure = isVideoPipelineUnderIngressPressure(now: now)
         guard Self.shouldAllowVideoRecoveryFrameRequest(
             now: now,
             lastRequestUptime: lastVideoRecoveryRequestUptime,
             isRequestPending: pendingVideoRecoveryRequest,
             minimumInterval: minimumInterval,
-            pendingTimeout: ShadowClientRealtimeSessionDefaults.videoRecoveryFramePendingTimeoutSeconds
+            pendingTimeout: ShadowClientRealtimeSessionDefaults.videoRecoveryFramePendingTimeoutSeconds,
+            isPipelineUnderIngressPressure: isPipelineUnderIngressPressure,
+            pressureMinimumInterval: ShadowClientRealtimeSessionDefaults.videoRecoveryFrameRequestUnderPressureCooldownSeconds
         ) else {
             return false
         }
@@ -1603,6 +1669,19 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         "AV1 decode failed (\(reason)). Runtime recovery exhausted; retry with HEVC fallback."
     }
 
+    private static func dynamicRangeMode(
+        fromTransferFunction transferFunction: String
+    ) -> ShadowClientRealtimeSessionSurfaceContext.DynamicRangeMode {
+        let normalized = transferFunction.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if normalized.contains("2084") || normalized.contains("PQ") || normalized.contains("HLG") {
+            return .hdr
+        }
+        if normalized.isEmpty || normalized == "NIL" {
+            return .unknown
+        }
+        return .sdr
+    }
+
     static func shouldTriggerDecoderOutputStallRecovery(
         hasRenderedFirstFrame: Bool,
         now: TimeInterval,
@@ -1636,10 +1715,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             return false
         }
         guard lastDecodedFrameOutputUptime > 0 else {
-            return false
+            return true
         }
-        return (now - lastDecodedFrameOutputUptime) <
-            ShadowClientRealtimeSessionDefaults.decoderOutputStallSuppressionGraceSeconds
+        let elapsedSinceFrameOutput = now - lastDecodedFrameOutputUptime
+        let suppressionCeiling = max(
+            ShadowClientRealtimeSessionDefaults.decoderOutputStallSuppressionGraceSeconds,
+            ShadowClientRealtimeSessionDefaults.decoderOutputStallSuppressionMaximumSecondsUnderPressure
+        )
+        return elapsedSinceFrameOutput < suppressionCeiling
     }
 
     static func didCounterCrossIntervalBoundary(
@@ -1660,10 +1743,17 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastRequestUptime: TimeInterval,
         isRequestPending: Bool,
         minimumInterval: TimeInterval,
-        pendingTimeout: TimeInterval
+        pendingTimeout: TimeInterval,
+        isPipelineUnderIngressPressure: Bool,
+        pressureMinimumInterval: TimeInterval
     ) -> Bool {
         let elapsed = now - lastRequestUptime
         if isRequestPending && elapsed < max(0, pendingTimeout) {
+            return false
+        }
+        if isPipelineUnderIngressPressure &&
+            elapsed < max(max(0, minimumInterval), max(0, pressureMinimumInterval))
+        {
             return false
         }
         return elapsed >= max(0, minimumInterval)
@@ -1815,34 +1905,106 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         for configuration: ShadowClientRemoteSessionVideoConfiguration
     ) -> VideoQueuePressureProfile {
         let normalizedFPS = max(ShadowClientStreamingLaunchBounds.minimumFPS, configuration.fps)
+        let normalizedWidth = max(ShadowClientStreamingLaunchBounds.minimumWidth, configuration.width)
+        let normalizedHeight = max(ShadowClientStreamingLaunchBounds.minimumHeight, configuration.height)
         let normalizedBitrateKbps = max(
             ShadowClientStreamingLaunchBounds.minimumBitrateKbps,
             configuration.bitrateKbps
+        )
+
+        let payloadBytes = max(
+            1,
+            max(256, ShadowClientRealtimeSessionDefaults.videoEstimatedPacketPayloadBytes)
         )
         let estimatedPacketsPerSecond = max(
             1,
             Int(
                 (
                     (Double(normalizedBitrateKbps) * 1_000.0 / 8.0) /
-                        Double(max(256, ShadowClientRealtimeSessionDefaults.videoEstimatedPacketPayloadBytes))
+                        Double(payloadBytes)
                 ).rounded(.up)
             )
         )
-        let packetsPerFrame = max(
+        let bitratePacketsPerFrame = max(
             1,
             Int((Double(estimatedPacketsPerSecond) / Double(normalizedFPS)).rounded(.up))
         )
+        let modeledBytesPerFrame =
+            (Double(normalizedWidth) * Double(normalizedHeight) *
+                ShadowClientRealtimeSessionDefaults.videoReceiveQueueModelBitsPerPixel) / 8.0
+        let modeledPacketsPerFrame = max(
+            ShadowClientRealtimeSessionDefaults.videoReceiveQueueMinimumPacketsPerFrameEstimate,
+            Int((modeledBytesPerFrame / Double(payloadBytes)).rounded(.up))
+        )
+        let bitratePacketCapFromModel = max(
+            modeledPacketsPerFrame,
+            Int(
+                (
+                    Double(modeledPacketsPerFrame) *
+                        max(
+                            1.0,
+                            ShadowClientRealtimeSessionDefaults.videoReceiveQueueBitratePacketsPerFrameCapRatio
+                        )
+                ).rounded(.up)
+            )
+        )
+        let effectivePacketsPerFrame = min(
+            ShadowClientRealtimeSessionDefaults.videoReceiveQueueMaximumPacketsPerFrameEstimate,
+            max(
+                ShadowClientRealtimeSessionDefaults.videoReceiveQueueMinimumPacketsPerFrameEstimate,
+                min(bitratePacketsPerFrame, bitratePacketCapFromModel)
+            )
+        )
+        let complexityScale = min(
+            2.4,
+            max(
+                1.0,
+                sqrt(
+                    Double(effectivePacketsPerFrame) /
+                        Double(
+                            max(
+                                1,
+                                ShadowClientRealtimeSessionDefaults.videoReceiveQueueMinimumPacketsPerFrameEstimate * 2
+                            )
+                        )
+                )
+            )
+        )
+        let fpsScale = max(
+            0.5,
+            Double(normalizedFPS) / Double(max(1, ShadowClientStreamingLaunchBounds.defaultFPS))
+        )
+        let complexityWindowBoost = Int(((complexityScale - 1.0) * 1.0).rounded(.up))
+        let targetFrameWindow = Int(
+            (
+                Double(ShadowClientRealtimeSessionDefaults.videoReceiveQueueTargetFrameWindow) *
+                    pow(fpsScale, 0.25)
+            ).rounded(.toNearestOrAwayFromZero)
+        ) + max(0, complexityWindowBoost)
+        let boundedTargetFrameWindow = min(
+            ShadowClientRealtimeSessionDefaults.videoReceiveQueueMaximumFrameWindow,
+            max(
+                ShadowClientRealtimeSessionDefaults.videoReceiveQueueMinimumFrameWindow,
+                targetFrameWindow
+            )
+        )
+        let targetWindowSeconds = min(
+            ShadowClientRealtimeSessionDefaults.videoReceiveQueueTargetWindowSeconds,
+            max(
+                ShadowClientRealtimeSessionDefaults.videoReceiveQueueMinimumTargetWindowSeconds,
+                Double(boundedTargetFrameWindow) / Double(max(1, normalizedFPS))
+            )
+        )
+        let receiveQueueCapacityByTimeWindow = Int(
+            (Double(estimatedPacketsPerSecond) * targetWindowSeconds).rounded(.up)
+        )
+        let receiveQueueCapacityByFrameWindow = effectivePacketsPerFrame * boundedTargetFrameWindow
 
         let receiveQueueCapacity = min(
             ShadowClientRealtimeSessionDefaults.videoReceiveQueueMaximumCapacity,
             max(
                 ShadowClientRealtimeSessionDefaults.videoReceiveQueueCapacity,
-                Int(
-                    (
-                        Double(estimatedPacketsPerSecond) *
-                            ShadowClientRealtimeSessionDefaults.videoReceiveQueueTargetWindowSeconds
-                    ).rounded(.up)
-                )
+                min(receiveQueueCapacityByTimeWindow, receiveQueueCapacityByFrameWindow)
             )
         )
 
@@ -1850,7 +2012,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             max(1, receiveQueueCapacity - 1),
             max(
                 ShadowClientRealtimeSessionDefaults.videoReceiveQueuePressureTrimToRecentPackets,
-                packetsPerFrame * ShadowClientRealtimeSessionDefaults.videoReceiveQueueTrimFrameWindow
+                effectivePacketsPerFrame * ShadowClientRealtimeSessionDefaults.videoReceiveQueueTrimFrameWindow
             )
         )
         let receiveQueuePressureSignalInterval = max(
@@ -1866,10 +2028,17 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             receiveQueuePressureTrimToRecentPackets *
                 ShadowClientRealtimeSessionDefaults.videoReceiveQueueRecoveryFrameWindow
         )
+        let receiveQueueIngressSheddingMaximumBurstPackets = min(
+            receiveQueueCapacity,
+            max(
+                ShadowClientRealtimeSessionDefaults.videoReceiveQueueIngressSheddingMaximumBurstPackets,
+                receiveQueuePressureTrimToRecentPackets
+            )
+        )
 
         let fpsScaledDecodeCapacity = max(
             ShadowClientRealtimeSessionDefaults.videoDecodeQueueCapacity,
-            Int((Double(normalizedFPS) / 4.0).rounded(.up))
+            Int((Double(normalizedFPS) / 5.0 * pow(complexityScale, 0.85)).rounded(.up))
         )
         let decodeQueueCapacity = min(
             ShadowClientRealtimeSessionDefaults.videoDecodeQueueMaximumCapacity,
@@ -1879,21 +2048,25 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             max(1, decodeQueueCapacity - 1),
             max(
                 ShadowClientRealtimeSessionDefaults.videoDecodeQueueConsumerMaxBufferedUnits,
-                Int((Double(normalizedFPS) / 8.0).rounded(.up))
+                Int((Double(decodeQueueCapacity) * 0.45).rounded(.up))
             )
         )
         let decodeQueueProducerSheddingHighWatermark = min(
             max(1, decodeQueueCapacity - 1),
             max(
                 ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerSheddingHighWatermark,
-                decodeQueueConsumerMaxBufferedUnits + 1
+                decodeQueueConsumerMaxBufferedUnits + max(2, decodeQueueCapacity / 8)
             )
         )
         let decodeQueueProducerTrimToRecentUnits = min(
             decodeQueueProducerSheddingHighWatermark,
             max(
-                ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerTrimToRecentUnits,
-                decodeQueueConsumerMaxBufferedUnits / 2
+                decodeQueueConsumerMaxBufferedUnits,
+                max(
+                    ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerTrimToRecentUnits,
+                    decodeQueueProducerSheddingHighWatermark -
+                        max(2, decodeQueueProducerSheddingHighWatermark / 4)
+                )
             )
         )
         let depacketizerDecodeQueueShedHighWatermark = min(
@@ -1903,6 +2076,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 decodeQueueProducerSheddingHighWatermark + 1
             )
         )
+        let depacketizerDecodeQueueProbeIntervalPackets = max(
+            1,
+            min(
+                ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueProbeIntervalPackets,
+                bitratePacketsPerFrame
+            )
+        )
 
         return .init(
             receiveQueueCapacity: receiveQueueCapacity,
@@ -1910,10 +2090,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             receiveQueuePressureTrimInterval: receiveQueuePressureTrimInterval,
             receiveQueuePressureTrimToRecentPackets: receiveQueuePressureTrimToRecentPackets,
             receiveQueueDropRecoveryThreshold: receiveQueueDropRecoveryThreshold,
+            receiveQueueIngressSheddingMaximumBurstPackets: receiveQueueIngressSheddingMaximumBurstPackets,
             decodeQueueCapacity: decodeQueueCapacity,
             decodeQueueConsumerMaxBufferedUnits: decodeQueueConsumerMaxBufferedUnits,
             decodeQueueProducerSheddingHighWatermark: decodeQueueProducerSheddingHighWatermark,
             decodeQueueProducerTrimToRecentUnits: decodeQueueProducerTrimToRecentUnits,
+            depacketizerDecodeQueueProbeIntervalPackets: depacketizerDecodeQueueProbeIntervalPackets,
             depacketizerDecodeQueueShedHighWatermark: depacketizerDecodeQueueShedHighWatermark
         )
     }
