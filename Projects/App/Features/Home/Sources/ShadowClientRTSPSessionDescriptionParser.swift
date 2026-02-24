@@ -22,12 +22,21 @@ public struct ShadowClientRTSPVideoTrackDescriptor: Equatable, Sendable {
     ) {
         self.codec = codec
         self.rtpPayloadType = rtpPayloadType
-        var normalizedCandidates = candidateRTPPayloadTypes.filter { (96 ... 127).contains($0) }
-        if !normalizedCandidates.contains(rtpPayloadType),
-           (96 ... 127).contains(rtpPayloadType)
-        {
-            normalizedCandidates.append(rtpPayloadType)
+        var normalizedCandidates: [Int] = []
+
+        func appendCandidate(_ payloadType: Int) {
+            guard (0 ... 127).contains(payloadType),
+                  payloadType != ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType
+            else {
+                return
+            }
+            if !normalizedCandidates.contains(payloadType) {
+                normalizedCandidates.append(payloadType)
+            }
         }
+
+        candidateRTPPayloadTypes.forEach(appendCandidate)
+        appendCandidate(rtpPayloadType)
         if normalizedCandidates.isEmpty {
             normalizedCandidates = [rtpPayloadType]
         }
@@ -512,7 +521,9 @@ public enum ShadowClientRTSPSessionDescriptionParser {
         var candidates: [Int] = []
 
         func append(_ payloadType: Int) {
-            guard (96 ... 127).contains(payloadType) else {
+            guard (0 ... 127).contains(payloadType),
+                  payloadType != ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType
+            else {
                 return
             }
             if !candidates.contains(payloadType) {

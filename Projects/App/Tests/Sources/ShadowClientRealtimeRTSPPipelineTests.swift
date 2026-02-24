@@ -103,6 +103,31 @@ func rtspSdpParserHandlesDescribeWithoutMediaSection() throws {
     #expect(track.parameterSets[0] == Data([0x00, 0x00, 0x00, 0x01]))
 }
 
+@Test("RTSP SDP parser keeps non-dynamic video payload types")
+func rtspSdpParserKeepsNonDynamicPayloadType() throws {
+    let sdp = """
+    v=0
+    o=- 0 0 IN IP4 127.0.0.1
+    s=No Name
+    t=0 0
+    c=IN IP4 127.0.0.1
+    m=video 0 RTP/AVP 0
+    a=rtpmap:0 H264/90000
+    a=fmtp:0 packetization-mode=1;sprop-parameter-sets=Z0IAH5WoFAFuQA==,aM4G4g==
+    a=control:streamid=video
+    """
+
+    let track = try ShadowClientRTSPSessionDescriptionParser.parseVideoTrack(
+        sdp: sdp,
+        contentBase: nil,
+        fallbackSessionURL: "rtsp://example.com/stream"
+    )
+
+    #expect(track.codec == .h264)
+    #expect(track.rtpPayloadType == 0)
+    #expect(track.candidateRTPPayloadTypes.contains(0))
+}
+
 @Test("RTSP SDP parser extracts Opus audio track metadata")
 func rtspSdpParserExtractsOpusAudioTrack() {
     let sdp = """
@@ -434,8 +459,8 @@ func rtpPayloadParserSupportsSlicedDataInput() throws {
     #expect(parsed.payload.startIndex == 0)
 }
 
-@Test("RTSP video payload adoption rejects non-video payload-type candidates")
-func rtspVideoPayloadAdoptionRejectsNonVideoPayloadTypeCandidates() {
+@Test("RTSP video payload adoption rejects audio and control payload types")
+func rtspVideoPayloadAdoptionRejectsAudioAndControlPayloadTypes() {
     let audioTrack = ShadowClientRTSPAudioTrackDescriptor(
         codec: .opus,
         rtpPayloadType: 97,
@@ -461,8 +486,21 @@ func rtspVideoPayloadAdoptionRejectsNonVideoPayloadTypeCandidates() {
             videoPayloadCandidates: Set([98])
         )
     )
+}
+
+@Test("RTSP video payload adoption accepts static payload type on early mismatch")
+func rtspVideoPayloadAdoptionAcceptsStaticPayloadTypeOnEarlyMismatch() {
+    let audioTrack = ShadowClientRTSPAudioTrackDescriptor(
+        codec: .opus,
+        rtpPayloadType: 97,
+        sampleRate: 48_000,
+        channelCount: 2,
+        controlURL: nil,
+        formatParameters: [:]
+    )
+
     #expect(
-        !ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
             observedPayloadType: 0,
             currentPayloadType: 98,
             audioPayloadType: audioTrack.rtpPayloadType,
@@ -471,8 +509,8 @@ func rtspVideoPayloadAdoptionRejectsNonVideoPayloadTypeCandidates() {
     )
 }
 
-@Test("RTSP video payload adoption accepts SDP advertised video payload candidate")
-func rtspVideoPayloadAdoptionAcceptsAdvertisedVideoPayloadCandidate() {
+@Test("RTSP video payload adoption accepts non-candidate dynamic payload on early mismatch")
+func rtspVideoPayloadAdoptionAcceptsNonCandidateDynamicPayloadOnEarlyMismatch() {
     let audioTrack = ShadowClientRTSPAudioTrackDescriptor(
         codec: .opus,
         rtpPayloadType: 97,
@@ -487,7 +525,7 @@ func rtspVideoPayloadAdoptionAcceptsAdvertisedVideoPayloadCandidate() {
             observedPayloadType: 99,
             currentPayloadType: 98,
             audioPayloadType: audioTrack.rtpPayloadType,
-            videoPayloadCandidates: Set([98, 99])
+            videoPayloadCandidates: Set([98])
         )
     )
 }

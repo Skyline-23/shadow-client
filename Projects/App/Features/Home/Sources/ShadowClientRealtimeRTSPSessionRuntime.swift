@@ -2622,7 +2622,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         observedPayloadType: Int,
         currentPayloadType: Int,
         audioPayloadType: Int?,
-        videoPayloadCandidates: Set<Int>
+        videoPayloadCandidates _: Set<Int>
     ) -> Bool {
         guard observedPayloadType != currentPayloadType else {
             return false
@@ -2635,10 +2635,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         {
             return false
         }
-        guard (96 ... 127).contains(observedPayloadType) else {
+        guard (0 ... 127).contains(observedPayloadType) else {
             return false
         }
-        return videoPayloadCandidates.contains(observedPayloadType)
+
+        // Mirror Moonlight startup behavior: before first-frame lock, accept any
+        // valid RTP payload type seen on the video socket except control/audio.
+        return true
     }
 
     static func queuePressureProfile(
@@ -4215,7 +4218,7 @@ private actor ShadowClientRTSPInterleavedClient {
                           ignoredPayloadTypeMismatches.insert(packet.payloadType).inserted
                 {
                     logger.notice(
-                        "RTSP payload type mismatch ignored for non-video candidate payload type \(packet.payloadType, privacy: .public)"
+                        "RTSP payload type mismatch ignored for disallowed payload type \(packet.payloadType, privacy: .public)"
                     )
                 }
                 continue
@@ -4419,7 +4422,7 @@ private actor ShadowClientRTSPInterleavedClient {
                       ignoredPayloadTypeMismatches.insert(packet.payloadType).inserted
             {
                 logger.notice(
-                    "RTSP payload type mismatch ignored for non-video candidate payload type \(packet.payloadType, privacy: .public)"
+                    "RTSP payload type mismatch ignored for disallowed payload type \(packet.payloadType, privacy: .public)"
                 )
             }
         }
