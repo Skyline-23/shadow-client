@@ -275,8 +275,8 @@ func audioJitterSkipPolicyDoesNotSkipBelowTargetDepth() {
     #expect(!shouldSkip)
 }
 
-@Test("Audio decode window keeps oldest packets under output queue pressure")
-func audioDecodeWindowKeepsOldestPacketsUnderOutputQueuePressure() {
+@Test("Audio decode window defers newest packets under output queue pressure")
+func audioDecodeWindowDefersNewestPacketsUnderOutputQueuePressure() {
     let window = ShadowClientRealtimeAudioSessionRuntime.audioReadyPacketDecodeWindow(
         readyPacketCount: 8,
         availableOutputSlots: 2,
@@ -285,11 +285,11 @@ func audioDecodeWindowKeepsOldestPacketsUnderOutputQueuePressure() {
 
     #expect(window.decodeStartIndex == 0)
     #expect(window.decodeEndIndex == 2)
-    #expect(window.droppedPacketCount == 6)
+    #expect(window.deferredPacketCount == 6)
 }
 
-@Test("Audio decode window limits decode batch to available output slots")
-func audioDecodeWindowLimitsDecodeBatchToAvailableSlots() {
+@Test("Audio decode window limits decode batch to available output slots and defers overflow")
+func audioDecodeWindowLimitsDecodeBatchToAvailableSlotsAndDefersOverflow() {
     let window = ShadowClientRealtimeAudioSessionRuntime.audioReadyPacketDecodeWindow(
         readyPacketCount: 6,
         availableOutputSlots: 4,
@@ -298,7 +298,7 @@ func audioDecodeWindowLimitsDecodeBatchToAvailableSlots() {
 
     #expect(window.decodeStartIndex == 0)
     #expect(window.decodeEndIndex == 4)
-    #expect(window.droppedPacketCount == 2)
+    #expect(window.deferredPacketCount == 2)
 }
 
 @Test("Audio decode window drains all ready packets when output slots are sufficient")
@@ -311,7 +311,7 @@ func audioDecodeWindowDrainsAllReadyPacketsWhenOutputSlotsAreSufficient() {
 
     #expect(window.decodeStartIndex == 0)
     #expect(window.decodeEndIndex == 3)
-    #expect(window.droppedPacketCount == 0)
+    #expect(window.deferredPacketCount == 0)
 }
 
 @Test("Audio ready packet drain limit disables draining while decode cooldown is active")
@@ -381,6 +381,42 @@ func audioReadyPacketDrainLimitUsesAvailableSlotsAndBatchCap() {
 
     #expect(bySlots == 3)
     #expect(byBatch == 8)
+}
+
+@Test("Audio queue profile keeps output buffer window low-latency for stereo")
+func audioQueueProfileKeepsLowLatencyWindowForStereo() {
+    let maximumQueuedBuffers = ShadowClientRealtimeAudioSessionRuntime
+        .recommendedMaximumQueuedAudioBuffers(
+            sampleRate: 48_000,
+            channels: 2
+        )
+    let pressureTrimToRecentPackets = ShadowClientRealtimeAudioSessionRuntime
+        .recommendedAudioPressureTrimToRecentPackets(
+            sampleRate: 48_000,
+            channels: 2
+        )
+
+    #expect(maximumQueuedBuffers <= 12)
+    #expect(maximumQueuedBuffers >= 4)
+    #expect(pressureTrimToRecentPackets <= 8)
+    #expect(pressureTrimToRecentPackets >= 3)
+}
+
+@Test("Audio queue profile scales channel slack without unbounded queue growth")
+func audioQueueProfileScalesChannelSlackWithoutUnboundedGrowth() {
+    let stereoQueuedBuffers = ShadowClientRealtimeAudioSessionRuntime
+        .recommendedMaximumQueuedAudioBuffers(
+            sampleRate: 48_000,
+            channels: 2
+        )
+    let surroundQueuedBuffers = ShadowClientRealtimeAudioSessionRuntime
+        .recommendedMaximumQueuedAudioBuffers(
+            sampleRate: 48_000,
+            channels: 6
+        )
+
+    #expect(surroundQueuedBuffers >= stereoQueuedBuffers)
+    #expect(surroundQueuedBuffers <= 12)
 }
 
 @Test("Audio recovered-packet burst budget is capped and slot-aware")
