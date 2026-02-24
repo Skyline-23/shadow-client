@@ -260,6 +260,60 @@ func remoteDesktopRuntimeLaunchesSelectedApp() async {
     }
 }
 
+@Test("Remote desktop runtime forwards server app version into session video configuration")
+@MainActor
+func remoteDesktopRuntimeForwardsServerAppVersionToSessionConfiguration() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.24": .init(
+                host: "192.168.0.24",
+                displayName: "Versioned-Host",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.1.450.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-VERSION"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.24": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(
+            sessionURL: "rtsp://192.168.0.24:48010/session",
+            verb: "launch"
+        )
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.24"], preferredHost: "192.168.0.24")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(
+            preferredCodec: .auto,
+            enableHDR: true,
+            enableSurroundAudio: true,
+            lowLatencyMode: false
+        )
+    )
+    await waitForLaunchState(runtime)
+
+    let latestConfiguration = await sessionConnector.latestVideoConfiguration()
+    #expect(latestConfiguration?.serverAppVersion == "7.1.450.0")
+}
+
 @Test("Remote desktop runtime connects launched video session URL before reporting success")
 @MainActor
 func remoteDesktopRuntimeConnectsVideoSessionBeforeLaunchSuccess() async {
@@ -674,6 +728,76 @@ func remoteDesktopRuntimeAutoRelaunchesCodecAfterPostLaunchDecoderFailure() asyn
 
     let codecHistory = await sessionConnector.videoConfigurations().map(\.preferredCodec)
     #expect(codecHistory == [.auto, .h265])
+}
+
+@Test("Remote desktop runtime persists runtime fallback codec for subsequent auto launches")
+@MainActor
+func remoteDesktopRuntimePersistsRuntimeFallbackCodecForSubsequentAutoLaunches() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.143": .init(
+                host: "192.168.0.143",
+                displayName: "Codec-Recovery-Persist-Host",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-CODEC-PERSIST"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.143": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let sessionURL = "rtsp://192.168.0.143:48010/session"
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: sessionURL, verb: "launch")
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.143"], preferredHost: "192.168.0.143")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(
+            preferredCodec: .auto,
+            enableHDR: true,
+            enableSurroundAudio: true,
+            lowLatencyMode: false
+        )
+    )
+    await waitForLaunchState(runtime)
+
+    runtime.handleSessionRenderStateTransition(
+        .failed("AV1 decode failed (decoder recovery exhausted). Runtime recovery exhausted; retry with fallback codec.")
+    )
+    await waitForLaunchCalls(control, expectedCount: 2)
+    await waitForLaunchState(runtime, maxAttempts: 200)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(
+            preferredCodec: .auto,
+            enableHDR: true,
+            enableSurroundAudio: true,
+            lowLatencyMode: false
+        )
+    )
+    await waitForLaunchCalls(control, expectedCount: 3)
+    await waitForLaunchState(runtime, maxAttempts: 200)
+
+    let codecHistory = await sessionConnector.videoConfigurations().map(\.preferredCodec)
+    #expect(codecHistory == [.auto, .h265, .h265])
 }
 
 @Test("Remote desktop runtime downgrades codec for forceLaunch after resume decoder failures")

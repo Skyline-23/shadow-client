@@ -962,6 +962,95 @@ func av1DepacketizerDoesNotRewindContinuityOnStaleParityShard() {
     #expect(frame == Data([0x01, 0x02, 0x03, 0x04, 0x05]))
 }
 
+@Test("AV1 depacketizer accepts late data shard when parity shard arrives early")
+func av1DepacketizerAcceptsLateDataAfterEarlyParityArrival() {
+    var depacketizer = ShadowClientAV1RTPDepacketizer()
+    let frameIndex: UInt32 = 68
+    let dataShardCount: UInt32 = 2
+
+    let sofPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 700,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF,
+        payloadBytes: [0x10, 0x11],
+        includeFrameHeaderWithLastPayloadLength: moonlightFrameHeaderSize + 2,
+        fecInfo: (dataShardCount << 22) | (0 << 12)
+    )
+    let earlyParityPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 702,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData,
+        payloadBytes: [0x99, 0x98],
+        fecInfo: (dataShardCount << 22) | (2 << 12)
+    )
+    let lateEofDataPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 701,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagEOF,
+        payloadBytes: [0x12, 0x13],
+        fecInfo: (dataShardCount << 22) | (1 << 12)
+    )
+
+    #expect(depacketizer.ingest(payload: sofPacket, marker: false) == nil)
+    #expect(depacketizer.ingest(payload: earlyParityPacket, marker: false) == nil)
+    let frame = depacketizer.ingest(payload: lateEofDataPacket, marker: true)
+
+    #expect(frame == Data([0x10, 0x11, 0x12, 0x13]))
+}
+
+@Test("AV1 depacketizer rejects block-boundary streamPacketIndex jump without SOF")
+func av1DepacketizerRejectsBlockBoundaryJumpWithoutSOF() {
+    var depacketizer = ShadowClientAV1RTPDepacketizer()
+    let frameIndex: UInt32 = 69
+    let dataShardCount: UInt32 = 2
+
+    let firstDataPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 800,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF,
+        payloadBytes: [0x21, 0x22],
+        includeFrameHeaderWithLastPayloadLength: moonlightFrameHeaderSize + 2,
+        fecInfo: (dataShardCount << 22) | (0 << 12)
+    )
+    let secondDataPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 801,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData,
+        payloadBytes: [0x23, 0x24],
+        fecInfo: (dataShardCount << 22) | (1 << 12)
+    )
+    let parityPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 802,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData,
+        payloadBytes: [0xAA, 0xBB],
+        fecInfo: (dataShardCount << 22) | (2 << 12)
+    )
+    let nextBlockDataPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 803,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagEOF,
+        payloadBytes: [0x25, 0x26],
+        fecInfo: (dataShardCount << 22) | (0 << 12)
+    )
+    let nextFramePacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 900,
+        frameIndex: frameIndex + 1,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF | nvVideoPacketFlagEOF,
+        payloadBytes: [0x31, 0x32],
+        includeFrameHeaderWithLastPayloadLength: moonlightFrameHeaderSize + 2
+    )
+
+    #expect(depacketizer.ingest(payload: firstDataPacket, marker: false) == nil)
+    #expect(depacketizer.ingest(payload: secondDataPacket, marker: false) == nil)
+    #expect(depacketizer.ingest(payload: parityPacket, marker: false) == nil)
+    #expect(depacketizer.ingest(payload: nextBlockDataPacket, marker: true) == nil)
+
+    // Depacketizer should recover on the next valid frame boundary.
+    let recoveredFrame = depacketizer.ingest(payload: nextFramePacket, marker: true)
+    #expect(recoveredFrame == Data([0x31, 0x32]))
+}
+
 @Test("AV1 depacketizer applies Sunshine 7.1.446 frame header profile for 0x81 packets")
 func av1DepacketizerUsesVersionAware41ByteHeader() {
     var depacketizer = ShadowClientAV1RTPDepacketizer()
@@ -970,6 +1059,25 @@ func av1DepacketizerUsesVersionAware41ByteHeader() {
     let packet = makeSyntheticNVVideoPacket(
         streamPacketIndex: 513,
         frameIndex: 67,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF | nvVideoPacketFlagEOF,
+        payloadBytes: Array(framePayload),
+        includeFrameHeaderWithLastPayloadLength: 41 + UInt16(framePayload.count),
+        frameHeaderSize: 41,
+        frameHeaderFirstByte: 0x81
+    )
+
+    let frame = depacketizer.ingest(payload: packet, marker: true)
+    #expect(frame == framePayload)
+}
+
+@Test("AV1 depacketizer uses heuristic frame-header parsing when app version is unavailable")
+func av1DepacketizerFallsBackToHeuristicFrameHeaderProfile() {
+    var depacketizer = ShadowClientAV1RTPDepacketizer()
+    depacketizer.configureFrameHeaderProfile(appVersion: nil)
+    let framePayload = Data([0xC1, 0xC2, 0xC3])
+    let packet = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 514,
+        frameIndex: 68,
         flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF | nvVideoPacketFlagEOF,
         payloadBytes: Array(framePayload),
         includeFrameHeaderWithLastPayloadLength: 41 + UInt16(framePayload.count),

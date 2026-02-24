@@ -1877,7 +1877,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             enableSurroundAudio: configuration.enableSurroundAudio,
             enableYUV444: configuration.enableYUV444,
             remoteInputKey: configuration.remoteInputKey,
-            remoteInputKeyID: configuration.remoteInputKeyID
+            remoteInputKeyID: configuration.remoteInputKeyID,
+            serverAppVersion: configuration.serverAppVersion
         )
     }
 

@@ -1541,13 +1541,19 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         guard !runtimeCodecRecoveryInProgress else {
             return
         }
-        guard case .launched = launchState else {
+        guard let launchRequest = lastLaunchRequestContext
+        else {
             return
         }
-        guard let activeSession,
-              let launchRequest = lastLaunchRequestContext,
-              launchRequest.appID == activeSession.appID
-        else {
+        let shouldAttemptRecoveryFromLaunchState: Bool
+        switch launchState {
+        case .launched, .launching:
+            shouldAttemptRecoveryFromLaunchState = true
+        case .idle, .failed:
+            shouldAttemptRecoveryFromLaunchState = false
+        }
+        let activeSessionMatchesLaunchRequest = activeSession?.appID == launchRequest.appID
+        guard shouldAttemptRecoveryFromLaunchState || activeSessionMatchesLaunchRequest else {
             return
         }
 
@@ -1582,6 +1588,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             appID: launchRequest.appID,
             appTitle: launchRequest.appTitle,
             settings: fallbackSettings
+        )
+        persistCodecFallbackIfNeeded(
+            attemptedPreferredCodec: launchRequest.settings.preferredCodec,
+            fallbackSettings: fallbackSettings
         )
     }
 
