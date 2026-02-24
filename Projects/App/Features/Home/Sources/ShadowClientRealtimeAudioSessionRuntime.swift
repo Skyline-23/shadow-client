@@ -577,6 +577,17 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 previousSequenceNumber: lastDecodedSequenceNumber,
                                 currentSequenceNumber: readyPacket.sequenceNumber
                             )
+                            let lowWatermarkSlots = max(
+                                1,
+                                queuePressureProfile.decodeSheddingLowWatermarkSlots
+                            )
+                            let shouldAttemptMissingPacketRecovery =
+                                Self.shouldAttemptMissingPacketRecoveryOrConcealment(
+                                    missingPacketCount: missingPacketCount,
+                                    remainingOutputSlots: remainingOutputSlots,
+                                    decodeSheddingLowWatermarkSlots: lowWatermarkSlots,
+                                    deferredPacketCount: decodeWindow.deferredPacketCount
+                                )
                             if let previousSequenceNumber = lastDecodedSequenceNumber,
                                let previousTimestamp = lastDecodedTimestamp,
                                let refreshedEstimate = Self.estimatedAudioSamplesPerPacket(
@@ -623,7 +634,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             } else {
                                 decodePayload = readyPacket.payload
                             }
-                            if missingPacketCount > 0 {
+                            if shouldAttemptMissingPacketRecovery {
                                 var recoveredMissingPacketCount = 0
                                 let missingRecoveryBudget =
                                     Self.maximumRecoveredAudioPacketsPerBurst(
@@ -1473,6 +1484,22 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             return false
         }
         return availableOutputSlots <= 0
+    }
+
+    internal static func shouldAttemptMissingPacketRecoveryOrConcealment(
+        missingPacketCount: Int,
+        remainingOutputSlots: Int,
+        decodeSheddingLowWatermarkSlots: Int,
+        deferredPacketCount: Int
+    ) -> Bool {
+        guard missingPacketCount > 0 else {
+            return false
+        }
+        guard deferredPacketCount == 0 else {
+            return false
+        }
+        let lowWatermarkSlots = max(1, decodeSheddingLowWatermarkSlots)
+        return remainingOutputSlots > lowWatermarkSlots
     }
 
     internal static func maximumRecoveredAudioPacketsPerBurst(

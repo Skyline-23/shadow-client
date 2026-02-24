@@ -366,6 +366,62 @@ func audioEmptyReadyDrainHoldDecisionExcludesCooldownPath() {
     )
 }
 
+@Test("Audio missing-packet recovery gate allows expansion with headroom and no backlog")
+func audioMissingPacketRecoveryGateAllowsExpansionWithHeadroomAndNoBacklog() {
+    #expect(
+        ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
+            missingPacketCount: 2,
+            remainingOutputSlots: 5,
+            decodeSheddingLowWatermarkSlots: 2,
+            deferredPacketCount: 0
+        )
+    )
+}
+
+@Test("Audio missing-packet recovery gate skips when decode backlog exists")
+func audioMissingPacketRecoveryGateSkipsWhenDecodeBacklogExists() {
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
+            missingPacketCount: 2,
+            remainingOutputSlots: 6,
+            decodeSheddingLowWatermarkSlots: 2,
+            deferredPacketCount: 1
+        )
+    )
+}
+
+@Test("Audio missing-packet recovery gate skips at or below low watermark")
+func audioMissingPacketRecoveryGateSkipsAtOrBelowLowWatermark() {
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
+            missingPacketCount: 1,
+            remainingOutputSlots: 2,
+            decodeSheddingLowWatermarkSlots: 2,
+            deferredPacketCount: 0
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
+            missingPacketCount: 1,
+            remainingOutputSlots: 1,
+            decodeSheddingLowWatermarkSlots: 2,
+            deferredPacketCount: 0
+        )
+    )
+}
+
+@Test("Audio missing-packet recovery gate skips when nothing is missing")
+func audioMissingPacketRecoveryGateSkipsWhenNoPacketsAreMissing() {
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
+            missingPacketCount: 0,
+            remainingOutputSlots: 8,
+            decodeSheddingLowWatermarkSlots: 2,
+            deferredPacketCount: 0
+        )
+    )
+}
+
 @Test("Audio ready packet drain limit is bounded by available slots and batch size")
 func audioReadyPacketDrainLimitUsesAvailableSlotsAndBatchCap() {
     let bySlots = ShadowClientRealtimeAudioSessionRuntime.audioReadyPacketDrainLimit(
