@@ -129,8 +129,10 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
 
         // Moonlight consumes only data shards in the depacketizer stage.
         // FEC parity shards are handled by a dedicated FEC queue, so they must not
-        // participate in frame continuity or AU assembly here.
+        // participate in AU assembly here. However, stream packet indices still
+        // advance across parity shards, so keep the continuity watermark in sync.
         if packet.fecDataShardCount > 0, packet.fecShardIndex >= packet.fecDataShardCount {
+            advanceStreamContinuityWatermark(for: packet.streamPacketIndex)
             return .noFrame
         }
 
@@ -246,6 +248,19 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         lastPacketPayloadLength = 0
         currentFrameMetadata = nil
         currentFrame.removeAll(keepingCapacity: true)
+    }
+
+    private mutating func advanceStreamContinuityWatermark(for streamPacketIndex: UInt32) {
+        guard let lastPacketInStream else {
+            lastPacketInStream = streamPacketIndex
+            return
+        }
+
+        let expectedStreamPacketIndex = (lastPacketInStream &+ 1) & Self.streamPacketIndexMask
+        if isBefore24(streamPacketIndex, expectedStreamPacketIndex) {
+            return
+        }
+        self.lastPacketInStream = streamPacketIndex
     }
 
     private func parseVideoPacket(from payload: Data) -> ParsedPacket? {

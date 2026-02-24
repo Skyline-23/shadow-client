@@ -146,9 +146,6 @@ public struct ShadowClientAppShellView: View {
             updateActiveSessionProcessActivity(isActive: isActive)
             ShadowClientRemoteSessionOrientationCoordinator.updateSessionState(isActive: isActive)
         }
-        .onChange(of: sessionSurfaceContext.renderState, initial: false) { _, newState in
-            remoteDesktopRuntime.handleSessionRenderStateTransition(newState)
-        }
         .onChange(of: gamepadInputConfiguration, initial: true) { _, configuration in
             gamepadInputRuntime.updateConfiguration(configuration)
         }

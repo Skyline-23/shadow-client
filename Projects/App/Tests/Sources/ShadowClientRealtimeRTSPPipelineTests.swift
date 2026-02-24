@@ -921,6 +921,47 @@ func av1DepacketizerIgnoresFECParityShards() {
     #expect(frame == Data([0xAA, 0xBB, 0xCC, 0xDD, 0xEE]))
 }
 
+@Test("AV1 depacketizer ignores stale parity shards without rewinding continuity watermark")
+func av1DepacketizerDoesNotRewindContinuityOnStaleParityShard() {
+    var depacketizer = ShadowClientAV1RTPDepacketizer()
+    let frameIndex: UInt32 = 67
+
+    let sofPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 600,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF,
+        payloadBytes: [0x01, 0x02],
+        includeFrameHeaderWithLastPayloadLength: moonlightFrameHeaderSize + 3
+    )
+    let parityPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 601,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData,
+        payloadBytes: [0x91, 0x92, 0x93],
+        fecInfo: (1 << 22) | (1 << 12)
+    )
+    let staleParityPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 599,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData,
+        payloadBytes: [0x81, 0x82, 0x83],
+        fecInfo: (1 << 22) | (1 << 12)
+    )
+    let eofPacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 602,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagEOF,
+        payloadBytes: [0x03, 0x04, 0x05]
+    )
+
+    #expect(depacketizer.ingest(payload: sofPacket, marker: false) == nil)
+    #expect(depacketizer.ingest(payload: parityPacket, marker: false) == nil)
+    #expect(depacketizer.ingest(payload: staleParityPacket, marker: false) == nil)
+    let frame = depacketizer.ingest(payload: eofPacket, marker: true)
+
+    #expect(frame == Data([0x01, 0x02, 0x03, 0x04, 0x05]))
+}
+
 @Test("AV1 depacketizer applies Sunshine 7.1.446 frame header profile for 0x81 packets")
 func av1DepacketizerUsesVersionAware41ByteHeader() {
     var depacketizer = ShadowClientAV1RTPDepacketizer()
@@ -1150,7 +1191,7 @@ func realtimeRuntimeVideoFrameBoundaryClassifier() {
 @Test("Realtime runtime video frame-start classifier requires SOF and first FEC block")
 func realtimeRuntimeVideoFrameStartClassifier() {
     var sofPayload = Data(repeating: 0, count: 16)
-    sofPayload[sofPayload.startIndex + 8] = 0x01 // SOF
+    sofPayload[sofPayload.startIndex + 8] = 0x04 // SOF
     sofPayload[sofPayload.startIndex + 11] = 0x00 // current block = 0
     let sofStart = ShadowClientRealtimeRTSPSessionRuntime.isLikelyVideoFrameStart(
         payload: sofPayload
@@ -1170,6 +1211,13 @@ func realtimeRuntimeVideoFrameStartClassifier() {
         payload: nonFirstFECBlockPayload
     )
     #expect(!nonFirstFECBlockStart)
+
+    var containsPicDataOnlyPayload = sofPayload
+    containsPicDataOnlyPayload[containsPicDataOnlyPayload.startIndex + 8] = 0x01 // picture-data only
+    let containsPicDataOnlyStart = ShadowClientRealtimeRTSPSessionRuntime.isLikelyVideoFrameStart(
+        payload: containsPicDataOnlyPayload
+    )
+    #expect(!containsPicDataOnlyStart)
 }
 
 @Test("Realtime runtime stall detector triggers recovery when decode submits continue without frame output")
@@ -1556,10 +1604,10 @@ func realtimeRuntimeFatalDecoderInitializationErrorsAbortRecovery() {
     )
 }
 
-@Test("Realtime runtime decode-failed statuses stay on bounded recovery path")
-func realtimeRuntimeDecodeFailedStatusesStayOnBoundedRecoveryPath() {
+@Test("Realtime runtime decode-failed statuses classify recoverable and fatal VT statuses")
+func realtimeRuntimeDecodeFailedStatusClassification() {
     #expect(
-        !ShadowClientRealtimeRTSPSessionRuntime.shouldAbortDecoderRecovery(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldAbortDecoderRecovery(
             forDecoderError: ShadowClientVideoToolboxDecoderError.decodeFailed(-12903)
         )
     )

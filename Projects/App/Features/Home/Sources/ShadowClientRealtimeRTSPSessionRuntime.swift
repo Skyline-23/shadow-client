@@ -2149,11 +2149,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                  .cannotCreateFormatDescription,
                  .cannotCreateDecoder:
                 return true
-            case .decodeFailed:
-                // Treat runtime decode failures as recoverable and let the bounded
-                // recovery budget decide abort timing. This avoids immediate
-                // fatal teardown on transient VT statuses during active playback.
-                return false
+            case let .decodeFailed(status):
+                return !isRecoverableDecodeFailureStatus(status)
             }
         }
 
@@ -2876,7 +2873,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
 
         let flags = payload[payload.startIndex + 8]
-        let hasSOF = (flags & 0x01) != 0
+        let hasSOF = (flags & 0x04) != 0
         guard hasSOF else {
             return false
         }

@@ -911,6 +911,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var persistentCodecFallback: ShadowClientVideoCodecPreference?
     private var lastLaunchRequestContext: ShadowClientLaunchRequestContext?
     private var runtimeCodecRecoveryInProgress = false
+    private var renderStateFailureObservation: AnyCancellable?
 
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
@@ -947,6 +948,16 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         self.pinProvider = pinProvider
         self.sessionPresentationMode = sessionConnectionClient.presentationMode
         self.sessionSurfaceContext = sessionConnectionClient.sessionSurfaceContext
+        self.renderStateFailureObservation = self.sessionSurfaceContext.$renderState
+            .removeDuplicates()
+            .sink { [weak self] state in
+                guard case let .failed(message) = state else {
+                    return
+                }
+                Task { @MainActor [weak self] in
+                    self?.handleSessionRenderStateTransition(.failed(message))
+                }
+            }
 
         commandLoopTask = Task { [weak self] in
             guard let self else {
@@ -966,6 +977,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         refreshAppsTask?.cancel()
         pairTask?.cancel()
         launchTask?.cancel()
+        renderStateFailureObservation?.cancel()
     }
 
     @MainActor
