@@ -537,10 +537,16 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     if readyPackets.isEmpty {
                         if isDecodeCooldownActive {
                             registerOutputQueuePressureDrop(1, "decode-cooldown-hold")
-                        } else if preDrainAvailableOutputSlots <= 0 {
-                            if handleOutputQueueSaturation(dropCount: 1) {
-                                continue
-                            }
+                            continue
+                        }
+                        if Self.shouldHoldDecodeWhenReadyPacketsEmpty(
+                            isDecodeCooldownActive: isDecodeCooldownActive,
+                            availableOutputSlots: preDrainAvailableOutputSlots
+                        ) {
+                            // Match Moonlight behavior: if output has no free slot right now,
+                            // hold decode and keep buffered packets intact instead of escalating
+                            // recovery as a synthetic drop.
+                            continue
                         }
                         continue
                     }
@@ -1458,9 +1464,22 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         return min(max(1, maximumDrainBatch), availableOutputSlots)
     }
 
+    internal static func shouldHoldDecodeWhenReadyPacketsEmpty(
+        isDecodeCooldownActive: Bool,
+        availableOutputSlots: Int
+    ) -> Bool {
+        guard !isDecodeCooldownActive else {
+            return false
+        }
+        return availableOutputSlots <= 0
+    }
+
     internal static func maximumRecoveredAudioPacketsPerBurst(
         availableOutputSlots: Int
     ) -> Int {
+        guard availableOutputSlots > 0 else {
+            return 0
+        }
         let normalizedSlots = max(1, availableOutputSlots)
         return min(4, max(1, normalizedSlots / 2))
     }
@@ -1468,6 +1487,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     internal static func maximumConcealmentPacketsPerBurst(
         availableOutputSlots: Int
     ) -> Int {
+        guard availableOutputSlots > 0 else {
+            return 0
+        }
         let normalizedSlots = max(1, availableOutputSlots)
         return min(3, max(1, normalizedSlots / 2))
     }

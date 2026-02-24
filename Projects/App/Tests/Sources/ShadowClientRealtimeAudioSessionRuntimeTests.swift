@@ -334,6 +334,38 @@ func audioReadyPacketDrainLimitDisablesWhenNoSlots() {
     #expect(limit == 0)
 }
 
+@Test("Audio runtime holds decode when ready drain is empty because output queue is full")
+func audioEmptyReadyDrainHoldDecisionWhenOutputQueueIsFull() {
+    #expect(
+        ShadowClientRealtimeAudioSessionRuntime.shouldHoldDecodeWhenReadyPacketsEmpty(
+            isDecodeCooldownActive: false,
+            availableOutputSlots: 0
+        )
+    )
+    #expect(
+        ShadowClientRealtimeAudioSessionRuntime.shouldHoldDecodeWhenReadyPacketsEmpty(
+            isDecodeCooldownActive: false,
+            availableOutputSlots: -1
+        )
+    )
+}
+
+@Test("Audio runtime does not treat cooldown hold as output-full hold path")
+func audioEmptyReadyDrainHoldDecisionExcludesCooldownPath() {
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldHoldDecodeWhenReadyPacketsEmpty(
+            isDecodeCooldownActive: true,
+            availableOutputSlots: 0
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldHoldDecodeWhenReadyPacketsEmpty(
+            isDecodeCooldownActive: false,
+            availableOutputSlots: 2
+        )
+    )
+}
+
 @Test("Audio ready packet drain limit is bounded by available slots and batch size")
 func audioReadyPacketDrainLimitUsesAvailableSlotsAndBatchCap() {
     let bySlots = ShadowClientRealtimeAudioSessionRuntime.audioReadyPacketDrainLimit(
@@ -353,6 +385,9 @@ func audioReadyPacketDrainLimitUsesAvailableSlotsAndBatchCap() {
 
 @Test("Audio recovered-packet burst budget is capped and slot-aware")
 func audioRecoveredPacketBurstBudgetIsCappedAndSlotAware() {
+    let zeroSlotBudget = ShadowClientRealtimeAudioSessionRuntime.maximumRecoveredAudioPacketsPerBurst(
+        availableOutputSlots: 0
+    )
     let oneSlotBudget = ShadowClientRealtimeAudioSessionRuntime.maximumRecoveredAudioPacketsPerBurst(
         availableOutputSlots: 1
     )
@@ -363,6 +398,7 @@ func audioRecoveredPacketBurstBudgetIsCappedAndSlotAware() {
         availableOutputSlots: 10
     )
 
+    #expect(zeroSlotBudget == 0)
     #expect(oneSlotBudget == 1)
     #expect(twoSlotBudget == 1)
     #expect(tenSlotBudget == 4)
@@ -370,6 +406,9 @@ func audioRecoveredPacketBurstBudgetIsCappedAndSlotAware() {
 
 @Test("Audio concealment burst budget is capped and slot-aware")
 func audioConcealmentBurstBudgetIsCappedAndSlotAware() {
+    let zeroSlotBudget = ShadowClientRealtimeAudioSessionRuntime.maximumConcealmentPacketsPerBurst(
+        availableOutputSlots: 0
+    )
     let oneSlotBudget = ShadowClientRealtimeAudioSessionRuntime.maximumConcealmentPacketsPerBurst(
         availableOutputSlots: 1
     )
@@ -380,6 +419,7 @@ func audioConcealmentBurstBudgetIsCappedAndSlotAware() {
         availableOutputSlots: 10
     )
 
+    #expect(zeroSlotBudget == 0)
     #expect(oneSlotBudget == 1)
     #expect(fourSlotBudget == 2)
     #expect(tenSlotBudget == 3)
