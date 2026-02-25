@@ -1576,14 +1576,16 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             ShadowClientRealtimeSessionDefaults.audioOutputQueueDecodeSheddingLowWatermarkSlots,
             normalizedChannels > 2 ? 3 : 2
         )
+        // Keep a short queue like Moonlight's low-latency audio path (~tens of ms),
+        // but with enough headroom to avoid persistent saturation on bursty Wi-Fi.
         let targetQueuedWindowPackets = max(
-            3,
-            Int((Double(estimatedPacketsPerSecond) * 0.05).rounded(.up))
+            5,
+            Int((Double(estimatedPacketsPerSecond) * 0.10).rounded(.up))
         )
         let maximumQueuedBuffers = min(
             12,
             max(
-                4,
+                6,
                 targetQueuedWindowPackets + (normalizedChannels > 2 ? 2 : 1)
             )
         )
