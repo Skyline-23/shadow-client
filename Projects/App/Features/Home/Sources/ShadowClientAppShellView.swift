@@ -149,6 +149,16 @@ public struct ShadowClientAppShellView: View {
         .onChange(of: gamepadInputConfiguration, initial: true) { _, configuration in
             gamepadInputRuntime.updateConfiguration(configuration)
         }
+        .onChange(of: sessionSurfaceContext.controlRoundTripMs, initial: false) { _, roundTripMs in
+            guard remoteDesktopRuntime.activeSession != nil else {
+                return
+            }
+            if roundTripHistoryRateLimiter.shouldEmit(
+                nowUptime: ProcessInfo.processInfo.systemUptime
+            ) {
+                sessionDiagnosticsHistory.appendControlRoundTripMs(roundTripMs)
+            }
+        }
         .onAppear {
             ShadowClientRemoteSessionOrientationCoordinator.updateSessionState(
                 isActive: remoteDesktopRuntime.activeSession != nil
@@ -2016,13 +2026,6 @@ public struct ShadowClientAppShellView: View {
                     settingsDiagnosticsModel = model
                     if remoteDesktopRuntime.activeSession != nil {
                         sessionDiagnosticsHistory.append(model)
-                        if roundTripHistoryRateLimiter.shouldEmit(
-                            nowUptime: ProcessInfo.processInfo.systemUptime
-                        ) {
-                            sessionDiagnosticsHistory.appendControlRoundTripMs(
-                                sessionSurfaceContext.controlRoundTripMs
-                            )
-                        }
                     }
                 }
             }
