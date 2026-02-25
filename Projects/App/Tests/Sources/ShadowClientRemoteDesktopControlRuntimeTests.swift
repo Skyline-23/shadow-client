@@ -724,7 +724,7 @@ func remoteDesktopRuntimeAutoRelaunchesCodecAfterPostLaunchDecoderFailure() asyn
     #expect(launchCalls.count == 2)
     #expect(launchCalls[0].settings.preferredCodec == .auto)
     #expect(launchCalls[1].settings.preferredCodec == .h265)
-    #expect(launchCalls[1].forceLaunch == false)
+    #expect(launchCalls[1].forceLaunch == true)
 
     let codecHistory = await sessionConnector.videoConfigurations().map(\.preferredCodec)
     #expect(codecHistory == [.auto, .h265])

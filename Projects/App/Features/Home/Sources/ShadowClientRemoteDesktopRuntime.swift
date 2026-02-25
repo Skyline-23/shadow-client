@@ -862,7 +862,12 @@ private actor ShadowClientRemoteInputSendQueue {
 private enum ShadowClientRemoteDesktopCommand: Sendable {
     case refreshHosts(candidates: [String], preferredHost: String?)
     case pairSelectedHost
-    case launchSelectedApp(appID: Int, appTitle: String?, settings: ShadowClientGameStreamLaunchSettings)
+    case launchSelectedApp(
+        appID: Int,
+        appTitle: String?,
+        forceLaunch: Bool,
+        settings: ShadowClientGameStreamLaunchSettings
+    )
     case clearActiveSession
     case sendInput(ShadowClientRemoteInputEvent)
     case openSessionFlow(host: String, appTitle: String)
@@ -987,10 +992,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             performRefreshHosts(candidates: candidates, preferredHost: preferredHost)
         case .pairSelectedHost:
             performPairSelectedHost()
-        case let .launchSelectedApp(appID, appTitle, settings):
+        case let .launchSelectedApp(appID, appTitle, forceLaunch, settings):
             performLaunchSelectedApp(
                 appID: appID,
                 appTitle: appTitle,
+                forceLaunch: forceLaunch,
                 settings: settings
             )
         case .clearActiveSession:
@@ -1218,12 +1224,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     public func launchSelectedApp(
         appID: Int,
         appTitle: String? = nil,
+        forceLaunch: Bool = false,
         settings: ShadowClientGameStreamLaunchSettings
     ) {
         commandContinuation.yield(
             .launchSelectedApp(
                 appID: appID,
                 appTitle: appTitle,
+                forceLaunch: forceLaunch,
                 settings: settings
             )
         )
@@ -1233,6 +1241,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private func performLaunchSelectedApp(
         appID: Int,
         appTitle: String? = nil,
+        forceLaunch: Bool,
         settings: ShadowClientGameStreamLaunchSettings
     ) {
         guard let selectedHost else {
@@ -1264,7 +1273,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     httpsPort: selectedHost.httpsPort,
                     appID: appID,
                     currentGameID: selectedHost.currentGameID,
-                    forceLaunch: false,
+                    forceLaunch: forceLaunch,
                     settings: launchSettingsToUse
                 )
 
@@ -1587,6 +1596,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         launchSelectedApp(
             appID: launchRequest.appID,
             appTitle: launchRequest.appTitle,
+            forceLaunch: true,
             settings: fallbackSettings
         )
         persistCodecFallbackIfNeeded(
