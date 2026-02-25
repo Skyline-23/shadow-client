@@ -2168,8 +2168,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     }
 
     static func isRecoverableDecodeFailureStatus(_ status: OSStatus) -> Bool {
-        // -12909 is commonly reported for transient malformed/partial frame submissions.
-        let recoverableStatuses: Set<OSStatus> = [-12909]
+        // -12909 and -12903 are commonly observed as transient VT decode errors
+        // during burst loss/recovery on realtime streams.
+        let recoverableStatuses: Set<OSStatus> = [-12909, -12903]
         return recoverableStatuses.contains(status)
     }
 
@@ -2642,6 +2643,23 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         // Mirror Moonlight startup behavior: before first-frame lock, accept any
         // valid RTP payload type seen on the video socket except control/audio.
         return true
+    }
+
+    static func videoPayloadTypeObservationThreshold(
+        observedPayloadType: Int,
+        videoPayloadCandidates: Set<Int>,
+        baseThreshold: Int = ShadowClientRealtimeSessionDefaults.videoPayloadTypeAdaptationObservationThreshold
+    ) -> Int {
+        if videoPayloadCandidates.contains(observedPayloadType) {
+            return 1
+        }
+        let normalizedBaseThreshold = max(1, baseThreshold)
+        if (96 ... 126).contains(observedPayloadType) {
+            return normalizedBaseThreshold
+        }
+        // Static RTP payload types are unexpected on Sunshine video tracks.
+        // Require stronger confirmation before switching to them.
+        return max(2, normalizedBaseThreshold * 2)
     }
 
     static func queuePressureProfile(
@@ -4164,6 +4182,8 @@ private actor ShadowClientRTSPInterleavedClient {
         var packetCount = 0
         var reorderBuffer = ShadowClientRTPVideoReorderBuffer()
         var ignoredPayloadTypeMismatches: Set<Int> = []
+        var pendingPayloadTypeCandidate: Int?
+        var pendingPayloadTypeCandidateCount = 0
 
         while !Task.isCancelled {
             if let packet = try parseInterleavedPacketIfAvailable() {
@@ -4183,6 +4203,8 @@ private actor ShadowClientRTSPInterleavedClient {
 
                 if packet.payloadType == effectivePayloadType {
                     hasReceivedVideoPayload = true
+                    pendingPayloadTypeCandidate = nil
+                    pendingPayloadTypeCandidateCount = 0
                     let orderedPackets = reorderBuffer.enqueue(packet)
                     for orderedPacket in orderedPackets {
                         try await onVideoPacket(
@@ -4201,22 +4223,46 @@ private actor ShadowClientRTSPInterleavedClient {
                        videoPayloadCandidates: videoPayloadCandidates
                    )
                 {
-                    logger.notice(
-                        "RTSP payload type mismatch; adopting stream payload type \(packet.payloadType, privacy: .public) (expected \(effectivePayloadType, privacy: .public))"
-                    )
-                    effectivePayloadType = packet.payloadType
-                    reorderBuffer.reset()
-                    hasReceivedVideoPayload = true
-                    let orderedPackets = reorderBuffer.enqueue(packet)
-                    for orderedPacket in orderedPackets {
-                        try await onVideoPacket(
-                            orderedPacket.payload,
-                            orderedPacket.marker
+                    let requiredObservationCount =
+                        ShadowClientRealtimeRTSPSessionRuntime.videoPayloadTypeObservationThreshold(
+                            observedPayloadType: packet.payloadType,
+                            videoPayloadCandidates: videoPayloadCandidates
+                        )
+                    if pendingPayloadTypeCandidate == packet.payloadType {
+                        pendingPayloadTypeCandidateCount += 1
+                    } else {
+                        pendingPayloadTypeCandidate = packet.payloadType
+                        pendingPayloadTypeCandidateCount = 1
+                    }
+
+                    if pendingPayloadTypeCandidateCount >= requiredObservationCount {
+                        logger.notice(
+                            "RTSP payload type mismatch; adopting stream payload type \(packet.payloadType, privacy: .public) (expected \(effectivePayloadType, privacy: .public), observations=\(pendingPayloadTypeCandidateCount, privacy: .public))"
+                        )
+                        effectivePayloadType = packet.payloadType
+                        reorderBuffer.reset()
+                        hasReceivedVideoPayload = true
+                        pendingPayloadTypeCandidate = nil
+                        pendingPayloadTypeCandidateCount = 0
+                        let orderedPackets = reorderBuffer.enqueue(packet)
+                        for orderedPacket in orderedPackets {
+                            try await onVideoPacket(
+                                orderedPacket.payload,
+                                orderedPacket.marker
+                            )
+                        }
+                    } else if pendingPayloadTypeCandidateCount == 1 ||
+                        pendingPayloadTypeCandidateCount == requiredObservationCount - 1
+                    {
+                        logger.notice(
+                            "RTSP payload type mismatch observed candidate \(packet.payloadType, privacy: .public) (expected \(effectivePayloadType, privacy: .public), observations=\(pendingPayloadTypeCandidateCount, privacy: .public)/\(requiredObservationCount, privacy: .public))"
                         )
                     }
                 } else if !hasReceivedVideoPayload,
                           ignoredPayloadTypeMismatches.insert(packet.payloadType).inserted
                 {
+                    pendingPayloadTypeCandidate = nil
+                    pendingPayloadTypeCandidateCount = 0
                     logger.notice(
                         "RTSP payload type mismatch ignored for disallowed payload type \(packet.payloadType, privacy: .public)"
                     )
@@ -4338,6 +4384,8 @@ private actor ShadowClientRTSPInterleavedClient {
         var datagramCount = 0
         var reorderBuffer = ShadowClientRTPVideoReorderBuffer()
         var ignoredPayloadTypeMismatches: Set<Int> = []
+        var pendingPayloadTypeCandidate: Int?
+        var pendingPayloadTypeCandidateCount = 0
         let receiveStart = ContinuousClock.now
 
         while !Task.isCancelled {
@@ -4387,6 +4435,8 @@ private actor ShadowClientRTSPInterleavedClient {
 
             if packet.payloadType == effectivePayloadType {
                 hasReceivedVideoPayload = true
+                pendingPayloadTypeCandidate = nil
+                pendingPayloadTypeCandidateCount = 0
                 let orderedPackets = reorderBuffer.enqueue(packet)
                 for orderedPacket in orderedPackets {
                     try await onVideoPacket(
@@ -4405,22 +4455,46 @@ private actor ShadowClientRTSPInterleavedClient {
                    videoPayloadCandidates: videoPayloadCandidates
                )
             {
-                logger.notice(
-                    "RTSP payload type mismatch; adopting stream payload type \(packet.payloadType, privacy: .public) (expected \(effectivePayloadType, privacy: .public))"
-                )
-                effectivePayloadType = packet.payloadType
-                reorderBuffer.reset()
-                hasReceivedVideoPayload = true
-                let orderedPackets = reorderBuffer.enqueue(packet)
-                for orderedPacket in orderedPackets {
-                    try await onVideoPacket(
-                        orderedPacket.payload,
-                        orderedPacket.marker
+                let requiredObservationCount =
+                    ShadowClientRealtimeRTSPSessionRuntime.videoPayloadTypeObservationThreshold(
+                        observedPayloadType: packet.payloadType,
+                        videoPayloadCandidates: videoPayloadCandidates
+                    )
+                if pendingPayloadTypeCandidate == packet.payloadType {
+                    pendingPayloadTypeCandidateCount += 1
+                } else {
+                    pendingPayloadTypeCandidate = packet.payloadType
+                    pendingPayloadTypeCandidateCount = 1
+                }
+
+                if pendingPayloadTypeCandidateCount >= requiredObservationCount {
+                    logger.notice(
+                        "RTSP payload type mismatch; adopting stream payload type \(packet.payloadType, privacy: .public) (expected \(effectivePayloadType, privacy: .public), observations=\(pendingPayloadTypeCandidateCount, privacy: .public))"
+                    )
+                    effectivePayloadType = packet.payloadType
+                    reorderBuffer.reset()
+                    hasReceivedVideoPayload = true
+                    pendingPayloadTypeCandidate = nil
+                    pendingPayloadTypeCandidateCount = 0
+                    let orderedPackets = reorderBuffer.enqueue(packet)
+                    for orderedPacket in orderedPackets {
+                        try await onVideoPacket(
+                            orderedPacket.payload,
+                            orderedPacket.marker
+                        )
+                    }
+                } else if pendingPayloadTypeCandidateCount == 1 ||
+                    pendingPayloadTypeCandidateCount == requiredObservationCount - 1
+                {
+                    logger.notice(
+                        "RTSP payload type mismatch observed candidate \(packet.payloadType, privacy: .public) (expected \(effectivePayloadType, privacy: .public), observations=\(pendingPayloadTypeCandidateCount, privacy: .public)/\(requiredObservationCount, privacy: .public))"
                     )
                 }
             } else if !hasReceivedVideoPayload,
                       ignoredPayloadTypeMismatches.insert(packet.payloadType).inserted
             {
+                pendingPayloadTypeCandidate = nil
+                pendingPayloadTypeCandidateCount = 0
                 logger.notice(
                     "RTSP payload type mismatch ignored for disallowed payload type \(packet.payloadType, privacy: .public)"
                 )

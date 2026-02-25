@@ -1465,7 +1465,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     internal static func audioReadyPacketDrainLimit(
         isDecodeCooldownActive: Bool,
         availableOutputSlots: Int,
-        maximumDrainBatch: Int = 8
+        maximumDrainBatch: Int = 4
     ) -> Int? {
         if isDecodeCooldownActive {
             return 0
@@ -1509,7 +1509,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             return 0
         }
         let normalizedSlots = max(1, availableOutputSlots)
-        return min(4, max(1, normalizedSlots / 2))
+        return min(2, max(1, normalizedSlots / 3))
     }
 
     internal static func maximumConcealmentPacketsPerBurst(
@@ -1519,7 +1519,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             return 0
         }
         let normalizedSlots = max(1, availableOutputSlots)
-        return min(3, max(1, normalizedSlots / 2))
+        return min(2, max(1, normalizedSlots / 3))
     }
 
     internal static func shouldSkipMissingAudioSequence(
@@ -1577,16 +1577,16 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             normalizedChannels > 2 ? 3 : 2
         )
         // Keep a short queue like Moonlight's low-latency audio path (~tens of ms),
-        // but with enough headroom to avoid persistent saturation on bursty Wi-Fi.
+        // while preserving extra headroom for bursty Wi-Fi and FEC/concealment recovery.
         let targetQueuedWindowPackets = max(
-            5,
-            Int((Double(estimatedPacketsPerSecond) * 0.10).rounded(.up))
+            10,
+            Int((Double(estimatedPacketsPerSecond) * 0.20).rounded(.up))
         )
         let maximumQueuedBuffers = min(
-            12,
+            16,
             max(
-                6,
-                targetQueuedWindowPackets + (normalizedChannels > 2 ? 2 : 1)
+                10,
+                targetQueuedWindowPackets + (normalizedChannels > 2 ? 3 : 2)
             )
         )
         return .init(

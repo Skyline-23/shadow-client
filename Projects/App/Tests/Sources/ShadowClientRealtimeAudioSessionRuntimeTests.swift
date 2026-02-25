@@ -452,7 +452,7 @@ func audioQueueProfileKeepsLowLatencyWindowForStereo() {
             channels: 2
         )
 
-    #expect(maximumQueuedBuffers <= 12)
+    #expect(maximumQueuedBuffers <= 16)
     #expect(maximumQueuedBuffers >= 4)
     #expect(pressureTrimToRecentPackets <= 8)
     #expect(pressureTrimToRecentPackets >= 3)
@@ -472,7 +472,7 @@ func audioQueueProfileScalesChannelSlackWithoutUnboundedGrowth() {
         )
 
     #expect(surroundQueuedBuffers >= stereoQueuedBuffers)
-    #expect(surroundQueuedBuffers <= 12)
+    #expect(surroundQueuedBuffers <= 16)
 }
 
 @Test("Audio recovered-packet burst budget is capped and slot-aware")
@@ -493,7 +493,7 @@ func audioRecoveredPacketBurstBudgetIsCappedAndSlotAware() {
     #expect(zeroSlotBudget == 0)
     #expect(oneSlotBudget == 1)
     #expect(twoSlotBudget == 1)
-    #expect(tenSlotBudget == 4)
+    #expect(tenSlotBudget == 2)
 }
 
 @Test("Audio concealment burst budget is capped and slot-aware")
@@ -513,8 +513,8 @@ func audioConcealmentBurstBudgetIsCappedAndSlotAware() {
 
     #expect(zeroSlotBudget == 0)
     #expect(oneSlotBudget == 1)
-    #expect(fourSlotBudget == 2)
-    #expect(tenSlotBudget == 3)
+    #expect(fourSlotBudget == 1)
+    #expect(tenSlotBudget == 2)
 }
 
 @Test("Custom audio decoder registry prioritizes preferred providers")

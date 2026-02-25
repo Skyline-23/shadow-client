@@ -530,6 +530,28 @@ func rtspVideoPayloadAdoptionAcceptsNonCandidateDynamicPayloadOnEarlyMismatch() 
     )
 }
 
+@Test("RTSP video payload adaptation observation threshold prefers known candidates")
+func rtspVideoPayloadAdaptationObservationThresholdPrefersKnownCandidates() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.videoPayloadTypeObservationThreshold(
+            observedPayloadType: 98,
+            videoPayloadCandidates: Set([98])
+        ) == 1
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.videoPayloadTypeObservationThreshold(
+            observedPayloadType: 99,
+            videoPayloadCandidates: Set([98])
+        ) == ShadowClientRealtimeSessionDefaults.videoPayloadTypeAdaptationObservationThreshold
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.videoPayloadTypeObservationThreshold(
+            observedPayloadType: 0,
+            videoPayloadCandidates: Set([98])
+        ) == ShadowClientRealtimeSessionDefaults.videoPayloadTypeAdaptationObservationThreshold * 2
+    )
+}
+
 @Test("Video RTP reorder buffer reorders nearby out-of-order packets")
 func videoRtpReorderBufferReordersNearbyPackets() {
     var reorderBuffer = ShadowClientRTPVideoReorderBuffer(
@@ -1753,7 +1775,7 @@ func realtimeRuntimeFatalDecoderInitializationErrorsAbortRecovery() {
 @Test("Realtime runtime decode-failed statuses classify recoverable and fatal VT statuses")
 func realtimeRuntimeDecodeFailedStatusClassification() {
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime.shouldAbortDecoderRecovery(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldAbortDecoderRecovery(
             forDecoderError: ShadowClientVideoToolboxDecoderError.decodeFailed(-12903)
         )
     )

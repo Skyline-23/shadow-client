@@ -149,7 +149,8 @@ public struct ShadowClientAppShellView: View {
         .onChange(of: gamepadInputConfiguration, initial: true) { _, configuration in
             gamepadInputRuntime.updateConfiguration(configuration)
         }
-        .onChange(of: sessionSurfaceContext.controlRoundTripMs, initial: false) { _, roundTripMs in
+        .task(id: sessionSurfaceContext.controlRoundTripMs) {
+            let roundTripMs = sessionSurfaceContext.controlRoundTripMs
             guard remoteDesktopRuntime.activeSession != nil else {
                 return
             }
