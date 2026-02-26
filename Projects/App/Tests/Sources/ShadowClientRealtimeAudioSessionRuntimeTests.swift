@@ -461,6 +461,36 @@ func audioMissingPacketCountIsUnchangedWithoutMoonlightFECShards() {
     #expect(adjusted == 3)
 }
 
+@Test("Audio packet sample estimation ignores sub-5ms timestamp deltas")
+func audioPacketSampleEstimationIgnoresSubFiveMillisecondTimestampDeltas() {
+    let estimated = ShadowClientRealtimeAudioSessionRuntime.estimatedAudioSamplesPerPacket(
+        sampleRate: 48_000,
+        previousSequenceNumber: 100,
+        currentSequenceNumber: 101,
+        previousTimestamp: 1_000,
+        currentTimestamp: 1_120,
+        minimumPacketSamples: 240,
+        maximumPacketSamples: 5_760
+    )
+
+    #expect(estimated == nil)
+}
+
+@Test("Audio packet sample estimation rounds to nearest 5ms step")
+func audioPacketSampleEstimationRoundsToNearestFiveMillisecondStep() {
+    let estimated = ShadowClientRealtimeAudioSessionRuntime.estimatedAudioSamplesPerPacket(
+        sampleRate: 48_000,
+        previousSequenceNumber: 100,
+        currentSequenceNumber: 101,
+        previousTimestamp: 1_000,
+        currentTimestamp: 1_370,
+        minimumPacketSamples: 240,
+        maximumPacketSamples: 5_760
+    )
+
+    #expect(estimated == 480)
+}
+
 @Test("Audio ready packet drain limit is bounded by available slots and batch size")
 func audioReadyPacketDrainLimitUsesAvailableSlotsAndBatchCap() {
     let bySlots = ShadowClientRealtimeAudioSessionRuntime.audioReadyPacketDrainLimit(

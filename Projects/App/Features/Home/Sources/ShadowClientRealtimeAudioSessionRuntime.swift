@@ -264,11 +264,15 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 ShadowClientRealtimeSessionDefaults.audioDecodeFailureLogInterval
             )
             let clock = ContinuousClock()
-            let minimumPacketSamples = max(1, sampleRate / 400)
+            let minimumPacketSamples = max(1, sampleRate / 200)
             let maximumPacketSamples = max(minimumPacketSamples, minimumPacketSamples * 48)
+            let defaultEstimatedPacketSamples = max(
+                minimumPacketSamples,
+                sampleRate / 100
+            )
             var lastDecodedSequenceNumber: UInt16?
             var lastDecodedTimestamp: UInt32?
-            var estimatedSamplesPerPacket = max(minimumPacketSamples, sampleRate / 50)
+            var estimatedSamplesPerPacket = defaultEstimatedPacketSamples
             var lossConcealmentEventCount = 0
             var rsFECRecoveryCount = 0
             let moonlightRSFECQueue = ShadowClientRealtimeAudioMoonlightRSFECQueue()
@@ -1312,7 +1316,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         max(0, rawMissingPacketCount)
     }
 
-    private static func estimatedAudioSamplesPerPacket(
+    internal static func estimatedAudioSamplesPerPacket(
         sampleRate: Int,
         previousSequenceNumber: UInt16,
         currentSequenceNumber: UInt16,
@@ -1343,12 +1347,16 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         guard rawSamplesPerPacket > 0 else {
             return nil
         }
-        let sampleStep = max(1, sampleRate / 400)
+        let sampleStep = max(1, sampleRate / 200)
+        guard rawSamplesPerPacket >= sampleStep else {
+            return nil
+        }
+        let roundedSamples = ((rawSamplesPerPacket + (sampleStep / 2)) / sampleStep) * sampleStep
         let normalizedSamples = max(
             minimumPacketSamples,
             min(
                 maximumPacketSamples,
-                max(sampleStep, (rawSamplesPerPacket / sampleStep) * sampleStep)
+                max(sampleStep, roundedSamples)
             )
         )
         return normalizedSamples
