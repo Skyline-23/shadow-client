@@ -422,6 +422,39 @@ func audioMissingPacketRecoveryGateSkipsWhenNoPacketsAreMissing() {
     )
 }
 
+@Test("Audio missing packet count subtracts observed Moonlight FEC shard sequences")
+func audioMissingPacketCountSubtractsObservedMoonlightFECShards() {
+    let adjusted = ShadowClientRealtimeAudioSessionRuntime
+        .adjustMissingRTPPacketCountForObservedMoonlightFEC(
+            rawMissingPacketCount: 4,
+            observedMoonlightFECShardsSinceLastDecodedPacket: 3
+        )
+
+    #expect(adjusted == 1)
+}
+
+@Test("Audio missing packet count never goes below zero after Moonlight FEC adjustment")
+func audioMissingPacketCountNeverDropsBelowZeroAfterMoonlightFECAdjustment() {
+    let adjusted = ShadowClientRealtimeAudioSessionRuntime
+        .adjustMissingRTPPacketCountForObservedMoonlightFEC(
+            rawMissingPacketCount: 2,
+            observedMoonlightFECShardsSinceLastDecodedPacket: 5
+        )
+
+    #expect(adjusted == 0)
+}
+
+@Test("Audio missing packet count is unchanged when no Moonlight FEC shards were observed")
+func audioMissingPacketCountIsUnchangedWithoutMoonlightFECShards() {
+    let adjusted = ShadowClientRealtimeAudioSessionRuntime
+        .adjustMissingRTPPacketCountForObservedMoonlightFEC(
+            rawMissingPacketCount: 3,
+            observedMoonlightFECShardsSinceLastDecodedPacket: 0
+        )
+
+    #expect(adjusted == 3)
+}
+
 @Test("Audio ready packet drain limit is bounded by available slots and batch size")
 func audioReadyPacketDrainLimitUsesAvailableSlotsAndBatchCap() {
     let bySlots = ShadowClientRealtimeAudioSessionRuntime.audioReadyPacketDrainLimit(
