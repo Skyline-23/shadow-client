@@ -47,7 +47,6 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
     private let minimumSamplesPerChannelStep: Int
     private let maximumDecodedSamplesPerChannel: Int
     private let maximumPayloadBytes: Int
-    private let supportsInBandFEC: Bool
     private let decodeLock = NSLock()
     private var int16DecodeScratch: [Int16]
     private let int16ToFloatScale = 1.0 / Float(Int16.max)
@@ -60,7 +59,6 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
         self.sampleRate = sampleRate
         self.channels = channels
         maximumPayloadBytes = max(512, compatibilityProfile.maximumSupportedPayloadBytes)
-        supportsInBandFEC = compatibilityProfile.supportsInBandFEC
 
         guard let opusSampleRate = OpusSampleRate(exactly: sampleRate) else {
             throw NSError(
@@ -139,11 +137,10 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
         }
 
         return try decodeLock.withLock {
-            let resolvedDecodeFEC = decodeFEC && supportsInBandFEC
             let decodedFrameCount = try int16DecodeScratch.withUnsafeMutableBufferPointer { scratchBuffer in
                 try decoder.decodeInterleavedInt16(
                     payload: payload,
-                    decodeFEC: resolvedDecodeFEC,
+                    decodeFEC: decodeFEC,
                     into: scratchBuffer
                 )
             }

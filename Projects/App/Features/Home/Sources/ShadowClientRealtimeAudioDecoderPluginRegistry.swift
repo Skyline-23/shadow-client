@@ -9,6 +9,7 @@ public protocol ShadowClientRealtimeCustomAudioDecoder: AnyObject {
     var requiresPlaybackSafetyGuard: Bool { get }
     func decode(payload: Data) throws -> AVAudioPCMBuffer?
     func decode(payload: Data, decodeFEC: Bool) throws -> AVAudioPCMBuffer?
+    func decodePacketLossConcealment(samplesPerChannel: Int) throws -> AVAudioPCMBuffer?
 }
 
 public extension ShadowClientRealtimeCustomAudioDecoder {
@@ -16,6 +17,10 @@ public extension ShadowClientRealtimeCustomAudioDecoder {
 
     func decode(payload: Data, decodeFEC _: Bool) throws -> AVAudioPCMBuffer? {
         try decode(payload: payload)
+    }
+
+    func decodePacketLossConcealment(samplesPerChannel _: Int) throws -> AVAudioPCMBuffer? {
+        nil
     }
 }
 

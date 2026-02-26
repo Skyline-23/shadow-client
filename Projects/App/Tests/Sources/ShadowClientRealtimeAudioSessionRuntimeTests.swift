@@ -207,6 +207,11 @@ func moonlightAudioFECClassifierValidatesHeaderFields() {
         Data([0x01, 0x61, 0x00, 0x10, 0x00, 0x00, 0x01, 0x00, 0, 0, 0, 1, 0xAA]),
         expectedPrimaryPayloadType: 97
     )
+    let invalidShardIndexOutsideMoonlightRange = ShadowClientRealtimeAudioRTPPayloadNormalizer
+        .isLikelyMoonlightAudioFECPayload(
+            Data([0x02, 0x61, 0x00, 0x10, 0x00, 0x00, 0x01, 0x00, 0, 0, 0, 1, 0xAA]),
+            expectedPrimaryPayloadType: 97
+        )
     let invalidShardIndex = ShadowClientRealtimeAudioRTPPayloadNormalizer
         .isLikelyMoonlightAudioFECPayload(
             Data([0x7F, 0x61, 0x00, 0x10, 0x00, 0x00, 0x01, 0x00, 0, 0, 0, 1, 0xAA]),
@@ -219,6 +224,7 @@ func moonlightAudioFECClassifierValidatesHeaderFields() {
         )
 
     #expect(valid)
+    #expect(!invalidShardIndexOutsideMoonlightRange)
     #expect(!invalidShardIndex)
     #expect(!invalidPrimaryPayloadType)
 }
@@ -422,22 +428,22 @@ func audioMissingPacketRecoveryGateSkipsWhenNoPacketsAreMissing() {
     )
 }
 
-@Test("Audio missing packet count subtracts observed Moonlight FEC shard sequences")
-func audioMissingPacketCountSubtractsObservedMoonlightFECShards() {
+@Test("Audio missing packet count does not subtract heuristic Moonlight FEC shard observations")
+func audioMissingPacketCountDoesNotSubtractHeuristicMoonlightFECObservations() {
     let adjusted = ShadowClientRealtimeAudioSessionRuntime
         .adjustMissingRTPPacketCountForObservedMoonlightFEC(
             rawMissingPacketCount: 4,
             observedMoonlightFECShardsSinceLastDecodedPacket: 3
         )
 
-    #expect(adjusted == 1)
+    #expect(adjusted == 4)
 }
 
-@Test("Audio missing packet count never goes below zero after Moonlight FEC adjustment")
-func audioMissingPacketCountNeverDropsBelowZeroAfterMoonlightFECAdjustment() {
+@Test("Audio missing packet count clamps negative raw values to zero")
+func audioMissingPacketCountClampsNegativeRawValuesToZero() {
     let adjusted = ShadowClientRealtimeAudioSessionRuntime
         .adjustMissingRTPPacketCountForObservedMoonlightFEC(
-            rawMissingPacketCount: 2,
+            rawMissingPacketCount: -1,
             observedMoonlightFECShardsSinceLastDecodedPacket: 5
         )
 

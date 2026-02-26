@@ -74,7 +74,9 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
         }
         let shardIndex = Int(payload[payload.startIndex])
         let payloadType = Int(payload[payload.startIndex + 1] & 0x7F)
-        guard shardIndex >= 0, shardIndex < 8 else {
+        // Moonlight/Sunshine audio FEC currently uses two shards (0, 1).
+        // Reject wider ranges to avoid misclassifying regular PT127 RED payloads.
+        guard shardIndex >= 0, shardIndex < 2 else {
             return false
         }
         guard (96 ... 127).contains(payloadType) else {
