@@ -68,8 +68,16 @@ public enum ShadowClientVideoDecoderDefaults {
 }
 
 public enum ShadowClientRealtimeSessionDefaults {
-    public static let defaultConnectTimeout: Duration = .seconds(8)
+    public static let defaultConnectTimeout: Duration = .seconds(10)
+    public static let rtspConnectTimeout: Duration = .seconds(10)
+    public static let rtspConnectRetryWindowSeconds: TimeInterval = 10
+    public static let rtspConnectRetryDelay: Duration = .milliseconds(500)
+    public static let rtspReceiveTimeout: Duration = .seconds(15)
     public static let fallbackVideoPort: UInt16 = 47_998
+    public static let fallbackAudioPort: UInt16 = 48_000
+    public static let fallbackControlPort: UInt16 = 47_999
+    public static let moonlightPrimaryAudioPayloadType = 97
+    public static let moonlightAudioFECPayloadType = 127
     public static let pingInterval: Duration = .milliseconds(500)
     public static let describeResponsePreviewByteCount = 512
     public static let ignoredRTPControlPayloadType = 127
@@ -128,6 +136,8 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let decoderRecoveryAttemptWindowSeconds: TimeInterval = 8.0
     public static let decoderMaxRecoveryAttempts = 3
     public static let av1MaxDecoderRecoveryAttempts = 2
+    public static let av1DecoderFastFallbackWindowSeconds: TimeInterval = 20.0
+    public static let av1DecoderFastFallbackFailureThreshold = 3
     public static let decoderOutputStallThresholdSeconds: TimeInterval = 2.2
     public static let decoderOutputStallActiveDecodeWindowSeconds: TimeInterval = 0.45
     public static let decoderOutputStallThresholdUnderPressureMultiplier: TimeInterval = 1.75
@@ -162,7 +172,7 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let audioOutputQueuePressureSignalInterval = 24
     public static let audioOutputQueuePressureTrimInterval = 60
     public static let audioOutputQueuePressureTrimToRecentPackets = 8
-    public static let audioOutputQueueDecodeSheddingLowWatermarkSlots = 2
+    public static let audioOutputQueueDecodeSheddingLowWatermarkSlots = 3
     public static let audioJitterBufferTargetDepth = 6
     public static let audioJitterBufferMaximumDepth = 32
     public static let audioJitterBufferOutOfOrderWaitSeconds: TimeInterval = 0.010
