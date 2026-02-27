@@ -141,23 +141,53 @@ actor ShadowClientSunshineControlChannelRuntime {
         )
     }
 
-    func requestVideoRecoveryFrame() async {
+    func requestVideoRecoveryFrame(lastSeenFrameIndex: UInt32?) async {
         guard let connection else {
             return
         }
 
+        let request = controlChannelMode.makeIDRRequest(lastSeenFrameIndex: lastSeenFrameIndex)
         do {
             try await sendReliableControlMessageWithoutBlockingForAcknowledge(
-                type: controlChannelMode.recoveryRequestType,
-                payload: controlChannelMode.recoveryRequestPayload,
-                channelID: controlChannelMode.recoveryRequestChannelID,
+                type: request.type,
+                payload: request.payload,
+                channelID: request.channelID,
                 over: connection
             )
             logger.notice(
-                "Sunshine video recovery request sent type=\(self.controlChannelMode.recoveryRequestType, privacy: .public) channel=\(self.controlChannelMode.recoveryRequestChannelID, privacy: .public)"
+                "Sunshine video recovery request sent type=\(request.type, privacy: .public) channel=\(request.channelID, privacy: .public)"
             )
         } catch {
             logger.error("Sunshine video recovery request failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    func requestInvalidateReferenceFrames(
+        startFrameIndex: UInt32,
+        endFrameIndex: UInt32
+    ) async {
+        guard let connection else {
+            return
+        }
+
+        let request = controlChannelMode.makeReferenceFrameInvalidationRequest(
+            startFrameIndex: startFrameIndex,
+            endFrameIndex: endFrameIndex
+        )
+        do {
+            try await sendReliableControlMessageWithoutBlockingForAcknowledge(
+                type: request.type,
+                payload: request.payload,
+                channelID: request.channelID,
+                over: connection
+            )
+            logger.notice(
+                "Sunshine reference frame invalidation request sent type=\(request.type, privacy: .public) channel=\(request.channelID, privacy: .public) range=\(startFrameIndex, privacy: .public)-\(endFrameIndex, privacy: .public)"
+            )
+        } catch {
+            logger.error(
+                "Sunshine reference frame invalidation request failed: \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 

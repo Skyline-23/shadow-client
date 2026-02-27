@@ -59,6 +59,8 @@ enum ShadowClientSunshineHandshakeProfile {
 
     static let sunshineEncryptionControlV2: UInt32 = 0x01
     static let sunshineEncryptionAudio: UInt32 = 0x04
+    static let featureFlagsAttributePrefix = "x-ss-general.featureflags:"
+    static let encryptionSupportedAttributePrefix = "x-ss-general.encryptionsupported:"
     static let encryptionRequestedAttributePrefix = "x-ss-general.encryptionrequested:"
 }
 
@@ -82,15 +84,25 @@ enum ShadowClientSunshineControlMessageProfile {
     static let periodicPingPayload = Data([0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
 
     static func invalidateReferenceFramesPayload(
-        firstFrame: UInt64,
-        lastFrame: UInt64
+        firstFrame: UInt32,
+        lastFrame: UInt32
     ) -> Data {
         var payload = Data()
         payload.reserveCapacity(24)
-        payload.appendUInt64LE(firstFrame)
-        payload.appendUInt64LE(lastFrame)
-        payload.appendUInt64LE(0)
+        appendUInt32LE(firstFrame, to: &payload)
+        appendUInt32LE(0, to: &payload)
+        appendUInt32LE(lastFrame, to: &payload)
+        appendUInt32LE(0, to: &payload)
+        appendUInt32LE(0, to: &payload)
+        appendUInt32LE(0, to: &payload)
         return payload
+    }
+
+    private static func appendUInt32LE(_ value: UInt32, to payload: inout Data) {
+        payload.append(UInt8(truncatingIfNeeded: value))
+        payload.append(UInt8(truncatingIfNeeded: value >> 8))
+        payload.append(UInt8(truncatingIfNeeded: value >> 16))
+        payload.append(UInt8(truncatingIfNeeded: value >> 24))
     }
 }
 
@@ -139,7 +151,7 @@ enum ShadowClientRTSPAnnounceProfile {
     static let surroundDisabled = "0"
     static let surroundEnabled = "1"
     static let surroundAudioQualityDisabled = "0"
-    static let surroundAudioQualityEnabled = "0"
+    static let surroundAudioQualityEnabled = "1"
     static let aqosPacketDuration = "5"
     static let encoderCSCMode = "0"
 

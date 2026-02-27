@@ -26,29 +26,50 @@ enum ShadowClientSunshineControlChannelMode: Sendable {
         ShadowClientSunshineControlMessageProfile.startBPayload
     }
 
-    var recoveryRequestType: UInt16 {
-        switch self {
-        case .plaintext:
-            return ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesType
-        case .encryptedV2:
-            return ShadowClientSunshineControlMessageProfile.startATypeEncryptedV2
-        }
-    }
-
-    var recoveryRequestPayload: Data {
-        switch self {
-        case .plaintext:
-            return ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesPayload(
-                firstFrame: 0,
-                lastFrame: 0
-            )
-        case .encryptedV2:
-            return ShadowClientSunshineControlMessageProfile.startAPayload
-        }
-    }
+    private static let plaintextIDRFallbackFrameWindow: UInt32 = 0x20
 
     var recoveryRequestChannelID: UInt8 {
         ShadowClientSunshineControlMessageProfile.urgentChannelID
+    }
+
+    func makeIDRRequest(
+        lastSeenFrameIndex: UInt32?
+    ) -> (type: UInt16, payload: Data, channelID: UInt8) {
+        switch self {
+        case .plaintext:
+            let lastFrame = lastSeenFrameIndex ?? 0
+            let firstFrame = lastFrame > Self.plaintextIDRFallbackFrameWindow ?
+                lastFrame - Self.plaintextIDRFallbackFrameWindow :
+                0
+            return (
+                ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesType,
+                ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesPayload(
+                    firstFrame: firstFrame,
+                    lastFrame: lastFrame
+                ),
+                recoveryRequestChannelID
+            )
+        case .encryptedV2:
+            return (
+                ShadowClientSunshineControlMessageProfile.startATypeEncryptedV2,
+                ShadowClientSunshineControlMessageProfile.startAPayload,
+                recoveryRequestChannelID
+            )
+        }
+    }
+
+    func makeReferenceFrameInvalidationRequest(
+        startFrameIndex: UInt32,
+        endFrameIndex: UInt32
+    ) -> (type: UInt16, payload: Data, channelID: UInt8) {
+        (
+            ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesType,
+            ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesPayload(
+                firstFrame: min(startFrameIndex, endFrameIndex),
+                lastFrame: max(startFrameIndex, endFrameIndex)
+            ),
+            recoveryRequestChannelID
+        )
     }
 }
 
