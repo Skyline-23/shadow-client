@@ -1638,7 +1638,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         let retrySignatures = [
-            "rtsp",
             "video timeout",
             "no video datagram",
             "no message available on stream",
@@ -1723,6 +1722,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         from settings: ShadowClientGameStreamLaunchSettings,
         connectError: any Error
     ) -> ShadowClientGameStreamLaunchSettings {
+        if shouldPreferH264AfterDecoderRuntimeFailure(
+            settings: settings,
+            connectError: connectError
+        ) {
+            return launchSettings(settings, preferredCodec: .h264)
+        }
         guard shouldDowngradeCodecForRecovery(
             settings: settings,
             connectError: connectError
@@ -1733,6 +1738,33 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         return launchSettings(settings, preferredCodec: downgradedCodec)
+    }
+
+    private static func shouldPreferH264AfterDecoderRuntimeFailure(
+        settings: ShadowClientGameStreamLaunchSettings,
+        connectError: any Error
+    ) -> Bool {
+        let isAV1Requested = settings.preferredCodec == .av1 || settings.preferredCodec == .auto
+        guard isAV1Requested else {
+            return false
+        }
+
+        let normalized = connectError.localizedDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty else {
+            return false
+        }
+
+        let directH264FallbackSignatures = [
+            "runtime recovery exhausted",
+            "decoder recovery exhausted",
+            "vtvideo decoderselection",
+            "vt-ds",
+            "osstatus -12903",
+            "osstatus -12909",
+        ]
+        return directH264FallbackSignatures.contains(where: normalized.contains)
     }
 
     private static func shouldDowngradeCodecForRecovery(

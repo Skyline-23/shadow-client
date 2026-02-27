@@ -2,21 +2,55 @@ import Foundation
 import Testing
 @testable import ShadowClientFeatureHome
 
-@Test("AV1 policy prefers explicit codec configuration when available")
-func av1PolicyPrefersExplicitConfiguration() {
+@Test("AV1 policy prefers discovered stream configuration over explicit codec configuration")
+func av1PolicyPrefersDiscoveredConfigurationOverExplicit() {
     let current = [Data([0x81, 0x00, 0x0C, 0x00])]
     let explicit = [Data([0x81, 0x20, 0x40, 0x00])]
+    let discovered = Data([0x81, 0x00, 0x4C, 0x00])
 
     let resolved = ShadowClientAV1CodecConfigurationPolicy.resolve(
         currentParameterSets: current,
         currentOrigin: .stream,
         explicitParameterSets: explicit,
-        discoveredConfiguration: Data([0x81, 0x00, 0x4C, 0x00]),
+        discoveredConfiguration: discovered,
+        fallbackConfiguration: Data([0x81, 0x00, 0x0C, 0x00])
+    )
+
+    #expect(resolved.parameterSets == [discovered])
+    #expect(resolved.origin == .stream)
+}
+
+@Test("AV1 policy uses explicit codec configuration when discovered stream configuration is unavailable")
+func av1PolicyUsesExplicitConfigurationWithoutDiscoveredStream() {
+    let explicit = [Data([0x81, 0x20, 0x40, 0x00])]
+
+    let resolved = ShadowClientAV1CodecConfigurationPolicy.resolve(
+        currentParameterSets: [],
+        currentOrigin: nil,
+        explicitParameterSets: explicit,
+        discoveredConfiguration: nil,
         fallbackConfiguration: Data([0x81, 0x00, 0x0C, 0x00])
     )
 
     #expect(resolved.parameterSets == explicit)
     #expect(resolved.origin == .explicit)
+}
+
+@Test("AV1 policy upgrades explicit configuration to discovered stream configuration")
+func av1PolicyUpgradesExplicitConfigurationToDiscoveredStream() {
+    let explicit = Data([0x81, 0x20, 0x40, 0x00])
+    let discovered = Data([0x81, 0x00, 0x4C, 0x00])
+
+    let resolved = ShadowClientAV1CodecConfigurationPolicy.resolve(
+        currentParameterSets: [explicit],
+        currentOrigin: .explicit,
+        explicitParameterSets: [explicit],
+        discoveredConfiguration: discovered,
+        fallbackConfiguration: Data([0x81, 0x00, 0x0C, 0x00])
+    )
+
+    #expect(resolved.parameterSets == [discovered])
+    #expect(resolved.origin == .stream)
 }
 
 @Test("AV1 policy seeds from discovered stream configuration when no current state exists")
@@ -47,7 +81,7 @@ func av1PolicyUsesFallbackWhenNoConfigurationExists() {
         fallbackConfiguration: fallback
     )
 
-    #expect(resolved.parameterSets == [fallback])
+    #expect(resolved.parameterSets.isEmpty)
     #expect(resolved.origin == .fallback)
 }
 

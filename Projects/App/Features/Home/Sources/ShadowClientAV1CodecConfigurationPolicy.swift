@@ -12,30 +12,48 @@ enum ShadowClientAV1CodecConfigurationPolicy {
         currentOrigin: ShadowClientAV1CodecConfigurationOrigin?,
         explicitParameterSets: [Data],
         discoveredConfiguration: Data?,
-        fallbackConfiguration: Data
+        fallbackConfiguration _: Data
     ) -> (
         parameterSets: [Data],
         origin: ShadowClientAV1CodecConfigurationOrigin
     ) {
-        if let explicitConfiguration = firstAV1CodecConfiguration(from: explicitParameterSets) {
-            return ([explicitConfiguration], .explicit)
-        }
+        let explicitConfiguration = firstAV1CodecConfiguration(from: explicitParameterSets)
 
         if currentParameterSets.isEmpty {
             if let discoveredConfiguration {
                 return ([discoveredConfiguration], .stream)
             }
-            return ([fallbackConfiguration], .fallback)
+            if let explicitConfiguration {
+                return ([explicitConfiguration], .explicit)
+            }
+            // Avoid synthesizing av1C from heuristics before stream config appears.
+            return ([], .fallback)
+        }
+
+        if let discoveredConfiguration {
+            if currentOrigin == .explicit || currentOrigin == .fallback {
+                if currentParameterSets != [discoveredConfiguration] {
+                    return ([discoveredConfiguration], .stream)
+                }
+                return (currentParameterSets, .stream)
+            }
+
+            // Once stream-derived AV1 configuration is active, keep it stable to
+            // avoid unnecessary VT session churn from noisy sequence-header variants.
+            if currentOrigin == .stream {
+                return (currentParameterSets, .stream)
+            }
         }
 
         if currentOrigin == .fallback,
-           let discoveredConfiguration,
-           currentParameterSets != [discoveredConfiguration]
+           let explicitConfiguration,
+           currentParameterSets != [explicitConfiguration]
         {
-            return ([discoveredConfiguration], .stream)
+            return ([explicitConfiguration], .explicit)
         }
 
-        return (currentParameterSets, currentOrigin ?? .stream)
+        let resolvedOrigin = currentOrigin ?? (explicitConfiguration == nil ? .fallback : .explicit)
+        return (currentParameterSets, resolvedOrigin)
     }
 
     private static func firstAV1CodecConfiguration(from parameterSets: [Data]) -> Data? {

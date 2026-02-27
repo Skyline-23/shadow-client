@@ -534,6 +534,64 @@ func remoteDesktopRuntimeRetriesForceLaunchAfterResumeConnectTimeout() async {
     }
 }
 
+@Test("Remote desktop runtime does not forceLaunch retry for deterministic RTSP setup 404 failure")
+@MainActor
+func remoteDesktopRuntimeDoesNotForceLaunchRetryForRTSPSetup404() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "wifi.skyline23.com": .init(
+                host: "wifi.skyline23.com",
+                displayName: "Skyline23-PC",
+                pairStatus: .paired,
+                currentGameID: 881_448_767,
+                serverState: "SUNSHINE_SERVER_BUSY",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-RTSP-404"
+            ),
+        ],
+        appListByHost: [
+            "wifi.skyline23.com": [
+                .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let resumeSessionURL = "rtsp://192.168.0.52:48010/resume"
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: resumeSessionURL, verb: "resume")
+    )
+    let sessionConnector = FakeSessionConnectionClient(
+        simulatedFailures: [
+            ShadowClientGameStreamError.requestFailed("RTSP SETUP failed (404):"),
+        ]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["wifi.skyline23.com"], preferredHost: "wifi.skyline23.com")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 881_448_767,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+
+    #expect(await sessionConnector.connectCalls() == [resumeSessionURL])
+    let calls = await control.launchCalls()
+    #expect(calls.count == 1)
+    #expect(calls[0].forceLaunch == false)
+    if case .failed = runtime.launchState {
+        #expect(true)
+    } else {
+        Issue.record("Expected failed state without forceLaunch retry, got \(runtime.launchState)")
+    }
+}
+
 @Test("Remote desktop runtime falls back from AV1 to H265 when decoder session creation fails")
 @MainActor
 func remoteDesktopRuntimeFallsBackCodecAfterDecoderCreationFailure() async {
@@ -723,11 +781,11 @@ func remoteDesktopRuntimeAutoRelaunchesCodecAfterPostLaunchDecoderFailure() asyn
     let launchCalls = await control.launchCalls()
     #expect(launchCalls.count == 2)
     #expect(launchCalls[0].settings.preferredCodec == .auto)
-    #expect(launchCalls[1].settings.preferredCodec == .h265)
+    #expect(launchCalls[1].settings.preferredCodec == .h264)
     #expect(launchCalls[1].forceLaunch == true)
 
     let codecHistory = await sessionConnector.videoConfigurations().map(\.preferredCodec)
-    #expect(codecHistory == [.auto, .h265])
+    #expect(codecHistory == [.auto, .h264])
 }
 
 @Test("Remote desktop runtime persists runtime fallback codec for subsequent auto launches")
@@ -797,7 +855,7 @@ func remoteDesktopRuntimePersistsRuntimeFallbackCodecForSubsequentAutoLaunches()
     await waitForLaunchState(runtime, maxAttempts: 200)
 
     let codecHistory = await sessionConnector.videoConfigurations().map(\.preferredCodec)
-    #expect(codecHistory == [.auto, .h265, .h265])
+    #expect(codecHistory == [.auto, .h264, .h264])
 }
 
 @Test("Remote desktop runtime downgrades codec for forceLaunch after resume decoder failures")

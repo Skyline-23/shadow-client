@@ -347,11 +347,11 @@ public actor ShadowClientVideoToolboxDecoder {
             ) else {
                 return
             }
-            if !explicitParameterSets.isEmpty {
-                latestParameterSets = explicitParameterSets
-            }
             if !parsedAccessUnit.parameterSets.isEmpty {
                 latestParameterSets = parsedAccessUnit.parameterSets
+            } else if latestParameterSets.isEmpty, !explicitParameterSets.isEmpty {
+                // Use SDP-provided sets for bootstrap only. Prefer in-band sets once observed.
+                latestParameterSets = explicitParameterSets
             }
             samplePayload = parsedAccessUnit.samplePayload
         case .av1:
@@ -377,6 +377,13 @@ public actor ShadowClientVideoToolboxDecoder {
             }
 
             if session != nil, configuredParameterSets != latestParameterSets {
+                #if DEBUG
+                print(
+                    "AV1 decoder reconfiguration requested origin=\(String(describing: av1CodecConfigurationOrigin)) " +
+                        "configured-bytes=\(configuredParameterSets.first?.count ?? 0) " +
+                        "next-bytes=\(latestParameterSets.first?.count ?? 0)"
+                )
+                #endif
                 invalidateDecoderSessionForReconfiguration()
             }
             samplePayload = annexBAccessUnit
