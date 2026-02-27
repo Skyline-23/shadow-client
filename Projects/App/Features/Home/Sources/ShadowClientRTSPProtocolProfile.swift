@@ -32,7 +32,6 @@ enum ShadowClientRTSPProtocolProfile {
     static let videoControlPaths = [
         "streamid=video/0/0",
         "streamid=video",
-        "streamid=0",
     ]
     static let audioControlPaths = [
         "streamid=audio/0/0",

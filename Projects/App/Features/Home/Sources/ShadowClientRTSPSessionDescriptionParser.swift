@@ -205,7 +205,7 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             if !advertisedPayloadTypes.contains(payloadType) {
                 advertisedPayloadTypes.append(payloadType)
             }
-            if codecByPayloadType[payloadType] == nil {
+            if codecByPayloadType[payloadType] != hintedCodec {
                 codecByPayloadType[payloadType] = hintedCodec
             }
         }
@@ -813,12 +813,21 @@ public enum ShadowClientRTSPSessionDescriptionParser {
                 .compactMap { decodeBase64Relaxed($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
         case .h265:
             let keys = ["sprop-vps", "sprop-sps", "sprop-pps"]
-            return keys.compactMap { key in
+            let splitParameterSets: [Data] = keys.compactMap { key in
                 guard let value = fmtp[key] else {
                     return nil
                 }
                 return decodeBase64Relaxed(value.trimmingCharacters(in: .whitespacesAndNewlines))
             }
+            if !splitParameterSets.isEmpty {
+                return splitParameterSets
+            }
+            guard let value = fmtp["sprop-parameter-sets"] else {
+                return []
+            }
+            return value
+                .split(separator: ",")
+                .compactMap { decodeBase64Relaxed($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
         case .av1:
             let keys = ["config", "sprop-parameter-sets"]
             var records: [Data] = []
