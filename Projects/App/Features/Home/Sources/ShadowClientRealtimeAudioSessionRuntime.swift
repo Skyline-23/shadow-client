@@ -30,6 +30,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     fileprivate struct RTPPacket: Sendable {
         let sequenceNumber: UInt16
         let timestamp: UInt32
+        let ssrc: UInt32
         let payloadType: Int
         let payload: Data
     }
@@ -223,15 +224,11 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 return
             }
 
-            var currentPayloadType = preferredPayloadType
-            var loggedUnexpectedPayloadTypes = Set<Int>()
+            let currentPayloadType = (96 ... 127).contains(preferredPayloadType) ?
+                preferredPayloadType :
+                ShadowClientRealtimeSessionDefaults.moonlightPrimaryAudioPayloadType
             var loggedPayloadNormalizationKeys = Set<String>()
-            var unexpectedPayloadTypeCounts: [Int: Int] = [:]
-            var hasLockedPayloadType = false
-            var pendingPayloadTypeCandidate: Int?
-            var pendingPayloadTypeCandidateCount = 0
-            var consecutivePayloadTypeMismatchCount = 0
-            var payloadTypeMismatchPressure = 0
+            var loggedFECIncompatibility = false
             var consecutiveDroppedOutputBuffers = 0
             var consecutiveDecryptFailures = 0
             var consecutiveDecodeFailures = 0
@@ -251,10 +248,6 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             )
             let decodeCooldown = ShadowClientRealtimeSessionDefaults.audioOutputQueueDecodeCooldown
             let outputRecoveryAttemptCooldownSeconds: TimeInterval = 0.35
-            let payloadAdaptationObservationThreshold = max(
-                1,
-                ShadowClientRealtimeSessionDefaults.audioPayloadTypeAdaptationObservationThreshold
-            )
             let decodeFailureAbortThreshold = max(
                 1,
                 ShadowClientRealtimeSessionDefaults.audioDecodeFailureAbortThreshold
@@ -275,6 +268,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var estimatedSamplesPerPacket = defaultEstimatedPacketSamples
             var lossConcealmentEventCount = 0
             var rsFECRecoveryCount = 0
+            var observedMoonlightFECShardsSinceLastDecodedPacket = 0
+            var startupResyncPacketsRemaining = Self.initialAudioResyncDropPacketCount(
+                packetDurationMs: Int(ShadowClientRTSPAnnounceProfile.aqosPacketDuration) ?? 5
+            )
             let moonlightRSFECQueue = ShadowClientRealtimeAudioMoonlightRSFECQueue()
 
             let registerOutputQueuePressureDrop: (Int, String) -> Void = { droppedCount, reason in
@@ -348,106 +345,42 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     let packet = RTPPacket(
                         sequenceNumber: parsedPacket.sequenceNumber,
                         timestamp: parsedPacket.timestamp,
+                        ssrc: parsedPacket.ssrc,
                         payloadType: normalizedPayload.payloadType,
                         payload: normalizedPayload.payload
                     )
                     await moonlightRSFECQueue.ingest(
                         packetSequenceNumber: packet.sequenceNumber,
                         packetTimestamp: packet.timestamp,
+                        packetSSRC: packet.ssrc,
                         payloadType: packet.payloadType,
                         payload: packet.payload,
                         expectedPrimaryPayloadType: currentPayloadType,
                         wrapperPayloadType: ShadowClientRealtimeSessionDefaults
                             .ignoredRTPControlPayloadType
                     )
+                    let isFECIncompatible = await moonlightRSFECQueue.isFECIncompatible()
+                    if isFECIncompatible, !loggedFECIncompatibility {
+                        loggedFECIncompatibility = true
+                        logger.notice(
+                            "Audio Moonlight RS-FEC marked incompatible; switching to primary-payload passthrough mode"
+                        )
+                    }
+                    if normalizedPayload.isMoonlightAudioFECPayload {
+                        observedMoonlightFECShardsSinceLastDecodedPacket += 1
+                    }
                     if !Self.shouldProcessPayloadMismatch(for: normalizedPayload) {
                         continue
                     }
 
                     if packet.payloadType != currentPayloadType {
-                        consecutivePayloadTypeMismatchCount += 1
-                        payloadTypeMismatchPressure = min(
-                            payloadAdaptationObservationThreshold * 4,
-                            payloadTypeMismatchPressure + 1
-                        )
-                        let lockIsExpired = hasLockedPayloadType &&
-                            (
-                                consecutivePayloadTypeMismatchCount >= payloadAdaptationObservationThreshold ||
-                                    payloadTypeMismatchPressure >= payloadAdaptationObservationThreshold
+                        if packet.payloadType != ShadowClientRealtimeSessionDefaults.moonlightAudioFECPayloadType {
+                            logger.notice(
+                                "Audio RTP payload mismatch ignored (expected=\(currentPayloadType, privacy: .public), observed=\(packet.payloadType, privacy: .public))"
                             )
-                        if lockIsExpired {
-                            pendingPayloadTypeCandidate = nil
-                            pendingPayloadTypeCandidateCount = 0
-                            consecutivePayloadTypeMismatchCount = 0
-                            payloadTypeMismatchPressure = 0
-                            hasLockedPayloadType = false
-                            if let nextPayloadType = Self.payloadTypePreference(
-                                observed: packet.payloadType,
-                                current: currentPayloadType,
-                                hasLockedPayloadType: false
-                            ) {
-                                let previousPayloadType = currentPayloadType
-                                currentPayloadType = nextPayloadType
-                                jitterBuffer.reset(preferredPayloadType: currentPayloadType)
-                                lastDecodedSequenceNumber = nil
-                                lastDecodedTimestamp = nil
-                                logger.notice(
-                                    "Adapting RTP audio payload type from \(previousPayloadType, privacy: .public) to \(currentPayloadType, privacy: .public) after lock expiry due to sustained mismatch"
-                                )
-                            }
-                            continue
-                        }
-                        let adaptationLockActive = hasLockedPayloadType && !lockIsExpired
-                        if let nextPayloadType = Self.payloadTypePreference(
-                            observed: packet.payloadType,
-                            current: currentPayloadType,
-                            hasLockedPayloadType: adaptationLockActive
-                        ) {
-                            if pendingPayloadTypeCandidate == nextPayloadType {
-                                pendingPayloadTypeCandidateCount += 1
-                            } else {
-                                pendingPayloadTypeCandidate = nextPayloadType
-                                pendingPayloadTypeCandidateCount = 1
-                            }
-                            if pendingPayloadTypeCandidateCount >= payloadAdaptationObservationThreshold {
-                                let previousPayloadType = currentPayloadType
-                                currentPayloadType = nextPayloadType
-                                hasLockedPayloadType = false
-                                pendingPayloadTypeCandidate = nil
-                                pendingPayloadTypeCandidateCount = 0
-                                consecutivePayloadTypeMismatchCount = 0
-                                payloadTypeMismatchPressure = 0
-                                jitterBuffer.reset(preferredPayloadType: currentPayloadType)
-                                lastDecodedSequenceNumber = nil
-                                lastDecodedTimestamp = nil
-                                logger.notice(
-                                    "Adapting RTP audio payload type from \(previousPayloadType, privacy: .public) to \(currentPayloadType, privacy: .public) after \(payloadAdaptationObservationThreshold, privacy: .public) consecutive candidate packets"
-                                )
-                            }
-                        } else {
-                            let previousUnexpectedCount = unexpectedPayloadTypeCounts[packet.payloadType, default: 0]
-                            let currentUnexpectedCount = previousUnexpectedCount + 1
-                            unexpectedPayloadTypeCounts[packet.payloadType] = currentUnexpectedCount
-                            if loggedUnexpectedPayloadTypes.insert(packet.payloadType).inserted ||
-                                Self.didCounterCrossIntervalBoundary(
-                                    previous: previousUnexpectedCount,
-                                    current: currentUnexpectedCount,
-                                    interval: ShadowClientRealtimeSessionDefaults.audioUnexpectedPayloadTypeLogInterval
-                                )
-                            {
-                                logger.notice(
-                                    "Audio RTP payload mismatch summary: expected=\(currentPayloadType, privacy: .public), observed=\(packet.payloadType, privacy: .public), count=\(currentUnexpectedCount, privacy: .public)"
-                                )
-                            }
                         }
                         continue
                     }
-                    hasLockedPayloadType = true
-                    pendingPayloadTypeCandidate = nil
-                    pendingPayloadTypeCandidateCount = 0
-                    consecutivePayloadTypeMismatchCount = 0
-                    payloadTypeMismatchPressure = max(0, payloadTypeMismatchPressure - 1)
-
                     @discardableResult
                     func handleOutputQueueSaturation(dropCount: Int) -> Bool {
                         consecutiveOutputQueueSaturationCount += 1
@@ -516,6 +449,20 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         nowUptime: nowUptime,
                         maximumReadyPackets: readyPacketDrainLimit
                     )
+                    let jitterOverflowDropCount = jitterBuffer.consumeOverflowDropCount()
+                    if jitterOverflowDropCount > 0 {
+                        registerOutputQueuePressureDrop(
+                            jitterOverflowDropCount,
+                            "jitter-overflow-drop"
+                        )
+                    }
+                    if startupResyncPacketsRemaining > 0 {
+                        startupResyncPacketsRemaining -= 1
+                        if startupResyncPacketsRemaining == 0 {
+                            logger.notice("Audio startup resync drop window completed")
+                        }
+                        continue
+                    }
                     if readyPackets.isEmpty {
                         if isDecodeCooldownActive {
                             registerOutputQueuePressureDrop(1, "decode-cooldown-hold")
@@ -525,9 +472,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             isDecodeCooldownActive: isDecodeCooldownActive,
                             availableOutputSlots: preDrainAvailableOutputSlots
                         ) {
-                            // Match Moonlight behavior: if output has no free slot right now,
-                            // hold decode and keep buffered packets intact instead of escalating
-                            // recovery as a synthetic drop.
+                            _ = handleOutputQueueSaturation(dropCount: 0)
                             continue
                         }
                         continue
@@ -579,7 +524,12 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 previousSequenceNumber: lastDecodedSequenceNumber,
                                 currentSequenceNumber: readyPacket.sequenceNumber
                             )
-                            let missingPacketCount = rawMissingPacketCount
+                            let missingPacketCount = Self
+                                .adjustMissingRTPPacketCountForObservedMoonlightFEC(
+                                    rawMissingPacketCount: rawMissingPacketCount,
+                                    observedMoonlightFECShardsSinceLastDecodedPacket:
+                                    observedMoonlightFECShardsSinceLastDecodedPacket
+                                )
                             let lowWatermarkSlots = max(
                                 1,
                                 queuePressureProfile.decodeSheddingLowWatermarkSlots
@@ -587,6 +537,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             let shouldAttemptMissingPacketRecovery =
                                 Self.shouldAttemptMissingPacketRecoveryOrConcealment(
                                     missingPacketCount: missingPacketCount,
+                                    isFECIncompatible: isFECIncompatible,
                                     remainingOutputSlots: remainingOutputSlots,
                                     decodeSheddingLowWatermarkSlots: lowWatermarkSlots,
                                     deferredPacketCount: decodeWindow.deferredPacketCount
@@ -647,7 +598,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                     missingPacketCount,
                                     missingRecoveryBudget
                                 )
-                                if let previousSequenceNumber = lastDecodedSequenceNumber,
+                                if !isFECIncompatible,
+                                   let previousSequenceNumber = lastDecodedSequenceNumber,
                                    boundedMissingPacketCount > 0,
                                    remainingOutputSlots > 0
                                 {
@@ -906,6 +858,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             if didAdvanceDecodeTimeline {
                                 lastDecodedSequenceNumber = readyPacket.sequenceNumber
                                 lastDecodedTimestamp = readyPacket.timestamp
+                                observedMoonlightFECShardsSinceLastDecodedPacket = 0
                             }
                         } catch {
                             consecutiveDecodeFailures += 1
@@ -1243,6 +1196,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             (UInt32(datagram[5]) << 16) |
             (UInt32(datagram[6]) << 8) |
             UInt32(datagram[7])
+        let ssrc = (UInt32(datagram[8]) << 24) |
+            (UInt32(datagram[9]) << 16) |
+            (UInt32(datagram[10]) << 8) |
+            UInt32(datagram[11])
 
         var headerLength = 12 + (csrcCount * 4)
         guard datagram.count >= headerLength else {
@@ -1272,6 +1229,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         return RTPPacket(
             sequenceNumber: sequenceNumber,
             timestamp: timestamp,
+            ssrc: ssrc,
             payloadType: payloadType,
             payload: datagram[headerLength..<endIndex]
         )
@@ -1288,6 +1246,11 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         let previousBoundary = previous / interval
         let currentBoundary = current / interval
         return currentBoundary > previousBoundary
+    }
+
+    internal static func initialAudioResyncDropPacketCount(packetDurationMs: Int) -> Int {
+        let normalizedPacketDurationMs = max(1, packetDurationMs)
+        return max(0, 500 / normalizedPacketDurationMs)
     }
 
     private static func missingRTPPacketCount(
@@ -1311,9 +1274,11 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
 
     internal static func adjustMissingRTPPacketCountForObservedMoonlightFEC(
         rawMissingPacketCount: Int,
-        observedMoonlightFECShardsSinceLastDecodedPacket _: Int
+        observedMoonlightFECShardsSinceLastDecodedPacket: Int
     ) -> Int {
-        max(0, rawMissingPacketCount)
+        let normalizedMissingCount = max(0, rawMissingPacketCount)
+        _ = observedMoonlightFECShardsSinceLastDecodedPacket
+        return normalizedMissingCount
     }
 
     internal static func estimatedAudioSamplesPerPacket(
@@ -1502,18 +1467,22 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
 
     internal static func shouldAttemptMissingPacketRecoveryOrConcealment(
         missingPacketCount: Int,
+        isFECIncompatible: Bool,
         remainingOutputSlots: Int,
         decodeSheddingLowWatermarkSlots: Int,
         deferredPacketCount: Int
     ) -> Bool {
+        guard !isFECIncompatible else {
+            return false
+        }
         guard missingPacketCount > 0 else {
             return false
         }
         guard deferredPacketCount == 0 else {
             return false
         }
-        let lowWatermarkSlots = max(1, decodeSheddingLowWatermarkSlots)
-        return remainingOutputSlots > lowWatermarkSlots
+        _ = max(1, decodeSheddingLowWatermarkSlots)
+        return remainingOutputSlots > 0
     }
 
     internal static func maximumRecoveredAudioPacketsPerBurst(
@@ -1522,8 +1491,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         guard availableOutputSlots > 0 else {
             return 0
         }
-        let normalizedSlots = max(1, availableOutputSlots)
-        return min(2, max(1, normalizedSlots / 3))
+        return max(0, availableOutputSlots)
     }
 
     internal static func maximumConcealmentPacketsPerBurst(
@@ -1532,8 +1500,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         guard availableOutputSlots > 0 else {
             return 0
         }
-        let normalizedSlots = max(1, availableOutputSlots)
-        return min(2, max(1, normalizedSlots / 3))
+        return max(0, availableOutputSlots)
     }
 
     internal static func shouldSkipMissingAudioSequence(
@@ -1588,19 +1555,18 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         )
         let decodeSheddingLowWatermarkSlots = max(
             ShadowClientRealtimeSessionDefaults.audioOutputQueueDecodeSheddingLowWatermarkSlots,
-            normalizedChannels > 2 ? 3 : 2
+            normalizedChannels > 2 ? 5 : 4
         )
-        // Keep a short queue like Moonlight's low-latency audio path (~tens of ms),
-        // while preserving extra headroom for bursty Wi-Fi and FEC/concealment recovery.
+        // Moonlight keeps pending audio short (~30 ms) and sheds early.
         let targetQueuedWindowPackets = max(
-            10,
-            Int((Double(estimatedPacketsPerSecond) * 0.20).rounded(.up))
+            2,
+            Int((Double(estimatedPacketsPerSecond) * 0.03).rounded(.up))
         )
         let maximumQueuedBuffers = min(
-            16,
+            8,
             max(
-                10,
-                targetQueuedWindowPackets + (normalizedChannels > 2 ? 3 : 2)
+                3,
+                targetQueuedWindowPackets + (normalizedChannels > 2 ? 1 : 0)
             )
         )
         return .init(
@@ -1702,6 +1668,7 @@ private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
     private var expectedSequence: UInt16?
     private var pendingGapSequence: UInt16?
     private var pendingGapStartUptime: TimeInterval?
+    private var pendingOverflowDropCount = 0
     private var packetsBySequence: [UInt16: ShadowClientRealtimeAudioSessionRuntime.RTPPacket] = [:]
 
     init(
@@ -1721,6 +1688,7 @@ private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
         expectedSequence = nil
         pendingGapSequence = nil
         pendingGapStartUptime = nil
+        pendingOverflowDropCount = 0
         packetsBySequence.removeAll(keepingCapacity: false)
     }
 
@@ -1788,6 +1756,7 @@ private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
         if packetsBySequence.count > maximumDepth {
             let overflowCount = packetsBySequence.count - maximumDepth
             removeOldestBufferedPackets(count: overflowCount)
+            pendingOverflowDropCount += overflowCount
         }
 
         return readyPackets
@@ -1820,7 +1789,14 @@ private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
         if packetsBySequence.count > maximumDepth {
             let overflowCount = packetsBySequence.count - maximumDepth
             removeOldestBufferedPackets(count: overflowCount)
+            pendingOverflowDropCount += overflowCount
         }
+    }
+
+    mutating func consumeOverflowDropCount() -> Int {
+        let count = pendingOverflowDropCount
+        pendingOverflowDropCount = 0
+        return count
     }
 
     private mutating func removeOldestBufferedPackets(count: Int) {

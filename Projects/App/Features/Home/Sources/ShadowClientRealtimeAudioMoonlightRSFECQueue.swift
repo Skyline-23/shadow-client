@@ -4,6 +4,7 @@ actor ShadowClientRealtimeAudioMoonlightRSFECQueue {
     private struct FECBlock: Sendable {
         let baseSequenceNumber: UInt16
         var baseTimestamp: UInt32?
+        var ssrc: UInt32?
         let primaryPayloadType: Int
         var blockSize: Int?
         var dataShards: [Data?]
@@ -19,6 +20,7 @@ actor ShadowClientRealtimeAudioMoonlightRSFECQueue {
             self.baseSequenceNumber = baseSequenceNumber
             self.primaryPayloadType = primaryPayloadType
             baseTimestamp = nil
+            ssrc = nil
             blockSize = nil
             dataShards = Array(repeating: nil, count: Self.dataShardCount)
             dataTimestamps = Array(repeating: nil, count: Self.dataShardCount)
@@ -35,6 +37,7 @@ actor ShadowClientRealtimeAudioMoonlightRSFECQueue {
         let primaryPayloadType: Int
         let baseSequenceNumber: UInt16
         let baseTimestamp: UInt32
+        let ssrc: UInt32
         let payload: Data
     }
 
@@ -101,29 +104,48 @@ actor ShadowClientRealtimeAudioMoonlightRSFECQueue {
     private var recoveredPayloadsBySequence: [UInt16: Data] = [:]
     private var lastObservedTimestampStep: UInt32 = defaultTimestampStep
     private var latestObservedBaseSequence: UInt16?
+    private var incompatibleFEC = false
 
     func ingest(
         packetSequenceNumber: UInt16,
         packetTimestamp: UInt32,
+        packetSSRC: UInt32,
         payloadType: Int,
         payload: Data,
         expectedPrimaryPayloadType: Int,
         wrapperPayloadType: Int
     ) {
+        if incompatibleFEC {
+            if payloadType == expectedPrimaryPayloadType {
+                ingestDataPacket(
+                    packetSequenceNumber: packetSequenceNumber,
+                    packetTimestamp: packetTimestamp,
+                    packetSSRC: packetSSRC,
+                    payload: payload,
+                    expectedPrimaryPayloadType: expectedPrimaryPayloadType
+                )
+            }
+            return
+        }
+
         if payloadType == expectedPrimaryPayloadType {
             ingestDataPacket(
                 packetSequenceNumber: packetSequenceNumber,
                 packetTimestamp: packetTimestamp,
+                packetSSRC: packetSSRC,
                 payload: payload,
                 expectedPrimaryPayloadType: expectedPrimaryPayloadType
             )
             return
         }
 
-        guard payloadType == wrapperPayloadType,
-              let shardHeader = Self.parseFECShardHeader(payload),
-              shardHeader.primaryPayloadType == expectedPrimaryPayloadType
-        else {
+        guard payloadType == wrapperPayloadType else {
+            return
+        }
+        guard let shardHeader = Self.parseFECShardHeader(payload) else {
+            return
+        }
+        guard shardHeader.primaryPayloadType == expectedPrimaryPayloadType else {
             return
         }
 
@@ -137,9 +159,14 @@ actor ShadowClientRealtimeAudioMoonlightRSFECQueue {
         recoveredPayloadsBySequence.removeValue(forKey: sequenceNumber)
     }
 
+    func isFECIncompatible() -> Bool {
+        incompatibleFEC
+    }
+
     private func ingestDataPacket(
         packetSequenceNumber: UInt16,
         packetTimestamp: UInt32,
+        packetSSRC: UInt32,
         payload: Data,
         expectedPrimaryPayloadType: Int
     ) {
@@ -154,13 +181,29 @@ actor ShadowClientRealtimeAudioMoonlightRSFECQueue {
         )
 
         guard block.primaryPayloadType == expectedPrimaryPayloadType else {
-            blocksByBaseSequence.removeValue(forKey: baseSequenceNumber)
+            markFECIncompatible()
             return
         }
 
         guard matchOrSetBlockSize(payload.count, block: &block) else {
-            blocksByBaseSequence.removeValue(forKey: baseSequenceNumber)
+            markFECIncompatible()
             return
+        }
+
+        if let blockSSRC = block.ssrc {
+            guard blockSSRC == packetSSRC else {
+                markFECIncompatible()
+                return
+            }
+        } else {
+            block.ssrc = packetSSRC
+        }
+
+        if shardOffset == 0, let baseTimestamp = block.baseTimestamp {
+            guard baseTimestamp == packetTimestamp else {
+                markFECIncompatible()
+                return
+            }
         }
 
         block.dataShards[shardOffset] = payload
@@ -194,7 +237,7 @@ actor ShadowClientRealtimeAudioMoonlightRSFECQueue {
         )
 
         guard block.primaryPayloadType == shardHeader.primaryPayloadType else {
-            blocksByBaseSequence.removeValue(forKey: baseSequenceNumber)
+            markFECIncompatible()
             return
         }
 
@@ -202,11 +245,27 @@ actor ShadowClientRealtimeAudioMoonlightRSFECQueue {
               shardHeader.shardIndex < Self.parityShardCount,
               matchOrSetBlockSize(shardHeader.payload.count, block: &block)
         else {
-            blocksByBaseSequence.removeValue(forKey: baseSequenceNumber)
+            markFECIncompatible()
             return
         }
 
-        block.baseTimestamp = shardHeader.baseTimestamp
+        if let blockSSRC = block.ssrc {
+            guard blockSSRC == shardHeader.ssrc else {
+                markFECIncompatible()
+                return
+            }
+        } else {
+            block.ssrc = shardHeader.ssrc
+        }
+
+        if let blockBaseTimestamp = block.baseTimestamp {
+            guard blockBaseTimestamp == shardHeader.baseTimestamp else {
+                markFECIncompatible()
+                return
+            }
+        } else {
+            block.baseTimestamp = shardHeader.baseTimestamp
+        }
         block.parityShards[shardHeader.shardIndex] = shardHeader.payload
         block.lastUpdatedUptime = now
         recoverMissingDataIfPossible(in: &block)
@@ -573,6 +632,10 @@ actor ShadowClientRealtimeAudioMoonlightRSFECQueue {
             (UInt32(payload[payload.startIndex + 5]) << 16) |
             (UInt32(payload[payload.startIndex + 6]) << 8) |
             UInt32(payload[payload.startIndex + 7])
+        let ssrc = (UInt32(payload[payload.startIndex + 8]) << 24) |
+            (UInt32(payload[payload.startIndex + 9]) << 16) |
+            (UInt32(payload[payload.startIndex + 10]) << 8) |
+            UInt32(payload[payload.startIndex + 11])
 
         guard payload.count > fecHeaderLength else {
             return nil
@@ -588,8 +651,18 @@ actor ShadowClientRealtimeAudioMoonlightRSFECQueue {
             primaryPayloadType: primaryPayloadType,
             baseSequenceNumber: baseSequenceNumber,
             baseTimestamp: baseTimestamp,
+            ssrc: ssrc,
             payload: shardPayload
         )
+    }
+
+    private func markFECIncompatible() {
+        guard !incompatibleFEC else {
+            return
+        }
+        incompatibleFEC = true
+        blocksByBaseSequence.removeAll(keepingCapacity: false)
+        recoveredPayloadsBySequence.removeAll(keepingCapacity: false)
     }
 
     private func sequenceDistanceForward(

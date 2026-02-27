@@ -16,9 +16,6 @@ let package = Package(
     dependencies: [
         .package(path: "../Modules"),
         .package(url: "https://github.com/swiftlang/swift-testing.git", exact: "6.0.3"),
-        .package(
-            url: "git@github.com:Skyline-23/SwiftOpus.git",
-            .upToNextMinor(from: "0.2.0")
-        ),
+        .package(path: "../../SwiftOpus"),
     ]
 )

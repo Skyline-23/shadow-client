@@ -377,6 +377,7 @@ func audioMissingPacketRecoveryGateAllowsExpansionWithHeadroomAndNoBacklog() {
     #expect(
         ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
             missingPacketCount: 2,
+            isFECIncompatible: false,
             remainingOutputSlots: 5,
             decodeSheddingLowWatermarkSlots: 2,
             deferredPacketCount: 0
@@ -389,6 +390,7 @@ func audioMissingPacketRecoveryGateSkipsWhenDecodeBacklogExists() {
     #expect(
         !ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
             missingPacketCount: 2,
+            isFECIncompatible: false,
             remainingOutputSlots: 6,
             decodeSheddingLowWatermarkSlots: 2,
             deferredPacketCount: 1
@@ -396,12 +398,22 @@ func audioMissingPacketRecoveryGateSkipsWhenDecodeBacklogExists() {
     )
 }
 
-@Test("Audio missing-packet recovery gate skips at or below low watermark")
-func audioMissingPacketRecoveryGateSkipsAtOrBelowLowWatermark() {
+@Test("Audio missing-packet recovery gate allows recovery as long as there is output capacity")
+func audioMissingPacketRecoveryGateAllowsRecoveryWhenOutputCapacityExists() {
     #expect(
-        !ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
+        ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
             missingPacketCount: 1,
+            isFECIncompatible: false,
             remainingOutputSlots: 2,
+            decodeSheddingLowWatermarkSlots: 2,
+            deferredPacketCount: 0
+        )
+    )
+    #expect(
+        ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
+            missingPacketCount: 1,
+            isFECIncompatible: false,
+            remainingOutputSlots: 1,
             decodeSheddingLowWatermarkSlots: 2,
             deferredPacketCount: 0
         )
@@ -409,7 +421,21 @@ func audioMissingPacketRecoveryGateSkipsAtOrBelowLowWatermark() {
     #expect(
         !ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
             missingPacketCount: 1,
-            remainingOutputSlots: 1,
+            isFECIncompatible: false,
+            remainingOutputSlots: 0,
+            decodeSheddingLowWatermarkSlots: 2,
+            deferredPacketCount: 0
+        )
+    )
+}
+
+@Test("Audio missing-packet recovery gate is disabled when Moonlight FEC is incompatible")
+func audioMissingPacketRecoveryGateSkipsWhenFECIncompatible() {
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
+            missingPacketCount: 2,
+            isFECIncompatible: true,
+            remainingOutputSlots: 4,
             decodeSheddingLowWatermarkSlots: 2,
             deferredPacketCount: 0
         )
@@ -421,6 +447,7 @@ func audioMissingPacketRecoveryGateSkipsWhenNoPacketsAreMissing() {
     #expect(
         !ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
             missingPacketCount: 0,
+            isFECIncompatible: false,
             remainingOutputSlots: 8,
             decodeSheddingLowWatermarkSlots: 2,
             deferredPacketCount: 0
@@ -521,8 +548,8 @@ func audioQueueProfileKeepsLowLatencyWindowForStereo() {
             channels: 2
         )
 
-    #expect(maximumQueuedBuffers <= 16)
-    #expect(maximumQueuedBuffers >= 4)
+    #expect(maximumQueuedBuffers <= 8)
+    #expect(maximumQueuedBuffers >= 3)
     #expect(pressureTrimToRecentPackets <= 8)
     #expect(pressureTrimToRecentPackets >= 3)
 }
@@ -541,11 +568,11 @@ func audioQueueProfileScalesChannelSlackWithoutUnboundedGrowth() {
         )
 
     #expect(surroundQueuedBuffers >= stereoQueuedBuffers)
-    #expect(surroundQueuedBuffers <= 16)
+    #expect(surroundQueuedBuffers <= 8)
 }
 
-@Test("Audio recovered-packet burst budget is capped and slot-aware")
-func audioRecoveredPacketBurstBudgetIsCappedAndSlotAware() {
+@Test("Audio recovered-packet burst budget follows available output slots")
+func audioRecoveredPacketBurstBudgetFollowsAvailableOutputSlots() {
     let zeroSlotBudget = ShadowClientRealtimeAudioSessionRuntime.maximumRecoveredAudioPacketsPerBurst(
         availableOutputSlots: 0
     )
@@ -561,12 +588,12 @@ func audioRecoveredPacketBurstBudgetIsCappedAndSlotAware() {
 
     #expect(zeroSlotBudget == 0)
     #expect(oneSlotBudget == 1)
-    #expect(twoSlotBudget == 1)
-    #expect(tenSlotBudget == 2)
+    #expect(twoSlotBudget == 2)
+    #expect(tenSlotBudget == 10)
 }
 
-@Test("Audio concealment burst budget is capped and slot-aware")
-func audioConcealmentBurstBudgetIsCappedAndSlotAware() {
+@Test("Audio concealment burst budget follows available output slots")
+func audioConcealmentBurstBudgetFollowsAvailableOutputSlots() {
     let zeroSlotBudget = ShadowClientRealtimeAudioSessionRuntime.maximumConcealmentPacketsPerBurst(
         availableOutputSlots: 0
     )
@@ -582,8 +609,22 @@ func audioConcealmentBurstBudgetIsCappedAndSlotAware() {
 
     #expect(zeroSlotBudget == 0)
     #expect(oneSlotBudget == 1)
-    #expect(fourSlotBudget == 1)
-    #expect(tenSlotBudget == 2)
+    #expect(fourSlotBudget == 4)
+    #expect(tenSlotBudget == 10)
+}
+
+@Test("Audio startup resync drop window follows Moonlight packet-duration rule")
+func audioStartupResyncDropWindowFollowsMoonlightPacketDurationRule() {
+    #expect(
+        ShadowClientRealtimeAudioSessionRuntime.initialAudioResyncDropPacketCount(
+            packetDurationMs: 5
+        ) == 100
+    )
+    #expect(
+        ShadowClientRealtimeAudioSessionRuntime.initialAudioResyncDropPacketCount(
+            packetDurationMs: 10
+        ) == 50
+    )
 }
 
 @Test("Custom audio decoder registry prioritizes preferred providers")

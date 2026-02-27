@@ -49,6 +49,8 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
     private let maximumPayloadBytes: Int
     private let decodeLock = NSLock()
     private var int16DecodeScratch: [Int16]
+    private var lastDecodedInterleavedFloat: [Float] = []
+    private var lastDecodedFrameCount = 0
     private let int16ToFloatScale = 1.0 / Float(Int16.max)
 
     init(
@@ -153,29 +155,117 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
             guard isLikelySupportedFrameCount(decodedFrameCount) else {
                 return nil
             }
-
-            let frameCapacity = AVAudioFrameCount(decodedFrameCount)
-            guard let pcmBuffer = AVAudioPCMBuffer(
-                pcmFormat: outputFormat,
-                frameCapacity: frameCapacity
-            ), let channelData = pcmBuffer.floatChannelData
-            else {
+            guard let decodedBuffer = makePCMBufferFromInterleavedScratch(
+                decodedFrameCount: decodedFrameCount
+            ) else {
                 return nil
             }
-
-            let channelCount = max(1, channels)
-            for channelIndex in 0 ..< channelCount {
-                let destination = channelData[channelIndex]
-                var sourceIndex = channelIndex
-                for frameIndex in 0 ..< decodedFrameCount {
-                    destination[frameIndex] = Float(int16DecodeScratch[sourceIndex]) * int16ToFloatScale
-                    sourceIndex += channelCount
-                }
-            }
-
-            pcmBuffer.frameLength = frameCapacity
-            return pcmBuffer
+            cacheLastDecodedFrame(decodedBuffer)
+            return decodedBuffer
         }
+    }
+
+    func decodePacketLossConcealment(samplesPerChannel: Int) throws -> AVAudioPCMBuffer? {
+        let normalizedFrameCount = normalizedConcealmentFrameCount(samplesPerChannel)
+        guard normalizedFrameCount > 0 else {
+            return nil
+        }
+
+        return try decodeLock.withLock {
+            if let concealmentBuffer = try? int16DecodeScratch.withUnsafeMutableBufferPointer({ scratchBuffer in
+                try decoder.concealInterleavedInt16(
+                    frameSizePerChannel: normalizedFrameCount,
+                    into: scratchBuffer
+                )
+            }), concealmentBuffer > 0,
+               concealmentBuffer <= maximumSamplesPerChannel,
+               isLikelySupportedFrameCount(concealmentBuffer),
+               let decodedBuffer = makePCMBufferFromInterleavedScratch(
+                   decodedFrameCount: concealmentBuffer
+               )
+            {
+                cacheLastDecodedFrame(decodedBuffer)
+                return decodedBuffer
+            }
+            return makeSilentConcealmentBuffer(frameCount: normalizedFrameCount)
+        }
+    }
+
+    private func makePCMBufferFromInterleavedScratch(
+        decodedFrameCount: Int
+    ) -> AVAudioPCMBuffer? {
+        let frameCapacity = AVAudioFrameCount(decodedFrameCount)
+        guard let pcmBuffer = AVAudioPCMBuffer(
+            pcmFormat: outputFormat,
+            frameCapacity: frameCapacity
+        ), let channelData = pcmBuffer.floatChannelData
+        else {
+            return nil
+        }
+
+        let channelCount = max(1, channels)
+        for channelIndex in 0 ..< channelCount {
+            let destination = channelData[channelIndex]
+            var sourceIndex = channelIndex
+            for frameIndex in 0 ..< decodedFrameCount {
+                destination[frameIndex] = Float(int16DecodeScratch[sourceIndex]) * int16ToFloatScale
+                sourceIndex += channelCount
+            }
+        }
+
+        pcmBuffer.frameLength = frameCapacity
+        return pcmBuffer
+    }
+
+    private func cacheLastDecodedFrame(_ sourceBuffer: AVAudioPCMBuffer) {
+        let channelCount = max(1, channels)
+        let frameCount = Int(sourceBuffer.frameLength)
+        guard frameCount > 0,
+              let sourceChannelData = sourceBuffer.floatChannelData
+        else {
+            return
+        }
+
+        let sampleCount = frameCount * channelCount
+        if lastDecodedInterleavedFloat.count != sampleCount {
+            lastDecodedInterleavedFloat = [Float](repeating: 0, count: sampleCount)
+        }
+        lastDecodedFrameCount = frameCount
+
+        for channelIndex in 0 ..< channelCount {
+            let source = sourceChannelData[channelIndex]
+            var destinationIndex = channelIndex
+            for frameIndex in 0 ..< frameCount {
+                lastDecodedInterleavedFloat[destinationIndex] = source[frameIndex]
+                destinationIndex += channelCount
+            }
+        }
+    }
+
+    private func makeSilentConcealmentBuffer(frameCount requestedFrameCount: Int) -> AVAudioPCMBuffer? {
+        let frameCount = min(requestedFrameCount, maximumDecodedSamplesPerChannel)
+        guard frameCount > 0, isLikelySupportedFrameCount(frameCount) else {
+            return nil
+        }
+        let frameCapacity = AVAudioFrameCount(frameCount)
+        guard let concealmentBuffer = AVAudioPCMBuffer(
+            pcmFormat: outputFormat,
+            frameCapacity: frameCapacity
+        ) else {
+            return nil
+        }
+        concealmentBuffer.frameLength = frameCapacity
+        return concealmentBuffer
+    }
+
+    private func normalizedConcealmentFrameCount(_ requestedSamplesPerChannel: Int) -> Int {
+        guard requestedSamplesPerChannel > 0 else {
+            return 0
+        }
+        let bounded = min(maximumDecodedSamplesPerChannel, requestedSamplesPerChannel)
+        let step = max(1, minimumSamplesPerChannelStep)
+        let normalized = (bounded / step) * step
+        return max(step, normalized)
     }
 
     private func isLikelySupportedFrameCount(_ decodedFrameCount: Int) -> Bool {

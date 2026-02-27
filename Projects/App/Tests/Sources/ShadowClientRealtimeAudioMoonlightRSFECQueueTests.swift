@@ -21,6 +21,7 @@ func moonlightAudioRSFECQueueRecoversSingleMissingShard() async {
     await queue.ingest(
         packetSequenceNumber: baseSequence,
         packetTimestamp: baseTimestamp,
+        packetSSRC: 0x00000001,
         payloadType: payloadType,
         payload: dataShards[0],
         expectedPrimaryPayloadType: payloadType,
@@ -29,6 +30,7 @@ func moonlightAudioRSFECQueueRecoversSingleMissingShard() async {
     await queue.ingest(
         packetSequenceNumber: baseSequence &+ 1,
         packetTimestamp: baseTimestamp &+ 5,
+        packetSSRC: 0x00000001,
         payloadType: payloadType,
         payload: dataShards[1],
         expectedPrimaryPayloadType: payloadType,
@@ -37,6 +39,7 @@ func moonlightAudioRSFECQueueRecoversSingleMissingShard() async {
     await queue.ingest(
         packetSequenceNumber: baseSequence &+ 3,
         packetTimestamp: baseTimestamp &+ 15,
+        packetSSRC: 0x00000001,
         payloadType: payloadType,
         payload: dataShards[3],
         expectedPrimaryPayloadType: payloadType,
@@ -46,6 +49,7 @@ func moonlightAudioRSFECQueueRecoversSingleMissingShard() async {
     await queue.ingest(
         packetSequenceNumber: baseSequence &+ 4,
         packetTimestamp: baseTimestamp &+ 20,
+        packetSSRC: 0x00000001,
         payloadType: 127,
         payload: makeFECShardPayload(
             shardIndex: 0,
@@ -82,6 +86,7 @@ func moonlightAudioRSFECQueueRecoversTwoMissingShards() async {
     await queue.ingest(
         packetSequenceNumber: baseSequence,
         packetTimestamp: baseTimestamp,
+        packetSSRC: 0x00000001,
         payloadType: payloadType,
         payload: dataShards[0],
         expectedPrimaryPayloadType: payloadType,
@@ -90,6 +95,7 @@ func moonlightAudioRSFECQueueRecoversTwoMissingShards() async {
     await queue.ingest(
         packetSequenceNumber: baseSequence &+ 3,
         packetTimestamp: baseTimestamp &+ 15,
+        packetSSRC: 0x00000001,
         payloadType: payloadType,
         payload: dataShards[3],
         expectedPrimaryPayloadType: payloadType,
@@ -99,6 +105,7 @@ func moonlightAudioRSFECQueueRecoversTwoMissingShards() async {
     await queue.ingest(
         packetSequenceNumber: baseSequence &+ 4,
         packetTimestamp: baseTimestamp &+ 20,
+        packetSSRC: 0x00000001,
         payloadType: 127,
         payload: makeFECShardPayload(
             shardIndex: 0,
@@ -113,6 +120,7 @@ func moonlightAudioRSFECQueueRecoversTwoMissingShards() async {
     await queue.ingest(
         packetSequenceNumber: baseSequence &+ 5,
         packetTimestamp: baseTimestamp &+ 25,
+        packetSSRC: 0x00000001,
         payloadType: 127,
         payload: makeFECShardPayload(
             shardIndex: 1,
@@ -149,6 +157,7 @@ func moonlightAudioRSFECQueueIgnoresMismatchedPrimaryPayloadType() async {
     await queue.ingest(
         packetSequenceNumber: baseSequence,
         packetTimestamp: baseTimestamp,
+        packetSSRC: 0x00000001,
         payloadType: 97,
         payload: dataShards[0],
         expectedPrimaryPayloadType: 97,
@@ -157,6 +166,7 @@ func moonlightAudioRSFECQueueIgnoresMismatchedPrimaryPayloadType() async {
     await queue.ingest(
         packetSequenceNumber: baseSequence &+ 1,
         packetTimestamp: baseTimestamp &+ 5,
+        packetSSRC: 0x00000001,
         payloadType: 97,
         payload: dataShards[1],
         expectedPrimaryPayloadType: 97,
@@ -165,6 +175,7 @@ func moonlightAudioRSFECQueueIgnoresMismatchedPrimaryPayloadType() async {
     await queue.ingest(
         packetSequenceNumber: baseSequence &+ 3,
         packetTimestamp: baseTimestamp &+ 15,
+        packetSSRC: 0x00000001,
         payloadType: 97,
         payload: dataShards[3],
         expectedPrimaryPayloadType: 97,
@@ -174,6 +185,7 @@ func moonlightAudioRSFECQueueIgnoresMismatchedPrimaryPayloadType() async {
     await queue.ingest(
         packetSequenceNumber: baseSequence &+ 4,
         packetTimestamp: baseTimestamp &+ 20,
+        packetSSRC: 0x00000001,
         payloadType: 127,
         payload: makeFECShardPayload(
             shardIndex: 0,
@@ -188,6 +200,121 @@ func moonlightAudioRSFECQueueIgnoresMismatchedPrimaryPayloadType() async {
 
     let recovered = await queue.takeRecoveredPayload(sequenceNumber: baseSequence &+ 2)
     #expect(recovered == nil)
+}
+
+@Test("Moonlight audio RS-FEC queue soft-drops malformed wrapper shard without latching incompatibility")
+func moonlightAudioRSFECQueueSoftDropsMalformedWrapperShard() async {
+    let queue = ShadowClientRealtimeAudioMoonlightRSFECQueue()
+    let baseSequence: UInt16 = 900
+    let baseTimestamp: UInt32 = 18_000
+    let payloadType = 97
+
+    let dataShards = [
+        Data([0x11, 0x22, 0x33, 0x44]),
+        Data([0x55, 0x66, 0x77, 0x88]),
+        Data([0x99, 0xAA, 0xBB, 0xCC]),
+        Data([0xDD, 0xEE, 0xFF, 0x10]),
+    ]
+    let parityShard0 = makeParityShard(dataShards: dataShards, row: 0)
+
+    await queue.ingest(
+        packetSequenceNumber: baseSequence &+ 4,
+        packetTimestamp: baseTimestamp &+ 20,
+        packetSSRC: 0x00000001,
+        payloadType: 127,
+        payload: Data([0x00, 0x01, 0x02]),
+        expectedPrimaryPayloadType: payloadType,
+        wrapperPayloadType: 127
+    )
+
+    await queue.ingest(
+        packetSequenceNumber: baseSequence,
+        packetTimestamp: baseTimestamp,
+        packetSSRC: 0x00000001,
+        payloadType: payloadType,
+        payload: dataShards[0],
+        expectedPrimaryPayloadType: payloadType,
+        wrapperPayloadType: 127
+    )
+    await queue.ingest(
+        packetSequenceNumber: baseSequence &+ 1,
+        packetTimestamp: baseTimestamp &+ 5,
+        packetSSRC: 0x00000001,
+        payloadType: payloadType,
+        payload: dataShards[1],
+        expectedPrimaryPayloadType: payloadType,
+        wrapperPayloadType: 127
+    )
+    await queue.ingest(
+        packetSequenceNumber: baseSequence &+ 3,
+        packetTimestamp: baseTimestamp &+ 15,
+        packetSSRC: 0x00000001,
+        payloadType: payloadType,
+        payload: dataShards[3],
+        expectedPrimaryPayloadType: payloadType,
+        wrapperPayloadType: 127
+    )
+    await queue.ingest(
+        packetSequenceNumber: baseSequence &+ 4,
+        packetTimestamp: baseTimestamp &+ 20,
+        packetSSRC: 0x00000001,
+        payloadType: 127,
+        payload: makeFECShardPayload(
+            shardIndex: 0,
+            primaryPayloadType: payloadType,
+            baseSequenceNumber: baseSequence,
+            baseTimestamp: baseTimestamp,
+            shardPayload: parityShard0
+        ),
+        expectedPrimaryPayloadType: payloadType,
+        wrapperPayloadType: 127
+    )
+
+    #expect(await queue.isFECIncompatible() == false)
+    #expect(await queue.takeRecoveredPayload(sequenceNumber: baseSequence &+ 2) == dataShards[2])
+}
+
+@Test("Moonlight audio RS-FEC queue latches incompatibility on base timestamp mismatch")
+func moonlightAudioRSFECQueueLatchesIncompatibilityOnBaseTimestampMismatch() async {
+    let queue = ShadowClientRealtimeAudioMoonlightRSFECQueue()
+    let baseSequence: UInt16 = 1000
+    let baseTimestamp: UInt32 = 24_000
+    let payloadType = 97
+
+    let dataShards = [
+        Data([0x01, 0x02, 0x03, 0x04]),
+        Data([0x10, 0x20, 0x30, 0x40]),
+        Data([0x50, 0x60, 0x70, 0x80]),
+        Data([0x90, 0xA0, 0xB0, 0xC0]),
+    ]
+    let parityShard0 = makeParityShard(dataShards: dataShards, row: 0)
+
+    await queue.ingest(
+        packetSequenceNumber: baseSequence,
+        packetTimestamp: baseTimestamp,
+        packetSSRC: 0x00000001,
+        payloadType: payloadType,
+        payload: dataShards[0],
+        expectedPrimaryPayloadType: payloadType,
+        wrapperPayloadType: 127
+    )
+    await queue.ingest(
+        packetSequenceNumber: baseSequence &+ 4,
+        packetTimestamp: baseTimestamp &+ 20,
+        packetSSRC: 0x00000001,
+        payloadType: 127,
+        payload: makeFECShardPayload(
+            shardIndex: 0,
+            primaryPayloadType: payloadType,
+            baseSequenceNumber: baseSequence,
+            baseTimestamp: baseTimestamp &+ 5,
+            shardPayload: parityShard0
+        ),
+        expectedPrimaryPayloadType: payloadType,
+        wrapperPayloadType: 127
+    )
+
+    #expect(await queue.isFECIncompatible())
 }
 
 private let parityRows: [[UInt8]] = [
