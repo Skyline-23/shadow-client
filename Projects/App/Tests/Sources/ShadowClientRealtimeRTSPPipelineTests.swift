@@ -530,8 +530,8 @@ func rtspVideoPayloadAdoptionAcceptsNonCandidateDynamicPayloadOnEarlyMismatch() 
     )
 }
 
-@Test("RTSP video payload adaptation observation threshold prefers known candidates")
-func rtspVideoPayloadAdaptationObservationThresholdPrefersKnownCandidates() {
+@Test("RTSP video payload adaptation observation threshold switches immediately before first frame lock")
+func rtspVideoPayloadAdaptationObservationThresholdSwitchesImmediately() {
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime.videoPayloadTypeObservationThreshold(
             observedPayloadType: 98,
@@ -542,13 +542,13 @@ func rtspVideoPayloadAdaptationObservationThresholdPrefersKnownCandidates() {
         ShadowClientRealtimeRTSPSessionRuntime.videoPayloadTypeObservationThreshold(
             observedPayloadType: 99,
             videoPayloadCandidates: Set([98])
-        ) == ShadowClientRealtimeSessionDefaults.videoPayloadTypeAdaptationObservationThreshold
+        ) == 1
     )
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime.videoPayloadTypeObservationThreshold(
             observedPayloadType: 0,
             videoPayloadCandidates: Set([98])
-        ) == ShadowClientRealtimeSessionDefaults.videoPayloadTypeAdaptationObservationThreshold * 2
+        ) == 1
     )
 }
 
@@ -572,8 +572,8 @@ func videoRtpReorderBufferReordersNearbyPackets() {
     #expect(thirdReady.map(\.sequenceNumber) == [101, 102])
 }
 
-@Test("Video RTP reorder buffer skips missing sequence after target depth is reached")
-func videoRtpReorderBufferSkipsMissingPacketAfterDepthThreshold() {
+@Test("Video RTP reorder buffer drops buffered gap run instead of force-skipping sequence")
+func videoRtpReorderBufferDropsGapRunAtDepthThreshold() {
     var reorderBuffer = ShadowClientRTPVideoReorderBuffer(
         targetDepth: 3,
         maximumDepth: 16
@@ -581,6 +581,8 @@ func videoRtpReorderBufferSkipsMissingPacketAfterDepthThreshold() {
     let packet200 = makeVideoRTPPacket(sequenceNumber: 200, payloadByte: 0x20)
     let packet202 = makeVideoRTPPacket(sequenceNumber: 202, payloadByte: 0x22)
     let packet203 = makeVideoRTPPacket(sequenceNumber: 203, payloadByte: 0x23)
+    let packet204 = makeVideoRTPPacket(sequenceNumber: 204, payloadByte: 0x24)
+    let packet201 = makeVideoRTPPacket(sequenceNumber: 201, payloadByte: 0x21)
 
     let firstReady = reorderBuffer.enqueue(packet200)
     #expect(firstReady.map(\.sequenceNumber) == [200])
@@ -589,7 +591,13 @@ func videoRtpReorderBufferSkipsMissingPacketAfterDepthThreshold() {
     #expect(secondReady.isEmpty)
 
     let thirdReady = reorderBuffer.enqueue(packet203)
-    #expect(thirdReady.map(\.sequenceNumber) == [202, 203])
+    #expect(thirdReady.isEmpty)
+
+    let fourthReady = reorderBuffer.enqueue(packet204)
+    #expect(fourthReady.isEmpty)
+
+    let recoveryReady = reorderBuffer.enqueue(packet201)
+    #expect(recoveryReady.map(\.sequenceNumber) == [201])
 }
 
 @Test("Sunshine ping payload parser accepts 16-byte ASCII payload")
@@ -1109,6 +1117,222 @@ func av1DepacketizerRejectsBlockBoundaryJumpWithoutSOF() {
     // Depacketizer should recover on the next valid frame boundary.
     let recoveredFrame = depacketizer.ingest(payload: nextFramePacket, marker: true)
     #expect(recoveredFrame == Data([0x31, 0x32]))
+}
+
+@Test("AV1 video FEC reconstruction queue recovers one missing data shard and emits ordered packets")
+func av1VideoFECReconstructionQueueRecoversSingleMissingDataShard() {
+    var queue = ShadowClientRTPVideoFECReconstructionQueue()
+    let frameIndex: UInt32 = 420
+    let dataShards: UInt32 = 2
+    let fecPercentage: UInt32 = 50 // 2 data shards -> 1 parity shard
+    let baseSequenceNumber: UInt16 = 1_000
+    let blockInfo = makeMultiFecBlocks(currentBlock: 0, lastBlock: 0)
+
+    let missingDataPayload = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 2_000,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF,
+        payloadBytes: [0x41, 0x42, 0x43],
+        fecInfo: (dataShards << 22) | (0 << 12) | (fecPercentage << 4),
+        multiFecBlocks: blockInfo
+    )
+    let presentDataPayload = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 2_001,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagEOF,
+        payloadBytes: [0x00, 0x00, 0x00],
+        fecInfo: (dataShards << 22) | (1 << 12) | (fecPercentage << 4),
+        multiFecBlocks: blockInfo
+    )
+    let parityPayload = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 2_002,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData,
+        payloadBytes: [0x41, 0x42, 0x43],
+        fecInfo: (dataShards << 22) | (2 << 12) | (fecPercentage << 4),
+        multiFecBlocks: blockInfo
+    )
+
+    let presentDataPacket = ShadowClientRTPPacket(
+        isRTP: true,
+        channel: 0,
+        sequenceNumber: baseSequenceNumber &+ 1,
+        marker: true,
+        payloadType: 98,
+        payload: presentDataPayload
+    )
+    let parityPacket = ShadowClientRTPPacket(
+        isRTP: true,
+        channel: 0,
+        sequenceNumber: baseSequenceNumber &+ 2,
+        marker: false,
+        payloadType: 98,
+        payload: parityPayload
+    )
+
+    let firstResult = queue.ingest(presentDataPacket)
+    #expect(firstResult.orderedDataPackets.isEmpty)
+    #expect(!firstResult.droppedUnrecoverableBlock)
+
+    let secondResult = queue.ingest(parityPacket)
+    #expect(!secondResult.droppedUnrecoverableBlock)
+    #expect(secondResult.orderedDataPackets.count == 2)
+    #expect(secondResult.orderedDataPackets.map(\.sequenceNumber) == [baseSequenceNumber, baseSequenceNumber &+ 1])
+    #expect(secondResult.orderedDataPackets[1].payload == presentDataPayload)
+    #expect((secondResult.orderedDataPackets[0].payload[8] & nvVideoPacketFlagSOF) != 0)
+    #expect((secondResult.orderedDataPackets[0].payload[8] & nvVideoPacketFlagEOF) == 0)
+    #expect(secondResult.orderedDataPackets[0].payload.count == missingDataPayload.count)
+}
+
+@Test("AV1 video FEC reconstruction queue marks unrecoverable block on transition and emits no packets")
+func av1VideoFECReconstructionQueueMarksUnrecoverableTransitionBlockDrop() {
+    var queue = ShadowClientRTPVideoFECReconstructionQueue()
+    let frameIndex: UInt32 = 421
+    let dataShards: UInt32 = 2
+    let fecPercentage: UInt32 = 50 // 2 data shards -> 1 parity shard
+
+    let firstBlockDataPayload = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 3_000,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF,
+        payloadBytes: [0x10, 0x11, 0x12],
+        fecInfo: (dataShards << 22) | (0 << 12) | (fecPercentage << 4),
+        multiFecBlocks: makeMultiFecBlocks(currentBlock: 0, lastBlock: 1)
+    )
+    let nextBlockDataPayload = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 3_002,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF,
+        payloadBytes: [0x20, 0x21, 0x22],
+        fecInfo: (dataShards << 22) | (0 << 12) | (fecPercentage << 4),
+        multiFecBlocks: makeMultiFecBlocks(currentBlock: 1, lastBlock: 1)
+    )
+
+    let firstBlockPacket = ShadowClientRTPPacket(
+        isRTP: true,
+        channel: 0,
+        sequenceNumber: 1_500,
+        marker: false,
+        payloadType: 98,
+        payload: firstBlockDataPayload
+    )
+    let nextBlockPacket = ShadowClientRTPPacket(
+        isRTP: true,
+        channel: 0,
+        sequenceNumber: 1_502,
+        marker: false,
+        payloadType: 98,
+        payload: nextBlockDataPayload
+    )
+
+    let firstResult = queue.ingest(firstBlockPacket)
+    #expect(firstResult.orderedDataPackets.isEmpty)
+    #expect(!firstResult.droppedUnrecoverableBlock)
+
+    let transitionResult = queue.ingest(nextBlockPacket)
+    #expect(transitionResult.orderedDataPackets.isEmpty)
+    #expect(transitionResult.droppedUnrecoverableBlock)
+}
+
+@Test("AV1 video FEC reconstruction queue defers emission until final FEC block of frame")
+func av1VideoFECReconstructionQueueDefersSubmissionUntilFinalBlock() {
+    var queue = ShadowClientRTPVideoFECReconstructionQueue()
+    let frameIndex: UInt32 = 700
+    let dataShards: UInt32 = 1
+    let fecInfo: UInt32 = (dataShards << 22) | (0 << 12) | (0 << 4)
+
+    let block0Payload = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 4_000,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF,
+        payloadBytes: [0x01, 0x02],
+        fecInfo: fecInfo,
+        multiFecBlocks: makeMultiFecBlocks(currentBlock: 0, lastBlock: 1)
+    )
+    let block1Payload = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 4_001,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagEOF,
+        payloadBytes: [0x03, 0x04],
+        fecInfo: fecInfo,
+        multiFecBlocks: makeMultiFecBlocks(currentBlock: 1, lastBlock: 1)
+    )
+
+    let block0Packet = ShadowClientRTPPacket(
+        isRTP: true,
+        channel: 0,
+        sequenceNumber: 2_000,
+        marker: false,
+        payloadType: 98,
+        payload: block0Payload
+    )
+    let block1Packet = ShadowClientRTPPacket(
+        isRTP: true,
+        channel: 0,
+        sequenceNumber: 2_001,
+        marker: true,
+        payloadType: 98,
+        payload: block1Payload
+    )
+
+    let firstResult = queue.ingest(block0Packet)
+    #expect(firstResult.orderedDataPackets.isEmpty)
+    #expect(!firstResult.droppedUnrecoverableBlock)
+
+    let secondResult = queue.ingest(block1Packet)
+    #expect(!secondResult.droppedUnrecoverableBlock)
+    #expect(secondResult.orderedDataPackets.count == 2)
+    #expect(secondResult.orderedDataPackets.map(\.sequenceNumber) == [2_000, 2_001])
+}
+
+@Test("AV1 video FEC reconstruction queue drops frame when intermediate FEC block is missing")
+func av1VideoFECReconstructionQueueDropsFrameOnMissingIntermediateBlock() {
+    var queue = ShadowClientRTPVideoFECReconstructionQueue()
+    let frameIndex: UInt32 = 701
+    let dataShards: UInt32 = 1
+    let fecInfo: UInt32 = (dataShards << 22) | (0 << 12) | (0 << 4)
+
+    let block0Payload = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 4_100,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF,
+        payloadBytes: [0x10],
+        fecInfo: fecInfo,
+        multiFecBlocks: makeMultiFecBlocks(currentBlock: 0, lastBlock: 2)
+    )
+    let block2Payload = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 4_102,
+        frameIndex: frameIndex,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagEOF,
+        payloadBytes: [0x30],
+        fecInfo: fecInfo,
+        multiFecBlocks: makeMultiFecBlocks(currentBlock: 2, lastBlock: 2)
+    )
+
+    let block0Packet = ShadowClientRTPPacket(
+        isRTP: true,
+        channel: 0,
+        sequenceNumber: 2_100,
+        marker: false,
+        payloadType: 98,
+        payload: block0Payload
+    )
+    let block2Packet = ShadowClientRTPPacket(
+        isRTP: true,
+        channel: 0,
+        sequenceNumber: 2_102,
+        marker: true,
+        payloadType: 98,
+        payload: block2Payload
+    )
+
+    let firstResult = queue.ingest(block0Packet)
+    #expect(firstResult.orderedDataPackets.isEmpty)
+    #expect(!firstResult.droppedUnrecoverableBlock)
+
+    let secondResult = queue.ingest(block2Packet)
+    #expect(secondResult.orderedDataPackets.isEmpty)
+    #expect(secondResult.droppedUnrecoverableBlock)
 }
 
 @Test("AV1 depacketizer applies Sunshine 7.1.446 frame header profile for 0x81 packets")
@@ -1701,6 +1925,18 @@ func realtimeRuntimeInputSendClassifierTreatsCanceledAsTransient() {
 
 @Test("Realtime runtime resets control channel for fatal send errors")
 func realtimeRuntimeInputSendClassifierResetsForFatalErrors() {
+    let nwNoMessageAvailableOnStream = NSError(domain: "Network.NWError", code: 96)
+
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.isTransientInputSendError(
+            nwNoMessageAvailableOnStream
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(
+            nwNoMessageAvailableOnStream
+        )
+    )
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(
             ShadowClientSunshineControlChannelError.connectionClosed
@@ -1809,12 +2045,32 @@ func realtimeRuntimeDecodeFailureStatusExtractionReportsDecodeStatus() {
     )
 }
 
-@Test("Realtime runtime AV1 sync-frame classifier only accepts IDR frame type")
-func realtimeRuntimeAV1SyncFrameClassifierOnlyAcceptsIDR() {
+@Test("Realtime runtime AV1 sync-frame classifier defaults to IDR-only admission")
+func realtimeRuntimeAV1SyncFrameClassifierDefaultsToIDR() {
     #expect(ShadowClientRealtimeRTSPSessionRuntime.isAV1SyncFrameType(2))
     #expect(!ShadowClientRealtimeRTSPSessionRuntime.isAV1SyncFrameType(1))
     #expect(!ShadowClientRealtimeRTSPSessionRuntime.isAV1SyncFrameType(5))
     #expect(!ShadowClientRealtimeRTSPSessionRuntime.isAV1SyncFrameType(nil))
+}
+
+@Test("Realtime runtime AV1 sync-frame classifier admits type 5 after recovery-frame invalidation request")
+func realtimeRuntimeAV1SyncFrameClassifierAdmitsRefInvalidatedFrameWhenAllowed() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.isAV1SyncFrameType(
+            5,
+            allowsReferenceInvalidatedFrame: true
+        )
+    )
+}
+
+@Test("Realtime runtime AV1 sync-frame classifier admits type 4 after recovery-frame invalidation request")
+func realtimeRuntimeAV1SyncFrameClassifierAdmitsType4WhenAllowed() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.isAV1SyncFrameType(
+            4,
+            allowsReferenceInvalidatedFrame: true
+        )
+    )
 }
 
 @Test("Realtime runtime keeps decoder failure history when successful decode occurs inside failure window")
@@ -1867,7 +2123,9 @@ private func makeSyntheticNVVideoPacket(
     frameHeaderSize: UInt16 = moonlightFrameHeaderSize,
     frameHeaderFirstByte: UInt8 = 0x01,
     frameHeaderFrameType: UInt8 = 0x01,
-    fecInfo: UInt32 = 0
+    fecInfo: UInt32 = 0,
+    multiFecFlags: UInt8 = 0x10,
+    multiFecBlocks: UInt8 = 0x00
 ) -> Data {
     var packetPayload = Data()
     if let lastPayloadLength {
@@ -1887,11 +2145,15 @@ private func makeSyntheticNVVideoPacket(
     packet.append(contentsOf: littleEndianBytes(frameIndex))
     packet.append(flags)
     packet.append(0x00) // extraFlags
-    packet.append(0x10) // multiFecFlags
-    packet.append(0x00) // multiFecBlocks (current block 0, last block 0)
+    packet.append(multiFecFlags)
+    packet.append(multiFecBlocks)
     packet.append(contentsOf: littleEndianBytes(fecInfo)) // fecInfo
     packet.append(packetPayload)
     return packet
+}
+
+private func makeMultiFecBlocks(currentBlock: UInt8, lastBlock: UInt8) -> UInt8 {
+    ((currentBlock & 0x03) << 4) | ((lastBlock & 0x03) << 6)
 }
 
 private func moonlightFrameHeader(
