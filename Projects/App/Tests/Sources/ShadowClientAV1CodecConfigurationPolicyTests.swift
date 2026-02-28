@@ -102,8 +102,8 @@ func av1PolicyUpgradesFromFallbackToStream() {
     #expect(resolved.origin == .stream)
 }
 
-@Test("AV1 policy keeps stable stream configuration and avoids churn")
-func av1PolicyKeepsStableStreamConfiguration() {
+@Test("AV1 policy updates stream configuration when a new discovered stream config appears")
+func av1PolicyUpdatesStreamConfigurationWhenDiscoveredConfigChanges() {
     let currentStreamConfiguration = Data([0x81, 0x00, 0x4C, 0x00])
     let laterDiscoveredConfiguration = Data([0x81, 0x20, 0x40, 0x00])
 
@@ -115,6 +115,6 @@ func av1PolicyKeepsStableStreamConfiguration() {
         fallbackConfiguration: Data([0x81, 0x00, 0x0C, 0x00])
     )
 
-    #expect(resolved.parameterSets == [currentStreamConfiguration])
+    #expect(resolved.parameterSets == [laterDiscoveredConfiguration])
     #expect(resolved.origin == .stream)
 }

@@ -38,9 +38,10 @@ enum ShadowClientAV1CodecConfigurationPolicy {
                 return (currentParameterSets, .stream)
             }
 
-            // Once stream-derived AV1 configuration is active, keep it stable to
-            // avoid unnecessary VT session churn from noisy sequence-header variants.
             if currentOrigin == .stream {
+                if currentParameterSets != [discoveredConfiguration] {
+                    return ([discoveredConfiguration], .stream)
+                }
                 return (currentParameterSets, .stream)
             }
         }
