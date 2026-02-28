@@ -39,9 +39,9 @@ enum ShadowClientAV1CodecConfigurationPolicy {
             }
 
             if currentOrigin == .stream {
-                if currentParameterSets != [discoveredConfiguration] {
-                    return ([discoveredConfiguration], .stream)
-                }
+                // Keep stream-derived AV1 configuration stable once activated.
+                // Replacing av1C on every newly observed sequence-header candidate
+                // causes unnecessary VT session churn on Sunshine AV1 streams.
                 return (currentParameterSets, .stream)
             }
         }
