@@ -2069,6 +2069,62 @@ func realtimeRuntimeRecoveryRequestGateHonorsIngressPressureCooldown() {
     )
 }
 
+@Test("Realtime runtime FEC unrecoverable burst gate suppresses requests below threshold")
+func realtimeRuntimeFECUnrecoverableBurstGateSuppressesBelowThreshold() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldRequestVideoRecoveryAfterFECUnrecoverableBurst(
+            now: 10.0,
+            firstUnrecoverableUptime: 9.7,
+            unrecoverableCount: 1,
+            lastRequestUptime: 0.0,
+            burstWindow: 1.5,
+            burstThreshold: 2,
+            minimumInterval: 1.0
+        )
+    )
+}
+
+@Test("Realtime runtime FEC unrecoverable burst gate allows request at threshold within window")
+func realtimeRuntimeFECUnrecoverableBurstGateAllowsThresholdWithinWindow() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldRequestVideoRecoveryAfterFECUnrecoverableBurst(
+            now: 10.0,
+            firstUnrecoverableUptime: 9.2,
+            unrecoverableCount: 2,
+            lastRequestUptime: 8.0,
+            burstWindow: 1.5,
+            burstThreshold: 2,
+            minimumInterval: 1.0
+        )
+    )
+}
+
+@Test("Realtime runtime FEC unrecoverable burst gate suppresses stale-window and cooldown violations")
+func realtimeRuntimeFECUnrecoverableBurstGateSuppressesStaleOrCooldownViolations() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldRequestVideoRecoveryAfterFECUnrecoverableBurst(
+            now: 10.0,
+            firstUnrecoverableUptime: 7.0,
+            unrecoverableCount: 3,
+            lastRequestUptime: 0.0,
+            burstWindow: 1.5,
+            burstThreshold: 2,
+            minimumInterval: 1.0
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldRequestVideoRecoveryAfterFECUnrecoverableBurst(
+            now: 10.0,
+            firstUnrecoverableUptime: 9.4,
+            unrecoverableCount: 3,
+            lastRequestUptime: 9.3,
+            burstWindow: 1.5,
+            burstThreshold: 2,
+            minimumInterval: 1.0
+        )
+    )
+}
+
 @Test("Realtime runtime treats canceled input send errors as transient and does not reset control channel")
 func realtimeRuntimeInputSendClassifierTreatsCanceledAsTransient() {
     let nwCanceled = NSError(domain: "Network.NWError", code: 89)

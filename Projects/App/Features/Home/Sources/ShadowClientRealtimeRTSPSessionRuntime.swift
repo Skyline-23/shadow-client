@@ -2661,6 +2661,30 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         return elapsed >= max(0, minimumInterval)
     }
 
+    static func shouldRequestVideoRecoveryAfterFECUnrecoverableBurst(
+        now: TimeInterval,
+        firstUnrecoverableUptime: TimeInterval,
+        unrecoverableCount: Int,
+        lastRequestUptime: TimeInterval,
+        burstWindow: TimeInterval,
+        burstThreshold: Int,
+        minimumInterval: TimeInterval
+    ) -> Bool {
+        let normalizedBurstThreshold = max(1, burstThreshold)
+        guard unrecoverableCount >= normalizedBurstThreshold else {
+            return false
+        }
+
+        let normalizedBurstWindow = max(0, burstWindow)
+        if firstUnrecoverableUptime > 0,
+           now - firstUnrecoverableUptime > normalizedBurstWindow
+        {
+            return false
+        }
+
+        return now - lastRequestUptime >= max(0, minimumInterval)
+    }
+
     static func shouldDropRenderSubmitForSessionFPS(
         now: TimeInterval,
         lastRenderedFramePublishUptime: TimeInterval,
@@ -3433,7 +3457,9 @@ private actor ShadowClientRTSPInterleavedClient {
     private var rtspHostHeaderValue: String?
     private var rtspClientVersionHeaderValue = ShadowClientRTSPRequestDefaults.clientVersionHeaderValue
     private var currentServerAppVersion: String?
-    private let videoFECUnrecoverableRecoveryRequestCooldownSeconds: TimeInterval = 0.35
+    private let videoFECUnrecoverableRecoveryRequestCooldownSeconds: TimeInterval = 1.0
+    private let videoFECUnrecoverableRecoveryBurstWindowSeconds: TimeInterval = 1.5
+    private let videoFECUnrecoverableRecoveryBurstThreshold = 2
     private var loggedInputSendKinds = Set<String>()
     private var loggedInputDropKinds = Set<String>()
 
@@ -4713,6 +4739,8 @@ private actor ShadowClientRTSPInterleavedClient {
         var packetCount = 0
         var fecReconstructionQueue = makeVideoFECReconstructionQueue()
         var lastFECRecoveryRequestUptime: TimeInterval = 0
+        var firstFECUnrecoverableUptime: TimeInterval = 0
+        var fecUnrecoverableBurstCount = 0
 
         while !Task.isCancelled {
             if let packet = try parseInterleavedPacketIfAvailable() {
@@ -4775,11 +4803,40 @@ private actor ShadowClientRTSPInterleavedClient {
                     // continuity-tainted payloads to the depacketizer/decoder path.
                     fecReconstructionQueue = makeVideoFECReconstructionQueue()
                     let now = ProcessInfo.processInfo.systemUptime
-                    if now - lastFECRecoveryRequestUptime >= videoFECUnrecoverableRecoveryRequestCooldownSeconds {
-                        lastFECRecoveryRequestUptime = now
-                        await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
+                    if firstFECUnrecoverableUptime == 0 ||
+                        now - firstFECUnrecoverableUptime > videoFECUnrecoverableRecoveryBurstWindowSeconds
+                    {
+                        firstFECUnrecoverableUptime = now
+                        fecUnrecoverableBurstCount = 0
                     }
+                    fecUnrecoverableBurstCount += 1
+                    if fecUnrecoverableBurstCount == 1 ||
+                        fecUnrecoverableBurstCount == videoFECUnrecoverableRecoveryBurstThreshold
+                    {
+                        logger.notice(
+                            "Video FEC unrecoverable burst progress count=\(fecUnrecoverableBurstCount, privacy: .public)/\(self.videoFECUnrecoverableRecoveryBurstThreshold, privacy: .public)"
+                        )
+                    }
+                    guard ShadowClientRealtimeRTSPSessionRuntime.shouldRequestVideoRecoveryAfterFECUnrecoverableBurst(
+                        now: now,
+                        firstUnrecoverableUptime: firstFECUnrecoverableUptime,
+                        unrecoverableCount: fecUnrecoverableBurstCount,
+                        lastRequestUptime: lastFECRecoveryRequestUptime,
+                        burstWindow: videoFECUnrecoverableRecoveryBurstWindowSeconds,
+                        burstThreshold: videoFECUnrecoverableRecoveryBurstThreshold,
+                        minimumInterval: videoFECUnrecoverableRecoveryRequestCooldownSeconds
+                    ) else {
+                        continue
+                    }
+                    lastFECRecoveryRequestUptime = now
+                    firstFECUnrecoverableUptime = 0
+                    fecUnrecoverableBurstCount = 0
+                    await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
                     continue
+                }
+                if !ingestResult.orderedDataPackets.isEmpty, fecUnrecoverableBurstCount > 0 {
+                    firstFECUnrecoverableUptime = 0
+                    fecUnrecoverableBurstCount = 0
                 }
                 for orderedPacket in ingestResult.orderedDataPackets {
                     try await onVideoPacket(
@@ -4907,6 +4964,8 @@ private actor ShadowClientRTSPInterleavedClient {
         var datagramCount = 0
         var fecReconstructionQueue = makeVideoFECReconstructionQueue()
         var lastFECRecoveryRequestUptime: TimeInterval = 0
+        var firstFECUnrecoverableUptime: TimeInterval = 0
+        var fecUnrecoverableBurstCount = 0
         let receiveStart = ContinuousClock.now
 
         while !Task.isCancelled {
@@ -4998,11 +5057,40 @@ private actor ShadowClientRTSPInterleavedClient {
                 // Do not forward ordered packets from an unrecoverable FEC block.
                 fecReconstructionQueue = makeVideoFECReconstructionQueue()
                 let now = ProcessInfo.processInfo.systemUptime
-                if now - lastFECRecoveryRequestUptime >= videoFECUnrecoverableRecoveryRequestCooldownSeconds {
-                    lastFECRecoveryRequestUptime = now
-                    await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
+                if firstFECUnrecoverableUptime == 0 ||
+                    now - firstFECUnrecoverableUptime > videoFECUnrecoverableRecoveryBurstWindowSeconds
+                {
+                    firstFECUnrecoverableUptime = now
+                    fecUnrecoverableBurstCount = 0
                 }
+                fecUnrecoverableBurstCount += 1
+                if fecUnrecoverableBurstCount == 1 ||
+                    fecUnrecoverableBurstCount == videoFECUnrecoverableRecoveryBurstThreshold
+                {
+                    logger.notice(
+                        "Video FEC unrecoverable burst progress count=\(fecUnrecoverableBurstCount, privacy: .public)/\(self.videoFECUnrecoverableRecoveryBurstThreshold, privacy: .public)"
+                    )
+                }
+                guard ShadowClientRealtimeRTSPSessionRuntime.shouldRequestVideoRecoveryAfterFECUnrecoverableBurst(
+                    now: now,
+                    firstUnrecoverableUptime: firstFECUnrecoverableUptime,
+                    unrecoverableCount: fecUnrecoverableBurstCount,
+                    lastRequestUptime: lastFECRecoveryRequestUptime,
+                    burstWindow: videoFECUnrecoverableRecoveryBurstWindowSeconds,
+                    burstThreshold: videoFECUnrecoverableRecoveryBurstThreshold,
+                    minimumInterval: videoFECUnrecoverableRecoveryRequestCooldownSeconds
+                ) else {
+                    continue
+                }
+                lastFECRecoveryRequestUptime = now
+                firstFECUnrecoverableUptime = 0
+                fecUnrecoverableBurstCount = 0
+                await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
                 continue
+            }
+            if !ingestResult.orderedDataPackets.isEmpty, fecUnrecoverableBurstCount > 0 {
+                firstFECUnrecoverableUptime = 0
+                fecUnrecoverableBurstCount = 0
             }
             for orderedPacket in ingestResult.orderedDataPackets {
                 try await onVideoPacket(
