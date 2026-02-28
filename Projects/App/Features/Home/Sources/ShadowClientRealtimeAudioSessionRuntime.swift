@@ -144,7 +144,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 maximumPendingDurationMs: rendererPendingDurationCapMs
             )
             logger.notice(
-                "Audio output pressure mode=moonlight-lbq-pending-duration cap-ms=\(realtimePendingDurationCapMs, privacy: .public) renderer-cap-ms=\(rendererPendingDurationCapMs, privacy: .public) queued-buffers=\(queuePressureProfile.maximumQueuedBuffers, privacy: .public) nominal-frames=\(nominalPacketFrameCount, privacy: .public)"
+                "Audio output pressure mode=shadow-lbq-pending-duration(moonlight-compatible) cap-ms=\(realtimePendingDurationCapMs, privacy: .public) renderer-cap-ms=\(rendererPendingDurationCapMs, privacy: .public) queued-buffers=\(queuePressureProfile.maximumQueuedBuffers, privacy: .public) nominal-frames=\(nominalPacketFrameCount, privacy: .public)"
             )
             if let encryption {
                 payloadDecryptor = try ShadowClientRealtimeAudioPayloadDecryptor(
@@ -283,7 +283,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         payloadDecryptor: ShadowClientRealtimeAudioPayloadDecryptor?,
         output audioOutput: ShadowClientRealtimeAudioEngineOutput
     ) {
-        decodeTask = Task(priority: .high) { [weak self] in
+        decodeTask = Task.detached(priority: .high) { [weak self] in
             guard let self else {
                 return
             }
@@ -363,7 +363,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
 
             let enqueueDecodedBuffer: (AVAudioPCMBuffer, String, Bool) -> Void = { pcmBuffer, source, shouldDropDueToPendingPressure in
                 if shouldDropDueToPendingPressure {
-                    registerOutputQueuePressureDrop(1, "drop-moonlight-pending-audio-duration")
+                    registerOutputQueuePressureDrop(1, "drop-shadow-lbq-pending-audio-duration")
                     return
                 }
 
@@ -391,192 +391,204 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             }
 
             while !Task.isCancelled {
-                guard let nextResult = await packetQueue.next() else {
+                guard let batchResult = await packetQueue.nextBatch(maxCount: 4) else {
                     return
                 }
-                let queuedPacket = nextResult.packet
-                let packet = queuedPacket.packet
-                let pendingQueueDurationMs = Double(
-                    max(0, nextResult.pendingPacketCountAfterDequeue) * max(1, packetDurationMs)
+                let pendingPacketCountAfterFirstDequeue = max(
+                    0,
+                    batchResult.pendingPacketCountAfterDequeue + max(0, batchResult.packets.count - 1)
                 )
-                let shouldDropDueToPendingPressure = Self
-                    .shouldRequeueReadyPacketsForPendingOutputPressure(
-                        pendingOutputDurationMs: pendingQueueDurationMs,
-                        realtimePendingDurationCapMs: realtimePendingDurationCapMs
+                for (batchIndex, queuedPacket) in batchResult.packets.enumerated() {
+                    if Task.isCancelled {
+                        return
+                    }
+                    let packet = queuedPacket.packet
+                    let pendingPacketCountAfterCurrentDequeue = max(
+                        0,
+                        pendingPacketCountAfterFirstDequeue - batchIndex
                     )
-
-                do {
-                    let rawMissingPacketCount = Self.missingRTPPacketCount(
-                        previousSequenceNumber: lastDecodedSequenceNumber,
-                        currentSequenceNumber: packet.sequenceNumber
+                    let pendingQueueDurationMs = Double(
+                        pendingPacketCountAfterCurrentDequeue * max(1, packetDurationMs)
                     )
-                    let missingPacketCount = Self.adjustMissingRTPPacketCountForObservedMoonlightFEC(
-                        rawMissingPacketCount: rawMissingPacketCount,
-                        observedMoonlightFECShardsSinceLastDecodedPacket: queuedPacket
-                            .observedMoonlightFECShardsSincePreviousPrimary
-                    )
+                    let shouldDropDueToPendingPressure = Self
+                        .shouldRequeueReadyPacketsForPendingOutputPressure(
+                            pendingOutputDurationMs: pendingQueueDurationMs,
+                            realtimePendingDurationCapMs: realtimePendingDurationCapMs
+                        )
 
-                    var recoveredMissingPacketCount = 0
-                    if let previousSequenceNumber = lastDecodedSequenceNumber,
-                       missingPacketCount > 0
-                    {
-                        for missingOffset in 1 ... missingPacketCount {
-                            let missingSequenceNumber = previousSequenceNumber &+ UInt16(missingOffset)
-                            guard let recoveredPayload = await moonlightRSFECQueue.takeRecoveredPayload(
-                                sequenceNumber: missingSequenceNumber
-                            ) else {
-                                continue
-                            }
+                    do {
+                        let rawMissingPacketCount = Self.missingRTPPacketCount(
+                            previousSequenceNumber: lastDecodedSequenceNumber,
+                            currentSequenceNumber: packet.sequenceNumber
+                        )
+                        let missingPacketCount = Self.adjustMissingRTPPacketCountForObservedMoonlightFEC(
+                            rawMissingPacketCount: rawMissingPacketCount,
+                            observedMoonlightFECShardsSinceLastDecodedPacket: queuedPacket
+                                .observedMoonlightFECShardsSincePreviousPrimary
+                        )
 
-                            let recoveredDecodePayload: Data
-                            if let payloadDecryptor {
-                                do {
-                                    recoveredDecodePayload = try payloadDecryptor.decrypt(
-                                        payload: recoveredPayload,
-                                        sequenceNumber: missingSequenceNumber
-                                    )
-                                    consecutiveDecryptFailures = 0
-                                } catch {
-                                    consecutiveDecryptFailures += 1
-                                    if consecutiveDecryptFailures == 1 ||
-                                        consecutiveDecryptFailures.isMultiple(of: 25)
-                                    {
-                                        self.logger.error(
-                                            "Failed to decrypt RS-FEC recovered RTP audio payload (count=\(consecutiveDecryptFailures, privacy: .public)): \(error.localizedDescription, privacy: .public)"
-                                        )
-                                    }
+                        var recoveredMissingPacketCount = 0
+                        if let previousSequenceNumber = lastDecodedSequenceNumber,
+                           missingPacketCount > 0
+                        {
+                            for missingOffset in 1 ... missingPacketCount {
+                                let missingSequenceNumber = previousSequenceNumber &+ UInt16(missingOffset)
+                                guard let recoveredPayload = await moonlightRSFECQueue.takeRecoveredPayload(
+                                    sequenceNumber: missingSequenceNumber
+                                ) else {
                                     continue
                                 }
-                            } else {
-                                recoveredDecodePayload = recoveredPayload
-                            }
 
-                            if let recoveredPCMBuffer = try decoder.decode(
-                                payload: recoveredDecodePayload,
-                                decodeFEC: false
-                            ) {
+                                let recoveredDecodePayload: Data
+                                if let payloadDecryptor {
+                                    do {
+                                        recoveredDecodePayload = try payloadDecryptor.decrypt(
+                                            payload: recoveredPayload,
+                                            sequenceNumber: missingSequenceNumber
+                                        )
+                                        consecutiveDecryptFailures = 0
+                                    } catch {
+                                        consecutiveDecryptFailures += 1
+                                        if consecutiveDecryptFailures == 1 ||
+                                            consecutiveDecryptFailures.isMultiple(of: 25)
+                                        {
+                                            self.logger.error(
+                                                "Failed to decrypt RS-FEC recovered RTP audio payload (count=\(consecutiveDecryptFailures, privacy: .public)): \(error.localizedDescription, privacy: .public)"
+                                            )
+                                        }
+                                        continue
+                                    }
+                                } else {
+                                    recoveredDecodePayload = recoveredPayload
+                                }
+
+                                if let recoveredPCMBuffer = try decoder.decode(
+                                    payload: recoveredDecodePayload,
+                                    decodeFEC: false
+                                ) {
+                                    enqueueDecodedBuffer(
+                                        recoveredPCMBuffer,
+                                        "rs-fec",
+                                        shouldDropDueToPendingPressure
+                                    )
+                                    recoveredMissingPacketCount += 1
+                                }
+                            }
+                        }
+
+                        if recoveredMissingPacketCount > 0 {
+                            let previousRSFECRecoveryCount = rsFECRecoveryCount
+                            rsFECRecoveryCount += recoveredMissingPacketCount
+                            if rsFECRecoveryCount == recoveredMissingPacketCount ||
+                                Self.didCounterCrossIntervalBoundary(
+                                    previous: previousRSFECRecoveryCount,
+                                    current: rsFECRecoveryCount,
+                                    interval: 25
+                                )
+                            {
+                                self.logger.notice(
+                                    "Audio Moonlight RS-FEC recovered missing packets (count=\(rsFECRecoveryCount, privacy: .public))"
+                                )
+                            }
+                        }
+
+                        let pendingConcealmentPacketCount = max(
+                            0,
+                            missingPacketCount - recoveredMissingPacketCount
+                        )
+                        if pendingConcealmentPacketCount > 0 {
+                            for _ in 0 ..< pendingConcealmentPacketCount {
+                                guard let silenceBuffer = Self.makeSilentPCMBuffer(
+                                    format: decoder.outputFormat,
+                                    frameCount: moonlightPLCSamplesPerChannel
+                                ) else {
+                                    registerOutputQueuePressureDrop(1, "alloc-loss-concealment-buffer")
+                                    continue
+                                }
+                                let concealmentBuffer = (try? decoder.decodePacketLossConcealment(
+                                    samplesPerChannel: moonlightPLCSamplesPerChannel
+                                )) ?? silenceBuffer
                                 enqueueDecodedBuffer(
-                                    recoveredPCMBuffer,
-                                    "rs-fec",
+                                    concealmentBuffer,
+                                    "plc",
                                     shouldDropDueToPendingPressure
                                 )
-                                recoveredMissingPacketCount += 1
+                            }
+                            let previousLossConcealmentEventCount = lossConcealmentEventCount
+                            lossConcealmentEventCount += pendingConcealmentPacketCount
+                            if lossConcealmentEventCount == pendingConcealmentPacketCount ||
+                                Self.didCounterCrossIntervalBoundary(
+                                    previous: previousLossConcealmentEventCount,
+                                    current: lossConcealmentEventCount,
+                                    interval: 25
+                                )
+                            {
+                                self.logger.notice(
+                                    "Audio packet loss concealment inserted buffers (count=\(lossConcealmentEventCount, privacy: .public), frameSamples=\(moonlightPLCSamplesPerChannel, privacy: .public))"
+                                )
                             }
                         }
-                    }
 
-                    if recoveredMissingPacketCount > 0 {
-                        let previousRSFECRecoveryCount = rsFECRecoveryCount
-                        rsFECRecoveryCount += recoveredMissingPacketCount
-                        if rsFECRecoveryCount == recoveredMissingPacketCount ||
-                            Self.didCounterCrossIntervalBoundary(
-                                previous: previousRSFECRecoveryCount,
-                                current: rsFECRecoveryCount,
-                                interval: 25
-                            )
-                        {
-                            self.logger.notice(
-                                "Audio Moonlight RS-FEC recovered missing packets (count=\(rsFECRecoveryCount, privacy: .public))"
-                            )
-                        }
-                    }
-
-                    let pendingConcealmentPacketCount = max(
-                        0,
-                        missingPacketCount - recoveredMissingPacketCount
-                    )
-                    if pendingConcealmentPacketCount > 0 {
-                        for _ in 0 ..< pendingConcealmentPacketCount {
-                            guard let silenceBuffer = Self.makeSilentPCMBuffer(
-                                format: decoder.outputFormat,
-                                frameCount: moonlightPLCSamplesPerChannel
-                            ) else {
-                                registerOutputQueuePressureDrop(1, "alloc-loss-concealment-buffer")
+                        let decodePayload: Data
+                        if let payloadDecryptor {
+                            do {
+                                decodePayload = try payloadDecryptor.decrypt(
+                                    payload: packet.payload,
+                                    sequenceNumber: packet.sequenceNumber
+                                )
+                                consecutiveDecryptFailures = 0
+                            } catch {
+                                consecutiveDecryptFailures += 1
+                                if consecutiveDecryptFailures == 1 ||
+                                    consecutiveDecryptFailures.isMultiple(of: 25)
+                                {
+                                    self.logger.error(
+                                        "Failed to decrypt RTP audio payload (count=\(consecutiveDecryptFailures, privacy: .public)): \(error.localizedDescription, privacy: .public)"
+                                    )
+                                }
+                                // Keep RTP continuity aligned with consumed queue order.
+                                lastDecodedSequenceNumber = packet.sequenceNumber
                                 continue
                             }
-                            let concealmentBuffer = (try? decoder.decodePacketLossConcealment(
-                                samplesPerChannel: moonlightPLCSamplesPerChannel
-                            )) ?? silenceBuffer
+                        } else {
+                            decodePayload = packet.payload
+                        }
+
+                        if let pcmBuffer = try decoder.decode(
+                            payload: decodePayload,
+                            decodeFEC: false
+                        ) {
                             enqueueDecodedBuffer(
-                                concealmentBuffer,
-                                "plc",
+                                pcmBuffer,
+                                "primary",
                                 shouldDropDueToPendingPressure
                             )
                         }
-                        let previousLossConcealmentEventCount = lossConcealmentEventCount
-                        lossConcealmentEventCount += pendingConcealmentPacketCount
-                        if lossConcealmentEventCount == pendingConcealmentPacketCount ||
-                            Self.didCounterCrossIntervalBoundary(
-                                previous: previousLossConcealmentEventCount,
-                                current: lossConcealmentEventCount,
-                                interval: 25
-                            )
+
+                        consecutiveDecodeFailures = 0
+                        lastDecodedSequenceNumber = packet.sequenceNumber
+                    } catch {
+                        consecutiveDecodeFailures += 1
+                        if consecutiveDecodeFailures == 1 ||
+                            consecutiveDecodeFailures.isMultiple(of: decodeFailureLogInterval)
                         {
-                            self.logger.notice(
-                                "Audio packet loss concealment inserted buffers (count=\(lossConcealmentEventCount, privacy: .public), frameSamples=\(moonlightPLCSamplesPerChannel, privacy: .public))"
+                            self.logger.error(
+                                "Audio decode failed (count=\(consecutiveDecodeFailures, privacy: .public)): \(error.localizedDescription, privacy: .public)"
                             )
                         }
-                    }
-
-                    let decodePayload: Data
-                    if let payloadDecryptor {
-                        do {
-                            decodePayload = try payloadDecryptor.decrypt(
-                                payload: packet.payload,
-                                sequenceNumber: packet.sequenceNumber
+                        if consecutiveDecodeFailures >= decodeFailureAbortThreshold {
+                            let message = "Audio decode repeatedly failed (\(consecutiveDecodeFailures))."
+                            self.logger.error("\(message, privacy: .public)")
+                            self.handleReceiveLoopTermination(
+                                over: connection,
+                                output: audioOutput,
+                                state: .decoderFailed(message)
                             )
-                            consecutiveDecryptFailures = 0
-                        } catch {
-                            consecutiveDecryptFailures += 1
-                            if consecutiveDecryptFailures == 1 ||
-                                consecutiveDecryptFailures.isMultiple(of: 25)
-                            {
-                                self.logger.error(
-                                    "Failed to decrypt RTP audio payload (count=\(consecutiveDecryptFailures, privacy: .public)): \(error.localizedDescription, privacy: .public)"
-                                )
-                            }
-                            // Keep RTP continuity aligned with consumed queue order.
-                            lastDecodedSequenceNumber = packet.sequenceNumber
-                            continue
+                            return
                         }
-                    } else {
-                        decodePayload = packet.payload
+                        // Decode failures still consumed this RTP sequence.
+                        lastDecodedSequenceNumber = packet.sequenceNumber
                     }
-
-                    if let pcmBuffer = try decoder.decode(
-                        payload: decodePayload,
-                        decodeFEC: false
-                    ) {
-                        enqueueDecodedBuffer(
-                            pcmBuffer,
-                            "primary",
-                            shouldDropDueToPendingPressure
-                        )
-                    }
-
-                    consecutiveDecodeFailures = 0
-                    lastDecodedSequenceNumber = packet.sequenceNumber
-                } catch {
-                    consecutiveDecodeFailures += 1
-                    if consecutiveDecodeFailures == 1 ||
-                        consecutiveDecodeFailures.isMultiple(of: decodeFailureLogInterval)
-                    {
-                        self.logger.error(
-                            "Audio decode failed (count=\(consecutiveDecodeFailures, privacy: .public)): \(error.localizedDescription, privacy: .public)"
-                        )
-                    }
-                    if consecutiveDecodeFailures >= decodeFailureAbortThreshold {
-                        let message = "Audio decode repeatedly failed (\(consecutiveDecodeFailures))."
-                        self.logger.error("\(message, privacy: .public)")
-                        self.handleReceiveLoopTermination(
-                            over: connection,
-                            output: audioOutput,
-                            state: .decoderFailed(message)
-                        )
-                        return
-                    }
-                    // Decode failures still consumed this RTP sequence.
-                    lastDecodedSequenceNumber = packet.sequenceNumber
                 }
             }
         }
@@ -592,7 +604,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         packetQueue: ShadowClientRealtimeAudioPacketQueue,
         moonlightRSFECQueue: ShadowClientRealtimeAudioMoonlightRSFECQueue
     ) {
-        receiveTask = Task(priority: .high) { [weak self] in
+        receiveTask = Task.detached(priority: .high) { [weak self] in
             guard let self else {
                 return
             }
@@ -803,7 +815,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         over connection: NWConnection,
         pingPayload: Data?
     ) {
-        pingTask = Task {
+        pingTask = Task.detached {
             var sequence: UInt32 = 1
             while !Task.isCancelled {
                 sequence &+= 1
@@ -1896,6 +1908,11 @@ private actor ShadowClientRealtimeAudioPacketQueue {
         let pendingPacketCountAfterDequeue: Int
     }
 
+    struct BatchResult: Sendable {
+        let packets: [ShadowClientRealtimeAudioSessionRuntime.QueuedPrimaryAudioPacket]
+        let pendingPacketCountAfterDequeue: Int
+    }
+
     private let capacity: Int
     private var packets: [ShadowClientRealtimeAudioSessionRuntime.QueuedPrimaryAudioPacket] = []
     private var packetReadIndex = 0
@@ -1949,6 +1966,40 @@ private actor ShadowClientRealtimeAudioPacketQueue {
         }
         return .init(
             packet: packet,
+            pendingPacketCountAfterDequeue: queuedPacketCount
+        )
+    }
+
+    func nextBatch(maxCount: Int) async -> BatchResult? {
+        let normalizedMaxCount = max(1, maxCount)
+        var dequeuedPackets: [ShadowClientRealtimeAudioSessionRuntime.QueuedPrimaryAudioPacket] = []
+        dequeuedPackets.reserveCapacity(normalizedMaxCount)
+
+        while dequeuedPackets.count < normalizedMaxCount,
+              let packet = popQueuedPacket() {
+            dequeuedPackets.append(packet)
+        }
+
+        if dequeuedPackets.isEmpty {
+            if isShutdown {
+                return nil
+            }
+            let packet = await withCheckedContinuation { continuation in
+                waiters.append(continuation)
+            }
+            guard let packet else {
+                return nil
+            }
+            dequeuedPackets.append(packet)
+        }
+
+        while dequeuedPackets.count < normalizedMaxCount,
+              let packet = popQueuedPacket() {
+            dequeuedPackets.append(packet)
+        }
+
+        return .init(
+            packets: dequeuedPackets,
             pendingPacketCountAfterDequeue: queuedPacketCount
         )
     }
