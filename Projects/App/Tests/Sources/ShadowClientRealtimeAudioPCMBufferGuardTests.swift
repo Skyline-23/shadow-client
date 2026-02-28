@@ -12,9 +12,9 @@ func audioPCMGuardRejectsNonFiniteSamples() {
     #expect(buffer.floatChannelData?[0][0] == 0)
 }
 
-@Test("Audio PCM guard rejects severe overrange buffers")
-func audioPCMGuardRejectsSevereOverrangeBuffers() {
-    let buffer = makePCMBuffer(frames: Array(repeating: 8.0, count: 256))
+@Test("Audio PCM guard rejects severe overrange float buffers")
+func audioPCMGuardRejectsSevereOverrangeFloatBuffers() {
+    let buffer = makePCMBuffer(frames: Array(repeating: 8.25, count: 256))
 
     let accepted = ShadowClientRealtimeAudioPCMBufferGuard.isSafeForPlayback(buffer)
 
@@ -25,6 +25,33 @@ func audioPCMGuardRejectsSevereOverrangeBuffers() {
 func audioPCMGuardNormalizesLikelyInt16ScaledFloatBuffer() {
     let frames: [Float] = (0 ..< 512).map { index in
         index.isMultiple(of: 2) ? 12_000.0 : -9_000.0
+    }
+    let buffer = makePCMBuffer(frames: frames)
+
+    let accepted = ShadowClientRealtimeAudioPCMBufferGuard.isSafeForPlayback(buffer)
+
+    #expect(accepted == true)
+    if let channelData = buffer.floatChannelData {
+        #expect(abs(channelData[0][0]) <= 1.0)
+        #expect(abs(channelData[0][1]) <= 1.0)
+    } else {
+        #expect(false)
+    }
+}
+
+@Test("Audio PCM guard normalizes low-amplitude int16-scaled float buffers")
+func audioPCMGuardNormalizesLowAmplitudeInt16ScaledFloatBuffer() {
+    let frames: [Float] = (0 ..< 512).map { index in
+        switch index % 4 {
+        case 0:
+            return 12
+        case 1:
+            return -9
+        case 2:
+            return 7
+        default:
+            return -8
+        }
     }
     let buffer = makePCMBuffer(frames: frames)
 

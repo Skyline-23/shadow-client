@@ -7,6 +7,9 @@ enum ShadowClientRealtimeAudioPCMBufferGuard {
     private static let maximumNonFiniteRatio = 0.01
     private static let maximumExtremeRatio = 0.25
     private static let maximumLoudClipRatio = 0.2
+    private static let minimumLikelyInt16ScaledMagnitude: Float = 8.0
+    private static let minimumIntegerLikeRatio = 0.9
+    private static let integerLikeEpsilon: Float = 0.0001
 
     static func isSafeForPlayback(_ pcmBuffer: AVAudioPCMBuffer) -> Bool {
         switch pcmBuffer.format.commonFormat {
@@ -156,8 +159,17 @@ enum ShadowClientRealtimeAudioPCMBufferGuard {
             return
         }
 
+        let finiteSampleCount = stats.totalSampleCount - stats.nonFiniteSampleCount
+        guard finiteSampleCount > 0 else {
+            return
+        }
+        let integerLikeRatio = Double(stats.nearIntegerSampleCount) / Double(finiteSampleCount)
+        guard integerLikeRatio >= minimumIntegerLikeRatio else {
+            return
+        }
+
         let maximumMagnitude = stats.maximumMagnitude
-        guard maximumMagnitude >= 256.0 else {
+        guard maximumMagnitude >= minimumLikelyInt16ScaledMagnitude else {
             return
         }
         guard maximumMagnitude <= Float(Int16.max) * 2.0 else {
@@ -170,9 +182,15 @@ enum ShadowClientRealtimeAudioPCMBufferGuard {
 
     private static func float32Stats(
         _ pcmBuffer: AVAudioPCMBuffer
-    ) -> (totalSampleCount: Int, nonFiniteSampleCount: Int, maximumMagnitude: Float) {
+    ) -> (
+        totalSampleCount: Int,
+        nonFiniteSampleCount: Int,
+        nearIntegerSampleCount: Int,
+        maximumMagnitude: Float
+    ) {
         var totalSampleCount = 0
         var nonFiniteSampleCount = 0
+        var nearIntegerSampleCount = 0
         var maximumMagnitude: Float = 0
 
         if let channelData = pcmBuffer.floatChannelData {
@@ -187,17 +205,20 @@ enum ShadowClientRealtimeAudioPCMBufferGuard {
                         nonFiniteSampleCount += 1
                         continue
                     }
+                    if abs(value.rounded() - value) <= integerLikeEpsilon {
+                        nearIntegerSampleCount += 1
+                    }
                     maximumMagnitude = max(maximumMagnitude, abs(value))
                 }
             }
-            return (totalSampleCount, nonFiniteSampleCount, maximumMagnitude)
+            return (totalSampleCount, nonFiniteSampleCount, nearIntegerSampleCount, maximumMagnitude)
         }
 
         let audioBufferList = UnsafeMutableAudioBufferListPointer(
             pcmBuffer.mutableAudioBufferList
         )
         guard !audioBufferList.isEmpty else {
-            return (0, 0, 0)
+            return (0, 0, 0, 0)
         }
         for audioBuffer in audioBufferList {
             guard let rawData = audioBuffer.mData else {
@@ -215,10 +236,13 @@ enum ShadowClientRealtimeAudioPCMBufferGuard {
                     nonFiniteSampleCount += 1
                     continue
                 }
+                if abs(value.rounded() - value) <= integerLikeEpsilon {
+                    nearIntegerSampleCount += 1
+                }
                 maximumMagnitude = max(maximumMagnitude, abs(value))
             }
         }
-        return (totalSampleCount, nonFiniteSampleCount, maximumMagnitude)
+        return (totalSampleCount, nonFiniteSampleCount, nearIntegerSampleCount, maximumMagnitude)
     }
 
     private static func applyScaleToFloat32Buffer(
