@@ -2172,6 +2172,17 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         firstDecoderOutputStallCandidateUptime = 0
         resetVideoQueuePressureTracking()
         pendingVideoRecoveryRequest = false
+        // A successful decoded frame means pipeline recovery made forward progress.
+        // Keep recovery escalation based on consecutive failures, not sparse
+        // failures spread across otherwise healthy playback.
+        depacketizerRecoveryAttemptCount = 0
+        firstDepacketizerRecoveryAttemptUptime = 0
+        decoderRecoveryAttemptCount = 0
+        firstDecoderRecoveryAttemptUptime = 0
+        decoderFailureCount = 0
+        firstDecoderFailureUptime = 0
+        av1RecoverableDecoderFailureCount = 0
+        firstAV1RecoverableDecoderFailureUptime = 0
     }
 
     private func effectiveLastDecodedFrameOutputUptime() -> TimeInterval {
