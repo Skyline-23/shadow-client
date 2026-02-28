@@ -1123,22 +1123,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             {
                 return
             }
-            if codec == .av1,
-               !Self.isLikelyValidAV1AccessUnit(frame)
-            {
-                logger.error(
-                    "Dropping malformed AV1 access unit before decode to avoid VideoToolbox bad-data failure"
-                )
-                if await handleDepacketizerCorruption(codec: .av1) {
-                    throw ShadowClientRealtimeSessionRuntimeError.transportFailure(
-                        Self.runtimeRecoveryExhaustedMessage(
-                            codec: .av1,
-                            reason: "invalid av1 access unit"
-                        )
-                    )
-                }
-                return
-            }
             if let videoDecodeQueue {
                 let producerSheddingHighWatermark = max(
                     1,
