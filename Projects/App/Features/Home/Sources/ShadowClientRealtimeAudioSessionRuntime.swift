@@ -1666,15 +1666,15 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             ShadowClientRealtimeSessionDefaults.audioOutputQueueDecodeSheddingLowWatermarkSlots,
             normalizedChannels > 2 ? 5 : 4
         )
-        // Keep pending audio bounded while allowing enough headroom for 5 ms packet bursts.
+        // Keep pending audio bounded while allowing enough headroom for coalesced Opus frames.
         let targetQueuedWindowPackets = max(
-            4,
-            Int((Double(estimatedPacketsPerSecond) * 0.05).rounded(.up))
+            12,
+            Int((Double(estimatedPacketsPerSecond) * 0.10).rounded(.up))
         )
         let provisionalMaximumQueuedBuffers = min(
-            12,
+            24,
             max(
-                4,
+                8,
                 targetQueuedWindowPackets + (normalizedChannels > 2 ? 1 : 0)
             )
         )

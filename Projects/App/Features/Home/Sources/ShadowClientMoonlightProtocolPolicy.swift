@@ -22,9 +22,9 @@ enum ShadowClientMoonlightProtocolPolicy {
         static let defaultPacketDurationMs = 5
         static let startupResyncWindowMs = 500
         // Keep 30ms as the low-latency target (soft cap), but allow a bounded
-        // hard cap so 5ms packet bursts do not immediately thrash decode/output.
+        // hard cap so coalesced Opus frames do not immediately thrash decode/output.
         static let outputRealtimePendingDurationCapMs: Double = 30
-        static let outputRealtimePendingDurationHardCapMs: Double = 60
+        static let outputRealtimePendingDurationHardCapMs: Double = 150
 
         static func packetDurationMs(from advertisedPacketDuration: String?) -> Int {
             guard let advertisedPacketDuration,
