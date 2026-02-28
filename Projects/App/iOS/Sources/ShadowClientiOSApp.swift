@@ -13,15 +13,34 @@ private enum ShadowClientiOSAudioSessionBootstrap {
 
     static func configurePlaybackSession() {
         let session = AVAudioSession.sharedInstance()
-        do {
+        func activate(options: AVAudioSession.CategoryOptions) throws {
             try session.setCategory(
                 .playback,
                 mode: .default,
-                options: [.allowBluetoothA2DP, .allowAirPlay]
+                options: options
             )
             try session.setActive(true, options: [])
+        }
+
+        do {
+            try activate(options: [])
+            return
         } catch {
-            logger.error("Failed to configure AVAudioSession: \(error.localizedDescription, privacy: .public)")
+            logger.error("AVAudioSession bootstrap primary path failed: \(error.localizedDescription, privacy: .public)")
+        }
+
+        do {
+            try activate(options: [.allowAirPlay])
+            return
+        } catch {
+            logger.error("AVAudioSession bootstrap AirPlay fallback failed: \(error.localizedDescription, privacy: .public)")
+        }
+
+        do {
+            try activate(options: [.allowBluetoothA2DP])
+            return
+        } catch {
+            logger.error("AVAudioSession bootstrap Bluetooth fallback failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 }
