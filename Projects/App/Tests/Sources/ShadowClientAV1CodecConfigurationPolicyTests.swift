@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import ShadowClientFeatureHome
 
-@Test("AV1 policy prefers discovered stream configuration over explicit codec configuration")
-func av1PolicyPrefersDiscoveredConfigurationOverExplicit() {
+@Test("AV1 policy keeps active stream configuration stable when new discovered candidates appear")
+func av1PolicyKeepsActiveStreamConfigurationStable() {
     let current = [Data([0x81, 0x00, 0x0C, 0x00])]
     let explicit = [Data([0x81, 0x20, 0x40, 0x00])]
     let discovered = Data([0x81, 0x00, 0x4C, 0x00])
@@ -16,7 +16,7 @@ func av1PolicyPrefersDiscoveredConfigurationOverExplicit() {
         fallbackConfiguration: Data([0x81, 0x00, 0x0C, 0x00])
     )
 
-    #expect(resolved.parameterSets == [discovered])
+    #expect(resolved.parameterSets == current)
     #expect(resolved.origin == .stream)
 }
 
@@ -85,8 +85,8 @@ func av1PolicyUsesFallbackWhenNoConfigurationExists() {
     #expect(resolved.origin == .fallback)
 }
 
-@Test("AV1 policy upgrades fallback configuration once stream config is discovered")
-func av1PolicyUpgradesFromFallbackToStream() {
+@Test("AV1 policy keeps fallback configuration stable when stream candidates are noisy")
+func av1PolicyKeepsFallbackConfigurationStable() {
     let fallback = Data([0x81, 0x00, 0x0C, 0x00])
     let discovered = Data([0x81, 0x00, 0x4C, 0x00])
 
@@ -98,8 +98,8 @@ func av1PolicyUpgradesFromFallbackToStream() {
         fallbackConfiguration: fallback
     )
 
-    #expect(resolved.parameterSets == [discovered])
-    #expect(resolved.origin == .stream)
+    #expect(resolved.parameterSets == [fallback])
+    #expect(resolved.origin == .fallback)
 }
 
 @Test("AV1 policy keeps stable stream configuration and avoids churn")
