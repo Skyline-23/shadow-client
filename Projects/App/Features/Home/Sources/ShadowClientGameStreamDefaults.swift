@@ -176,8 +176,8 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let audioJitterBufferTargetDepth = 6
     public static let audioJitterBufferMaximumDepth = 32
     public static let audioJitterBufferOutOfOrderWaitSeconds: TimeInterval = 0.010
-    public static let audioOutputQueueSaturationBurstThreshold = 4
-    public static let audioOutputQueueDecodeCooldown: Duration = .milliseconds(16)
+    public static let audioOutputQueueSaturationBurstThreshold = 8
+    public static let audioOutputQueueDecodeCooldown: Duration = .milliseconds(24)
     public static let audioPayloadTypeAdaptationObservationThreshold = 3
     public static let audioUnexpectedPayloadTypeLogInterval = 240
     public static let audioDecodeFailureAbortThreshold = 240

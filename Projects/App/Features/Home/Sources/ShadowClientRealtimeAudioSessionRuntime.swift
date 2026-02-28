@@ -94,7 +94,20 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             controlURL: nil,
             formatParameters: [:]
         )
+        let packetDurationMs = ShadowClientMoonlightProtocolPolicy.Audio.packetDurationMs(
+            from: ShadowClientRTSPAnnounceProfile.aqosPacketDuration
+        )
+        let minimumPacketSamples = max(1, resolvedTrack.sampleRate / 200)
+        let maximumPacketSamples = max(minimumPacketSamples, minimumPacketSamples * 48)
+        let nominalPacketFrameCount = Self.moonlightPLCSamplesPerChannel(
+            sampleRate: resolvedTrack.sampleRate,
+            packetDurationMs: packetDurationMs,
+            minimumPacketSamples: minimumPacketSamples,
+            maximumPacketSamples: maximumPacketSamples
+        )
         var decoderImplementationName = "unknown"
+        var realtimePendingDurationCapMs = ShadowClientMoonlightProtocolPolicy.Audio
+            .outputRealtimePendingDurationCapMs
 
         do {
             let resolvedDecoder = try ShadowClientRealtimeAudioDecoderFactory.make(
@@ -102,7 +115,12 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             )
             let queuePressureProfile = Self.audioQueuePressureProfile(
                 sampleRate: resolvedTrack.sampleRate,
-                channels: resolvedTrack.channelCount
+                channels: resolvedTrack.channelCount,
+                packetDurationMs: packetDurationMs
+            )
+            realtimePendingDurationCapMs = Self.audioRealtimePendingDurationCapMs(
+                packetDurationMs: packetDurationMs,
+                maximumQueuedBuffers: queuePressureProfile.maximumQueuedBuffers
             )
             decoderImplementationName = ShadowClientRealtimeAudioDecoderFactory.debugName(
                 for: resolvedDecoder
@@ -110,7 +128,12 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             decoder = resolvedDecoder
             output = try ShadowClientRealtimeAudioEngineOutput(
                 format: resolvedDecoder.outputFormat,
-                maximumQueuedBufferCount: queuePressureProfile.maximumQueuedBuffers
+                maximumQueuedBufferCount: queuePressureProfile.maximumQueuedBuffers,
+                nominalFramesPerBuffer: AVAudioFrameCount(max(1, nominalPacketFrameCount)),
+                maximumPendingDurationMs: realtimePendingDurationCapMs
+            )
+            logger.notice(
+                "Audio output pressure mode=shadow-realtime-backpressure-v2 cap-ms=\(realtimePendingDurationCapMs, privacy: .public) queued-buffers=\(queuePressureProfile.maximumQueuedBuffers, privacy: .public) nominal-frames=\(nominalPacketFrameCount, privacy: .public)"
             )
             if let encryption {
                 payloadDecryptor = try ShadowClientRealtimeAudioPayloadDecryptor(
@@ -161,6 +184,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 preferredPayloadType: resolvedTrack.rtpPayloadType,
                 sampleRate: resolvedTrack.sampleRate,
                 channels: resolvedTrack.channelCount,
+                packetDurationMs: packetDurationMs,
+                realtimePendingDurationCapMs: realtimePendingDurationCapMs,
                 decoder: activeDecoder,
                 payloadDecryptor: payloadDecryptor,
                 output: activeOutput
@@ -215,6 +240,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         preferredPayloadType: Int,
         sampleRate: Int,
         channels: Int,
+        packetDurationMs: Int,
+        realtimePendingDurationCapMs: Double,
         decoder: any ShadowClientRealtimeAudioPacketDecoding,
         payloadDecryptor: ShadowClientRealtimeAudioPayloadDecryptor?,
         output audioOutput: ShadowClientRealtimeAudioEngineOutput
@@ -240,7 +267,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var decodeCooldownDeadline: ContinuousClock.Instant?
             let queuePressureProfile = Self.audioQueuePressureProfile(
                 sampleRate: sampleRate,
-                channels: channels
+                channels: channels,
+                packetDurationMs: packetDurationMs
             )
             let decodeSaturationBurstThreshold = max(
                 1,
@@ -259,18 +287,18 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             let clock = ContinuousClock()
             let minimumPacketSamples = max(1, sampleRate / 200)
             let maximumPacketSamples = max(minimumPacketSamples, minimumPacketSamples * 48)
-            let defaultEstimatedPacketSamples = max(
-                minimumPacketSamples,
-                sampleRate / 100
+            let moonlightPLCSamplesPerChannel = Self.moonlightPLCSamplesPerChannel(
+                sampleRate: sampleRate,
+                packetDurationMs: packetDurationMs,
+                minimumPacketSamples: minimumPacketSamples,
+                maximumPacketSamples: maximumPacketSamples
             )
             var lastDecodedSequenceNumber: UInt16?
-            var lastDecodedTimestamp: UInt32?
-            var estimatedSamplesPerPacket = defaultEstimatedPacketSamples
             var lossConcealmentEventCount = 0
             var rsFECRecoveryCount = 0
             var observedMoonlightFECShardsSinceLastDecodedPacket = 0
             var startupResyncPacketsRemaining = Self.initialAudioResyncDropPacketCount(
-                packetDurationMs: Int(ShadowClientRTSPAnnounceProfile.aqosPacketDuration) ?? 5
+                packetDurationMs: packetDurationMs
             )
             let moonlightRSFECQueue = ShadowClientRealtimeAudioMoonlightRSFECQueue()
 
@@ -333,8 +361,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         payloadType: parsedPacket.payloadType,
                         payload: parsedPacket.payload,
                         preferredPayloadType: currentPayloadType,
-                        wrapperPayloadType: ShadowClientRealtimeSessionDefaults
-                            .ignoredRTPControlPayloadType
+                        wrapperPayloadType: ShadowClientMoonlightProtocolPolicy.Audio
+                            .fecWrapperPayloadType
                     )
                     if let normalizationKey = normalizedPayload.normalizationKey,
                        loggedPayloadNormalizationKeys.insert(normalizationKey).inserted,
@@ -356,8 +384,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         payloadType: packet.payloadType,
                         payload: packet.payload,
                         expectedPrimaryPayloadType: currentPayloadType,
-                        wrapperPayloadType: ShadowClientRealtimeSessionDefaults
-                            .ignoredRTPControlPayloadType
+                        wrapperPayloadType: ShadowClientMoonlightProtocolPolicy.Audio
+                            .fecWrapperPayloadType
                     )
                     let isFECIncompatible = await moonlightRSFECQueue.isFECIncompatible()
                     if isFECIncompatible, !loggedFECIncompatibility {
@@ -374,7 +402,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     }
 
                     if packet.payloadType != currentPayloadType {
-                        if packet.payloadType != ShadowClientRealtimeSessionDefaults.moonlightAudioFECPayloadType {
+                        if packet.payloadType != ShadowClientMoonlightProtocolPolicy.Audio
+                            .fecWrapperPayloadType
+                        {
                             logger.notice(
                                 "Audio RTP payload mismatch ignored (expected=\(currentPayloadType, privacy: .public), observed=\(packet.payloadType, privacy: .public))"
                             )
@@ -409,7 +439,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             lastOutputRecoveryAttemptUptime == 0 ||
                             now - lastOutputRecoveryAttemptUptime >=
                             outputRecoveryAttemptCooldownSeconds
+                        var attemptedOutputRecovery = false
                         if canAttemptOutputRecovery {
+                            attemptedOutputRecovery = true
                             lastOutputRecoveryAttemptUptime = now
                             if audioOutput.recoverPlaybackUnderPressure() {
                                 logger.notice(
@@ -424,7 +456,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             )
                         }
 
-                        if consecutiveOutputQueueSaturationCount >= decodeSaturationBurstThreshold {
+                        if attemptedOutputRecovery &&
+                            consecutiveOutputQueueSaturationCount >= decodeSaturationBurstThreshold
+                        {
                             consecutiveOutputQueueSaturationCount = 0
                             activateDecodeCooldownUnderSaturation("sustained-output-queue-saturation")
                         }
@@ -478,17 +512,28 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         continue
                     }
 
+                    let pendingOutputDurationMs = audioOutput.pendingDurationMs
+                    if pendingOutputDurationMs > realtimePendingDurationCapMs {
+                        registerOutputQueuePressureDrop(
+                            readyPackets.count,
+                            "drop-output-backpressure-realtime"
+                        )
+                        continue
+                    }
+
                     if let cooldownDeadline = decodeCooldownDeadline {
                         if clock.now < cooldownDeadline {
-                            self.jitterBuffer.reinsertReadyPacketsAtHead(readyPackets)
+                            registerOutputQueuePressureDrop(
+                                readyPackets.count,
+                                "decode-cooldown-drop-ready"
+                            )
                             continue
                         }
                         decodeCooldownDeadline = nil
                     }
                     let availableOutputSlots = audioOutput.availableEnqueueSlots
                     if availableOutputSlots <= 0 {
-                        self.jitterBuffer.reinsertReadyPacketsAtHead(readyPackets)
-                        if handleOutputQueueSaturation(dropCount: 0) {
+                        if handleOutputQueueSaturation(dropCount: readyPackets.count) {
                             continue
                         }
                         continue
@@ -534,28 +579,16 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 1,
                                 queuePressureProfile.decodeSheddingLowWatermarkSlots
                             )
+                            let outputSlotsReservedForPrimaryDecode = 1
                             let shouldAttemptMissingPacketRecovery =
                                 Self.shouldAttemptMissingPacketRecoveryOrConcealment(
                                     missingPacketCount: missingPacketCount,
                                     isFECIncompatible: isFECIncompatible,
                                     remainingOutputSlots: remainingOutputSlots,
                                     decodeSheddingLowWatermarkSlots: lowWatermarkSlots,
-                                    deferredPacketCount: decodeWindow.deferredPacketCount
+                                    deferredPacketCount: decodeWindow.deferredPacketCount,
+                                    minimumReservedOutputSlots: outputSlotsReservedForPrimaryDecode
                                 )
-                            if let previousSequenceNumber = lastDecodedSequenceNumber,
-                               let previousTimestamp = lastDecodedTimestamp,
-                               let refreshedEstimate = Self.estimatedAudioSamplesPerPacket(
-                                   sampleRate: sampleRate,
-                                   previousSequenceNumber: previousSequenceNumber,
-                                   currentSequenceNumber: readyPacket.sequenceNumber,
-                                   previousTimestamp: previousTimestamp,
-                                   currentTimestamp: readyPacket.timestamp,
-                                   minimumPacketSamples: minimumPacketSamples,
-                                   maximumPacketSamples: maximumPacketSamples
-                               )
-                            {
-                                estimatedSamplesPerPacket = refreshedEstimate
-                            }
                             let decodePayload: Data
                             if let payloadDecryptor {
                                 do {
@@ -590,9 +623,17 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             }
                             if shouldAttemptMissingPacketRecovery {
                                 var recoveredMissingPacketCount = 0
+                                let recoveryHeadroomSlots = max(
+                                    outputSlotsReservedForPrimaryDecode,
+                                    lowWatermarkSlots
+                                )
+                                let missingRecoveryOutputSlots = max(
+                                    0,
+                                    remainingOutputSlots - recoveryHeadroomSlots
+                                )
                                 let missingRecoveryBudget =
                                     Self.maximumRecoveredAudioPacketsPerBurst(
-                                        availableOutputSlots: remainingOutputSlots
+                                        availableOutputSlots: missingRecoveryOutputSlots
                                     )
                                 let boundedMissingPacketCount = min(
                                     missingPacketCount,
@@ -724,10 +765,18 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                     0,
                                     missingPacketCount - recoveredMissingPacketCount
                                 )
+                                let concealmentHeadroomSlots = max(
+                                    outputSlotsReservedForPrimaryDecode,
+                                    lowWatermarkSlots
+                                )
+                                let concealmentOutputSlots = max(
+                                    0,
+                                    remainingOutputSlots - concealmentHeadroomSlots
+                                )
                                 let concealmentPacketCount = min(
                                     pendingConcealmentPacketCount,
                                     Self.maximumConcealmentPacketsPerBurst(
-                                        availableOutputSlots: remainingOutputSlots
+                                        availableOutputSlots: concealmentOutputSlots
                                     )
                                 )
                                 if pendingConcealmentPacketCount > concealmentPacketCount {
@@ -737,10 +786,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                     )
                                 }
                                 if concealmentPacketCount > 0 {
-                                    let concealmentFrameCount = max(
-                                        minimumPacketSamples,
-                                        estimatedSamplesPerPacket
-                                    )
+                                    let concealmentFrameCount = moonlightPLCSamplesPerChannel
                                     var insertedConcealmentCount = 0
                                     for _ in 0 ..< concealmentPacketCount {
                                         guard remainingOutputSlots > 0 else {
@@ -814,7 +860,11 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                     }
                                 }
                             }
-                            var didAdvanceDecodeTimeline = true
+                            guard remainingOutputSlots > 0 else {
+                                deferredPacketStartIndex = min(deferredPacketStartIndex, packetIndex)
+                                decodeLoopObservedOutputSaturation = true
+                                break packetDecodeLoop
+                            }
                             if let pcmBuffer = try decoder.decode(
                                 payload: decodePayload,
                                 decodeFEC: false
@@ -855,11 +905,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                     consecutiveDroppedOutputBuffers = 0
                                 }
                             }
-                            if didAdvanceDecodeTimeline {
-                                lastDecodedSequenceNumber = readyPacket.sequenceNumber
-                                lastDecodedTimestamp = readyPacket.timestamp
-                                observedMoonlightFECShardsSinceLastDecodedPacket = 0
-                            }
+                            lastDecodedSequenceNumber = readyPacket.sequenceNumber
+                            observedMoonlightFECShardsSinceLastDecodedPacket = 0
                         } catch {
                             consecutiveDecodeFailures += 1
                             if consecutiveDecodeFailures == 1 ||
@@ -890,7 +937,14 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     let deferredStartIndex = min(deferredPacketStartIndex, readyPackets.count)
                     if deferredStartIndex < readyPackets.count {
                         let deferredPackets = Array(readyPackets[deferredStartIndex...])
-                        jitterBuffer.reinsertReadyPacketsAtHead(deferredPackets)
+                        if decodeLoopObservedOutputSaturation {
+                            registerOutputQueuePressureDrop(
+                                deferredPackets.count,
+                                "drop-output-queue-saturation-backlog"
+                            )
+                        } else {
+                            jitterBuffer.reinsertReadyPacketsAtHead(deferredPackets)
+                        }
                     }
                 } catch {
                     if Task.isCancelled {
@@ -1190,7 +1244,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         let hasPadding = (datagram[0] & 0x20) != 0
         let hasExtension = (datagram[0] & 0x10) != 0
         let csrcCount = Int(datagram[0] & 0x0F)
-        let payloadType = Int(datagram[1] & 0x7F)
+        let payloadType = Int(
+            datagram[1] & ShadowClientMoonlightProtocolPolicy.Audio.payloadTypeMask
+        )
         let sequenceNumber = (UInt16(datagram[2]) << 8) | UInt16(datagram[3])
         let timestamp = (UInt32(datagram[4]) << 24) |
             (UInt32(datagram[5]) << 16) |
@@ -1249,8 +1305,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     }
 
     internal static func initialAudioResyncDropPacketCount(packetDurationMs: Int) -> Int {
-        let normalizedPacketDurationMs = max(1, packetDurationMs)
-        return max(0, 500 / normalizedPacketDurationMs)
+        ShadowClientMoonlightProtocolPolicy.Audio.initialResyncDropPacketCount(
+            packetDurationMs: packetDurationMs
+        )
     }
 
     private static func missingRTPPacketCount(
@@ -1327,6 +1384,20 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         return normalizedSamples
     }
 
+    internal static func moonlightPLCSamplesPerChannel(
+        sampleRate: Int,
+        packetDurationMs: Int,
+        minimumPacketSamples: Int,
+        maximumPacketSamples: Int
+    ) -> Int {
+        ShadowClientMoonlightProtocolPolicy.Audio.plcSamplesPerChannel(
+            sampleRate: sampleRate,
+            packetDurationMs: packetDurationMs,
+            minimumPacketSamples: minimumPacketSamples,
+            maximumPacketSamples: maximumPacketSamples
+        )
+    }
+
     private static func sequenceDistanceForward(
         from: UInt16,
         to: UInt16
@@ -1395,10 +1466,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         guard !hasLockedPayloadType else {
             return nil
         }
-        guard observed != ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType else {
+        guard observed != ShadowClientMoonlightProtocolPolicy.Audio.fecWrapperPayloadType else {
             return nil
         }
-        guard (96 ... 127).contains(observed) else {
+        guard ShadowClientMoonlightProtocolPolicy.Audio.isValidDynamicPayloadType(observed) else {
             return nil
         }
         return observed
@@ -1410,7 +1481,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         guard !normalizedPayload.isMoonlightAudioFECPayload else {
             return false
         }
-        guard normalizedPayload.payloadType != ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType else {
+        guard normalizedPayload.payloadType != ShadowClientMoonlightProtocolPolicy.Audio
+            .fecWrapperPayloadType
+        else {
             // Treat wrapper/control-like payload types as non-adaptive traffic.
             // Valid RTP RED payloads are normalized to their primary payload type before this gate.
             return false
@@ -1470,7 +1543,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         isFECIncompatible: Bool,
         remainingOutputSlots: Int,
         decodeSheddingLowWatermarkSlots: Int,
-        deferredPacketCount: Int
+        deferredPacketCount: Int,
+        minimumReservedOutputSlots: Int = 1
     ) -> Bool {
         guard !isFECIncompatible else {
             return false
@@ -1481,26 +1555,44 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         guard deferredPacketCount == 0 else {
             return false
         }
-        _ = max(1, decodeSheddingLowWatermarkSlots)
-        return remainingOutputSlots > 0
+        let lowWatermarkSlots = max(1, decodeSheddingLowWatermarkSlots)
+        let reservedOutputSlots = max(0, minimumReservedOutputSlots)
+        let requiredSlots = max(reservedOutputSlots, lowWatermarkSlots)
+        return remainingOutputSlots > requiredSlots
     }
 
     internal static func maximumRecoveredAudioPacketsPerBurst(
-        availableOutputSlots: Int
+        availableOutputSlots: Int,
+        parityShardsPerFECBlock: Int = ShadowClientMoonlightProtocolPolicy.Audio.fecParityShardsPerBlock
     ) -> Int {
-        guard availableOutputSlots > 0 else {
-            return 0
+        guard parityShardsPerFECBlock == ShadowClientMoonlightProtocolPolicy.Audio
+            .fecParityShardsPerBlock
+        else {
+            guard availableOutputSlots > 0 else {
+                return 0
+            }
+            return min(availableOutputSlots, max(1, parityShardsPerFECBlock))
         }
-        return max(0, availableOutputSlots)
+        return ShadowClientMoonlightProtocolPolicy.Audio.recoveredPacketsPerBurstCap(
+            availableOutputSlots: availableOutputSlots
+        )
     }
 
     internal static func maximumConcealmentPacketsPerBurst(
-        availableOutputSlots: Int
+        availableOutputSlots: Int,
+        dataShardsPerFECBlock: Int = ShadowClientMoonlightProtocolPolicy.Audio.fecDataShardsPerBlock
     ) -> Int {
-        guard availableOutputSlots > 0 else {
-            return 0
+        guard dataShardsPerFECBlock == ShadowClientMoonlightProtocolPolicy.Audio
+            .fecDataShardsPerBlock
+        else {
+            guard availableOutputSlots > 0 else {
+                return 0
+            }
+            return min(availableOutputSlots, max(1, dataShardsPerFECBlock))
         }
-        return max(0, availableOutputSlots)
+        return ShadowClientMoonlightProtocolPolicy.Audio.concealmentPacketsPerBurstCap(
+            availableOutputSlots: availableOutputSlots
+        )
     }
 
     internal static func shouldSkipMissingAudioSequence(
@@ -1527,13 +1619,24 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
 
     private static func audioQueuePressureProfile(
         sampleRate: Int,
-        channels: Int
+        channels: Int,
+        packetDurationMs: Int = ShadowClientMoonlightProtocolPolicy.Audio.packetDurationMs(
+            from: ShadowClientRTSPAnnounceProfile.aqosPacketDuration
+        )
     ) -> AudioQueuePressureProfile {
         let normalizedSampleRate = max(8_000, sampleRate)
         let normalizedChannels = max(1, channels)
+        let normalizedPacketDurationMs = max(1, packetDurationMs)
+        let estimatedSamplesPerPacket = max(
+            1,
+            Int(
+                (Double(normalizedSampleRate) * Double(normalizedPacketDurationMs) / 1_000.0)
+                    .rounded(.toNearestOrAwayFromZero)
+            )
+        )
         let estimatedPacketsPerSecond = max(
             25,
-            Int((Double(normalizedSampleRate) / 960.0).rounded(.up))
+            Int((Double(normalizedSampleRate) / Double(estimatedSamplesPerPacket)).rounded(.up))
         )
         let pressureSignalInterval = max(
             ShadowClientRealtimeSessionDefaults.audioOutputQueuePressureSignalInterval,
@@ -1544,9 +1647,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             estimatedPacketsPerSecond
         )
         let pressureTrimToRecentPackets = max(
-            3,
+            4,
             min(
-                8,
+                12,
                 max(
                     ShadowClientRealtimeSessionDefaults.audioOutputQueuePressureTrimToRecentPackets / 2,
                     Int((Double(estimatedPacketsPerSecond) * 0.08).rounded(.up))
@@ -1557,16 +1660,31 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             ShadowClientRealtimeSessionDefaults.audioOutputQueueDecodeSheddingLowWatermarkSlots,
             normalizedChannels > 2 ? 5 : 4
         )
-        // Moonlight keeps pending audio short (~30 ms) and sheds early.
+        // Keep pending audio bounded while allowing enough headroom for 5 ms packet bursts.
         let targetQueuedWindowPackets = max(
-            2,
-            Int((Double(estimatedPacketsPerSecond) * 0.03).rounded(.up))
+            4,
+            Int((Double(estimatedPacketsPerSecond) * 0.05).rounded(.up))
         )
-        let maximumQueuedBuffers = min(
-            8,
+        let provisionalMaximumQueuedBuffers = min(
+            12,
             max(
-                3,
+                4,
                 targetQueuedWindowPackets + (normalizedChannels > 2 ? 1 : 0)
+            )
+        )
+        let realtimePendingDurationCapMs = audioRealtimePendingDurationCapMs(
+            packetDurationMs: normalizedPacketDurationMs,
+            maximumQueuedBuffers: provisionalMaximumQueuedBuffers
+        )
+        let maximumQueuedBuffersByPendingCap = max(
+            4,
+            Int((realtimePendingDurationCapMs / Double(normalizedPacketDurationMs)).rounded(.down))
+        )
+        let maximumQueuedBuffers = max(
+            4,
+            min(
+                provisionalMaximumQueuedBuffers,
+                maximumQueuedBuffersByPendingCap
             )
         )
         return .init(
@@ -1578,24 +1696,68 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         )
     }
 
+    internal static func audioRealtimePendingDurationCapMs(
+        packetDurationMs: Int,
+        maximumQueuedBuffers: Int
+    ) -> Double {
+        let normalizedPacketDurationMs = max(1, packetDurationMs)
+        let normalizedQueuedBuffers = max(1, maximumQueuedBuffers)
+        let queueWindowMs = Double(normalizedPacketDurationMs * normalizedQueuedBuffers)
+        let softCap = max(
+            Double(normalizedPacketDurationMs),
+            ShadowClientMoonlightProtocolPolicy.Audio.outputRealtimePendingDurationCapMs
+        )
+        let hardCap = max(
+            softCap,
+            ShadowClientMoonlightProtocolPolicy.Audio.outputRealtimePendingDurationHardCapMs
+        )
+        return max(softCap, min(hardCap, queueWindowMs))
+    }
+
     internal static func recommendedMaximumQueuedAudioBuffers(
         sampleRate: Int,
-        channels: Int
+        channels: Int,
+        packetDurationMs: Int = ShadowClientMoonlightProtocolPolicy.Audio.packetDurationMs(
+            from: ShadowClientRTSPAnnounceProfile.aqosPacketDuration
+        )
     ) -> Int {
         audioQueuePressureProfile(
             sampleRate: sampleRate,
-            channels: channels
+            channels: channels,
+            packetDurationMs: packetDurationMs
         ).maximumQueuedBuffers
     }
 
     internal static func recommendedAudioPressureTrimToRecentPackets(
         sampleRate: Int,
-        channels: Int
+        channels: Int,
+        packetDurationMs: Int = ShadowClientMoonlightProtocolPolicy.Audio.packetDurationMs(
+            from: ShadowClientRTSPAnnounceProfile.aqosPacketDuration
+        )
     ) -> Int {
         audioQueuePressureProfile(
             sampleRate: sampleRate,
-            channels: channels
+            channels: channels,
+            packetDurationMs: packetDurationMs
         ).pressureTrimToRecentPackets
+    }
+
+    internal static func recommendedAudioRealtimePendingDurationCapMs(
+        sampleRate: Int,
+        channels: Int,
+        packetDurationMs: Int = ShadowClientMoonlightProtocolPolicy.Audio.packetDurationMs(
+            from: ShadowClientRTSPAnnounceProfile.aqosPacketDuration
+        )
+    ) -> Double {
+        let profile = audioQueuePressureProfile(
+            sampleRate: sampleRate,
+            channels: channels,
+            packetDurationMs: packetDurationMs
+        )
+        return audioRealtimePendingDurationCapMs(
+            packetDurationMs: packetDurationMs,
+            maximumQueuedBuffers: profile.maximumQueuedBuffers
+        )
     }
 
     public static func preferredOpusChannelCountForNegotiation(
@@ -2303,20 +2465,38 @@ private final class ShadowClientRealtimeAudioEngineOutput {
     )
     private let format: AVAudioFormat
     private let maximumQueuedBufferCount: Int
+    private let nominalFramesPerBuffer: Double
+    private let maximumQueuedFrameEstimate: Double
     private let queuedBufferLock = NSLock()
     private var queuedBufferCount = 0
+    private var queuedFrameEstimate: Double = 0
+    private var lastQueueEstimateUptime = ProcessInfo.processInfo.systemUptime
     private var isStarted = false
     private var isTerminated = false
     private var isGraphConfigured = false
 
     init(
         format: AVAudioFormat,
-        maximumQueuedBufferCount: Int = minimumQueuedBufferCount
+        maximumQueuedBufferCount: Int = minimumQueuedBufferCount,
+        nominalFramesPerBuffer: AVAudioFrameCount,
+        maximumPendingDurationMs: Double
     ) throws {
         self.format = format
         self.maximumQueuedBufferCount = max(
             Self.minimumQueuedBufferCount,
             maximumQueuedBufferCount
+        )
+        self.nominalFramesPerBuffer = max(1, Double(nominalFramesPerBuffer))
+        let boundedMaximumPendingDurationMs = max(1, maximumPendingDurationMs)
+        let maximumPendingFramesFromDuration = max(
+            self.nominalFramesPerBuffer,
+            (format.sampleRate * boundedMaximumPendingDurationMs / 1_000.0).rounded(.up)
+        )
+        let maximumPendingFramesFromCount = self.nominalFramesPerBuffer *
+            Double(self.maximumQueuedBufferCount)
+        self.maximumQueuedFrameEstimate = min(
+            maximumPendingFramesFromCount,
+            max(self.nominalFramesPerBuffer, maximumPendingFramesFromDuration)
         )
         var initializationState = 0
         engineQueue.sync {
@@ -2365,12 +2545,16 @@ private final class ShadowClientRealtimeAudioEngineOutput {
     }
 
     func enqueue(pcmBuffer: AVAudioPCMBuffer) -> Bool {
+        let incomingFrameCount = max(1, Double(pcmBuffer.frameLength))
+        let nowUptime = ProcessInfo.processInfo.systemUptime
         queuedBufferLock.lock()
-        if queuedBufferCount >= maximumQueuedBufferCount {
+        refreshQueuedFrameEstimateLocked(nowUptime: nowUptime)
+        if queuedFrameEstimate + incomingFrameCount > maximumQueuedFrameEstimate {
             queuedBufferLock.unlock()
             return false
         }
         queuedBufferCount += 1
+        queuedFrameEstimate += incomingFrameCount
         queuedBufferLock.unlock()
 
         return engineQueue.sync {
@@ -2396,14 +2580,34 @@ private final class ShadowClientRealtimeAudioEngineOutput {
 
     var hasEnqueueCapacity: Bool {
         queuedBufferLock.lock()
-        let hasCapacity = queuedBufferCount < maximumQueuedBufferCount
+        refreshQueuedFrameEstimateLocked(nowUptime: ProcessInfo.processInfo.systemUptime)
+        let hasCapacity = queuedFrameEstimate < maximumQueuedFrameEstimate
         queuedBufferLock.unlock()
         return hasCapacity
     }
 
+    var pendingDurationMs: Double {
+        queuedBufferLock.lock()
+        refreshQueuedFrameEstimateLocked(nowUptime: ProcessInfo.processInfo.systemUptime)
+        let pendingFrames = queuedFrameEstimate
+        queuedBufferLock.unlock()
+        guard format.sampleRate > 0 else {
+            return 0
+        }
+        return (pendingFrames / format.sampleRate) * 1_000.0
+    }
+
     var availableEnqueueSlots: Int {
         queuedBufferLock.lock()
-        let available = max(0, maximumQueuedBufferCount - queuedBufferCount)
+        refreshQueuedFrameEstimateLocked(nowUptime: ProcessInfo.processInfo.systemUptime)
+        let remainingFrames = max(0, maximumQueuedFrameEstimate - queuedFrameEstimate)
+        let available = max(
+            0,
+            min(
+                maximumQueuedBufferCount,
+                Int((remainingFrames / nominalFramesPerBuffer).rounded(.down))
+            )
+        )
         queuedBufferLock.unlock()
         return available
     }
@@ -2428,6 +2632,8 @@ private final class ShadowClientRealtimeAudioEngineOutput {
 
         queuedBufferLock.lock()
         queuedBufferCount = 0
+        queuedFrameEstimate = 0
+        lastQueueEstimateUptime = ProcessInfo.processInfo.systemUptime
         queuedBufferLock.unlock()
     }
 
@@ -2441,6 +2647,8 @@ private final class ShadowClientRealtimeAudioEngineOutput {
             }
             queuedBufferLock.lock()
             queuedBufferCount = 0
+            queuedFrameEstimate = 0
+            lastQueueEstimateUptime = ProcessInfo.processInfo.systemUptime
             queuedBufferLock.unlock()
             return true
         }
@@ -2453,8 +2661,21 @@ private final class ShadowClientRealtimeAudioEngineOutput {
 
     private func didConsumeQueuedBuffer() {
         queuedBufferLock.lock()
+        refreshQueuedFrameEstimateLocked(nowUptime: ProcessInfo.processInfo.systemUptime)
         queuedBufferCount = max(0, queuedBufferCount - 1)
         queuedBufferLock.unlock()
+    }
+
+    private func refreshQueuedFrameEstimateLocked(nowUptime: TimeInterval) {
+        let elapsed = max(0, nowUptime - lastQueueEstimateUptime)
+        guard elapsed > 0 else {
+            return
+        }
+        let consumedFrames = elapsed * format.sampleRate
+        if consumedFrames > 0 {
+            queuedFrameEstimate = max(0, queuedFrameEstimate - consumedFrames)
+        }
+        lastQueueEstimateUptime = nowUptime
     }
 
     private func configureGraphLocked() -> Bool {
