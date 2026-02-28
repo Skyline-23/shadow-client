@@ -342,10 +342,10 @@ final class ShadowClientGamepadInputPassthroughRuntime {
             buttonFlags: buttonFlags,
             leftTrigger: normalizedTriggerValue(gamepad.leftTrigger.value),
             rightTrigger: normalizedTriggerValue(gamepad.rightTrigger.value),
-            leftStickX: normalizedStickValue(gamepad.leftThumbstick.xAxis.value, invert: false),
-            leftStickY: normalizedStickValue(gamepad.leftThumbstick.yAxis.value, invert: true),
-            rightStickX: normalizedStickValue(gamepad.rightThumbstick.xAxis.value, invert: false),
-            rightStickY: normalizedStickValue(gamepad.rightThumbstick.yAxis.value, invert: true)
+            leftStickX: normalizedStickValue(gamepad.leftThumbstick.xAxis.value),
+            leftStickY: normalizedStickValue(gamepad.leftThumbstick.yAxis.value),
+            rightStickX: normalizedStickValue(gamepad.rightThumbstick.xAxis.value),
+            rightStickY: normalizedStickValue(gamepad.rightThumbstick.yAxis.value)
         )
     }
 
@@ -371,11 +371,12 @@ final class ShadowClientGamepadInputPassthroughRuntime {
         return UInt8(clamping: Int((clamped * 255.0).rounded()))
     }
 
-    private func normalizedStickValue(_ value: Float, invert: Bool) -> Int16 {
-        var clamped = min(max(Double(value), -1.0), 1.0)
-        if invert {
-            clamped = -clamped
-        }
+    private func normalizedStickValue(_ value: Float) -> Int16 {
+        Self.normalizeStickAxisValue(value)
+    }
+
+    nonisolated static func normalizeStickAxisValue(_ value: Float) -> Int16 {
+        let clamped = min(max(Double(value), -1.0), 1.0)
         let scaled = Int((clamped * 32767.0).rounded())
         return Int16(clamping: scaled)
     }
