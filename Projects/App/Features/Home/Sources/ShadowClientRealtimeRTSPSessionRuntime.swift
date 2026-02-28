@@ -1558,7 +1558,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 av1RecoverableDecoderFailureCount = 0
             }
             av1RecoverableDecoderFailureCount += 1
-            if av1RecoverableDecoderFailureCount >=
+            if Self.shouldCountAV1RecoverableFailureForFastFallback(status),
+               av1RecoverableDecoderFailureCount >=
                 ShadowClientRealtimeSessionDefaults.av1DecoderFastFallbackFailureThreshold
             {
                 logger.error(
@@ -1573,7 +1574,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             decodeFailureStatus: decodeFailureStatus
         )
         if shouldTreatFailureAsSoftFrameDrop {
-            if hasRenderedFirstFrame, av1RecoverableDecoderFailureCount > 1 {
+            if hasRenderedFirstFrame,
+               Self.shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
+                   av1RecoverableDecoderFailureCount
+               )
+            {
                 logger.notice(
                     "AV1 decoder recoverable failure burst detected; requesting recovery frame without decoder reset"
                 )
@@ -2359,6 +2364,18 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         decodeFailureStatus: OSStatus?
     ) -> Bool {
         codec == .av1 && decodeFailureStatus == -12909
+    }
+
+    static func shouldCountAV1RecoverableFailureForFastFallback(_ status: OSStatus) -> Bool {
+        // Keep AV1 fast fallback tied to decoder-instability-class failures.
+        // -12909 is treated as a soft frame drop and should not force codec relaunch.
+        status == -12903
+    }
+
+    static func shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
+        _ recoverableFailureCount: Int
+    ) -> Bool {
+        recoverableFailureCount >= 3
     }
 
     static func isRecoverableDecodeFailureStatus(_ status: OSStatus) -> Bool {

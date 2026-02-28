@@ -2238,6 +2238,39 @@ func realtimeRuntimeSoftDropPolicyClassifiesAV1RecoverableFailure() {
     )
 }
 
+@Test("Realtime runtime AV1 fast-fallback counter excludes soft-drop status -12909")
+func realtimeRuntimeAV1FastFallbackCounterExcludesSoftDropStatus() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldCountAV1RecoverableFailureForFastFallback(
+            -12909
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldCountAV1RecoverableFailureForFastFallback(
+            -12903
+        )
+    )
+}
+
+@Test("Realtime runtime AV1 soft-recovery request starts on third recoverable failure")
+func realtimeRuntimeAV1SoftRecoveryRequestThreshold() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
+            1
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
+            2
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
+            3
+        )
+    )
+}
+
 @Test("Realtime runtime decode failure status extraction reports decode status")
 func realtimeRuntimeDecodeFailureStatusExtractionReportsDecodeStatus() {
     #expect(
