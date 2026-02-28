@@ -31,6 +31,7 @@ actor ShadowClientSunshineControlChannelRuntime {
     private var controlChannelMode: ShadowClientSunshineControlChannelMode = .plaintext
     private var controlEncryptionCodec: ShadowClientSunshineControlEncryptionCodec?
     private var controlEncryptionSequenceNumber: UInt32 = 0
+    private var receivedControllerFeedbackEventCount: Int = 0
 
     init(
         connectTimeout: Duration = ShadowClientSunshineControlChannelDefaults.connectTimeout,
@@ -261,6 +262,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                         from: packet,
                         command: command
                     ) {
+                        reportControllerFeedbackEventIfNeeded(feedbackEvent)
                         await onControllerFeedback?(feedbackEvent)
                     }
 
@@ -508,6 +510,32 @@ actor ShadowClientSunshineControlChannelRuntime {
         return ShadowClientSunshineControlFeedbackCodec.parse(type: type, payload: payload)
     }
 
+    private func reportControllerFeedbackEventIfNeeded(
+        _ event: ShadowClientSunshineControllerFeedbackEvent
+    ) {
+        receivedControllerFeedbackEventCount &+= 1
+        guard receivedControllerFeedbackEventCount <= 16 ||
+                receivedControllerFeedbackEventCount.isMultiple(of: 120)
+        else {
+            return
+        }
+
+        logger.notice(
+            "RUMBLE TRACE control feedback #\(self.receivedControllerFeedbackEventCount, privacy: .public): \(self.controllerFeedbackSummary(for: event), privacy: .public)"
+        )
+    }
+
+    private func controllerFeedbackSummary(
+        for event: ShadowClientSunshineControllerFeedbackEvent
+    ) -> String {
+        switch event {
+        case let .rumble(rumble):
+            return "rumble controller=\(rumble.controllerNumber) low=\(rumble.lowFrequencyMotor) high=\(rumble.highFrequencyMotor)"
+        case let .triggerRumble(trigger):
+            return "trigger controller=\(trigger.controllerNumber) left=\(trigger.leftTriggerMotor) right=\(trigger.rightTriggerMotor)"
+        }
+    }
+
     private func readUInt16LE(_ data: Data, at offset: Int) -> UInt16 {
         let b0 = UInt16(data[offset])
         let b1 = UInt16(data[offset + 1]) << 8
@@ -616,6 +644,7 @@ actor ShadowClientSunshineControlChannelRuntime {
         outgoingReliableSequenceByChannel.removeAll(keepingCapacity: false)
         connectID = 0
         controlEncryptionSequenceNumber = 0
+        receivedControllerFeedbackEventCount = 0
     }
 
     private func nextReliableSequenceNumber(for channelID: UInt8) -> UInt16 {

@@ -1,9 +1,7 @@
 import Foundation
 import GameController
 import os
-#if canImport(CoreHaptics)
 import CoreHaptics
-#endif
 
 #if os(macOS)
 import AppKit
@@ -52,10 +50,9 @@ final class ShadowClientGamepadInputPassthroughRuntime {
     private var lastStateByControllerIndex: [UInt8: ShadowClientRemoteGamepadState] = [:]
     private var announcedControllerIndices: Set<UInt8> = []
     private var hasLoggedBackgroundGate = false
-#if canImport(CoreHaptics)
-    @available(macOS 11.0, iOS 14.0, tvOS 14.0, *)
+    private var controllerFeedbackEventCount: Int = 0
     private var hapticsEngineStoreByControllerID: [ObjectIdentifier: [GCHapticsLocality: CHHapticEngine]] = [:]
-#endif
+    private var loggedHapticsCapabilitiesByControllerID: Set<ObjectIdentifier> = []
 
     func start(eventSink: @escaping EventSink) {
         self.eventSink = eventSink
@@ -119,11 +116,9 @@ final class ShadowClientGamepadInputPassthroughRuntime {
         controllerIDByIndex.removeAll(keepingCapacity: false)
         lastStateByControllerIndex.removeAll(keepingCapacity: false)
         announcedControllerIndices.removeAll(keepingCapacity: false)
-#if canImport(CoreHaptics)
-        if #available(macOS 11.0, iOS 14.0, tvOS 14.0, *) {
-            stopAndClearAllHapticsEngines()
-        }
-#endif
+        controllerFeedbackEventCount = 0
+        stopAndClearAllHapticsEngines()
+        loggedHapticsCapabilitiesByControllerID.removeAll(keepingCapacity: false)
         hasLoggedBackgroundGate = false
     }
 
@@ -150,12 +145,16 @@ final class ShadowClientGamepadInputPassthroughRuntime {
 
     func applyControllerFeedback(_ event: ShadowClientSunshineControllerFeedbackEvent) {
         guard isSessionActive else {
+            logger.notice("RUMBLE TRACE dropped feedback because session is inactive")
             return
         }
 
-#if canImport(CoreHaptics)
-        guard #available(macOS 11.0, iOS 14.0, tvOS 14.0, *) else {
-            return
+        controllerFeedbackEventCount &+= 1
+
+        if shouldLogControllerFeedbackEventSample() {
+            logger.notice(
+                "RUMBLE TRACE received feedback #\(self.controllerFeedbackEventCount, privacy: .public): \(self.controllerFeedbackSummary(for: event), privacy: .public)"
+            )
         }
 
         switch event {
@@ -164,9 +163,6 @@ final class ShadowClientGamepadInputPassthroughRuntime {
         case let .triggerRumble(triggerRumble):
             applyTriggerRumble(triggerRumble)
         }
-#else
-        _ = event
-#endif
     }
 
     private func refreshConnectedControllers() {
@@ -202,6 +198,7 @@ final class ShadowClientGamepadInputPassthroughRuntime {
         controllerIDByIndex[index] = controllerID
         lastStateByControllerIndex[index] = nil
         announcedControllerIndices.remove(index)
+        logControllerHapticsCapabilitiesIfNeeded(controller: controller, index: index)
 
         extendedGamepad.valueChangedHandler = { [weak self, weak controller] _, _ in
             guard let self, let controller else {
@@ -226,11 +223,8 @@ final class ShadowClientGamepadInputPassthroughRuntime {
         controllerIDByIndex.removeValue(forKey: controllerNumber)
         controllersByID.removeValue(forKey: controllerID)
         announcedControllerIndices.remove(controllerNumber)
-#if canImport(CoreHaptics)
-        if #available(macOS 11.0, iOS 14.0, tvOS 14.0, *) {
-            stopAndRemoveHapticsEngines(for: controllerID)
-        }
-#endif
+        loggedHapticsCapabilitiesByControllerID.remove(controllerID)
+        stopAndRemoveHapticsEngines(for: controllerID)
 
         let mask = currentActiveGamepadMask()
         let disconnectedState = ShadowClientRemoteGamepadState(
@@ -467,12 +461,17 @@ final class ShadowClientGamepadInputPassthroughRuntime {
 #endif
     }
 
-#if canImport(CoreHaptics)
-    @available(macOS 11.0, iOS 14.0, tvOS 14.0, *)
     private func applyRumble(_ rumble: ShadowClientSunshineControllerRumbleEvent) {
-        guard let controller = controller(for: rumble.controllerNumber),
-              let haptics = controller.haptics
-        else {
+        guard let controller = controller(for: rumble.controllerNumber) else {
+            logger.notice(
+                "RUMBLE TRACE dropped rumble: unknown controllerNumber=\(rumble.controllerNumber, privacy: .public)"
+            )
+            return
+        }
+        guard let haptics = controller.haptics else {
+            logger.notice(
+                "RUMBLE TRACE dropped rumble: controller has no haptics controllerNumber=\(rumble.controllerNumber, privacy: .public)"
+            )
             return
         }
 
@@ -510,11 +509,17 @@ final class ShadowClientGamepadInputPassthroughRuntime {
         )
     }
 
-    @available(macOS 11.0, iOS 14.0, tvOS 14.0, *)
     private func applyTriggerRumble(_ rumble: ShadowClientSunshineControllerTriggerRumbleEvent) {
-        guard let controller = controller(for: rumble.controllerNumber),
-              let haptics = controller.haptics
-        else {
+        guard let controller = controller(for: rumble.controllerNumber) else {
+            logger.notice(
+                "RUMBLE TRACE dropped trigger rumble: unknown controllerNumber=\(rumble.controllerNumber, privacy: .public)"
+            )
+            return
+        }
+        guard let haptics = controller.haptics else {
+            logger.notice(
+                "RUMBLE TRACE dropped trigger rumble: controller has no haptics controllerNumber=\(rumble.controllerNumber, privacy: .public)"
+            )
             return
         }
 
@@ -563,7 +568,6 @@ final class ShadowClientGamepadInputPassthroughRuntime {
         )
     }
 
-    @available(macOS 11.0, iOS 14.0, tvOS 14.0, *)
     private func playHapticPulse(
         on controller: GCController,
         haptics: GCDeviceHaptics,
@@ -581,6 +585,9 @@ final class ShadowClientGamepadInputPassthroughRuntime {
             haptics: haptics,
             locality: locality
         ) else {
+            logger.notice(
+                "RUMBLE TRACE dropped pulse: no haptic engine for locality=\(locality.rawValue, privacy: .public)"
+            )
             return
         }
 
@@ -609,7 +616,6 @@ final class ShadowClientGamepadInputPassthroughRuntime {
         }
     }
 
-    @available(macOS 11.0, iOS 14.0, tvOS 14.0, *)
     private func hapticEngine(
         on controller: GCController,
         haptics: GCDeviceHaptics,
@@ -621,6 +627,9 @@ final class ShadowClientGamepadInputPassthroughRuntime {
         }
 
         guard let engine = haptics.createEngine(withLocality: locality) else {
+            logger.notice(
+                "RUMBLE TRACE failed to create engine for locality=\(locality.rawValue, privacy: .public)"
+            )
             return nil
         }
 
@@ -637,7 +646,6 @@ final class ShadowClientGamepadInputPassthroughRuntime {
         return engine
     }
 
-    @available(macOS 11.0, iOS 14.0, tvOS 14.0, *)
     private func stopAndClearAllHapticsEngines() {
         for engines in hapticsEngineStoreByControllerID.values {
             for engine in engines.values {
@@ -647,7 +655,6 @@ final class ShadowClientGamepadInputPassthroughRuntime {
         hapticsEngineStoreByControllerID.removeAll(keepingCapacity: false)
     }
 
-    @available(macOS 11.0, iOS 14.0, tvOS 14.0, *)
     private func stopAndRemoveHapticsEngines(for controllerID: ObjectIdentifier) {
         guard let engines = hapticsEngineStoreByControllerID.removeValue(forKey: controllerID) else {
             return
@@ -669,5 +676,41 @@ final class ShadowClientGamepadInputPassthroughRuntime {
     private func normalizedMotorIntensity(_ value: UInt16) -> Float {
         Float(value) / Float(UInt16.max)
     }
-#endif
+
+    private func shouldLogControllerFeedbackEventSample() -> Bool {
+        controllerFeedbackEventCount <= 16 || controllerFeedbackEventCount.isMultiple(of: 120)
+    }
+
+    private func controllerFeedbackSummary(
+        for event: ShadowClientSunshineControllerFeedbackEvent
+    ) -> String {
+        switch event {
+        case let .rumble(rumble):
+            return "rumble controller=\(rumble.controllerNumber) low=\(rumble.lowFrequencyMotor) high=\(rumble.highFrequencyMotor)"
+        case let .triggerRumble(rumble):
+            return "trigger controller=\(rumble.controllerNumber) left=\(rumble.leftTriggerMotor) right=\(rumble.rightTriggerMotor)"
+        }
+    }
+
+    private func logControllerHapticsCapabilitiesIfNeeded(controller: GCController, index: UInt8) {
+        let controllerID = ObjectIdentifier(controller)
+        guard loggedHapticsCapabilitiesByControllerID.insert(controllerID).inserted else {
+            return
+        }
+
+        guard let haptics = controller.haptics else {
+            logger.notice(
+                "RUMBLE TRACE controller connected index=\(index, privacy: .public), haptics=unavailable"
+            )
+            return
+        }
+
+        let localities = haptics.supportedLocalities
+            .map(\.rawValue)
+            .sorted()
+            .joined(separator: ",")
+        logger.notice(
+            "RUMBLE TRACE controller connected index=\(index, privacy: .public), haptics=available localities=[\(localities, privacy: .public)]"
+        )
+    }
 }
