@@ -662,6 +662,41 @@ func audioReadyPacketsAreRequeuedWhenOutputSlotsUnavailable() {
     #expect(!shouldNotRequeue)
 }
 
+@Test("Audio decode cooldown gate activates only after pressure burst threshold inside window")
+func audioDecodeCooldownGateRequiresBurstThresholdInsideWindow() {
+    #expect(
+        ShadowClientRealtimeAudioSessionRuntime.shouldActivateAudioDecodeCooldown(
+            now: 10.0,
+            firstOutputQueuePressureDropUptime: 9.4,
+            outputQueuePressureDropCount: 8,
+            dropWindowSeconds: 1.0,
+            burstThreshold: 8
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldActivateAudioDecodeCooldown(
+            now: 10.0,
+            firstOutputQueuePressureDropUptime: 9.4,
+            outputQueuePressureDropCount: 7,
+            dropWindowSeconds: 1.0,
+            burstThreshold: 8
+        )
+    )
+}
+
+@Test("Audio decode cooldown gate suppresses stale pressure bursts")
+func audioDecodeCooldownGateSuppressesStaleBursts() {
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldActivateAudioDecodeCooldown(
+            now: 10.0,
+            firstOutputQueuePressureDropUptime: 8.5,
+            outputQueuePressureDropCount: 12,
+            dropWindowSeconds: 1.0,
+            burstThreshold: 8
+        )
+    )
+}
+
 @Test("Audio drop window packet count scales with packet duration")
 func audioDropWindowPacketCountScalesWithPacketDuration() {
     let fiveMsPackets = ShadowClientRealtimeAudioSessionRuntime.dropPacketCountForWindow(

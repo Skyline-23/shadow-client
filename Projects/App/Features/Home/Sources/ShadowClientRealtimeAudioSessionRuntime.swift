@@ -319,8 +319,15 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var consecutiveDecodeFailures = 0
             var outputQueuePressureDropCount = 0
             var firstOutputQueuePressureDropUptime: TimeInterval = 0
+            var decodeCooldownUntilUptime: TimeInterval = 0
             var lossConcealmentEventCount = 0
             var rsFECRecoveryCount = 0
+            let audioDecodeCooldown = ShadowClientRealtimeSessionDefaults.audioOutputQueueDecodeCooldown
+            let audioDecodeCooldownSeconds: TimeInterval = {
+                let components = ShadowClientRealtimeSessionDefaults.audioOutputQueueDecodeCooldown.components
+                return TimeInterval(components.seconds) +
+                    (TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000)
+            }()
 
             let registerOutputQueuePressureDrop: (Int, String) -> Void = { droppedCount, reason in
                 guard droppedCount > 0 else {
@@ -351,6 +358,27 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         "Audio output queue pressure detected (\(reason, privacy: .public), dropped=\(outputQueuePressureDropCount, privacy: .public))"
                     )
                 }
+            }
+            let maybeActivateDecodeCooldownAfterPressureBurst: () -> Void = {
+                let now = ProcessInfo.processInfo.systemUptime
+                guard Self.shouldActivateAudioDecodeCooldown(
+                    now: now,
+                    firstOutputQueuePressureDropUptime: firstOutputQueuePressureDropUptime,
+                    outputQueuePressureDropCount: outputQueuePressureDropCount,
+                    dropWindowSeconds: ShadowClientRealtimeSessionDefaults.audioOutputQueueDropWindowSeconds,
+                    burstThreshold: ShadowClientRealtimeSessionDefaults.audioOutputQueueSaturationBurstThreshold
+                ) else {
+                    return
+                }
+                decodeCooldownUntilUptime = max(
+                    decodeCooldownUntilUptime,
+                    now + audioDecodeCooldownSeconds
+                )
+                outputQueuePressureDropCount = 0
+                firstOutputQueuePressureDropUptime = 0
+                self.logger.notice(
+                    "Audio output saturation burst detected; pausing decode for \(Int((audioDecodeCooldownSeconds * 1_000).rounded()), privacy: .public)ms"
+                )
             }
 
             let logFirstDecodedBufferIfNeeded: (AVAudioFrameCount, String) -> Void = { frameLength, source in
@@ -393,7 +421,25 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             }
 
             while !Task.isCancelled {
-                guard let batchResult = await packetQueue.nextBatch(maxCount: 4) else {
+                let nowUptime = ProcessInfo.processInfo.systemUptime
+                let isDecodeCooldownActive = nowUptime < decodeCooldownUntilUptime
+                let availableOutputSlots = audioOutput.availableEnqueueSlots
+                let drainLimit = Self.audioReadyPacketDrainLimit(
+                    isDecodeCooldownActive: isDecodeCooldownActive,
+                    availableOutputSlots: availableOutputSlots,
+                    maximumDrainBatch: 4
+                ) ?? 0
+                if drainLimit == 0 {
+                    if isDecodeCooldownActive || Self.shouldHoldDecodeWhenReadyPacketsEmpty(
+                        isDecodeCooldownActive: isDecodeCooldownActive,
+                        availableOutputSlots: availableOutputSlots
+                    ) {
+                        try? await Task.sleep(for: audioDecodeCooldown)
+                    }
+                    continue
+                }
+
+                guard let batchResult = await packetQueue.nextBatch(maxCount: drainLimit) else {
                     return
                 }
                 let pendingPacketCountAfterFirstDequeue = max(
@@ -417,6 +463,23 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             pendingOutputDurationMs: pendingQueueDurationMs,
                             realtimePendingDurationCapMs: realtimePendingDurationCapMs
                         )
+                    if shouldDropDueToPendingPressure {
+                        registerOutputQueuePressureDrop(1, "drop-shadow-lbq-pending-audio-duration")
+                        maybeActivateDecodeCooldownAfterPressureBurst()
+                        // Keep RTP continuity aligned with consumed queue order.
+                        lastDecodedSequenceNumber = packet.sequenceNumber
+                        continue
+                    }
+                    let availableOutputSlotsForPacket = audioOutput.availableEnqueueSlots
+                    if Self.shouldRequeueReadyPacketsForUnavailableOutputSlots(
+                        availableOutputSlots: availableOutputSlotsForPacket
+                    ) {
+                        registerOutputQueuePressureDrop(1, "drop-output-no-enqueue-slots")
+                        maybeActivateDecodeCooldownAfterPressureBurst()
+                        // Keep RTP continuity aligned with consumed queue order.
+                        lastDecodedSequenceNumber = packet.sequenceNumber
+                        continue
+                    }
 
                     do {
                         let rawMissingPacketCount = Self.missingRTPPacketCount(
@@ -429,8 +492,19 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 .observedMoonlightFECShardsSincePreviousPrimary
                         )
 
+                        let canAttemptMissingRecovery = Self
+                            .shouldAttemptMissingPacketRecoveryOrConcealment(
+                                missingPacketCount: missingPacketCount,
+                                isFECIncompatible: await moonlightRSFECQueue.isFECIncompatible(),
+                                remainingOutputSlots: max(0, availableOutputSlotsForPacket - 1),
+                                decodeSheddingLowWatermarkSlots: queuePressureProfile
+                                    .decodeSheddingLowWatermarkSlots,
+                                deferredPacketCount: 0
+                            )
+
                         var recoveredMissingPacketCount = 0
-                        if let previousSequenceNumber = lastDecodedSequenceNumber,
+                        if canAttemptMissingRecovery,
+                           let previousSequenceNumber = lastDecodedSequenceNumber,
                            missingPacketCount > 0
                         {
                             for missingOffset in 1 ... missingPacketCount {
@@ -471,7 +545,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                     enqueueDecodedBuffer(
                                         recoveredPCMBuffer,
                                         "rs-fec",
-                                        shouldDropDueToPendingPressure
+                                        false
                                     )
                                     recoveredMissingPacketCount += 1
                                 }
@@ -498,7 +572,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             0,
                             missingPacketCount - recoveredMissingPacketCount
                         )
-                        if pendingConcealmentPacketCount > 0 {
+                        if canAttemptMissingRecovery, pendingConcealmentPacketCount > 0 {
                             for _ in 0 ..< pendingConcealmentPacketCount {
                                 guard let silenceBuffer = Self.makeSilentPCMBuffer(
                                     format: decoder.outputFormat,
@@ -513,7 +587,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 enqueueDecodedBuffer(
                                     concealmentBuffer,
                                     "plc",
-                                    shouldDropDueToPendingPressure
+                                    false
                                 )
                             }
                             let previousLossConcealmentEventCount = lossConcealmentEventCount
@@ -563,7 +637,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             enqueueDecodedBuffer(
                                 pcmBuffer,
                                 "primary",
-                                shouldDropDueToPendingPressure
+                                false
                             )
                         }
 
@@ -1380,6 +1454,22 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         availableOutputSlots: Int
     ) -> Bool {
         availableOutputSlots <= 0
+    }
+
+    internal static func shouldActivateAudioDecodeCooldown(
+        now: TimeInterval,
+        firstOutputQueuePressureDropUptime: TimeInterval,
+        outputQueuePressureDropCount: Int,
+        dropWindowSeconds: TimeInterval,
+        burstThreshold: Int
+    ) -> Bool {
+        guard outputQueuePressureDropCount >= max(1, burstThreshold) else {
+            return false
+        }
+        guard firstOutputQueuePressureDropUptime > 0 else {
+            return false
+        }
+        return now - firstOutputQueuePressureDropUptime <= max(0, dropWindowSeconds)
     }
 
     internal static func dropPacketCountForWindow(
@@ -2525,29 +2615,16 @@ private final class ShadowClientRealtimeAudioEngineOutput {
 
     func enqueue(pcmBuffer: AVAudioPCMBuffer) -> Bool {
         let incomingFrameCount = max(1, Double(pcmBuffer.frameLength))
-        let maximumCapacityWaitIterations = 100
-        var reservedOutputSlot = false
-        for iteration in 0 ... maximumCapacityWaitIterations {
-            let nowUptime = ProcessInfo.processInfo.systemUptime
-            queuedBufferLock.lock()
-            refreshQueuedFrameEstimateLocked(nowUptime: nowUptime)
-            if queuedFrameEstimate + incomingFrameCount <= maximumQueuedFrameEstimate {
-                queuedBufferCount += 1
-                queuedFrameEstimate += incomingFrameCount
-                queuedBufferLock.unlock()
-                reservedOutputSlot = true
-                break
-            }
+        let nowUptime = ProcessInfo.processInfo.systemUptime
+        queuedBufferLock.lock()
+        refreshQueuedFrameEstimateLocked(nowUptime: nowUptime)
+        guard queuedFrameEstimate + incomingFrameCount <= maximumQueuedFrameEstimate else {
             queuedBufferLock.unlock()
-
-            if iteration == maximumCapacityWaitIterations {
-                break
-            }
-            Thread.sleep(forTimeInterval: 0.001)
-        }
-        guard reservedOutputSlot else {
             return false
         }
+        queuedBufferCount += 1
+        queuedFrameEstimate += incomingFrameCount
+        queuedBufferLock.unlock()
 
         return engineQueue.sync {
             guard !isTerminated else {
