@@ -2347,6 +2347,24 @@ func realtimeRuntimeAV1SoftRecoveryRequestRequiresOutputStall() {
     )
 }
 
+@Test("Realtime runtime AV1 reference invalidation range uses Moonlight 0x20 window")
+func realtimeRuntimeAV1ReferenceInvalidationRangeUsesMoonlightWindow() {
+    let range = ShadowClientRealtimeRTSPSessionRuntime.av1ReferenceInvalidationRange(
+        endFrameIndex: 0x0100
+    )
+    #expect(range.start == 0x00E0)
+    #expect(range.end == 0x0100)
+}
+
+@Test("Realtime runtime AV1 reference invalidation range clamps at zero for early frames")
+func realtimeRuntimeAV1ReferenceInvalidationRangeClampsAtZero() {
+    let range = ShadowClientRealtimeRTSPSessionRuntime.av1ReferenceInvalidationRange(
+        endFrameIndex: 0x0010
+    )
+    #expect(range.start == 0)
+    #expect(range.end == 0x0010)
+}
+
 @Test("Realtime runtime decode failure status extraction reports decode status")
 func realtimeRuntimeDecodeFailureStatusExtractionReportsDecodeStatus() {
     #expect(

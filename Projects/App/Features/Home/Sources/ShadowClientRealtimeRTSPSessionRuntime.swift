@@ -524,6 +524,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var lastVideoQueuePressureSignalUptime: TimeInterval = 0
     private var lastVideoDecodeQueueConsumerTrimUptime: TimeInterval = 0
     private var lastVideoRecoveryRequestUptime: TimeInterval = 0
+    private var lastAV1ReferenceInvalidationRequestUptime: TimeInterval = 0
     private var pendingVideoRecoveryRequest = false
     private var videoRenderSubmitDropCount = 0
     private var lastObservedDecodeQueueBacklog = 0
@@ -634,6 +635,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastVideoQueuePressureSignalUptime = 0
         lastVideoDecodeQueueConsumerTrimUptime = 0
         lastVideoRecoveryRequestUptime = 0
+        lastAV1ReferenceInvalidationRequestUptime = 0
         pendingVideoRecoveryRequest = false
         videoRenderSubmitDropCount = 0
         lastObservedDecodeQueueBacklog = 0
@@ -795,6 +797,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastVideoQueuePressureSignalUptime = 0
         lastVideoDecodeQueueConsumerTrimUptime = 0
         lastVideoRecoveryRequestUptime = 0
+        lastAV1ReferenceInvalidationRequestUptime = 0
         pendingVideoRecoveryRequest = false
         videoRenderSubmitDropCount = 0
         lastObservedDecodeQueueBacklog = 0
@@ -1110,8 +1113,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                    isPendingDeferredRequest: av1PendingRecoveryRequestAfterSuccessfulFrame
                )
             {
-                _ = await requestVideoRecoveryFrame(
-                    codec: .av1,
+                _ = await requestAV1ReferenceFrameInvalidationOrRecovery(
                     reason: "depacketizer-discontinuity-post-success",
                     minimumInterval: 0.0
                 )
@@ -1580,10 +1582,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             )
             if hasRenderedFirstFrame, shouldRequestSoftRecovery {
                 logger.notice(
-                    "AV1 decoder recoverable failure burst with output stall detected; requesting recovery frame without decoder reset or sync-gate transition"
+                    "AV1 decoder recoverable failure burst with output stall detected; requesting reference invalidation without decoder reset or sync-gate transition"
                 )
-                _ = await requestVideoRecoveryFrame(
-                    codec: codec,
+                _ = await requestAV1ReferenceFrameInvalidationOrRecovery(
                     reason: "decoder-recoverable-soft",
                     minimumInterval: 1.0
                 )
@@ -2224,6 +2225,38 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     }
 
     @discardableResult
+    private func requestAV1ReferenceFrameInvalidationOrRecovery(
+        reason: String,
+        minimumInterval: TimeInterval = ShadowClientRealtimeSessionDefaults.videoRecoveryFrameRequestCooldownSeconds
+    ) async -> Bool {
+        let endFrameIndex =
+            lastAV1DecodeSubmissionContext?.depacketizerMetadata?.frameIndex ??
+            lastObservedVideoFrameIndex
+        let now = ProcessInfo.processInfo.systemUptime
+
+        if let endFrameIndex,
+           now - lastAV1ReferenceInvalidationRequestUptime >= max(0, minimumInterval)
+        {
+            let range = Self.av1ReferenceInvalidationRange(endFrameIndex: endFrameIndex)
+            lastAV1ReferenceInvalidationRequestUptime = now
+            logger.notice(
+                "AV1 reference frame invalidation requested (reason=\(reason, privacy: .public), range=\(range.start, privacy: .public)-\(range.end, privacy: .public))"
+            )
+            await rtspClient?.requestInvalidateReferenceFrames(
+                startFrameIndex: range.start,
+                endFrameIndex: range.end
+            )
+            return true
+        }
+
+        return await requestVideoRecoveryFrame(
+            codec: .av1,
+            reason: reason,
+            minimumInterval: minimumInterval
+        )
+    }
+
+    @discardableResult
     private func requestVideoRecoveryFrame(
         for codec: ShadowClientVideoCodec,
         reason: String,
@@ -2394,6 +2427,17 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             lastDecodedFrameOutputUptime: lastDecodedFrameOutputUptime,
             minimumStallSeconds: minimumOutputStallSeconds
         )
+    }
+
+    static func av1ReferenceInvalidationRange(
+        endFrameIndex: UInt32,
+        window: UInt32 = 0x20
+    ) -> (start: UInt32, end: UInt32) {
+        let normalizedWindow = max(1, window)
+        let startFrameIndex = endFrameIndex > normalizedWindow
+            ? (endFrameIndex - normalizedWindow)
+            : 0
+        return (startFrameIndex, endFrameIndex)
     }
 
     static func isRecoverableDecodeFailureStatus(_ status: OSStatus) -> Bool {
