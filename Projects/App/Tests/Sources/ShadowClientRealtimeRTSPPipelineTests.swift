@@ -2194,6 +2194,50 @@ func realtimeRuntimeRecoverableDecodeErrorsDoNotAbortRecovery() {
     )
 }
 
+@Test("Realtime runtime immediate decoder-reset policy treats AV1 -12909 as soft recovery")
+func realtimeRuntimeImmediateDecoderResetPolicyTreatsAV1RecoverableFailureAsSoft() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.requiresImmediateDecoderReset(
+            codec: .av1,
+            decodeFailureStatus: -12909
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.requiresImmediateDecoderReset(
+            codec: .av1,
+            decodeFailureStatus: -12903
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.requiresImmediateDecoderReset(
+            codec: .h264,
+            decodeFailureStatus: -12903
+        )
+    )
+}
+
+@Test("Realtime runtime soft-drop policy classifies AV1 -12909 without hard reset")
+func realtimeRuntimeSoftDropPolicyClassifiesAV1RecoverableFailure() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldTreatDecoderFailureAsSoftFrameDrop(
+            codec: .av1,
+            decodeFailureStatus: -12909
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldTreatDecoderFailureAsSoftFrameDrop(
+            codec: .av1,
+            decodeFailureStatus: -12903
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldTreatDecoderFailureAsSoftFrameDrop(
+            codec: .h264,
+            decodeFailureStatus: -12909
+        )
+    )
+}
+
 @Test("Realtime runtime decode failure status extraction reports decode status")
 func realtimeRuntimeDecodeFailureStatusExtractionReportsDecodeStatus() {
     #expect(

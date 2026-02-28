@@ -1542,12 +1542,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
         let now = ProcessInfo.processInfo.systemUptime
         let decodeFailureStatus = Self.decodeFailureStatus(from: error)
-        let requiresImmediateDecoderReset =
-            decodeFailureStatus == -12903 ||
-            (
-                codec == .av1 &&
-                    decodeFailureStatus.map(Self.isRecoverableDecodeFailureStatus) == true
-            )
+        let requiresImmediateDecoderReset = Self.requiresImmediateDecoderReset(
+            codec: codec,
+            decodeFailureStatus: decodeFailureStatus
+        )
         if codec == .av1,
            let status = decodeFailureStatus,
            Self.isRecoverableDecodeFailureStatus(status)
@@ -1568,6 +1566,28 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 )
                 return false
             }
+        }
+
+        let shouldTreatFailureAsSoftFrameDrop = Self.shouldTreatDecoderFailureAsSoftFrameDrop(
+            codec: codec,
+            decodeFailureStatus: decodeFailureStatus
+        )
+        if shouldTreatFailureAsSoftFrameDrop {
+            if hasRenderedFirstFrame, av1RecoverableDecoderFailureCount > 1 {
+                logger.notice(
+                    "AV1 decoder recoverable failure burst detected; requesting recovery frame without decoder reset"
+                )
+                _ = await requestVideoRecoveryFrame(
+                    for: codec,
+                    reason: "decoder-recoverable-soft",
+                    minimumInterval: 0.35
+                )
+            } else {
+                logger.notice(
+                    "AV1 decoder dropped one recoverable frame; continuing without decoder reset"
+                )
+            }
+            return true
         }
 
         if firstDecoderFailureUptime == 0 ||
@@ -2317,6 +2337,28 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             "decoder codec is not supported",
         ]
         return fatalSignatures.contains(where: normalized.contains)
+    }
+
+    static func requiresImmediateDecoderReset(
+        codec: ShadowClientVideoCodec,
+        decodeFailureStatus: OSStatus?
+    ) -> Bool {
+        guard let decodeFailureStatus else {
+            return false
+        }
+        // AV1 -12909 is often a transient decode miss under network burst loss.
+        // Treat it as soft recovery first (request recovery frame) to avoid churn.
+        if codec == .av1, decodeFailureStatus == -12909 {
+            return false
+        }
+        return decodeFailureStatus == -12903
+    }
+
+    static func shouldTreatDecoderFailureAsSoftFrameDrop(
+        codec: ShadowClientVideoCodec,
+        decodeFailureStatus: OSStatus?
+    ) -> Bool {
+        codec == .av1 && decodeFailureStatus == -12909
     }
 
     static func isRecoverableDecodeFailureStatus(_ status: OSStatus) -> Bool {
