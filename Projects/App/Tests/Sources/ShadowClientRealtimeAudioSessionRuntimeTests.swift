@@ -630,6 +630,38 @@ func audioReadyPacketDrainLimitUsesAvailableSlotsAndBatchCap() {
     #expect(byBatch == 8)
 }
 
+@Test("Audio ready packets are requeued when pending output duration exceeds realtime cap")
+func audioReadyPacketsAreRequeuedForPendingOutputPressure() {
+    let shouldRequeue = ShadowClientRealtimeAudioSessionRuntime
+        .shouldRequeueReadyPacketsForPendingOutputPressure(
+            pendingOutputDurationMs: 121,
+            realtimePendingDurationCapMs: 120
+        )
+    let shouldNotRequeue = ShadowClientRealtimeAudioSessionRuntime
+        .shouldRequeueReadyPacketsForPendingOutputPressure(
+            pendingOutputDurationMs: 120,
+            realtimePendingDurationCapMs: 120
+        )
+
+    #expect(shouldRequeue)
+    #expect(!shouldNotRequeue)
+}
+
+@Test("Audio ready packets are requeued when output slots are unavailable")
+func audioReadyPacketsAreRequeuedWhenOutputSlotsUnavailable() {
+    let shouldRequeue = ShadowClientRealtimeAudioSessionRuntime
+        .shouldRequeueReadyPacketsForUnavailableOutputSlots(
+            availableOutputSlots: 0
+        )
+    let shouldNotRequeue = ShadowClientRealtimeAudioSessionRuntime
+        .shouldRequeueReadyPacketsForUnavailableOutputSlots(
+            availableOutputSlots: 1
+        )
+
+    #expect(shouldRequeue)
+    #expect(!shouldNotRequeue)
+}
+
 @Test("Audio queue profile keeps output buffer window low-latency for stereo")
 func audioQueueProfileKeepsLowLatencyWindowForStereo() {
     let maximumQueuedBuffers = ShadowClientRealtimeAudioSessionRuntime

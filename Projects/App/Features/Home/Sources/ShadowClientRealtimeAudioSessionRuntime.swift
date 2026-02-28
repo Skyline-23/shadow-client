@@ -557,11 +557,14 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     }
 
                     let pendingOutputDurationMs = audioOutput.pendingDurationMs
-                    if pendingOutputDurationMs > realtimePendingDurationCapMs {
-                        registerOutputQueuePressureDrop(
-                            readyPackets.count,
-                            "drop-output-backpressure-realtime"
-                        )
+                    if Self.shouldRequeueReadyPacketsForPendingOutputPressure(
+                        pendingOutputDurationMs: pendingOutputDurationMs,
+                        realtimePendingDurationCapMs: realtimePendingDurationCapMs
+                    ) {
+                        // Keep continuity under transient output pressure by requeueing
+                        // ready packets instead of dropping decode input immediately.
+                        jitterBuffer.reinsertReadyPacketsAtHead(readyPackets)
+                        _ = handleOutputQueueSaturation(dropCount: 0)
                         continue
                     }
 
@@ -576,8 +579,13 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         decodeCooldownDeadline = nil
                     }
                     let availableOutputSlots = audioOutput.availableEnqueueSlots
-                    if availableOutputSlots <= 0 {
-                        if handleOutputQueueSaturation(dropCount: readyPackets.count) {
+                    if Self.shouldRequeueReadyPacketsForUnavailableOutputSlots(
+                        availableOutputSlots: availableOutputSlots
+                    ) {
+                        // availableOutputSlots may shrink after pre-drain sampling.
+                        // Requeue removed packets to avoid avoidable continuity breaks.
+                        jitterBuffer.reinsertReadyPacketsAtHead(readyPackets)
+                        if handleOutputQueueSaturation(dropCount: 0) {
                             continue
                         }
                         continue
@@ -997,14 +1005,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     let deferredStartIndex = min(deferredPacketStartIndex, readyPackets.count)
                     if deferredStartIndex < readyPackets.count {
                         let deferredPackets = Array(readyPackets[deferredStartIndex...])
-                        if decodeLoopObservedOutputSaturation {
-                            registerOutputQueuePressureDrop(
-                                deferredPackets.count,
-                                "drop-output-queue-saturation-backlog"
-                            )
-                        } else {
-                            jitterBuffer.reinsertReadyPacketsAtHead(deferredPackets)
-                        }
+                        // Preserve ordered continuity by always returning deferred packets
+                        // to jitter buffer head; bounded jitter depth handles pressure trim.
+                        jitterBuffer.reinsertReadyPacketsAtHead(deferredPackets)
                     }
                 } catch {
                     if Task.isCancelled {
@@ -1602,6 +1605,19 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             return false
         }
         return availableOutputSlots <= 0
+    }
+
+    internal static func shouldRequeueReadyPacketsForPendingOutputPressure(
+        pendingOutputDurationMs: Double,
+        realtimePendingDurationCapMs: Double
+    ) -> Bool {
+        pendingOutputDurationMs > realtimePendingDurationCapMs
+    }
+
+    internal static func shouldRequeueReadyPacketsForUnavailableOutputSlots(
+        availableOutputSlots: Int
+    ) -> Bool {
+        availableOutputSlots <= 0
     }
 
     internal static func shouldAttemptMissingPacketRecoveryOrConcealment(
