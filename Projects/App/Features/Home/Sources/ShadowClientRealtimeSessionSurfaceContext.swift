@@ -28,6 +28,33 @@ public final class ShadowClientRealtimeSessionFrameStore: @unchecked Sendable {
     }
 }
 
+private actor ShadowClientControlRoundTripStreamHub {
+    private var continuations: [UUID: AsyncStream<Int?>.Continuation] = [:]
+
+    func register(
+        id: UUID,
+        continuation: AsyncStream<Int?>.Continuation,
+        initialValue: Int?
+    ) {
+        continuations[id] = continuation
+        continuation.yield(initialValue)
+    }
+
+    func unregister(id: UUID) {
+        continuations.removeValue(forKey: id)
+    }
+
+    func publish(_ value: Int?) {
+        continuations.values.forEach { $0.yield(value) }
+    }
+
+    func finishAll() {
+        let pendingContinuations = Array(continuations.values)
+        continuations.removeAll(keepingCapacity: false)
+        pendingContinuations.forEach { $0.finish() }
+    }
+}
+
 public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     public enum RenderState: Equatable, Sendable {
         case idle
@@ -53,6 +80,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     @Published public private(set) var activeDynamicRangeMode: DynamicRangeMode = .unknown
     @Published public private(set) var preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
     private var lastControlRoundTripPublishUptime: TimeInterval = 0
+    private let controlRoundTripStreamHub = ShadowClientControlRoundTripStreamHub()
 
     public let frameStore: ShadowClientRealtimeSessionFrameStore
 
@@ -60,10 +88,18 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         self.frameStore = frameStore
     }
 
+    deinit {
+        let streamHub = controlRoundTripStreamHub
+        Task {
+            await streamHub.finishAll()
+        }
+    }
+
     public func reset() {
         frameStore.update(pixelBuffer: nil)
         renderState = .idle
         controlRoundTripMs = nil
+        publishControlRoundTripSample(nil)
         activeVideoCodec = nil
         estimatedVideoFPS = nil
         estimatedVideoBitrateKbps = nil
@@ -100,6 +136,31 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
 
         controlRoundTripMs = normalized
         lastControlRoundTripPublishUptime = now
+        publishControlRoundTripSample(normalized)
+    }
+
+    public func controlRoundTripAsyncStream() -> AsyncStream<Int?> {
+        AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            let identifier = UUID()
+            let initialValue = controlRoundTripMs
+            let streamHub = controlRoundTripStreamHub
+            Task {
+                await streamHub.register(
+                    id: identifier,
+                    continuation: continuation,
+                    initialValue: initialValue
+                )
+            }
+            continuation.onTermination = { [weak self] _ in
+                guard let self else {
+                    return
+                }
+                let streamHub = self.controlRoundTripStreamHub
+                Task {
+                    await streamHub.unregister(id: identifier)
+                }
+            }
+        }
     }
 
     public func updateActiveVideoCodec(_ codec: ShadowClientVideoCodec?) {
@@ -149,6 +210,13 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
 
     private static func normalizedRenderFPS(_ fps: Int) -> Int {
         max(fps, 1)
+    }
+
+    private func publishControlRoundTripSample(_ milliseconds: Int?) {
+        let streamHub = controlRoundTripStreamHub
+        Task {
+            await streamHub.publish(milliseconds)
+        }
     }
 }
 

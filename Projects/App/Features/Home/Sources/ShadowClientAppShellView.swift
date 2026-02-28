@@ -149,15 +149,19 @@ public struct ShadowClientAppShellView: View {
         .onChange(of: gamepadInputConfiguration, initial: true) { _, configuration in
             gamepadInputRuntime.updateConfiguration(configuration)
         }
-        .task(id: sessionSurfaceContext.controlRoundTripMs) {
-            let roundTripMs = sessionSurfaceContext.controlRoundTripMs
+        .task(id: remoteDesktopRuntime.activeSession != nil) {
             guard remoteDesktopRuntime.activeSession != nil else {
                 return
             }
-            if roundTripHistoryRateLimiter.shouldEmit(
-                nowUptime: ProcessInfo.processInfo.systemUptime
-            ) {
-                sessionDiagnosticsHistory.appendControlRoundTripMs(roundTripMs)
+            for await roundTripMs in sessionSurfaceContext.controlRoundTripAsyncStream() {
+                guard remoteDesktopRuntime.activeSession != nil else {
+                    break
+                }
+                if roundTripHistoryRateLimiter.shouldEmit(
+                    nowUptime: ProcessInfo.processInfo.systemUptime
+                ) {
+                    sessionDiagnosticsHistory.appendControlRoundTripMs(roundTripMs)
+                }
             }
         }
         .onAppear {
