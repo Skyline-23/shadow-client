@@ -27,6 +27,51 @@ private final class MockCustomAudioDecoder: ShadowClientRealtimeCustomAudioDecod
     }
 }
 
+private final class RecordingDefaultCustomAudioDecoder: ShadowClientRealtimeCustomAudioDecoder {
+    let codec: ShadowClientAudioCodec = .opus
+    let sampleRate: Int = 48_000
+    let channels: Int = 2
+    let outputFormat: AVAudioFormat = AVAudioFormat(
+        standardFormatWithSampleRate: 48_000,
+        channels: 2
+    )!
+    private(set) var decodeCallCount = 0
+    private(set) var decodedPayloads: [Data] = []
+
+    func decode(payload: Data) throws -> AVAudioPCMBuffer? {
+        decodeCallCount += 1
+        decodedPayloads.append(payload)
+        return nil
+    }
+}
+
+private final class RecordingPLCCustomAudioDecoder: ShadowClientRealtimeCustomAudioDecoder {
+    let codec: ShadowClientAudioCodec = .opus
+    let sampleRate: Int = 48_000
+    let channels: Int = 2
+    let outputFormat: AVAudioFormat = AVAudioFormat(
+        standardFormatWithSampleRate: 48_000,
+        channels: 2
+    )!
+    private(set) var requestedPLCSamples: [Int] = []
+
+    func decode(payload _: Data) throws -> AVAudioPCMBuffer? {
+        nil
+    }
+
+    func decodePacketLossConcealment(samplesPerChannel: Int) throws -> AVAudioPCMBuffer? {
+        requestedPLCSamples.append(samplesPerChannel)
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: outputFormat,
+            frameCapacity: AVAudioFrameCount(samplesPerChannel)
+        ) else {
+            return nil
+        }
+        buffer.frameLength = AVAudioFrameCount(samplesPerChannel)
+        return buffer
+    }
+}
+
 @Test("Payload type adaptation accepts dynamic payload type changes before lock")
 func payloadTypeAdaptationAcceptsDynamicChangesBeforeLock() {
     let adapted = ShadowClientRealtimeAudioSessionRuntime.payloadTypePreference(
@@ -138,8 +183,8 @@ func rtpPayloadNormalizerClassifiesMoonlightAudioFECPayloads() {
     )
 }
 
-@Test("RTP payload normalizer unwraps RED wrapper payload to primary payload")
-func rtpPayloadNormalizerUnwrapsREDWrapperPayload() {
+@Test("RTP payload normalizer keeps PT127 RED wrapper payload opaque")
+func rtpPayloadNormalizerKeepsREDWrapperPayloadOpaque() {
     let normalized = ShadowClientRealtimeAudioRTPPayloadNormalizer.normalize(
         payloadType: 127,
         payload: Data([
@@ -155,12 +200,23 @@ func rtpPayloadNormalizerUnwrapsREDWrapperPayload() {
         wrapperPayloadType: 127
     )
 
-    #expect(normalized.payloadType == 97)
-    #expect(normalized.payload == Data([0xCC, 0xDD, 0xEE]))
-    #expect(normalized.normalizationKey == "rtp-audio-red:127->97")
+    #expect(normalized.payloadType == 127)
+    #expect(normalized.payload == Data([
+        0x81,
+        0x00,
+        0x02,
+        0x02,
+        0x61,
+        0xAA,
+        0xBB,
+        0xCC,
+        0xDD,
+        0xEE,
+    ]))
+    #expect(normalized.normalizationKey == nil)
     #expect(!normalized.isMoonlightAudioFECPayload)
     #expect(
-        ShadowClientRealtimeAudioSessionRuntime.shouldProcessPayloadMismatch(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldProcessPayloadMismatch(
             for: normalized
         )
     )
@@ -186,8 +242,8 @@ func rtpPayloadNormalizerDoesNotTreatAmbiguousPT127AsDirectOpus() {
     )
 }
 
-@Test("RTP payload normalizer unwraps RED primary payload for PT127 wrapper")
-func rtpPayloadNormalizerUnwrapsREDPrimaryPayload() {
+@Test("RTP payload normalizer keeps RED primary payload wrapper for PT127")
+func rtpPayloadNormalizerKeepsREDPrimaryPayloadWrapper() {
     let normalized = ShadowClientRealtimeAudioRTPPayloadNormalizer.normalize(
         payloadType: 127,
         payload: Data([97, 0xF8, 0xAA, 0xBB]),
@@ -195,10 +251,15 @@ func rtpPayloadNormalizerUnwrapsREDPrimaryPayload() {
         wrapperPayloadType: 127
     )
 
-    #expect(normalized.payloadType == 97)
-    #expect(normalized.payload == Data([0xF8, 0xAA, 0xBB]))
-    #expect(normalized.normalizationKey == "rtp-audio-red:127->97")
+    #expect(normalized.payloadType == 127)
+    #expect(normalized.payload == Data([97, 0xF8, 0xAA, 0xBB]))
+    #expect(normalized.normalizationKey == nil)
     #expect(!normalized.isMoonlightAudioFECPayload)
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldProcessPayloadMismatch(
+            for: normalized
+        )
+    )
 }
 
 @Test("Moonlight audio FEC payload classifier validates header fields")
@@ -398,10 +459,10 @@ func audioMissingPacketRecoveryGateSkipsWhenDecodeBacklogExists() {
     )
 }
 
-@Test("Audio missing-packet recovery gate allows recovery as long as there is output capacity")
-func audioMissingPacketRecoveryGateAllowsRecoveryWhenOutputCapacityExists() {
+@Test("Audio missing-packet recovery gate requires headroom above low-watermark")
+func audioMissingPacketRecoveryGateRequiresHeadroomAboveLowWatermark() {
     #expect(
-        ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
             missingPacketCount: 1,
             isFECIncompatible: false,
             remainingOutputSlots: 2,
@@ -411,6 +472,15 @@ func audioMissingPacketRecoveryGateAllowsRecoveryWhenOutputCapacityExists() {
     )
     #expect(
         ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
+            missingPacketCount: 1,
+            isFECIncompatible: false,
+            remainingOutputSlots: 3,
+            decodeSheddingLowWatermarkSlots: 2,
+            deferredPacketCount: 0
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
             missingPacketCount: 1,
             isFECIncompatible: false,
             remainingOutputSlots: 1,
@@ -425,6 +495,20 @@ func audioMissingPacketRecoveryGateAllowsRecoveryWhenOutputCapacityExists() {
             remainingOutputSlots: 0,
             decodeSheddingLowWatermarkSlots: 2,
             deferredPacketCount: 0
+        )
+    )
+}
+
+@Test("Audio missing-packet recovery gate can consume all slots when reserve is disabled")
+func audioMissingPacketRecoveryGateAllowsSingleSlotWhenReserveIsDisabled() {
+    #expect(
+        ShadowClientRealtimeAudioSessionRuntime.shouldAttemptMissingPacketRecoveryOrConcealment(
+            missingPacketCount: 1,
+            isFECIncompatible: false,
+            remainingOutputSlots: 1,
+            decodeSheddingLowWatermarkSlots: 1,
+            deferredPacketCount: 0,
+            minimumReservedOutputSlots: 0
         )
     )
 }
@@ -548,10 +632,36 @@ func audioQueueProfileKeepsLowLatencyWindowForStereo() {
             channels: 2
         )
 
-    #expect(maximumQueuedBuffers <= 8)
-    #expect(maximumQueuedBuffers >= 3)
-    #expect(pressureTrimToRecentPackets <= 8)
-    #expect(pressureTrimToRecentPackets >= 3)
+    #expect(maximumQueuedBuffers <= 12)
+    #expect(maximumQueuedBuffers >= 4)
+    #expect(pressureTrimToRecentPackets <= 12)
+    #expect(pressureTrimToRecentPackets >= 4)
+}
+
+@Test("Audio realtime pending cap scales to queue window for 5ms Opus")
+func audioRealtimePendingCapScalesToQueueWindowForFiveMsOpus() {
+    let capMs = ShadowClientRealtimeAudioSessionRuntime.recommendedAudioRealtimePendingDurationCapMs(
+        sampleRate: 48_000,
+        channels: 2,
+        packetDurationMs: 5
+    )
+
+    #expect(capMs == 50)
+}
+
+@Test("Audio realtime pending cap honors soft and hard bounds")
+func audioRealtimePendingCapHonorsSoftAndHardBounds() {
+    let softBoundCap = ShadowClientRealtimeAudioSessionRuntime.audioRealtimePendingDurationCapMs(
+        packetDurationMs: 5,
+        maximumQueuedBuffers: 1
+    )
+    let hardBoundCap = ShadowClientRealtimeAudioSessionRuntime.audioRealtimePendingDurationCapMs(
+        packetDurationMs: 5,
+        maximumQueuedBuffers: 20
+    )
+
+    #expect(softBoundCap == 30)
+    #expect(hardBoundCap == 60)
 }
 
 @Test("Audio queue profile scales channel slack without unbounded queue growth")
@@ -568,7 +678,27 @@ func audioQueueProfileScalesChannelSlackWithoutUnboundedGrowth() {
         )
 
     #expect(surroundQueuedBuffers >= stereoQueuedBuffers)
-    #expect(surroundQueuedBuffers <= 8)
+    #expect(surroundQueuedBuffers <= 12)
+}
+
+@Test("Audio queue profile expands queued buffer budget for shorter packet durations")
+func audioQueueProfileExpandsQueuedBufferBudgetForShortPacketDurations() {
+    let fiveMsQueuedBuffers = ShadowClientRealtimeAudioSessionRuntime
+        .recommendedMaximumQueuedAudioBuffers(
+            sampleRate: 48_000,
+            channels: 2,
+            packetDurationMs: 5
+        )
+    let tenMsQueuedBuffers = ShadowClientRealtimeAudioSessionRuntime
+        .recommendedMaximumQueuedAudioBuffers(
+            sampleRate: 48_000,
+            channels: 2,
+            packetDurationMs: 10
+        )
+
+    #expect(fiveMsQueuedBuffers > tenMsQueuedBuffers)
+    #expect(fiveMsQueuedBuffers >= 6)
+    #expect(tenMsQueuedBuffers >= 3)
 }
 
 @Test("Audio recovered-packet burst budget follows available output slots")
@@ -589,7 +719,7 @@ func audioRecoveredPacketBurstBudgetFollowsAvailableOutputSlots() {
     #expect(zeroSlotBudget == 0)
     #expect(oneSlotBudget == 1)
     #expect(twoSlotBudget == 2)
-    #expect(tenSlotBudget == 10)
+    #expect(tenSlotBudget == 2)
 }
 
 @Test("Audio concealment burst budget follows available output slots")
@@ -610,7 +740,26 @@ func audioConcealmentBurstBudgetFollowsAvailableOutputSlots() {
     #expect(zeroSlotBudget == 0)
     #expect(oneSlotBudget == 1)
     #expect(fourSlotBudget == 4)
-    #expect(tenSlotBudget == 10)
+    #expect(tenSlotBudget == 4)
+}
+
+@Test("Audio PLC frame samples follow Moonlight packet-duration rule")
+func audioPLCSampleCountFollowsMoonlightPacketDurationRule() {
+    let fiveMs = ShadowClientRealtimeAudioSessionRuntime.moonlightPLCSamplesPerChannel(
+        sampleRate: 48_000,
+        packetDurationMs: 5,
+        minimumPacketSamples: 240,
+        maximumPacketSamples: 5_760
+    )
+    let tenMs = ShadowClientRealtimeAudioSessionRuntime.moonlightPLCSamplesPerChannel(
+        sampleRate: 48_000,
+        packetDurationMs: 10,
+        minimumPacketSamples: 240,
+        maximumPacketSamples: 5_760
+    )
+
+    #expect(fiveMs == 240)
+    #expect(tenMs == 480)
 }
 
 @Test("Audio startup resync drop window follows Moonlight packet-duration rule")
@@ -625,6 +774,35 @@ func audioStartupResyncDropWindowFollowsMoonlightPacketDurationRule() {
             packetDurationMs: 10
         ) == 50
     )
+}
+
+@Test("Custom audio decoder default decodeFEC path delegates to decode(payload:)")
+func customAudioDecoderDefaultDecodeFECDelegatesToDecodePayload() throws {
+    let decoder = RecordingDefaultCustomAudioDecoder()
+    let payload = Data([0x11, 0x22, 0x33])
+
+    _ = try decoder.decode(payload: payload, decodeFEC: false)
+    _ = try decoder.decode(payload: payload, decodeFEC: true)
+
+    #expect(decoder.decodeCallCount == 2)
+    #expect(decoder.decodedPayloads == [payload, payload])
+}
+
+@Test("Custom audio decoder default packet-loss concealment API returns nil for silence fallback path")
+func customAudioDecoderDefaultPacketLossConcealmentReturnsNil() throws {
+    let decoder = RecordingDefaultCustomAudioDecoder()
+    let plc = try decoder.decodePacketLossConcealment(samplesPerChannel: 960)
+
+    #expect(plc == nil)
+}
+
+@Test("Custom audio decoder PLC override receives exact samples-per-channel request")
+func customAudioDecoderPacketLossConcealmentOverrideReceivesRequestedSampleCount() throws {
+    let decoder = RecordingPLCCustomAudioDecoder()
+    let plc = try decoder.decodePacketLossConcealment(samplesPerChannel: 960)
+
+    #expect(decoder.requestedPLCSamples == [960])
+    #expect(plc?.frameLength == 960)
 }
 
 @Test("Custom audio decoder registry prioritizes preferred providers")
