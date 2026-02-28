@@ -391,7 +391,9 @@ enum ShadowClientSunshineInputPacketCodec {
         macKeyCode: UInt16,
         characters: String?
     ) -> UInt16? {
-        if let mapped = macKeyCodeToWindowsVirtualKey[macKeyCode] {
+        if macKeyCode != ShadowClientRemoteInputEvent.softwareKeyboardSyntheticKeyCode,
+           let mapped = macKeyCodeToWindowsVirtualKey[macKeyCode]
+        {
             return mapped
         }
 

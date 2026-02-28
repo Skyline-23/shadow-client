@@ -363,6 +363,11 @@ public enum ShadowClientRemoteInputEvent: Equatable, Sendable {
     case gamepadArrival(ShadowClientRemoteGamepadArrival)
 }
 
+public extension ShadowClientRemoteInputEvent {
+    /// Sentinel key code used by software keyboards when no hardware scan code exists.
+    static let softwareKeyboardSyntheticKeyCode: UInt16 = .max
+}
+
 public protocol ShadowClientRemoteSessionInputClient: Sendable {
     func send(event: ShadowClientRemoteInputEvent, host: String, sessionURL: String) async throws
 }

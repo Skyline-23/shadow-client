@@ -38,6 +38,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
     private let keyboardField = ShadowClientIOSKeyboardCaptureTextField(frame: .zero)
     private var isPrimaryButtonHeld = false
     private var lastPrimaryDragLocation: CGPoint?
+    private var keyboardCaptureRequested = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -88,6 +89,18 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
     override func layoutSubviews() {
         super.layoutSubviews()
         keyboardField.frame = CGRect(x: 8, y: 8, width: 1, height: 1)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else {
+            keyboardField.resignFirstResponder()
+            return
+        }
+        guard keyboardCaptureRequested else {
+            return
+        }
+        requestKeyboardFirstResponder()
     }
 
     private func setupGestures() {
@@ -206,11 +219,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         guard recognizer.state == .ended else {
             return
         }
-        if keyboardField.isFirstResponder {
-            keyboardField.resignFirstResponder()
-        } else {
-            keyboardField.becomeFirstResponder()
-        }
+        toggleKeyboardCapture()
     }
 
     @objc
@@ -244,8 +253,51 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
     }
 
     private func emitKeyboardCharacter(_ character: String) {
-        emit(.keyDown(keyCode: 0, characters: character))
-        emit(.keyUp(keyCode: 0, characters: character))
+        emit(
+            .keyDown(
+                keyCode: ShadowClientRemoteInputEvent.softwareKeyboardSyntheticKeyCode,
+                characters: character
+            )
+        )
+        emit(
+            .keyUp(
+                keyCode: ShadowClientRemoteInputEvent.softwareKeyboardSyntheticKeyCode,
+                characters: character
+            )
+        )
+    }
+
+    private func toggleKeyboardCapture() {
+        keyboardCaptureRequested.toggle()
+        if keyboardCaptureRequested {
+            requestKeyboardFirstResponder()
+        } else {
+            keyboardField.resignFirstResponder()
+        }
+    }
+
+    private func requestKeyboardFirstResponder() {
+        guard window != nil else {
+            return
+        }
+        guard keyboardField.isFirstResponder == false else {
+            return
+        }
+        if keyboardField.becomeFirstResponder() {
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                return
+            }
+            guard self.keyboardCaptureRequested, self.window != nil else {
+                return
+            }
+            guard self.keyboardField.isFirstResponder == false else {
+                return
+            }
+            _ = self.keyboardField.becomeFirstResponder()
+        }
     }
 
     private func emit(_ event: ShadowClientRemoteInputEvent) {
