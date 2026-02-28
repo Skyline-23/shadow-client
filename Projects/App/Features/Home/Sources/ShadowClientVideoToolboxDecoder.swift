@@ -137,6 +137,29 @@ private final class ShadowClientRealtimeDecoderOutputCallbackContext: @unchecked
     }
 }
 
+enum ShadowClientRetainedRef {
+    static func retain<T: AnyObject>(_ object: T) -> UnsafeMutableRawPointer {
+        UnsafeMutableRawPointer(Unmanaged.passRetained(object).toOpaque())
+    }
+
+    static func unretainedValue<T: AnyObject>(
+        from opaque: UnsafeMutableRawPointer,
+        as type: T.Type = T.self
+    ) -> T {
+        Unmanaged<T>.fromOpaque(opaque).takeUnretainedValue()
+    }
+
+    static func release<T: AnyObject>(
+        _ opaque: UnsafeMutableRawPointer?,
+        as type: T.Type = T.self
+    ) {
+        guard let opaque else {
+            return
+        }
+        _ = Unmanaged<T>.fromOpaque(opaque).takeRetainedValue()
+    }
+}
+
 private struct ShadowClientDecoderSendablePixelBuffer: @unchecked Sendable {
     let value: CVPixelBuffer
 }
@@ -203,7 +226,7 @@ public actor ShadowClientVideoToolboxDecoder {
     private var formatDescription: CMFormatDescription?
     private var session: VTDecompressionSession?
     private var outputBridge: ShadowClientRealtimeDecoderOutputBridge?
-    private var outputCallbackContext: ShadowClientRealtimeDecoderOutputCallbackContext?
+    private var outputCallbackContextRef: UnsafeMutableRawPointer?
     private var frameIndex: Int64 = 0
     private var preferredOutputDimensions: CMVideoDimensions?
     private var decodePresentationTimeScale: CMTimeScale
@@ -461,26 +484,26 @@ public actor ShadowClientVideoToolboxDecoder {
                 decodeFailureSignal.record(status: status)
             }
         )
+        let callbackContextRef = ShadowClientRetainedRef.retain(callbackContext)
         bridge.setTargetFramesPerSecond(Int(decodePresentationTimeScale))
         outputBridge = bridge
-        outputCallbackContext = callbackContext
+        outputCallbackContextRef = callbackContextRef
         var callbackRecord = VTDecompressionOutputCallbackRecord(
             decompressionOutputCallback: { refCon, _, status, _, imageBuffer, _, _ in
                 guard let refCon else {
                     return
                 }
 
-                let callbackContext = Unmanaged<ShadowClientRealtimeDecoderOutputCallbackContext>
-                    .fromOpaque(refCon)
-                    .takeUnretainedValue()
+                let callbackContext: ShadowClientRealtimeDecoderOutputCallbackContext =
+                    ShadowClientRetainedRef.unretainedValue(
+                        from: refCon
+                    )
                 callbackContext.handleCallback(
                     status: status,
                     imageBuffer: imageBuffer
                 )
             },
-            decompressionOutputRefCon: UnsafeMutableRawPointer(
-                Unmanaged.passUnretained(callbackContext).toOpaque()
-            )
+            decompressionOutputRefCon: callbackContextRef
         )
 
         let fallbackPixelBufferAttributes = Self.defaultPixelBufferAttributes
@@ -549,6 +572,11 @@ public actor ShadowClientVideoToolboxDecoder {
         }
 
         guard creationResult.0 == noErr, let newSession = creationResult.1 else {
+            ShadowClientRetainedRef.release(
+                outputCallbackContextRef,
+                as: ShadowClientRealtimeDecoderOutputCallbackContext.self
+            )
+            outputCallbackContextRef = nil
             throw ShadowClientVideoToolboxDecoderError.cannotCreateDecoder(creationResult.0)
         }
 
@@ -560,13 +588,18 @@ public actor ShadowClientVideoToolboxDecoder {
 
     private func invalidateDecoderSessionForReconfiguration() {
         if let session {
+            VTDecompressionSessionWaitForAsynchronousFrames(session)
             VTDecompressionSessionInvalidate(session)
         }
         outputBridge?.stop()
         session = nil
         formatDescription = nil
         outputBridge = nil
-        outputCallbackContext = nil
+        ShadowClientRetainedRef.release(
+            outputCallbackContextRef,
+            as: ShadowClientRealtimeDecoderOutputCallbackContext.self
+        )
+        outputCallbackContextRef = nil
         configuredParameterSets = []
         frameIndex = 0
         decodeSlotCounter.reset()
