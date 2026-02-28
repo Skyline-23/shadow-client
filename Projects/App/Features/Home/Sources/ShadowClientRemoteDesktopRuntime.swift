@@ -1252,7 +1252,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         launchState = .launching
         activeSession = nil
         lastKnownSessionURL = nil
-        launchTask?.cancel()
+        let previousLaunchTask = launchTask
+        previousLaunchTask?.cancel()
         launchGeneration &+= 1
         let currentLaunchGeneration = launchGeneration
         let controlClient = controlClient
@@ -1265,6 +1266,25 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             settings: launchSettingsToUse
         )
         launchTask = Task {
+            if let previousLaunchTask {
+                await previousLaunchTask.value
+            }
+
+            if Task.isCancelled {
+                await sessionConnectionClient.disconnect()
+                await MainActor.run {
+                    guard self.launchGeneration == currentLaunchGeneration,
+                          launchState == .launching
+                    else {
+                        return
+                    }
+                    launchState = .idle
+                    activeSession = nil
+                    lastKnownSessionURL = nil
+                }
+                return
+            }
+
             do {
                 await sessionConnectionClient.disconnect()
 
@@ -1343,6 +1363,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
 
                 if Task.isCancelled {
+                    await sessionConnectionClient.disconnect()
                     await MainActor.run {
                         guard self.launchGeneration == currentLaunchGeneration,
                               launchState == .launching
@@ -1379,6 +1400,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
             } catch {
                 if Task.isCancelled {
+                    await sessionConnectionClient.disconnect()
                     await MainActor.run {
                         guard self.launchGeneration == currentLaunchGeneration,
                               launchState == .launching
@@ -1417,7 +1439,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     @MainActor
     private func performClearActiveSession() {
-        launchTask?.cancel()
+        let previousLaunchTask = launchTask
+        previousLaunchTask?.cancel()
         launchTask = nil
         launchGeneration &+= 1
 
@@ -1430,6 +1453,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let sessionConnectionClient = sessionConnectionClient
         let inputSendQueue = inputSendQueue
         Task {
+            if let previousLaunchTask {
+                await previousLaunchTask.value
+            }
             await inputSendQueue.clear()
             await sessionConnectionClient.disconnect()
         }

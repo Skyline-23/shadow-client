@@ -1353,6 +1353,66 @@ func remoteDesktopRuntimeKeepsLatestLaunchStateWhenPriorLaunchIsCancelled() asyn
     }
 }
 
+@Test("Remote desktop runtime serializes relaunch after cancelling prior launch")
+@MainActor
+func remoteDesktopRuntimeSerializesRelaunchAfterCancellingPriorLaunch() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.36": .init(
+                host: "192.168.0.36",
+                displayName: "Arcade-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-12"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.36": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+                .init(id: 2, title: "Steam", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResults: [
+            .init(sessionURL: "rtsp://192.168.0.36:48010/session-a", verb: "launch"),
+            .init(sessionURL: "rtsp://192.168.0.36:48010/session-b", verb: "launch"),
+        ]
+    )
+    let sessionConnector = SerializingLaunchSessionConnectionClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.36"], preferredHost: "192.168.0.36")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForSessionConnectCalls(sessionConnector, expectedCount: 1)
+
+    runtime.launchSelectedApp(
+        appID: 2,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime, maxAttempts: 200)
+
+    let disconnectCountsAtConnectStart = await sessionConnector.disconnectCountAtConnectStart()
+    #expect(disconnectCountsAtConnectStart.count == 2)
+    #expect(disconnectCountsAtConnectStart[0] == 1)
+    #expect(disconnectCountsAtConnectStart[1] >= 3)
+    #expect(await sessionConnector.disconnectCalls() >= 3)
+    #expect(runtime.activeSession?.appID == 2)
+}
+
 @Test("Remote desktop runtime forwards captured input events to active session input client")
 @MainActor
 func remoteDesktopRuntimeForwardsCapturedInputEventsToActiveSessionInputClient() async {
@@ -1734,6 +1794,45 @@ private actor BlockingFirstSessionConnectionClient: ShadowClientRemoteSessionCon
     }
 }
 
+private actor SerializingLaunchSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
+    let presentationMode: ShadowClientRemoteSessionPresentationMode = .embeddedPlayer
+    nonisolated let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init()
+
+    private var connectCallCount = 0
+    private var disconnectCallCount = 0
+    private var disconnectCountSnapshotsAtConnectStart: [Int] = []
+
+    func connect(
+        to sessionURL: String,
+        host: String,
+        appTitle: String,
+        videoConfiguration: ShadowClientRemoteSessionVideoConfiguration
+    ) async throws {
+        connectCallCount += 1
+        disconnectCountSnapshotsAtConnectStart.append(disconnectCallCount)
+
+        if connectCallCount == 1 {
+            try await Task.sleep(for: .seconds(30))
+        }
+    }
+
+    func disconnect() async {
+        disconnectCallCount += 1
+    }
+
+    func connectCalls() -> Int {
+        connectCallCount
+    }
+
+    func disconnectCalls() -> Int {
+        disconnectCallCount
+    }
+
+    func disconnectCountAtConnectStart() -> [Int] {
+        disconnectCountSnapshotsAtConnectStart
+    }
+}
+
 private actor FakeSessionInputClient: ShadowClientRemoteSessionInputClient {
     struct InputCall: Equatable {
         let event: ShadowClientRemoteInputEvent
@@ -1812,6 +1911,20 @@ private func waitForSessionConnectCalls(
 ) async {
     for _ in 0..<maxAttempts {
         if await connector.connectCalls().count >= expectedCount {
+            return
+        }
+
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+private func waitForSessionConnectCalls(
+    _ connector: SerializingLaunchSessionConnectionClient,
+    expectedCount: Int,
+    maxAttempts: Int = 50
+) async {
+    for _ in 0..<maxAttempts {
+        if await connector.connectCalls() >= expectedCount {
             return
         }
 
