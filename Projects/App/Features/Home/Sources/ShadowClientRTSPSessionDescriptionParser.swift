@@ -210,13 +210,11 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             }
         }
 
-        guard let payloadType = selectPayloadType(
+        let payloadType = selectPayloadType(
             advertisedPayloadTypes: advertisedPayloadTypes,
             codecByPayloadType: codecByPayloadType,
             fmtpByPayloadType: fmtpByPayloadType
-        ) else {
-            throw ShadowClientRTSPSessionDescriptionError.missingPayloadType
-        }
+        ) ?? ShadowClientRTSPProtocolProfile.fallbackVideoPayloadType
         guard let codec = inferCodec(
             for: payloadType,
             codecByPayloadType: codecByPayloadType,
@@ -381,7 +379,7 @@ public enum ShadowClientRTSPSessionDescriptionParser {
         let codec: ShadowClientAudioCodec
         if let mappedCodec = codecByPayloadType[selectedPayloadType] {
             codec = mappedCodec
-        } else if selectedPayloadType == 97 ||
+        } else if selectedPayloadType == ShadowClientMoonlightProtocolPolicy.Audio.primaryPayloadType ||
             fmtpByPayloadType[selectedPayloadType]?["surround-params"] != nil
         {
             // Sunshine commonly advertises audio PT=97 with surround-params while omitting rtpmap.
@@ -713,7 +711,7 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             return true
         }
         // Sunshine frequently omits full audio media descriptors but still uses PT97 Opus.
-        return mapping.payloadType == 97
+        return mapping.payloadType == ShadowClientMoonlightProtocolPolicy.Audio.primaryPayloadType
     }
 
     private static func shouldAcceptGlobalAudioFMTP(
@@ -723,7 +721,7 @@ public enum ShadowClientRTSPSessionDescriptionParser {
         if knownAudioPayloadTypes.contains(parsed.payloadType) {
             return true
         }
-        if parsed.payloadType == 97 {
+        if parsed.payloadType == ShadowClientMoonlightProtocolPolicy.Audio.primaryPayloadType {
             return true
         }
         return parsed.parameters.keys.contains { key in

@@ -28,8 +28,10 @@ actor ShadowClientRealtimeAudioMoonlightRSFECQueue {
             lastUpdatedUptime = now
         }
 
-        private static let dataShardCount = 4
-        private static let parityShardCount = 2
+        private static let dataShardCount = ShadowClientMoonlightProtocolPolicy.Audio
+            .fecDataShardsPerBlock
+        private static let parityShardCount = ShadowClientMoonlightProtocolPolicy.Audio
+            .fecParityShardsPerBlock
     }
 
     private struct FECShardHeader: Sendable {
@@ -88,17 +90,18 @@ actor ShadowClientRealtimeAudioMoonlightRSFECQueue {
         }
     }
 
-    private static let dataShardCount = 4
-    private static let parityShardCount = 2
+    private static let dataShardCount = ShadowClientMoonlightProtocolPolicy.Audio
+        .fecDataShardsPerBlock
+    private static let parityShardCount = ShadowClientMoonlightProtocolPolicy.Audio
+        .fecParityShardsPerBlock
     private static let totalShardCount = dataShardCount + parityShardCount
-    private static let fecHeaderLength = 12
-    private static let defaultTimestampStep: UInt32 = 5
+    private static let fecHeaderLength = ShadowClientMoonlightProtocolPolicy.Audio.fecHeaderLength
+    private static let defaultTimestampStep: UInt32 = ShadowClientMoonlightProtocolPolicy.Audio
+        .defaultTimestampStep
     private static let maxTrackedBlocks = 96
     private static let maxRecoveredPayloads = 256
-    private static let parityCoefficients: [[UInt8]] = [
-        [0x77, 0x40, 0x38, 0x0E],
-        [0xC7, 0xA7, 0x0D, 0x6C],
-    ]
+    private static let parityCoefficients: [[UInt8]] = ShadowClientMoonlightProtocolPolicy.Audio
+        .parityCoefficients
 
     private var blocksByBaseSequence: [UInt16: FECBlock] = [:]
     private var recoveredPayloadsBySequence: [UInt16: Data] = [:]
@@ -617,12 +620,15 @@ actor ShadowClientRealtimeAudioMoonlightRSFECQueue {
         }
 
         let shardIndex = Int(payload[payload.startIndex])
-        guard shardIndex >= 0, shardIndex < parityShardCount else {
+        guard ShadowClientMoonlightProtocolPolicy.Audio.isFECPayloadShardIndex(shardIndex) else {
             return nil
         }
 
-        let primaryPayloadType = Int(payload[payload.startIndex + 1] & 0x7F)
-        guard (96 ... 127).contains(primaryPayloadType) else {
+        let primaryPayloadType = Int(
+            payload[payload.startIndex + 1] &
+                ShadowClientMoonlightProtocolPolicy.Audio.payloadTypeMask
+        )
+        guard ShadowClientMoonlightProtocolPolicy.Audio.isValidDynamicPayloadType(primaryPayloadType) else {
             return nil
         }
 
