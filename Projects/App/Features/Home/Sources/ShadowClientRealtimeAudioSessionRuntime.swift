@@ -251,11 +251,13 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 return
             }
 
-            let currentPayloadType = (96 ... 127).contains(preferredPayloadType) ?
+            var currentPayloadType = (96 ... 127).contains(preferredPayloadType) ?
                 preferredPayloadType :
                 ShadowClientRealtimeSessionDefaults.moonlightPrimaryAudioPayloadType
             var loggedPayloadNormalizationKeys = Set<String>()
             var loggedFECIncompatibility = false
+            var loggedUnexpectedPayloadTypes = Set<Int>()
+            var payloadTypeObservationCounts: [Int: Int] = [:]
             var consecutiveDroppedOutputBuffers = 0
             var consecutiveDecryptFailures = 0
             var consecutiveDecodeFailures = 0
@@ -300,7 +302,13 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var startupResyncPacketsRemaining = Self.initialAudioResyncDropPacketCount(
                 packetDurationMs: packetDurationMs
             )
+            var datagramCount = 0
+            var hasLoggedFirstDecodedBuffer = false
             let moonlightRSFECQueue = ShadowClientRealtimeAudioMoonlightRSFECQueue()
+            let payloadTypeObservationThreshold = max(
+                1,
+                ShadowClientRealtimeSessionDefaults.audioPayloadTypeAdaptationObservationThreshold
+            )
 
             let registerOutputQueuePressureDrop: (Int, String) -> Void = { droppedCount, reason in
                 guard droppedCount > 0 else {
@@ -346,12 +354,27 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     )
                 }
             }
+            let logFirstDecodedBufferIfNeeded: (AVAudioFrameCount, String) -> Void = { frameLength, source in
+                guard !hasLoggedFirstDecodedBuffer else {
+                    return
+                }
+                hasLoggedFirstDecodedBuffer = true
+                self.logger.notice(
+                    "First decoded audio buffer enqueued: source=\(source, privacy: .public), frames=\(frameLength, privacy: .public)"
+                )
+            }
             while !Task.isCancelled {
                 do {
                     guard let datagram = try await Self.receiveDatagram(over: connection),
                           !datagram.isEmpty
                     else {
                         continue
+                    }
+                    datagramCount += 1
+                    if datagramCount == 1 {
+                        logger.notice(
+                            "First UDP audio datagram received: bytes=\(datagram.count, privacy: .public)"
+                        )
                     }
 
                     guard let parsedPacket = Self.parseRTPPacket(datagram) else {
@@ -402,9 +425,30 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     }
 
                     if packet.payloadType != currentPayloadType {
-                        if packet.payloadType != ShadowClientMoonlightProtocolPolicy.Audio
-                            .fecWrapperPayloadType
-                        {
+                        if let adaptedPayloadType = Self.payloadTypePreference(
+                            observed: packet.payloadType,
+                            current: currentPayloadType,
+                            hasLockedPayloadType: false
+                        ) {
+                            let observations = (payloadTypeObservationCounts[adaptedPayloadType] ?? 0) + 1
+                            payloadTypeObservationCounts[adaptedPayloadType] = observations
+                            if observations == 1 || observations == payloadTypeObservationThreshold {
+                                logger.notice(
+                                    "Audio RTP payload mismatch observed candidate \(adaptedPayloadType, privacy: .public) (expected=\(currentPayloadType, privacy: .public), observations=\(observations, privacy: .public)/\(payloadTypeObservationThreshold, privacy: .public))"
+                                )
+                            }
+                            guard observations >= payloadTypeObservationThreshold else {
+                                continue
+                            }
+                            currentPayloadType = adaptedPayloadType
+                            payloadTypeObservationCounts.removeAll(keepingCapacity: true)
+                            loggedUnexpectedPayloadTypes.removeAll(keepingCapacity: true)
+                            observedMoonlightFECShardsSinceLastDecodedPacket = 0
+                            jitterBuffer.reset(preferredPayloadType: currentPayloadType)
+                            logger.notice(
+                                "Audio RTP payload mismatch; adopting stream payload type \(currentPayloadType, privacy: .public)"
+                            )
+                        } else if loggedUnexpectedPayloadTypes.insert(packet.payloadType).inserted {
                             logger.notice(
                                 "Audio RTP payload mismatch ignored (expected=\(currentPayloadType, privacy: .public), observed=\(packet.payloadType, privacy: .public))"
                             )
@@ -710,6 +754,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                                             0,
                                                             remainingOutputSlots - 1
                                                         )
+                                                        logFirstDecodedBufferIfNeeded(
+                                                            recoveredPCMBuffer.frameLength,
+                                                            "rs-fec-sanitized"
+                                                        )
                                                         recoveredMissingPacketCount += 1
                                                         continue
                                                     }
@@ -728,6 +776,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                                 remainingOutputSlots = max(
                                                     0,
                                                     remainingOutputSlots - 1
+                                                )
+                                                logFirstDecodedBufferIfNeeded(
+                                                    recoveredPCMBuffer.frameLength,
+                                                    "rs-fec"
                                                 )
                                                 recoveredMissingPacketCount += 1
                                             }
@@ -831,6 +883,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                         }
                                         if audioOutput.enqueue(pcmBuffer: concealmentBuffer) {
                                             remainingOutputSlots = max(0, remainingOutputSlots - 1)
+                                            logFirstDecodedBufferIfNeeded(
+                                                concealmentBuffer.frameLength,
+                                                "plc"
+                                            )
                                             insertedConcealmentCount += 1
                                         } else {
                                             registerOutputQueuePressureDrop(1, "drop-loss-concealment-buffer")
@@ -898,6 +954,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                     break packetDecodeLoop
                                 }
                                 remainingOutputSlots = max(0, remainingOutputSlots - 1)
+                                logFirstDecodedBufferIfNeeded(
+                                    pcmBuffer.frameLength,
+                                    "primary"
+                                )
                                 if consecutiveDroppedOutputBuffers >= 150 {
                                     logger.error(
                                         "Audio decoder produced repeated suspicious PCM buffers; continuing with sanitized output to keep session alive."

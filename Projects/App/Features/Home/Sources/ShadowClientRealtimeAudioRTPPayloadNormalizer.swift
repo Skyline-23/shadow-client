@@ -41,18 +41,8 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
             )
         }
 
-        if let (primaryPayloadType, primaryPayload) = extractRTPREDPrimaryPayload(from: payload),
-           primaryPayloadType != wrapperPayloadType,
-           (96 ... 127).contains(primaryPayloadType)
-        {
-            return .init(
-                payloadType: primaryPayloadType,
-                payload: primaryPayload,
-                normalizationKey: "rtp-audio-red:\(wrapperPayloadType)->\(primaryPayloadType)",
-                normalizationMessage: "Unwrapped RTP RED wrapper \(wrapperPayloadType) to primary payload type \(primaryPayloadType)",
-                isMoonlightAudioFECPayload: false
-            )
-        }
+        // Moonlight/Sunshine treat PT127 as dedicated audio FEC wrapper.
+        // Keep non-FEC PT127 opaque rather than attempting RED unwrap.
 
         return .init(
             payloadType: payloadType,
@@ -69,17 +59,20 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
     ) -> Bool {
         // AUDIO_FEC_HEADER layout used by Moonlight/Sunshine:
         // shardIndex(1), payloadType(1), baseSequence(2), baseTimestamp(4), ssrc(4)
-        guard payload.count >= 12 else {
+        guard payload.count >= ShadowClientMoonlightProtocolPolicy.Audio.fecHeaderLength else {
             return false
         }
         let shardIndex = Int(payload[payload.startIndex])
-        let payloadType = Int(payload[payload.startIndex + 1] & 0x7F)
+        let payloadType = Int(
+            payload[payload.startIndex + 1] &
+                ShadowClientMoonlightProtocolPolicy.Audio.payloadTypeMask
+        )
         // Moonlight/Sunshine audio FEC currently uses two shards (0, 1).
         // Reject wider ranges to avoid misclassifying regular PT127 RED payloads.
-        guard shardIndex >= 0, shardIndex < 2 else {
+        guard ShadowClientMoonlightProtocolPolicy.Audio.isFECPayloadShardIndex(shardIndex) else {
             return false
         }
-        guard (96 ... 127).contains(payloadType) else {
+        guard ShadowClientMoonlightProtocolPolicy.Audio.isValidDynamicPayloadType(payloadType) else {
             return false
         }
         return payloadType == expectedPrimaryPayloadType
@@ -104,7 +97,9 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
             index += 1
 
             let hasFollowingREDHeaders = (headerByte & 0x80) != 0
-            let payloadType = Int(headerByte & 0x7F)
+            let payloadType = Int(
+                headerByte & ShadowClientMoonlightProtocolPolicy.Audio.payloadTypeMask
+            )
             if hasFollowingREDHeaders {
                 guard (payload.endIndex - index) >= 3 else {
                     return nil
