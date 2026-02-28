@@ -72,7 +72,24 @@ public extension ShadowClientRemoteDesktopDependencies {
             pinnedCertificateStore: pinnedCertificateStore,
             defaultHTTPPort: defaultHTTPPort,
             defaultHTTPSPort: defaultHTTPSPort,
-            sessionConnectTimeout: ShadowClientGameStreamNetworkDefaults.defaultSessionConnectTimeout
+            audioSessionActivation: nil
+        )
+    }
+
+    static func live(
+        identityStore: ShadowClientPairingIdentityStore = .shared,
+        pinnedCertificateStore: ShadowClientPinnedHostCertificateStore = .shared,
+        defaultHTTPPort: Int = ShadowClientGameStreamNetworkDefaults.defaultHTTPPort,
+        defaultHTTPSPort: Int = ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort,
+        audioSessionActivation: (@Sendable () async -> Void)? = nil
+    ) -> Self {
+        live(
+            identityStore: identityStore,
+            pinnedCertificateStore: pinnedCertificateStore,
+            defaultHTTPPort: defaultHTTPPort,
+            defaultHTTPSPort: defaultHTTPSPort,
+            sessionConnectTimeout: ShadowClientGameStreamNetworkDefaults.defaultSessionConnectTimeout,
+            audioSessionActivation: audioSessionActivation
         )
     }
 
@@ -83,7 +100,27 @@ public extension ShadowClientRemoteDesktopDependencies {
         defaultHTTPSPort: Int,
         sessionConnectTimeout: Duration
     ) -> Self {
-        let sessionRuntime = ShadowClientRealtimeRTSPSessionRuntime()
+        live(
+            identityStore: identityStore,
+            pinnedCertificateStore: pinnedCertificateStore,
+            defaultHTTPPort: defaultHTTPPort,
+            defaultHTTPSPort: defaultHTTPSPort,
+            sessionConnectTimeout: sessionConnectTimeout,
+            audioSessionActivation: nil
+        )
+    }
+
+    static func live(
+        identityStore: ShadowClientPairingIdentityStore,
+        pinnedCertificateStore: ShadowClientPinnedHostCertificateStore,
+        defaultHTTPPort: Int,
+        defaultHTTPSPort: Int,
+        sessionConnectTimeout: Duration,
+        audioSessionActivation: (@Sendable () async -> Void)? = nil
+    ) -> Self {
+        let sessionRuntime = ShadowClientRealtimeRTSPSessionRuntime(
+            audioSessionActivation: audioSessionActivation
+        )
         return .init(
             metadataClient: NativeGameStreamMetadataClient(
                 identityStore: identityStore,

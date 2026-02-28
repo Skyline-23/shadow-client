@@ -475,6 +475,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
     private let decoder: ShadowClientVideoToolboxDecoder
     private let connectTimeout: Duration
+    private let audioSessionActivation: (@Sendable () async -> Void)?
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RealtimeSession")
     private let videoCodecSupport = ShadowClientVideoCodecSupport()
     private var rtspClient: ShadowClientRTSPInterleavedClient?
@@ -551,11 +552,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     public init(
         surfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init(),
         decoder: ShadowClientVideoToolboxDecoder = .init(),
-        connectTimeout: Duration = ShadowClientRealtimeSessionDefaults.defaultConnectTimeout
+        connectTimeout: Duration = ShadowClientRealtimeSessionDefaults.defaultConnectTimeout,
+        audioSessionActivation: (@Sendable () async -> Void)? = nil
     ) {
         self.surfaceContext = surfaceContext
         self.decoder = decoder
         self.connectTimeout = connectTimeout
+        self.audioSessionActivation = audioSessionActivation
     }
 
     deinit {
@@ -674,7 +677,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 await MainActor.run {
                     sessionSurfaceContext.updateAudioOutputState(audioState)
                 }
-            }
+            },
+            audioSessionActivation: audioSessionActivation
         )
         let track = try await client.start(
             url: url,
@@ -3607,6 +3611,7 @@ private actor ShadowClientRTSPInterleavedClient {
     private let timeout: Duration
     private let onControlRoundTripSample: (@Sendable (Double) async -> Void)?
     private let onAudioOutputStateChanged: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)?
+    private let audioSessionActivation: (@Sendable () async -> Void)?
     private let defaultClientPortBase: UInt16 = ShadowClientRTSPProtocolProfile.clientPortBase
     private let queue = DispatchQueue(label: "com.skyline23.shadowclient.rtsp.connection")
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RTSP")
@@ -3649,11 +3654,13 @@ private actor ShadowClientRTSPInterleavedClient {
     init(
         timeout: Duration,
         onControlRoundTripSample: (@Sendable (Double) async -> Void)? = nil,
-        onAudioOutputStateChanged: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)? = nil
+        onAudioOutputStateChanged: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)? = nil,
+        audioSessionActivation: (@Sendable () async -> Void)? = nil
     ) {
         self.timeout = timeout
         self.onControlRoundTripSample = onControlRoundTripSample
         self.onAudioOutputStateChanged = onAudioOutputStateChanged
+        self.audioSessionActivation = audioSessionActivation
     }
 
     func start(
@@ -5140,6 +5147,9 @@ private actor ShadowClientRTSPInterleavedClient {
 
         if let audioServerPort {
             do {
+                if let audioSessionActivation {
+                    await audioSessionActivation()
+                }
                 try await audioRuntime.start(
                     remoteHost: host,
                     remotePort: audioServerPort,

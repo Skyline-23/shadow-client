@@ -4,49 +4,6 @@ import Foundation
 import Network
 import os
 
-#if os(iOS)
-private enum ShadowClientRealtimeIOSAudioSessionRuntimeBridge {
-    static func ensurePlaybackSessionActive(logger: Logger) {
-        let configure = {
-            let session = AVAudioSession.sharedInstance()
-
-            func activate(options: AVAudioSession.CategoryOptions) throws {
-                try session.setCategory(.playback, mode: .default, options: options)
-                try session.setActive(true, options: [])
-            }
-
-            do {
-                try activate(options: [])
-                return
-            } catch {
-                logger.error("Audio runtime AVAudioSession primary path failed: \(error.localizedDescription, privacy: .public)")
-            }
-
-            do {
-                try activate(options: [.allowAirPlay])
-                return
-            } catch {
-                logger.error("Audio runtime AVAudioSession AirPlay fallback failed: \(error.localizedDescription, privacy: .public)")
-            }
-
-            do {
-                try activate(options: [.allowBluetoothA2DP])
-            } catch {
-                logger.error("Audio runtime AVAudioSession Bluetooth fallback failed: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-
-        if Thread.isMainThread {
-            configure()
-        } else {
-            DispatchQueue.main.sync {
-                configure()
-            }
-        }
-    }
-}
-#endif
-
 public enum ShadowClientRealtimeAudioOutputState: Equatable, Sendable {
     case idle
     case starting
@@ -135,10 +92,6 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     ) async throws {
         stop()
         updateState(.starting)
-
-#if os(iOS)
-        ShadowClientRealtimeIOSAudioSessionRuntimeBridge.ensurePlaybackSessionActive(logger: logger)
-#endif
 
         let resolvedTrack = track ?? ShadowClientRTSPAudioTrackDescriptor(
             codec: .opus,
