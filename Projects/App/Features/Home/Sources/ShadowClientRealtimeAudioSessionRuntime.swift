@@ -389,6 +389,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 guard let queuedPacket = await packetQueue.next() else {
                     return
                 }
+                let packet = queuedPacket.packet
 
                 if Self.shouldRequeueReadyPacketsForPendingOutputPressure(
                     pendingOutputDurationMs: Double(
@@ -397,11 +398,12 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     realtimePendingDurationCapMs: realtimePendingDurationCapMs
                 ) {
                     registerOutputQueuePressureDrop(1, "drop-moonlight-pending-audio-duration")
+                    // Moonlight advances sequence continuity even when renderer pressure drops output.
+                    lastDecodedSequenceNumber = packet.sequenceNumber
                     continue
                 }
 
                 do {
-                    let packet = queuedPacket.packet
                     let rawMissingPacketCount = Self.missingRTPPacketCount(
                         previousSequenceNumber: lastDecodedSequenceNumber,
                         currentSequenceNumber: packet.sequenceNumber
@@ -523,6 +525,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                     "Failed to decrypt RTP audio payload (count=\(consecutiveDecryptFailures, privacy: .public)): \(error.localizedDescription, privacy: .public)"
                                 )
                             }
+                            // Keep RTP continuity aligned with consumed queue order.
+                            lastDecodedSequenceNumber = packet.sequenceNumber
                             continue
                         }
                     } else {
@@ -557,6 +561,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         )
                         return
                     }
+                    // Decode failures still consumed this RTP sequence.
+                    lastDecodedSequenceNumber = packet.sequenceNumber
                 }
             }
         }
