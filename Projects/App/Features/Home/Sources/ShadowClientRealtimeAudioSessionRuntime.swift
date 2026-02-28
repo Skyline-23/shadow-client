@@ -1334,8 +1334,14 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         observedMoonlightFECShardsSinceLastDecodedPacket: Int
     ) -> Int {
         let normalizedMissingCount = max(0, rawMissingPacketCount)
-        _ = observedMoonlightFECShardsSinceLastDecodedPacket
-        return normalizedMissingCount
+        let normalizedObservedFECShardCount = max(0, observedMoonlightFECShardsSinceLastDecodedPacket)
+        guard normalizedMissingCount > 0, normalizedObservedFECShardCount > 0 else {
+            return normalizedMissingCount
+        }
+        // Moonlight/Sunshine often interleave PT127 FEC shards in RTP sequence space.
+        // Exclude observed FEC-only gaps from primary audio loss accounting.
+        let estimatedFECGapCount = min(normalizedMissingCount, normalizedObservedFECShardCount)
+        return max(0, normalizedMissingCount - estimatedFECGapCount)
     }
 
     internal static func estimatedAudioSamplesPerPacket(
