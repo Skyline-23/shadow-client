@@ -3521,9 +3521,9 @@ private actor ShadowClientRTSPInterleavedClient {
     private var rtspHostHeaderValue: String?
     private var rtspClientVersionHeaderValue = ShadowClientRTSPRequestDefaults.clientVersionHeaderValue
     private var currentServerAppVersion: String?
-    private let videoFECUnrecoverableRecoveryRequestCooldownSeconds: TimeInterval = 1.0
-    private let videoFECUnrecoverableRecoveryBurstWindowSeconds: TimeInterval = 1.5
-    private let videoFECUnrecoverableRecoveryBurstThreshold = 2
+    private let videoFECUnrecoverableRecoveryRequestCooldownSeconds: TimeInterval = 1.5
+    private let videoFECUnrecoverableRecoveryBurstWindowSeconds: TimeInterval = 2.0
+    private let videoFECUnrecoverableRecoveryBurstThreshold = 3
     private var loggedInputSendKinds = Set<String>()
     private var loggedInputDropKinds = Set<String>()
 
