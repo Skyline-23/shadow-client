@@ -169,12 +169,12 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let videoRenderSubmitPacingToleranceRatio: Double = 0.80
     public static let videoRenderSubmitDropSummaryInterval = 600
     public static let audioOutputQueueDropWindowSeconds: TimeInterval = 1.0
-    public static let audioOutputQueuePressureSignalInterval = 24
+    public static let audioOutputQueuePressureSignalInterval = 30
     public static let audioOutputQueuePressureTrimInterval = 60
     public static let audioOutputQueuePressureTrimToRecentPackets = 8
     public static let audioOutputQueueDecodeSheddingLowWatermarkSlots = 3
     public static let audioJitterBufferTargetDepth = 6
-    public static let audioJitterBufferMaximumDepth = 32
+    public static let audioJitterBufferMaximumDepth = 30
     public static let audioJitterBufferOutOfOrderWaitSeconds: TimeInterval = 0.010
     public static let audioOutputQueueSaturationBurstThreshold = 8
     public static let audioOutputQueueDecodeCooldown: Duration = .milliseconds(24)

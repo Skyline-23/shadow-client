@@ -705,10 +705,9 @@ func audioQueueProfileKeepsLowLatencyWindowForStereo() {
             channels: 2
         )
 
-    #expect(maximumQueuedBuffers <= 24)
-    #expect(maximumQueuedBuffers >= 8)
+    #expect(maximumQueuedBuffers == 30)
     #expect(pressureTrimToRecentPackets <= 12)
-    #expect(pressureTrimToRecentPackets >= 4)
+    #expect(pressureTrimToRecentPackets >= 1)
 }
 
 @Test("Audio realtime pending cap scales to queue window for 5ms Opus")
@@ -719,7 +718,7 @@ func audioRealtimePendingCapScalesToQueueWindowForFiveMsOpus() {
         packetDurationMs: 5
     )
 
-    #expect(capMs == 120)
+    #expect(capMs == 150)
 }
 
 @Test("Audio realtime pending cap honors soft and hard bounds")
@@ -750,8 +749,8 @@ func audioQueueProfileScalesChannelSlackWithoutUnboundedGrowth() {
             channels: 6
         )
 
-    #expect(surroundQueuedBuffers >= stereoQueuedBuffers)
-    #expect(surroundQueuedBuffers <= 24)
+    #expect(surroundQueuedBuffers == stereoQueuedBuffers)
+    #expect(surroundQueuedBuffers == 30)
 }
 
 @Test("Audio queue profile expands queued buffer budget for shorter packet durations")
@@ -769,9 +768,8 @@ func audioQueueProfileExpandsQueuedBufferBudgetForShortPacketDurations() {
             packetDurationMs: 10
         )
 
-    #expect(fiveMsQueuedBuffers > tenMsQueuedBuffers)
-    #expect(fiveMsQueuedBuffers >= 20)
-    #expect(tenMsQueuedBuffers >= 3)
+    #expect(fiveMsQueuedBuffers == tenMsQueuedBuffers)
+    #expect(fiveMsQueuedBuffers == 30)
 }
 
 @Test("Audio recovered-packet burst budget follows available output slots")

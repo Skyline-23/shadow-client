@@ -21,6 +21,7 @@ enum ShadowClientMoonlightProtocolPolicy {
         // AQoS packet duration defaults and startup resync window.
         static let defaultPacketDurationMs = 5
         static let startupResyncWindowMs = 500
+        static let packetQueueBound = 30
         // Keep 30ms as the low-latency target (soft cap), but allow a bounded
         // hard cap so coalesced Opus frames do not immediately thrash decode/output.
         static let outputRealtimePendingDurationCapMs: Double = 30
