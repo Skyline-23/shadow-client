@@ -55,6 +55,31 @@ private actor ShadowClientControlRoundTripStreamHub {
     }
 }
 
+private actor ShadowClientControllerFeedbackStreamHub {
+    private var continuations: [UUID: AsyncStream<ShadowClientSunshineControllerFeedbackEvent>.Continuation] = [:]
+
+    func register(
+        id: UUID,
+        continuation: AsyncStream<ShadowClientSunshineControllerFeedbackEvent>.Continuation
+    ) {
+        continuations[id] = continuation
+    }
+
+    func unregister(id: UUID) {
+        continuations.removeValue(forKey: id)
+    }
+
+    func publish(_ event: ShadowClientSunshineControllerFeedbackEvent) {
+        continuations.values.forEach { $0.yield(event) }
+    }
+
+    func finishAll() {
+        let pendingContinuations = Array(continuations.values)
+        continuations.removeAll(keepingCapacity: false)
+        pendingContinuations.forEach { $0.finish() }
+    }
+}
+
 public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     public enum RenderState: Equatable, Sendable {
         case idle
@@ -81,6 +106,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     @Published public private(set) var preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
     private var lastControlRoundTripPublishUptime: TimeInterval = 0
     private let controlRoundTripStreamHub = ShadowClientControlRoundTripStreamHub()
+    private let controllerFeedbackStreamHub = ShadowClientControllerFeedbackStreamHub()
 
     public let frameStore: ShadowClientRealtimeSessionFrameStore
 
@@ -90,8 +116,10 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
 
     deinit {
         let streamHub = controlRoundTripStreamHub
+        let feedbackHub = controllerFeedbackStreamHub
         Task {
             await streamHub.finishAll()
+            await feedbackHub.finishAll()
         }
     }
 
@@ -163,6 +191,28 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         }
     }
 
+    func controllerFeedbackAsyncStream() -> AsyncStream<ShadowClientSunshineControllerFeedbackEvent> {
+        AsyncStream(bufferingPolicy: .bufferingNewest(8)) { continuation in
+            let identifier = UUID()
+            let feedbackHub = controllerFeedbackStreamHub
+            Task {
+                await feedbackHub.register(
+                    id: identifier,
+                    continuation: continuation
+                )
+            }
+            continuation.onTermination = { [weak self] _ in
+                guard let self else {
+                    return
+                }
+                let feedbackHub = self.controllerFeedbackStreamHub
+                Task {
+                    await feedbackHub.unregister(id: identifier)
+                }
+            }
+        }
+    }
+
     public func updateActiveVideoCodec(_ codec: ShadowClientVideoCodec?) {
         activeVideoCodec = codec
     }
@@ -216,6 +266,15 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         let streamHub = controlRoundTripStreamHub
         Task {
             await streamHub.publish(milliseconds)
+        }
+    }
+
+    func publishControllerFeedbackEvent(
+        _ event: ShadowClientSunshineControllerFeedbackEvent
+    ) {
+        let feedbackHub = controllerFeedbackStreamHub
+        Task {
+            await feedbackHub.publish(event)
         }
     }
 }

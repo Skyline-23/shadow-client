@@ -678,6 +678,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     sessionSurfaceContext.updateAudioOutputState(audioState)
                 }
             },
+            onControllerFeedback: { [sessionSurfaceContext] feedbackEvent in
+                sessionSurfaceContext.publishControllerFeedbackEvent(feedbackEvent)
+            },
             audioSessionActivation: audioSessionActivation
         )
         let track = try await client.start(
@@ -3611,6 +3614,7 @@ private actor ShadowClientRTSPInterleavedClient {
     private let timeout: Duration
     private let onControlRoundTripSample: (@Sendable (Double) async -> Void)?
     private let onAudioOutputStateChanged: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)?
+    private let onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)?
     private let audioSessionActivation: (@Sendable () async -> Void)?
     private let defaultClientPortBase: UInt16 = ShadowClientRTSPProtocolProfile.clientPortBase
     private let queue = DispatchQueue(label: "com.skyline23.shadowclient.rtsp.connection")
@@ -3655,11 +3659,13 @@ private actor ShadowClientRTSPInterleavedClient {
         timeout: Duration,
         onControlRoundTripSample: (@Sendable (Double) async -> Void)? = nil,
         onAudioOutputStateChanged: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)? = nil,
+        onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)? = nil,
         audioSessionActivation: (@Sendable () async -> Void)? = nil
     ) {
         self.timeout = timeout
         self.onControlRoundTripSample = onControlRoundTripSample
         self.onAudioOutputStateChanged = onAudioOutputStateChanged
+        self.onControllerFeedback = onControllerFeedback
         self.audioSessionActivation = audioSessionActivation
     }
 
@@ -4760,7 +4766,8 @@ private actor ShadowClientRTSPInterleavedClient {
 
         let controlHost = remoteHost ?? .init(host)
         let runtime = ShadowClientSunshineControlChannelRuntime(
-            onRoundTripSample: onControlRoundTripSample
+            onRoundTripSample: onControlRoundTripSample,
+            onControllerFeedback: onControllerFeedback
         )
 
         do {

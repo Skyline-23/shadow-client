@@ -58,3 +58,22 @@ func realtimeSessionSurfaceContextResetRestoresDefaultPreferredRenderFPS() {
 
     #expect(context.preferredRenderFPS == ShadowClientStreamingLaunchBounds.defaultFPS)
 }
+
+@Test("Realtime session surface context streams controller feedback events")
+func realtimeSessionSurfaceContextStreamsControllerFeedbackEvents() async {
+    let context = ShadowClientRealtimeSessionSurfaceContext()
+    let stream = context.controllerFeedbackAsyncStream()
+    let expected = ShadowClientSunshineControllerFeedbackEvent.rumble(
+        .init(
+            controllerNumber: 0,
+            lowFrequencyMotor: 0x1111,
+            highFrequencyMotor: 0x2222
+        )
+    )
+
+    context.publishControllerFeedbackEvent(expected)
+
+    var iterator = stream.makeAsyncIterator()
+    let received = await iterator.next()
+    #expect(received == expected)
+}

@@ -77,6 +77,8 @@ enum ShadowClientSunshineControlMessageProfile {
     static let invalidateReferenceFramesType: UInt16 = 0x0301
     static let periodicPingType: UInt16 = 0x0200
     static let inputDataType: UInt16 = 0x0206
+    static let rumbleType: UInt16 = 0x010b
+    static let rumbleTriggersType: UInt16 = 0x5500
 
     static let startAPayload = Data([0x00, 0x00])
     static let startBPayload = Data([0x00])

@@ -16,6 +16,7 @@ actor ShadowClientSunshineControlChannelRuntime {
     private let connectTimeout: Duration
     private let commandAcknowledgeTimeout: Duration
     private let onRoundTripSample: (@Sendable (Double) async -> Void)?
+    private let onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)?
     private let queue = DispatchQueue(label: "com.skyline23.shadowclient.control.enet")
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "ControlChannel")
 
@@ -34,11 +35,13 @@ actor ShadowClientSunshineControlChannelRuntime {
     init(
         connectTimeout: Duration = ShadowClientSunshineControlChannelDefaults.connectTimeout,
         commandAcknowledgeTimeout: Duration = ShadowClientSunshineControlChannelDefaults.commandAcknowledgeTimeout,
-        onRoundTripSample: (@Sendable (Double) async -> Void)? = nil
+        onRoundTripSample: (@Sendable (Double) async -> Void)? = nil,
+        onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)? = nil
     ) {
         self.connectTimeout = connectTimeout
         self.commandAcknowledgeTimeout = commandAcknowledgeTimeout
         self.onRoundTripSample = onRoundTripSample
+        self.onControllerFeedback = onControllerFeedback
     }
 
     func start(
@@ -254,6 +257,13 @@ actor ShadowClientSunshineControlChannelRuntime {
                         command: command
                     )
 
+                    if let feedbackEvent = parseControllerFeedbackEvent(
+                        from: packet,
+                        command: command
+                    ) {
+                        await onControllerFeedback?(feedbackEvent)
+                    }
+
                     guard command.isAcknowledgeRequired else {
                         continue
                     }
@@ -453,6 +463,61 @@ actor ShadowClientSunshineControlChannelRuntime {
         }
 
         await onRoundTripSample?(roundTripSampleMs)
+    }
+
+    private func parseControllerFeedbackEvent(
+        from packet: ShadowClientSunshineENetPacketCodec.ParsedPacket,
+        command: ShadowClientSunshineENetPacketCodec.ParsedPacket.Command
+    ) -> ShadowClientSunshineControllerFeedbackEvent? {
+        guard command.number == ShadowClientSunshineENetProtocolProfile.protocolCommandSendReliable else {
+            return nil
+        }
+
+        let commandBase = command.offset
+        guard commandBase + 6 <= packet.rawData.count else {
+            return nil
+        }
+
+        let payloadLength = Int(readUInt16BE(packet.rawData, at: commandBase + 4))
+        let payloadStart = commandBase + 6
+        guard payloadLength >= 2,
+              payloadStart + payloadLength <= packet.rawData.count
+        else {
+            return nil
+        }
+
+        var controlPayload = Data(packet.rawData[payloadStart ..< (payloadStart + payloadLength)])
+
+        if let controlEncryptionCodec {
+            do {
+                controlPayload = try controlEncryptionCodec.decryptControlMessageToV1(controlPayload)
+            } catch {
+                logger.debug(
+                    "Sunshine control payload decrypt skipped: \(error.localizedDescription, privacy: .public)"
+                )
+                return nil
+            }
+        }
+
+        guard controlPayload.count >= 2 else {
+            return nil
+        }
+
+        let type = readUInt16LE(controlPayload, at: 0)
+        let payload = Data(controlPayload.dropFirst(2))
+        return ShadowClientSunshineControlFeedbackCodec.parse(type: type, payload: payload)
+    }
+
+    private func readUInt16LE(_ data: Data, at offset: Int) -> UInt16 {
+        let b0 = UInt16(data[offset])
+        let b1 = UInt16(data[offset + 1]) << 8
+        return b0 | b1
+    }
+
+    private func readUInt16BE(_ data: Data, at offset: Int) -> UInt16 {
+        let b0 = UInt16(data[offset]) << 8
+        let b1 = UInt16(data[offset + 1])
+        return b0 | b1
     }
 
     private func periodicPingLoop(over connection: NWConnection) async {

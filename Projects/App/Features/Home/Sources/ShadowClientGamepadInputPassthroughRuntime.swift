@@ -1,6 +1,9 @@
 import Foundation
 import GameController
 import os
+#if canImport(CoreHaptics)
+import CoreHaptics
+#endif
 
 #if os(macOS)
 import AppKit
@@ -44,10 +47,15 @@ final class ShadowClientGamepadInputPassthroughRuntime {
     private var observers: [NSObjectProtocol] = []
 
     private var controllerIndexByID: [ObjectIdentifier: UInt8] = [:]
+    private var controllerIDByIndex: [UInt8: ObjectIdentifier] = [:]
     private var controllersByID: [ObjectIdentifier: GCController] = [:]
     private var lastStateByControllerIndex: [UInt8: ShadowClientRemoteGamepadState] = [:]
     private var announcedControllerIndices: Set<UInt8> = []
     private var hasLoggedBackgroundGate = false
+#if canImport(CoreHaptics)
+    @available(macOS 11.0, iOS 14.0, tvOS 14.0, *)
+    private var hapticsEngineStoreByControllerID: [ObjectIdentifier: [GCHapticsLocality: CHHapticEngine]] = [:]
+#endif
 
     func start(eventSink: @escaping EventSink) {
         self.eventSink = eventSink
@@ -108,8 +116,14 @@ final class ShadowClientGamepadInputPassthroughRuntime {
         }
         controllersByID.removeAll(keepingCapacity: false)
         controllerIndexByID.removeAll(keepingCapacity: false)
+        controllerIDByIndex.removeAll(keepingCapacity: false)
         lastStateByControllerIndex.removeAll(keepingCapacity: false)
         announcedControllerIndices.removeAll(keepingCapacity: false)
+#if canImport(CoreHaptics)
+        if #available(macOS 11.0, iOS 14.0, tvOS 14.0, *) {
+            stopAndClearAllHapticsEngines()
+        }
+#endif
         hasLoggedBackgroundGate = false
     }
 
@@ -132,6 +146,27 @@ final class ShadowClientGamepadInputPassthroughRuntime {
             announcedControllerIndices.removeAll(keepingCapacity: true)
             emitCurrentStates(force: true, includeArrival: true)
         }
+    }
+
+    func applyControllerFeedback(_ event: ShadowClientSunshineControllerFeedbackEvent) {
+        guard isSessionActive else {
+            return
+        }
+
+#if canImport(CoreHaptics)
+        guard #available(macOS 11.0, iOS 14.0, tvOS 14.0, *) else {
+            return
+        }
+
+        switch event {
+        case let .rumble(rumble):
+            applyRumble(rumble)
+        case let .triggerRumble(triggerRumble):
+            applyTriggerRumble(triggerRumble)
+        }
+#else
+        _ = event
+#endif
     }
 
     private func refreshConnectedControllers() {
@@ -164,6 +199,7 @@ final class ShadowClientGamepadInputPassthroughRuntime {
 
         controllersByID[controllerID] = controller
         controllerIndexByID[controllerID] = index
+        controllerIDByIndex[index] = controllerID
         lastStateByControllerIndex[index] = nil
         announcedControllerIndices.remove(index)
 
@@ -187,8 +223,14 @@ final class ShadowClientGamepadInputPassthroughRuntime {
 
         controller.extendedGamepad?.valueChangedHandler = nil
         controllerIndexByID.removeValue(forKey: controllerID)
+        controllerIDByIndex.removeValue(forKey: controllerNumber)
         controllersByID.removeValue(forKey: controllerID)
         announcedControllerIndices.remove(controllerNumber)
+#if canImport(CoreHaptics)
+        if #available(macOS 11.0, iOS 14.0, tvOS 14.0, *) {
+            stopAndRemoveHapticsEngines(for: controllerID)
+        }
+#endif
 
         let mask = currentActiveGamepadMask()
         let disconnectedState = ShadowClientRemoteGamepadState(
@@ -424,4 +466,208 @@ final class ShadowClientGamepadInputPassthroughRuntime {
         true
 #endif
     }
+
+#if canImport(CoreHaptics)
+    @available(macOS 11.0, iOS 14.0, tvOS 14.0, *)
+    private func applyRumble(_ rumble: ShadowClientSunshineControllerRumbleEvent) {
+        guard let controller = controller(for: rumble.controllerNumber),
+              let haptics = controller.haptics
+        else {
+            return
+        }
+
+        let lowIntensity = normalizedMotorIntensity(rumble.lowFrequencyMotor)
+        let highIntensity = normalizedMotorIntensity(rumble.highFrequencyMotor)
+
+        let localities = haptics.supportedLocalities
+        let hasSplitHandles = localities.contains(GCHapticsLocality.leftHandle) &&
+            localities.contains(GCHapticsLocality.rightHandle)
+
+        if hasSplitHandles {
+            playHapticPulse(
+                on: controller,
+                haptics: haptics,
+                locality: GCHapticsLocality.leftHandle,
+                intensity: lowIntensity,
+                sharpness: 0.2
+            )
+            playHapticPulse(
+                on: controller,
+                haptics: haptics,
+                locality: GCHapticsLocality.rightHandle,
+                intensity: highIntensity,
+                sharpness: 0.8
+            )
+            return
+        }
+
+        playHapticPulse(
+            on: controller,
+            haptics: haptics,
+            locality: GCHapticsLocality.default,
+            intensity: max(lowIntensity, highIntensity),
+            sharpness: 0.5
+        )
+    }
+
+    @available(macOS 11.0, iOS 14.0, tvOS 14.0, *)
+    private func applyTriggerRumble(_ rumble: ShadowClientSunshineControllerTriggerRumbleEvent) {
+        guard let controller = controller(for: rumble.controllerNumber),
+              let haptics = controller.haptics
+        else {
+            return
+        }
+
+        let leftIntensity = normalizedMotorIntensity(rumble.leftTriggerMotor)
+        let rightIntensity = normalizedMotorIntensity(rumble.rightTriggerMotor)
+        let localities = haptics.supportedLocalities
+        let hasSplitTriggers = localities.contains(GCHapticsLocality.leftTrigger) &&
+            localities.contains(GCHapticsLocality.rightTrigger)
+
+        if hasSplitTriggers {
+            playHapticPulse(
+                on: controller,
+                haptics: haptics,
+                locality: GCHapticsLocality.leftTrigger,
+                intensity: leftIntensity,
+                sharpness: 0.6
+            )
+            playHapticPulse(
+                on: controller,
+                haptics: haptics,
+                locality: GCHapticsLocality.rightTrigger,
+                intensity: rightIntensity,
+                sharpness: 0.6
+            )
+            return
+        }
+
+        if localities.contains(GCHapticsLocality.triggers) {
+            playHapticPulse(
+                on: controller,
+                haptics: haptics,
+                locality: GCHapticsLocality.triggers,
+                intensity: max(leftIntensity, rightIntensity),
+                sharpness: 0.6
+            )
+            return
+        }
+
+        // Fallback for controllers that don't expose trigger-specific actuators.
+        playHapticPulse(
+            on: controller,
+            haptics: haptics,
+            locality: GCHapticsLocality.default,
+            intensity: max(leftIntensity, rightIntensity),
+            sharpness: 0.6
+        )
+    }
+
+    @available(macOS 11.0, iOS 14.0, tvOS 14.0, *)
+    private func playHapticPulse(
+        on controller: GCController,
+        haptics: GCDeviceHaptics,
+        locality: GCHapticsLocality,
+        intensity: Float,
+        sharpness: Float
+    ) {
+        let clampedIntensity = min(max(intensity, 0), 1)
+        guard clampedIntensity > 0 else {
+            return
+        }
+
+        guard let engine = hapticEngine(
+            on: controller,
+            haptics: haptics,
+            locality: locality
+        ) else {
+            return
+        }
+
+        do {
+            try engine.start()
+            let event = CHHapticEvent(
+                eventType: .hapticContinuous,
+                parameters: [
+                    CHHapticEventParameter(
+                        parameterID: .hapticIntensity,
+                        value: clampedIntensity
+                    ),
+                    CHHapticEventParameter(
+                        parameterID: .hapticSharpness,
+                        value: min(max(sharpness, 0), 1)
+                    ),
+                ],
+                relativeTime: 0,
+                duration: 0.08
+            )
+            let pattern = try CHHapticPattern(events: [event], parameters: [])
+            let player = try engine.makePlayer(with: pattern)
+            try player.start(atTime: CHHapticTimeImmediate)
+        } catch {
+            logger.debug("Gamepad haptic pulse failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    @available(macOS 11.0, iOS 14.0, tvOS 14.0, *)
+    private func hapticEngine(
+        on controller: GCController,
+        haptics: GCDeviceHaptics,
+        locality: GCHapticsLocality
+    ) -> CHHapticEngine? {
+        let controllerID = ObjectIdentifier(controller)
+        if let cachedEngine = hapticsEngineStoreByControllerID[controllerID]?[locality] {
+            return cachedEngine
+        }
+
+        guard let engine = haptics.createEngine(withLocality: locality) else {
+            return nil
+        }
+
+        engine.isAutoShutdownEnabled = true
+        do {
+            try engine.start()
+        } catch {
+            logger.debug("Gamepad haptic engine start failed: \(error.localizedDescription, privacy: .public)")
+        }
+
+        var engines = hapticsEngineStoreByControllerID[controllerID] ?? [:]
+        engines[locality] = engine
+        hapticsEngineStoreByControllerID[controllerID] = engines
+        return engine
+    }
+
+    @available(macOS 11.0, iOS 14.0, tvOS 14.0, *)
+    private func stopAndClearAllHapticsEngines() {
+        for engines in hapticsEngineStoreByControllerID.values {
+            for engine in engines.values {
+                engine.stop(completionHandler: nil)
+            }
+        }
+        hapticsEngineStoreByControllerID.removeAll(keepingCapacity: false)
+    }
+
+    @available(macOS 11.0, iOS 14.0, tvOS 14.0, *)
+    private func stopAndRemoveHapticsEngines(for controllerID: ObjectIdentifier) {
+        guard let engines = hapticsEngineStoreByControllerID.removeValue(forKey: controllerID) else {
+            return
+        }
+        for engine in engines.values {
+            engine.stop(completionHandler: nil)
+        }
+    }
+
+    private func controller(for controllerNumber: UInt16) -> GCController? {
+        guard let index = UInt8(exactly: controllerNumber),
+              let controllerID = controllerIDByIndex[index]
+        else {
+            return nil
+        }
+        return controllersByID[controllerID]
+    }
+
+    private func normalizedMotorIntensity(_ value: UInt16) -> Float {
+        Float(value) / Float(UInt16.max)
+    }
+#endif
 }

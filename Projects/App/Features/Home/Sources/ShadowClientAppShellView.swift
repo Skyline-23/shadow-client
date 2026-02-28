@@ -155,6 +155,17 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
                 }
             }
         }
+        .task(id: remoteDesktopRuntime.activeSession != nil) {
+            guard remoteDesktopRuntime.activeSession != nil else {
+                return
+            }
+            for await feedbackEvent in sessionSurfaceContext.controllerFeedbackAsyncStream() {
+                guard remoteDesktopRuntime.activeSession != nil else {
+                    break
+                }
+                gamepadInputRuntime.applyControllerFeedback(feedbackEvent)
+            }
+        }
         .onAppear {
             ShadowClientRemoteSessionOrientationCoordinator.updateSessionState(
                 isActive: remoteDesktopRuntime.activeSession != nil
