@@ -210,6 +210,18 @@ func sunshineInputCodecEncodesGamepadArrivalPacket() {
     #expect(readUInt32LE(payload, at: 12) == 0x0001_FF3F)
 }
 
+@Test("Sunshine input codec default gamepad arrival advertises analog triggers and rumble")
+func sunshineInputCodecDefaultGamepadArrivalAdvertisesRumble() {
+    let arrival = ShadowClientSunshineInputPacketCodec.defaultGamepadArrival(
+        controllerNumber: 0,
+        activeGamepadMask: 0x0001,
+        supportedButtonFlags: 0x0000_FFFF
+    )
+
+    #expect(arrival.type == 0x02)
+    #expect(arrival.capabilities == 0x0003)
+}
+
 private func readUInt16LE(_ data: Data, at offset: Int) -> UInt16 {
     let b0 = UInt16(data[offset])
     let b1 = UInt16(data[offset + 1]) << 8

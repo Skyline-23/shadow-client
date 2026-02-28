@@ -33,6 +33,8 @@ enum ShadowClientSunshineInputPacketCodec {
     private enum ControllerArrivalPacket {
         static let typePlayStation: UInt8 = 0x02
         static let capabilityAnalogTriggers: UInt16 = 0x01
+        static let capabilityRumble: UInt16 = 0x02
+        static let defaultCapabilities: UInt16 = capabilityAnalogTriggers | capabilityRumble
     }
 
     private enum MouseButton {
@@ -213,7 +215,7 @@ enum ShadowClientSunshineInputPacketCodec {
             controllerNumber: controllerNumber,
             activeGamepadMask: activeGamepadMask,
             type: ControllerArrivalPacket.typePlayStation,
-            capabilities: ControllerArrivalPacket.capabilityAnalogTriggers,
+            capabilities: ControllerArrivalPacket.defaultCapabilities,
             supportedButtonFlags: supportedButtonFlags
         )
     }
