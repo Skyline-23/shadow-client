@@ -459,8 +459,8 @@ func rtpPayloadParserSupportsSlicedDataInput() throws {
     #expect(parsed.payload.startIndex == 0)
 }
 
-@Test("RTSP video payload adoption rejects audio and control payload types")
-func rtspVideoPayloadAdoptionRejectsAudioAndControlPayloadTypes() {
+@Test("RTSP video payload adoption allows audio PT overlap and still rejects control payload type")
+func rtspVideoPayloadAdoptionAllowsAudioPayloadOverlapAndRejectsControlPayloadType() {
     let audioTrack = ShadowClientRTSPAudioTrackDescriptor(
         codec: .opus,
         rtpPayloadType: 97,
@@ -471,7 +471,7 @@ func rtspVideoPayloadAdoptionRejectsAudioAndControlPayloadTypes() {
     )
 
     #expect(
-        !ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
             observedPayloadType: 97,
             currentPayloadType: 98,
             audioPayloadType: audioTrack.rtpPayloadType,
@@ -739,6 +739,40 @@ func av1DepacketizerPublishesCompletedFrameMetadata() {
     #expect(depacketizer.consumeLastCompletedFrameMetadata() == nil)
 }
 
+@Test("AV1 depacketizer publishes frame type 4 and 5 metadata for sync-gate recovery admission")
+func av1DepacketizerPublishesFrameType4And5MetadataForSyncGate() {
+    for frameType in [UInt8(4), UInt8(5)] {
+        var depacketizer = ShadowClientAV1RTPDepacketizer()
+        let framePayload = Data([0x51, 0x52, frameType])
+        let packet = makeSyntheticNVVideoPacket(
+            streamPacketIndex: 300 + UInt32(frameType),
+            frameIndex: 70 + UInt32(frameType),
+            flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF | nvVideoPacketFlagEOF,
+            payloadBytes: Array(framePayload),
+            includeFrameHeaderWithLastPayloadLength: moonlightFrameHeaderSize + UInt16(framePayload.count),
+            frameHeaderFrameType: frameType
+        )
+
+        let frame = depacketizer.ingest(payload: packet, marker: true)
+        let metadata = depacketizer.consumeLastCompletedFrameMetadata()
+
+        #expect(frame == framePayload)
+        #expect(metadata?.frameType == frameType)
+        #expect(
+            ShadowClientRealtimeRTSPSessionRuntime.isAV1SyncFrameType(
+                frameType,
+                allowsReferenceInvalidatedFrame: false
+            ) == false
+        )
+        #expect(
+            ShadowClientRealtimeRTSPSessionRuntime.isAV1SyncFrameType(
+                frameType,
+                allowsReferenceInvalidatedFrame: true
+            )
+        )
+    }
+}
+
 @Test("Moonlight NV depacketizer passthrough strategy ignores invalid lastPayloadLength for H264/H265")
 func moonlightNvDepacketizerPassthroughIgnoresInvalidLastPayloadLength() {
     var depacketizer = ShadowClientMoonlightNVRTPDepacketizer(
@@ -853,6 +887,45 @@ func av1DepacketizerReportsCorruptPacketSequenceStatus() {
         break
     default:
         Issue.record("Expected droppedCorruptFrame for discontinuous stream packet sequence")
+    }
+}
+
+@Test("AV1 depacketizer classifies forward frame gaps as corruption for recovery")
+func av1DepacketizerClassifiesForwardFrameGapAsCorruption() {
+    var depacketizer = ShadowClientAV1RTPDepacketizer()
+
+    let firstFramePayload = Data([0x10, 0x20])
+    let firstFramePacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 300,
+        frameIndex: 40,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF | nvVideoPacketFlagEOF,
+        payloadBytes: Array(firstFramePayload),
+        includeFrameHeaderWithLastPayloadLength: moonlightFrameHeaderSize + UInt16(firstFramePayload.count)
+    )
+
+    let gapFramePayload = Data([0x30, 0x40])
+    let gapFramePacket = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 400,
+        frameIndex: 42,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF | nvVideoPacketFlagEOF,
+        payloadBytes: Array(gapFramePayload),
+        includeFrameHeaderWithLastPayloadLength: moonlightFrameHeaderSize + UInt16(gapFramePayload.count)
+    )
+
+    let firstResult = depacketizer.ingestWithStatus(payload: firstFramePacket, marker: true)
+    switch firstResult {
+    case let .frame(frame):
+        #expect(frame == firstFramePayload)
+    default:
+        Issue.record("Expected first frame to decode successfully")
+    }
+
+    let gapResult = depacketizer.ingestWithStatus(payload: gapFramePacket, marker: true)
+    switch gapResult {
+    case .droppedCorruptFrame:
+        break
+    default:
+        Issue.record("Expected droppedCorruptFrame for forward frame gap")
     }
 }
 
@@ -1335,6 +1408,62 @@ func av1VideoFECReconstructionQueueDropsFrameOnMissingIntermediateBlock() {
     #expect(secondResult.droppedUnrecoverableBlock)
 }
 
+@Test("AV1 video FEC reconstruction queue normalizes legacy non-multi-FEC block metadata")
+func av1VideoFECReconstructionQueueNormalizesLegacyNonMultiFECMetadata() {
+    var queue = ShadowClientRTPVideoFECReconstructionQueue(
+        fixedShardPayloadSize: nil,
+        multiFECCapable: false
+    )
+    let packet = ShadowClientRTPPacket(
+        isRTP: true,
+        channel: 0,
+        sequenceNumber: 2_200,
+        marker: true,
+        payloadType: 98,
+        payload: makeSyntheticNVVideoPacket(
+            streamPacketIndex: 4_200,
+            frameIndex: 702,
+            flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF | nvVideoPacketFlagEOF,
+            payloadBytes: [0x7A, 0x7B],
+            fecInfo: (1 << 22) | (0 << 12) | (0 << 4),
+            multiFecBlocks: makeMultiFecBlocks(currentBlock: 2, lastBlock: 2)
+        )
+    )
+
+    let result = queue.ingest(packet)
+    #expect(!result.droppedUnrecoverableBlock)
+    #expect(result.orderedDataPackets.count == 1)
+}
+
+@Test("AV1 video FEC reconstruction queue reconstructs missing shard using fixed payload size")
+func av1VideoFECReconstructionQueueUsesFixedShardPayloadSizeForRecoveredShard() {
+    var queue = ShadowClientRTPVideoFECReconstructionQueue(
+        fixedShardPayloadSize: 40,
+        multiFECCapable: true
+    )
+
+    let parityPacket = ShadowClientRTPPacket(
+        isRTP: true,
+        channel: 0,
+        sequenceNumber: 2_301,
+        marker: true,
+        payloadType: 98,
+        payload: makeSyntheticNVVideoPacket(
+            streamPacketIndex: 4_301,
+            frameIndex: 703,
+            flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF | nvVideoPacketFlagEOF,
+            payloadBytes: [0xAA, 0xBB, 0xCC, 0xDD],
+            fecInfo: (1 << 22) | (1 << 12) | (100 << 4),
+            multiFecBlocks: makeMultiFecBlocks(currentBlock: 0, lastBlock: 0)
+        )
+    )
+
+    let result = queue.ingest(parityPacket)
+    #expect(!result.droppedUnrecoverableBlock)
+    #expect(result.orderedDataPackets.count == 1)
+    #expect(result.orderedDataPackets[0].payload.count == 40)
+}
+
 @Test("AV1 depacketizer applies Sunshine 7.1.446 frame header profile for 0x81 packets")
 func av1DepacketizerUsesVersionAware41ByteHeader() {
     var depacketizer = ShadowClientAV1RTPDepacketizer()
@@ -1354,8 +1483,8 @@ func av1DepacketizerUsesVersionAware41ByteHeader() {
     #expect(frame == framePayload)
 }
 
-@Test("AV1 depacketizer uses heuristic frame-header parsing when app version is unavailable")
-func av1DepacketizerFallsBackToHeuristicFrameHeaderProfile() {
+@Test("AV1 depacketizer uses conservative fixed frame-header parsing when app version is unavailable")
+func av1DepacketizerFallsBackToConservativeFixedFrameHeaderProfile() {
     var depacketizer = ShadowClientAV1RTPDepacketizer()
     depacketizer.configureFrameHeaderProfile(appVersion: nil)
     let framePayload = Data([0xC1, 0xC2, 0xC3])
@@ -1364,9 +1493,28 @@ func av1DepacketizerFallsBackToHeuristicFrameHeaderProfile() {
         frameIndex: 68,
         flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF | nvVideoPacketFlagEOF,
         payloadBytes: Array(framePayload),
-        includeFrameHeaderWithLastPayloadLength: 41 + UInt16(framePayload.count),
-        frameHeaderSize: 41,
-        frameHeaderFirstByte: 0x81
+        includeFrameHeaderWithLastPayloadLength: 8 + UInt16(framePayload.count),
+        frameHeaderSize: 8,
+        frameHeaderFirstByte: 0x01
+    )
+
+    let frame = depacketizer.ingest(payload: packet, marker: true)
+    #expect(frame == framePayload)
+}
+
+@Test("AV1 depacketizer normalizes legacy non-multi-FEC block metadata from app version")
+func av1DepacketizerNormalizesLegacyNonMultiFECMetadataFromVersion() {
+    var depacketizer = ShadowClientAV1RTPDepacketizer()
+    depacketizer.configureFrameHeaderProfile(appVersion: "7.1.430.0")
+
+    let framePayload = Data([0x7D, 0x7E])
+    let packet = makeSyntheticNVVideoPacket(
+        streamPacketIndex: 515,
+        frameIndex: 69,
+        flags: nvVideoPacketFlagContainsPicData | nvVideoPacketFlagSOF | nvVideoPacketFlagEOF,
+        payloadBytes: Array(framePayload),
+        includeFrameHeaderWithLastPayloadLength: moonlightFrameHeaderSize + UInt16(framePayload.count),
+        multiFecBlocks: makeMultiFecBlocks(currentBlock: 2, lastBlock: 2)
     )
 
     let frame = depacketizer.ingest(payload: packet, marker: true)
@@ -2068,6 +2216,16 @@ func realtimeRuntimeAV1SyncFrameClassifierAdmitsType4WhenAllowed() {
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime.isAV1SyncFrameType(
             4,
+            allowsReferenceInvalidatedFrame: true
+        )
+    )
+}
+
+@Test("Realtime runtime AV1 sync-frame classifier rejects Sunshine frame type 104")
+func realtimeRuntimeAV1SyncFrameClassifierRejectsSunshine104() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.isAV1SyncFrameType(
+            104,
             allowsReferenceInvalidatedFrame: true
         )
     )
