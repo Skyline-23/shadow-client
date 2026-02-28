@@ -2150,6 +2150,72 @@ func realtimeRuntimeUDPVideoStallDetectorUsesPostStartInactivityThreshold() {
     )
 }
 
+@Test("Realtime runtime escalates prolonged UDP video inactivity to fallback threshold")
+func realtimeRuntimeUDPVideoInactivityEscalationUsesFallbackThreshold() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateUDPVideoDatagramInactivityToFallback(
+            now: 10.0,
+            firstObservedStallUptime: 0.0,
+            fallbackThresholdSeconds: 12.0
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateUDPVideoDatagramInactivityToFallback(
+            now: 21.9,
+            firstObservedStallUptime: 10.0,
+            fallbackThresholdSeconds: 12.0
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateUDPVideoDatagramInactivityToFallback(
+            now: 22.0,
+            firstObservedStallUptime: 10.0,
+            fallbackThresholdSeconds: 12.0
+        )
+    )
+}
+
+@Test("Realtime runtime falls back to interleaved transport for UDP inactivity timeout errors")
+func realtimeRuntimeInterleavedFallbackClassifierMatchesUDPTimeoutErrors() {
+    let noDatagramError = NSError(
+        domain: "ShadowClientTest",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "RTSP UDP video timeout: no video datagram received"]
+    )
+    let stallError = NSError(
+        domain: "ShadowClientTest",
+        code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "RTSP UDP video timeout: video datagram stream stalled after startup"]
+    )
+    let prolongedError = NSError(
+        domain: "ShadowClientTest",
+        code: 3,
+        userInfo: [NSLocalizedDescriptionKey: "RTSP UDP video timeout: prolonged datagram inactivity after startup"]
+    )
+    let unrelatedError = NSError(
+        domain: "ShadowClientTest",
+        code: 4,
+        userInfo: [NSLocalizedDescriptionKey: "RTSP request parsing failed"]
+    )
+
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime
+            .shouldFallbackToInterleavedTransportAfterUDPReceiveError(noDatagramError)
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime
+            .shouldFallbackToInterleavedTransportAfterUDPReceiveError(stallError)
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime
+            .shouldFallbackToInterleavedTransportAfterUDPReceiveError(prolongedError)
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime
+            .shouldFallbackToInterleavedTransportAfterUDPReceiveError(unrelatedError)
+    )
+}
+
 @Test("Realtime runtime treats canceled input send errors as transient and does not reset control channel")
 func realtimeRuntimeInputSendClassifierTreatsCanceledAsTransient() {
     let nwCanceled = NSError(domain: "Network.NWError", code: 89)

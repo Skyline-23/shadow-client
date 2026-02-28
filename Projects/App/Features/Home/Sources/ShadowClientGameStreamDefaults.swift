@@ -84,6 +84,7 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let defaultPingASCII = "PING"
     public static let initialVideoDatagramTimeout: Duration = .seconds(10)
     public static let postStartVideoDatagramInactivityTimeoutSeconds: TimeInterval = 4.0
+    public static let postStartVideoDatagramInactivityFallbackThresholdSeconds: TimeInterval = 12.0
     public static let udpParseFailureLogLimit = 6
     public static let minimumTransportReadLength = 1
     public static let maximumTransportReadLength = 64 * 1_024

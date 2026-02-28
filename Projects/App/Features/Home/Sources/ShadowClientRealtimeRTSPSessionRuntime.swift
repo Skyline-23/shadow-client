@@ -2837,6 +2837,29 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         return now - lastRecoveryRequestUptime >= max(0, recoveryRequestCooldownSeconds)
     }
 
+    static func shouldEscalateUDPVideoDatagramInactivityToFallback(
+        now: TimeInterval,
+        firstObservedStallUptime: TimeInterval,
+        fallbackThresholdSeconds: TimeInterval =
+            ShadowClientRealtimeSessionDefaults.postStartVideoDatagramInactivityFallbackThresholdSeconds
+    ) -> Bool {
+        guard firstObservedStallUptime > 0 else {
+            return false
+        }
+        return now - firstObservedStallUptime >= max(0, fallbackThresholdSeconds)
+    }
+
+    static func shouldFallbackToInterleavedTransportAfterUDPReceiveError(
+        _ error: Error
+    ) -> Bool {
+        let normalized = error.localizedDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalized.contains("udp video timeout: no video datagram received") ||
+            normalized.contains("udp video timeout: video datagram stream stalled after startup") ||
+            normalized.contains("udp video timeout: prolonged datagram inactivity after startup")
+    }
+
     static func shouldResetControlChannelAfterTransientInputSendFailures(
         failureCount: Int,
         now: TimeInterval,
@@ -4922,15 +4945,29 @@ private actor ShadowClientRTSPInterleavedClient {
     ) async throws {
         let audioTrack = audioTrackDescriptor
         if let remoteHost, let videoServerPort {
-            try await receiveUDPVideoPackets(
-                host: remoteHost,
-                port: videoServerPort,
-                payloadType: payloadType,
-                videoPayloadCandidates: videoPayloadCandidates,
-                audioTrack: audioTrack,
-                onVideoPacket: onVideoPacket
-            )
-            return
+            do {
+                try await receiveUDPVideoPackets(
+                    host: remoteHost,
+                    port: videoServerPort,
+                    payloadType: payloadType,
+                    videoPayloadCandidates: videoPayloadCandidates,
+                    audioTrack: audioTrack,
+                    onVideoPacket: onVideoPacket
+                )
+                return
+            } catch {
+                guard ShadowClientRealtimeRTSPSessionRuntime
+                    .shouldFallbackToInterleavedTransportAfterUDPReceiveError(error)
+                else {
+                    throw error
+                }
+                logger.notice(
+                    "RTSP UDP video receive became inactive; escalating to session reconnect"
+                )
+                throw ShadowClientRTSPInterleavedClientError.requestFailed(
+                    "RTSP UDP video receive inactive; reconnect required"
+                )
+            }
         }
 
         var currentVideoPayloadType = payloadType
@@ -5170,6 +5207,7 @@ private actor ShadowClientRTSPInterleavedClient {
         var lastVideoDatagramUptime = ProcessInfo.processInfo.systemUptime
         var lastVideoDatagramInactivityRecoveryRequestUptime: TimeInterval = 0
         var hasPendingPostStartDatagramStall = false
+        var firstObservedPostStartDatagramStallUptime: TimeInterval = 0
 
         while !Task.isCancelled {
             guard let datagram = try udpSocket.receive(
@@ -5188,6 +5226,9 @@ private actor ShadowClientRTSPInterleavedClient {
                     datagramCount: datagramCount,
                     secondsSinceLastDatagram: secondsSinceLastDatagram
                 ) {
+                    if firstObservedPostStartDatagramStallUptime == 0 {
+                        firstObservedPostStartDatagramStallUptime = now
+                    }
                     hasPendingPostStartDatagramStall = true
                     if ShadowClientRealtimeRTSPSessionRuntime.shouldRequestVideoRecoveryForUDPDatagramInactivity(
                         now: now,
@@ -5199,6 +5240,14 @@ private actor ShadowClientRTSPInterleavedClient {
                             "RTSP UDP video datagram stream stalled after startup (silence=\(secondsSinceLastDatagram, privacy: .public)s); requesting recovery frame without terminating session"
                         )
                         await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
+                    }
+                    if ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateUDPVideoDatagramInactivityToFallback(
+                        now: now,
+                        firstObservedStallUptime: firstObservedPostStartDatagramStallUptime
+                    ) {
+                        throw ShadowClientRTSPInterleavedClientError.requestFailed(
+                            "RTSP UDP video timeout: prolonged datagram inactivity after startup"
+                        )
                     }
                 }
                 continue
@@ -5213,6 +5262,7 @@ private actor ShadowClientRTSPInterleavedClient {
                     "RTSP UDP video datagram flow resumed after inactivity stall (silence=\(resumedAfterSilenceSeconds, privacy: .public)s)"
                 )
                 hasPendingPostStartDatagramStall = false
+                firstObservedPostStartDatagramStallUptime = 0
                 lastVideoDatagramInactivityRecoveryRequestUptime = 0
             }
             datagramCount += 1

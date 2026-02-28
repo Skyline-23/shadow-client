@@ -882,6 +882,8 @@ private struct ShadowClientLaunchRequestContext: Sendable {
 }
 
 public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
+    private static let runtimeStreamReconnectCooldownSeconds: TimeInterval = 4.0
+
     @Published public private(set) var hosts: [ShadowClientRemoteHostDescriptor] = []
     @Published public private(set) var apps: [ShadowClientRemoteAppDescriptor] = []
     @Published public private(set) var hostState: ShadowClientRemoteHostCatalogState = .idle
@@ -916,6 +918,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var persistentCodecFallback: ShadowClientVideoCodecPreference?
     private var lastLaunchRequestContext: ShadowClientLaunchRequestContext?
     private var runtimeCodecRecoveryInProgress = false
+    private var runtimeStreamReconnectInProgress = false
+    private var lastRuntimeStreamReconnectUptime: TimeInterval = 0
     private var renderStateFailureObservation: AnyCancellable?
 
     public init(
@@ -1396,6 +1400,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     else {
                         return
                     }
+                    self.runtimeStreamReconnectInProgress = false
                     self.runtimeCodecRecoveryInProgress = false
 
                     self.activeSession = ShadowClientActiveRemoteSession(
@@ -1436,6 +1441,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     else {
                         return
                     }
+                    self.runtimeStreamReconnectInProgress = false
                     self.runtimeCodecRecoveryInProgress = false
                     self.launchState = .failed(
                         Self.userFacingLaunchFailureMessage(
@@ -1465,6 +1471,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         activeSession = nil
         lastKnownSessionURL = nil
         lastLaunchRequestContext = nil
+        runtimeStreamReconnectInProgress = false
         runtimeCodecRecoveryInProgress = false
         launchState = .idle
 
@@ -1492,6 +1499,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return
         }
 
+        if attemptRuntimeStreamReconnect(afterFailureMessage: message) {
+            return
+        }
         attemptRuntimeCodecRecovery(afterFailureMessage: message)
     }
 
@@ -1589,9 +1599,82 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         return false
     }
 
+    private static func shouldRetryRuntimeStreamReconnect(failureMessage: String) -> Bool {
+        let normalized = failureMessage
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty else {
+            return false
+        }
+
+        let reconnectSignatures = [
+            "rtsp udp video receive inactive",
+            "udp video receive became inactive",
+            "rtsp udp video timeout",
+            "prolonged datagram inactivity",
+            "video datagram stream stalled after startup",
+            "no message available on stream",
+            "rtsp transport connection closed",
+            "transport connection timed out",
+            "connection reset by peer",
+            "network.nwerror error 96",
+        ]
+        return reconnectSignatures.contains(where: normalized.contains)
+    }
+
+    @MainActor
+    @discardableResult
+    private func attemptRuntimeStreamReconnect(afterFailureMessage message: String) -> Bool {
+        guard !runtimeStreamReconnectInProgress,
+              !runtimeCodecRecoveryInProgress
+        else {
+            return false
+        }
+        guard let launchRequest = lastLaunchRequestContext else {
+            return false
+        }
+        guard Self.shouldRetryRuntimeStreamReconnect(failureMessage: message) else {
+            return false
+        }
+
+        let shouldAttemptRecoveryFromLaunchState: Bool
+        switch launchState {
+        case .launched, .launching:
+            shouldAttemptRecoveryFromLaunchState = true
+        case .idle, .failed:
+            shouldAttemptRecoveryFromLaunchState = false
+        }
+        let activeSessionMatchesLaunchRequest = activeSession?.appID == launchRequest.appID
+        guard shouldAttemptRecoveryFromLaunchState || activeSessionMatchesLaunchRequest else {
+            return false
+        }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        if lastRuntimeStreamReconnectUptime > 0,
+           now - lastRuntimeStreamReconnectUptime < Self.runtimeStreamReconnectCooldownSeconds
+        {
+            return false
+        }
+        lastRuntimeStreamReconnectUptime = now
+        runtimeStreamReconnectInProgress = true
+        logger.notice(
+            "Session runtime transport failed; attempting in-place stream reconnect for appID=\(launchRequest.appID, privacy: .public)"
+        )
+
+        launchSelectedApp(
+            appID: launchRequest.appID,
+            appTitle: launchRequest.appTitle,
+            forceLaunch: false,
+            settings: launchRequest.settings
+        )
+        return true
+    }
+
     @MainActor
     private func attemptRuntimeCodecRecovery(afterFailureMessage message: String) {
-        guard !runtimeCodecRecoveryInProgress else {
+        guard !runtimeCodecRecoveryInProgress,
+              !runtimeStreamReconnectInProgress
+        else {
             return
         }
         guard let launchRequest = lastLaunchRequestContext
