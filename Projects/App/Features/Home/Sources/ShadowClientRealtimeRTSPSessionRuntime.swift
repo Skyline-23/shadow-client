@@ -1111,7 +1111,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                )
             {
                 _ = await requestVideoRecoveryFrame(
-                    for: .av1,
+                    codec: .av1,
                     reason: "depacketizer-discontinuity-post-success",
                     minimumInterval: 0.0
                 )
@@ -1463,12 +1463,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             depacketizerCorruptionCount = 0
             firstDepacketizerCorruptionUptime = 0
             lastDepacketizerRecoveryUptime = now
-            awaitingAV1SyncFrame = true
-            av1SyncGateAllowsReferenceInvalidatedFrame = false
             av1PendingRecoveryRequestAfterSuccessfulFrame = ShadowClientMoonlightProtocolPolicy.AV1
                 .shouldDeferRecoveryRequestAfterDiscontinuity()
             logger.error(
-                "Video depacketizer detected stream discontinuity for codec \(String(describing: codec), privacy: .public); deferring recovery request until next complete frame"
+                "Video depacketizer detected stream discontinuity for codec \(String(describing: codec), privacy: .public); deferring recovery request until next complete frame without immediate sync-gate transition"
             )
             if !hasRenderedFirstFrame {
                 await transitionSurfaceState(.waitingForFirstFrame)
@@ -1580,12 +1578,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                )
             {
                 logger.notice(
-                    "AV1 decoder recoverable failure burst detected; requesting recovery frame without decoder reset"
+                    "AV1 decoder recoverable failure burst detected; requesting recovery frame without decoder reset or sync-gate transition"
                 )
                 _ = await requestVideoRecoveryFrame(
-                    for: codec,
+                    codec: codec,
                     reason: "decoder-recoverable-soft",
-                    minimumInterval: 0.35
+                    minimumInterval: 1.0
                 )
             } else {
                 logger.notice(
