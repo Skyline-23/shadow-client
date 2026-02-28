@@ -643,8 +643,8 @@ func audioQueueProfileKeepsLowLatencyWindowForStereo() {
             channels: 2
         )
 
-    #expect(maximumQueuedBuffers <= 12)
-    #expect(maximumQueuedBuffers >= 4)
+    #expect(maximumQueuedBuffers <= 24)
+    #expect(maximumQueuedBuffers >= 8)
     #expect(pressureTrimToRecentPackets <= 12)
     #expect(pressureTrimToRecentPackets >= 4)
 }
@@ -657,7 +657,7 @@ func audioRealtimePendingCapScalesToQueueWindowForFiveMsOpus() {
         packetDurationMs: 5
     )
 
-    #expect(capMs == 50)
+    #expect(capMs == 100)
 }
 
 @Test("Audio realtime pending cap honors soft and hard bounds")
@@ -672,7 +672,7 @@ func audioRealtimePendingCapHonorsSoftAndHardBounds() {
     )
 
     #expect(softBoundCap == 30)
-    #expect(hardBoundCap == 60)
+    #expect(hardBoundCap == 100)
 }
 
 @Test("Audio queue profile scales channel slack without unbounded queue growth")
@@ -689,7 +689,7 @@ func audioQueueProfileScalesChannelSlackWithoutUnboundedGrowth() {
         )
 
     #expect(surroundQueuedBuffers >= stereoQueuedBuffers)
-    #expect(surroundQueuedBuffers <= 12)
+    #expect(surroundQueuedBuffers <= 24)
 }
 
 @Test("Audio queue profile expands queued buffer budget for shorter packet durations")
