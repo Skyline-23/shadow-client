@@ -662,6 +662,36 @@ func audioReadyPacketsAreRequeuedWhenOutputSlotsUnavailable() {
     #expect(!shouldNotRequeue)
 }
 
+@Test("Audio drop window packet count scales with packet duration")
+func audioDropWindowPacketCountScalesWithPacketDuration() {
+    let fiveMsPackets = ShadowClientRealtimeAudioSessionRuntime.dropPacketCountForWindow(
+        windowSeconds: 0.25,
+        packetDurationMs: 5
+    )
+    let tenMsPackets = ShadowClientRealtimeAudioSessionRuntime.dropPacketCountForWindow(
+        windowSeconds: 0.25,
+        packetDurationMs: 10
+    )
+
+    #expect(fiveMsPackets == 50)
+    #expect(tenMsPackets == 25)
+}
+
+@Test("Audio drop window packet count has sane lower bounds")
+func audioDropWindowPacketCountHasSaneLowerBounds() {
+    let zeroWindow = ShadowClientRealtimeAudioSessionRuntime.dropPacketCountForWindow(
+        windowSeconds: 0,
+        packetDurationMs: 5
+    )
+    let onePacketWindow = ShadowClientRealtimeAudioSessionRuntime.dropPacketCountForWindow(
+        windowSeconds: 0.001,
+        packetDurationMs: 5
+    )
+
+    #expect(zeroWindow == 0)
+    #expect(onePacketWindow == 1)
+}
+
 @Test("Audio queue profile keeps output buffer window low-latency for stereo")
 func audioQueueProfileKeepsLowLatencyWindowForStereo() {
     let maximumQueuedBuffers = ShadowClientRealtimeAudioSessionRuntime

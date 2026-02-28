@@ -299,9 +299,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var lossConcealmentEventCount = 0
             var rsFECRecoveryCount = 0
             var observedMoonlightFECShardsSinceLastDecodedPacket = 0
-            var startupResyncPacketsRemaining = Self.initialAudioResyncDropPacketCount(
+            var dropPacketsRemaining = Self.initialAudioResyncDropPacketCount(
                 packetDurationMs: packetDurationMs
             )
+            var outputSaturationDropWindowActivationCount = 0
             var datagramCount = 0
             var hasLoggedFirstDecodedBuffer = false
             let moonlightRSFECQueue = ShadowClientRealtimeAudioMoonlightRSFECQueue()
@@ -351,6 +352,24 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 {
                     self.logger.notice(
                         "Audio decode cooldown activated due to \(reason, privacy: .public) (count=\(outputQueueDecodeCooldownActivationCount, privacy: .public), trimmed=\(trimmedCount, privacy: .public))"
+                    )
+                }
+            }
+            let activateDropWindowUnderSaturation: (String) -> Void = { reason in
+                let dropWindowPackets = Self.dropPacketCountForWindow(
+                    windowSeconds: 0.25,
+                    packetDurationMs: packetDurationMs
+                )
+                guard dropWindowPackets > 0 else {
+                    return
+                }
+                dropPacketsRemaining = max(dropPacketsRemaining, dropWindowPackets)
+                outputSaturationDropWindowActivationCount += 1
+                if outputSaturationDropWindowActivationCount == 1 ||
+                    outputSaturationDropWindowActivationCount.isMultiple(of: 12)
+                {
+                    self.logger.notice(
+                        "Audio drop window activated due to \(reason, privacy: .public) (count=\(outputSaturationDropWindowActivationCount, privacy: .public), packets=\(dropWindowPackets, privacy: .public))"
                     )
                 }
             }
@@ -503,6 +522,16 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         if attemptedOutputRecovery &&
                             consecutiveOutputQueueSaturationCount >= decodeSaturationBurstThreshold
                         {
+                            let flushedPacketCount = self.jitterBuffer.trimToMostRecent(
+                                maxBufferedPackets: 1
+                            )
+                            if flushedPacketCount > 0 {
+                                registerOutputQueuePressureDrop(
+                                    flushedPacketCount,
+                                    "drop-output-saturation-flush"
+                                )
+                            }
+                            activateDropWindowUnderSaturation("sustained-output-queue-saturation")
                             consecutiveOutputQueueSaturationCount = 0
                             activateDecodeCooldownUnderSaturation("sustained-output-queue-saturation")
                         }
@@ -534,10 +563,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             "jitter-overflow-drop"
                         )
                     }
-                    if startupResyncPacketsRemaining > 0 {
-                        startupResyncPacketsRemaining -= 1
-                        if startupResyncPacketsRemaining == 0 {
-                            logger.notice("Audio startup resync drop window completed")
+                    if dropPacketsRemaining > 0 {
+                        dropPacketsRemaining -= 1
+                        if dropPacketsRemaining == 0 {
+                            logger.notice("Audio drop window completed")
                         }
                         continue
                     }
@@ -1618,6 +1647,18 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         availableOutputSlots: Int
     ) -> Bool {
         availableOutputSlots <= 0
+    }
+
+    internal static func dropPacketCountForWindow(
+        windowSeconds: TimeInterval,
+        packetDurationMs: Int
+    ) -> Int {
+        guard windowSeconds > 0 else {
+            return 0
+        }
+        let normalizedPacketDurationMs = max(1, packetDurationMs)
+        let windowMs = Int((windowSeconds * 1_000).rounded(.up))
+        return max(1, windowMs / normalizedPacketDurationMs)
     }
 
     internal static func shouldAttemptMissingPacketRecoveryOrConcealment(
