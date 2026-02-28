@@ -319,15 +319,6 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var firstOutputQueuePressureDropUptime: TimeInterval = 0
             var lossConcealmentEventCount = 0
             var rsFECRecoveryCount = 0
-            let shouldDropOutputDueToPendingPressure: () async -> Bool = {
-                let pendingQueueDurationMs = Double(
-                    await packetQueue.pendingDurationMs(packetDurationMs: packetDurationMs)
-                )
-                return Self.shouldRequeueReadyPacketsForPendingOutputPressure(
-                    pendingOutputDurationMs: pendingQueueDurationMs,
-                    realtimePendingDurationCapMs: realtimePendingDurationCapMs
-                )
-            }
 
             let registerOutputQueuePressureDrop: (Int, String) -> Void = { droppedCount, reason in
                 guard droppedCount > 0 else {
@@ -400,10 +391,19 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             }
 
             while !Task.isCancelled {
-                guard let queuedPacket = await packetQueue.next() else {
+                guard let nextResult = await packetQueue.next() else {
                     return
                 }
+                let queuedPacket = nextResult.packet
                 let packet = queuedPacket.packet
+                let pendingQueueDurationMs = Double(
+                    max(0, nextResult.pendingPacketCountAfterDequeue) * max(1, packetDurationMs)
+                )
+                let shouldDropDueToPendingPressure = Self
+                    .shouldRequeueReadyPacketsForPendingOutputPressure(
+                        pendingOutputDurationMs: pendingQueueDurationMs,
+                        realtimePendingDurationCapMs: realtimePendingDurationCapMs
+                    )
 
                 do {
                     let rawMissingPacketCount = Self.missingRTPPacketCount(
@@ -455,12 +455,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 payload: recoveredDecodePayload,
                                 decodeFEC: false
                             ) {
-                                let dropDueToPendingPressure = await
-                                    shouldDropOutputDueToPendingPressure()
                                 enqueueDecodedBuffer(
                                     recoveredPCMBuffer,
                                     "rs-fec",
-                                    dropDueToPendingPressure
+                                    shouldDropDueToPendingPressure
                                 )
                                 recoveredMissingPacketCount += 1
                             }
@@ -499,12 +497,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             let concealmentBuffer = (try? decoder.decodePacketLossConcealment(
                                 samplesPerChannel: moonlightPLCSamplesPerChannel
                             )) ?? silenceBuffer
-                            let dropDueToPendingPressure = await
-                                shouldDropOutputDueToPendingPressure()
                             enqueueDecodedBuffer(
                                 concealmentBuffer,
                                 "plc",
-                                dropDueToPendingPressure
+                                shouldDropDueToPendingPressure
                             )
                         }
                         let previousLossConcealmentEventCount = lossConcealmentEventCount
@@ -551,11 +547,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         payload: decodePayload,
                         decodeFEC: false
                     ) {
-                        let dropDueToPendingPressure = await shouldDropOutputDueToPendingPressure()
                         enqueueDecodedBuffer(
                             pcmBuffer,
                             "primary",
-                            dropDueToPendingPressure
+                            shouldDropDueToPendingPressure
                         )
                     }
 
@@ -1896,8 +1891,14 @@ private actor ShadowClientRealtimeAudioPacketQueue {
         let flushedCount: Int
     }
 
+    struct NextResult: Sendable {
+        let packet: ShadowClientRealtimeAudioSessionRuntime.QueuedPrimaryAudioPacket
+        let pendingPacketCountAfterDequeue: Int
+    }
+
     private let capacity: Int
     private var packets: [ShadowClientRealtimeAudioSessionRuntime.QueuedPrimaryAudioPacket] = []
+    private var packetReadIndex = 0
     private var waiters: [CheckedContinuation<ShadowClientRealtimeAudioSessionRuntime.QueuedPrimaryAudioPacket?, Never>] =
         []
     private var isShutdown = false
@@ -1921,35 +1922,47 @@ private actor ShadowClientRealtimeAudioPacketQueue {
         }
 
         var flushedCount = 0
-        if packets.count >= capacity {
-            flushedCount = packets.count
+        if queuedPacketCount >= capacity {
+            flushedCount = queuedPacketCount
             packets.removeAll(keepingCapacity: true)
+            packetReadIndex = 0
         }
         packets.append(packet)
         return .init(flushedCount: flushedCount)
     }
 
-    func next() async -> ShadowClientRealtimeAudioSessionRuntime.QueuedPrimaryAudioPacket? {
-        if !packets.isEmpty {
-            return packets.removeFirst()
+    func next() async -> NextResult? {
+        if let packet = popQueuedPacket() {
+            return .init(
+                packet: packet,
+                pendingPacketCountAfterDequeue: queuedPacketCount
+            )
         }
         if isShutdown {
             return nil
         }
-        return await withCheckedContinuation { continuation in
+        let packet = await withCheckedContinuation { continuation in
             waiters.append(continuation)
         }
+        guard let packet else {
+            return nil
+        }
+        return .init(
+            packet: packet,
+            pendingPacketCountAfterDequeue: queuedPacketCount
+        )
     }
 
     func flush() -> Int {
-        let droppedCount = packets.count
+        let droppedCount = queuedPacketCount
         packets.removeAll(keepingCapacity: true)
+        packetReadIndex = 0
         return droppedCount
     }
 
     func pendingDurationMs(packetDurationMs: Int) -> Int {
         let normalizedPacketDurationMs = max(1, packetDurationMs)
-        return packets.count * normalizedPacketDurationMs
+        return queuedPacketCount * normalizedPacketDurationMs
     }
 
     func shutdown() -> Int {
@@ -1957,13 +1970,45 @@ private actor ShadowClientRealtimeAudioPacketQueue {
             return 0
         }
         isShutdown = true
-        let droppedCount = packets.count
+        let droppedCount = queuedPacketCount
         packets.removeAll(keepingCapacity: true)
+        packetReadIndex = 0
         while !waiters.isEmpty {
             let waiter = waiters.removeFirst()
             waiter.resume(returning: nil)
         }
         return droppedCount
+    }
+
+    private var queuedPacketCount: Int {
+        max(0, packets.count - packetReadIndex)
+    }
+
+    private func popQueuedPacket() -> ShadowClientRealtimeAudioSessionRuntime.QueuedPrimaryAudioPacket? {
+        guard packetReadIndex < packets.count else {
+            return nil
+        }
+        let packet = packets[packetReadIndex]
+        packetReadIndex += 1
+        compactStorageIfNeeded()
+        return packet
+    }
+
+    private func compactStorageIfNeeded() {
+        let consumedCount = packetReadIndex
+        guard consumedCount > 0 else {
+            return
+        }
+        if consumedCount >= packets.count {
+            packets.removeAll(keepingCapacity: true)
+            packetReadIndex = 0
+            return
+        }
+        guard consumedCount >= 64, consumedCount * 2 >= packets.count else {
+            return
+        }
+        packets.removeFirst(consumedCount)
+        packetReadIndex = 0
     }
 }
 
