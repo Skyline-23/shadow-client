@@ -164,6 +164,82 @@ func autoBitrateComputesLaunchBitrate() {
     #expect(launch.bitrateKbps <= ShadowClientAppSettingsDefaults.maximumBitrateWhenLocked)
 }
 
+@Test("Auto bitrate lowers recommendation when low-latency mode is enabled")
+func autoBitratePrefersLowerBitrateForLowLatencyMode() {
+    let conservative = ShadowClientAppSettings.recommendedBitrateKbps(
+        resolution: .p1080,
+        frameRate: .fps60,
+        codec: .av1,
+        enableHDR: true,
+        enableYUV444: false,
+        lowLatencyMode: true,
+        unlockBitrateLimit: false
+    )
+    let qualityBiased = ShadowClientAppSettings.recommendedBitrateKbps(
+        resolution: .p1080,
+        frameRate: .fps60,
+        codec: .av1,
+        enableHDR: true,
+        enableYUV444: false,
+        lowLatencyMode: false,
+        unlockBitrateLimit: false
+    )
+
+    #expect(conservative < qualityBiased)
+}
+
+@Test("Auto bitrate uses resolved codec efficiency for estimation")
+func autoBitrateUsesResolvedCodecForEstimation() {
+    let autoAsAV1 = ShadowClientAppSettings.recommendedBitrateKbps(
+        resolution: .p2160,
+        frameRate: .fps60,
+        codec: .auto,
+        enableHDR: true,
+        enableYUV444: false,
+        lowLatencyMode: true,
+        unlockBitrateLimit: false,
+        resolvedCodecForAuto: .av1
+    )
+    let autoAsH264 = ShadowClientAppSettings.recommendedBitrateKbps(
+        resolution: .p2160,
+        frameRate: .fps60,
+        codec: .auto,
+        enableHDR: true,
+        enableYUV444: false,
+        lowLatencyMode: true,
+        unlockBitrateLimit: false,
+        resolvedCodecForAuto: .h264
+    )
+
+    #expect(autoAsAV1 < autoAsH264)
+}
+
+@Test("Auto bitrate reduces under unstable network signal")
+func autoBitrateDropsOnNetworkInstability() {
+    let stable = ShadowClientAppSettings.recommendedBitrateKbps(
+        resolution: .p2160,
+        frameRate: .fps60,
+        codec: .av1,
+        enableHDR: true,
+        enableYUV444: false,
+        lowLatencyMode: true,
+        unlockBitrateLimit: false,
+        networkSignal: .init(jitterMs: 3.0, packetLossPercent: 0.1)
+    )
+    let unstable = ShadowClientAppSettings.recommendedBitrateKbps(
+        resolution: .p2160,
+        frameRate: .fps60,
+        codec: .av1,
+        enableHDR: true,
+        enableYUV444: false,
+        lowLatencyMode: true,
+        unlockBitrateLimit: false,
+        networkSignal: .init(jitterMs: 28.0, packetLossPercent: 2.2)
+    )
+
+    #expect(unstable < stable)
+}
+
 private actor RecordingConnectionClient: ShadowClientConnectionClient {
     private var connectInvocations: [String] = []
 

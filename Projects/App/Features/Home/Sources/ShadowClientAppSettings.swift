@@ -288,7 +288,8 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
     }
 
     public func launchSettings(
-        hostApp: ShadowClientRemoteAppDescriptor?
+        hostApp: ShadowClientRemoteAppDescriptor?,
+        networkSignal: StreamingNetworkSignal? = nil
     ) -> ShadowClientGameStreamLaunchSettings {
         let requestedHostAudioPlayback = !muteHostSpeakersWhileStreaming
         let resolvedPlayAudioOnHost: Bool
@@ -302,7 +303,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             width: resolution.width,
             height: resolution.height,
             fps: frameRate.fps,
-            bitrateKbps: resolvedBitrateKbps,
+            bitrateKbps: resolvedBitrateKbps(networkSignal: networkSignal),
             preferredCodec: videoCodec,
             enableHDR: preferHDR && (hostApp?.hdrSupported ?? true),
             enableSurroundAudio: audioConfiguration.prefersSurroundAudio,
@@ -319,9 +320,19 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
     }
 
     public var resolvedBitrateKbps: Int {
+        resolvedBitrateKbps(networkSignal: nil)
+    }
+
+    public func resolvedBitrateKbps(networkSignal: StreamingNetworkSignal?) -> Int {
         if !autoBitrate {
             return bitrateKbps
         }
+
+        let resolvedCodecForAuto = Self.resolvedCodecForBitrateEstimation(
+            preferredCodec: videoCodec,
+            enableHDR: preferHDR,
+            enableYUV444: enableYUV444
+        )
 
         return Self.recommendedBitrateKbps(
             resolution: resolution,
@@ -330,7 +341,9 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             enableHDR: preferHDR,
             enableYUV444: enableYUV444,
             lowLatencyMode: lowLatencyMode,
-            unlockBitrateLimit: unlockBitrateLimit
+            unlockBitrateLimit: unlockBitrateLimit,
+            networkSignal: networkSignal,
+            resolvedCodecForAuto: resolvedCodecForAuto
         )
     }
 
@@ -341,7 +354,9 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         enableHDR: Bool,
         enableYUV444: Bool,
         lowLatencyMode: Bool,
-        unlockBitrateLimit: Bool
+        unlockBitrateLimit: Bool,
+        networkSignal: StreamingNetworkSignal? = nil,
+        resolvedCodecForAuto: ShadowClientVideoCodecPreference? = nil
     ) -> Int {
         let pixelsPerSecond = Double(resolution.width * resolution.height * frameRate.fps)
         let normalizedLoad = max(
@@ -351,16 +366,21 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         var bitrate = Double(ShadowClientAppSettingsDefaults.bitrateEstimationBaselineKbps) *
             Foundation.pow(normalizedLoad, ShadowClientAppSettingsDefaults.bitrateEstimationScaleExponent)
 
+        let effectiveCodec = effectiveCodecForBitrateEstimation(
+            preferredCodec: codec,
+            resolvedCodecForAuto: resolvedCodecForAuto
+        )
+
         let codecMultiplier: Double
-        switch codec {
+        switch effectiveCodec {
         case .auto:
-            codecMultiplier = 1.0
+            codecMultiplier = 0.95
         case .av1:
-            codecMultiplier = 0.92
+            codecMultiplier = 0.85
         case .h265:
-            codecMultiplier = 1.0
+            codecMultiplier = 0.95
         case .h264:
-            codecMultiplier = 1.18
+            codecMultiplier = 1.08
         }
         bitrate *= codecMultiplier
 
@@ -371,7 +391,16 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             bitrate *= 1.30
         }
         if lowLatencyMode {
-            bitrate *= 1.08
+            // Realtime stability favors headroom over peak visual fidelity.
+            // Lower bitrate in low-latency mode to reduce burst loss and
+            // decoder reference-chain corruption under transient congestion.
+            bitrate *= 0.90
+        }
+        if let networkSignal {
+            bitrate *= headroomMultiplier(
+                for: networkSignal,
+                lowLatencyMode: lowLatencyMode
+            )
         }
 
         let roundedStep = ShadowClientAppSettingsDefaults.bitrateStepKbps
@@ -381,6 +410,91 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             ? ShadowClientAppSettingsDefaults.maximumBitrateWhenUnlocked
             : ShadowClientAppSettingsDefaults.maximumBitrateWhenLocked
         return min(max(rounded, minimum), maximum)
+    }
+
+    private static let bitrateCodecSupport = ShadowClientVideoCodecSupport()
+
+    private static func resolvedCodecForBitrateEstimation(
+        preferredCodec: ShadowClientVideoCodecPreference,
+        enableHDR: Bool,
+        enableYUV444: Bool
+    ) -> ShadowClientVideoCodecPreference {
+        let resolved = bitrateCodecSupport.resolvePreferredCodec(
+            preferredCodec,
+            enableHDR: enableHDR,
+            enableYUV444: enableYUV444
+        )
+
+        if preferredCodec == .auto, resolved == .auto {
+            // The resolver keeps .auto to preserve launch negotiation behavior.
+            // For bitrate estimation, treat this path as AV1-capable auto.
+            return .av1
+        }
+
+        return resolved
+    }
+
+    private static func effectiveCodecForBitrateEstimation(
+        preferredCodec: ShadowClientVideoCodecPreference,
+        resolvedCodecForAuto: ShadowClientVideoCodecPreference?
+    ) -> ShadowClientVideoCodecPreference {
+        guard preferredCodec == .auto else {
+            return preferredCodec
+        }
+
+        guard let resolvedCodecForAuto else {
+            return .auto
+        }
+
+        if resolvedCodecForAuto == .auto {
+            return .av1
+        }
+
+        return resolvedCodecForAuto
+    }
+
+    private static func headroomMultiplier(
+        for signal: StreamingNetworkSignal,
+        lowLatencyMode: Bool
+    ) -> Double {
+        let jitterMs = signal.jitterMs.isFinite ? max(0.0, signal.jitterMs) : 100.0
+        let packetLossPercent = signal.packetLossPercent.isFinite
+            ? min(max(0.0, signal.packetLossPercent), 100.0)
+            : 100.0
+
+        var multiplier = 1.0
+
+        switch packetLossPercent {
+        case 0.5 ..< 1.0:
+            multiplier = min(multiplier, 0.92)
+        case 1.0 ..< 2.0:
+            multiplier = min(multiplier, 0.85)
+        case 2.0 ..< 3.5:
+            multiplier = min(multiplier, 0.75)
+        case 3.5...:
+            multiplier = min(multiplier, 0.65)
+        default:
+            break
+        }
+
+        switch jitterMs {
+        case 8.0 ..< 15.0:
+            multiplier = min(multiplier, 0.92)
+        case 15.0 ..< 25.0:
+            multiplier = min(multiplier, 0.85)
+        case 25.0 ..< 40.0:
+            multiplier = min(multiplier, 0.78)
+        case 40.0...:
+            multiplier = min(multiplier, 0.70)
+        default:
+            break
+        }
+
+        if lowLatencyMode, (packetLossPercent >= 0.5 || jitterMs >= 10.0) {
+            multiplier *= 0.95
+        }
+
+        return max(0.55, min(multiplier, 1.0))
     }
 
     public var identityKey: String {

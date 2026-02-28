@@ -1,3 +1,4 @@
+import ShadowClientStreaming
 import ShadowClientUI
 import SwiftUI
 
@@ -1925,7 +1926,24 @@ public struct ShadowClientAppShellView: View {
     }
 
     private var effectiveBitrateKbps: Int {
-        currentSettings.resolvedBitrateKbps
+        currentSettings.resolvedBitrateKbps(networkSignal: launchBitrateNetworkSignal)
+    }
+
+    private var launchBitrateNetworkSignal: StreamingNetworkSignal? {
+        guard autoBitrate, let settingsDiagnosticsModel else {
+            return nil
+        }
+
+        let nowMs = Int(Date().timeIntervalSince1970 * 1_000)
+        let sampleAgeMs = max(0, nowMs - settingsDiagnosticsModel.timestampMs)
+        guard sampleAgeMs <= ShadowClientUIRuntimeDefaults.bitrateSignalFreshnessWindowMs else {
+            return nil
+        }
+
+        return .init(
+            jitterMs: Double(settingsDiagnosticsModel.jitterMs),
+            packetLossPercent: settingsDiagnosticsModel.packetLossPercent
+        )
     }
 
     private var bitrateSliderBinding: Binding<Double> {
@@ -2174,7 +2192,10 @@ public struct ShadowClientAppShellView: View {
 
     @MainActor
     private func launchRemoteApp(_ app: ShadowClientRemoteAppDescriptor) {
-        let settings = currentSettings.launchSettings(hostApp: app)
+        let settings = currentSettings.launchSettings(
+            hostApp: app,
+            networkSignal: launchBitrateNetworkSignal
+        )
 
         remoteDesktopRuntime.launchSelectedApp(
             appID: app.id,
@@ -2195,7 +2216,10 @@ public struct ShadowClientAppShellView: View {
             return
         }
 
-        let settings = currentSettings.launchSettings(hostApp: nil)
+        let settings = currentSettings.launchSettings(
+            hostApp: nil,
+            networkSignal: launchBitrateNetworkSignal
+        )
         let fallbackApp = preferredLaunchApp(from: remoteDesktopRuntime.apps) ?? {
             guard selectedHost.currentGameID > 0 else {
                 return nil

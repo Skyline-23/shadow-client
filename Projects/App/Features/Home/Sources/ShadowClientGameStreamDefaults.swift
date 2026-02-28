@@ -83,6 +83,7 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let ignoredRTPControlPayloadType = 127
     public static let defaultPingASCII = "PING"
     public static let initialVideoDatagramTimeout: Duration = .seconds(10)
+    public static let postStartVideoDatagramInactivityTimeoutSeconds: TimeInterval = 4.0
     public static let udpParseFailureLogLimit = 6
     public static let minimumTransportReadLength = 1
     public static let maximumTransportReadLength = 64 * 1_024
@@ -185,6 +186,8 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let videoPayloadTypeAdaptationObservationThreshold = 3
     public static let controlRoundTripPublishMinimumIntervalSeconds: TimeInterval = 1.0 / 30.0
     public static let controlRoundTripPublishDeltaThresholdMs = 2
+    public static let transientInputSendFailureBurstWindowSeconds: TimeInterval = 3.0
+    public static let transientInputSendFailureBurstThreshold = 6
 }
 
 public enum ShadowClientRTSPRequestDefaults {
@@ -269,6 +272,7 @@ public enum ShadowClientUIRuntimeDefaults {
     public static let pollingInterval: Duration = .milliseconds(200)
     public static let streamOutputHeartbeatInterval: Duration = .seconds(1)
     public static let diagnosticsHUDSampleHistoryLimit = 48
+    public static let bitrateSignalFreshnessWindowMs = 5_000
 }
 
 public enum ShadowClientHostClassificationDefaults {

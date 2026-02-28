@@ -1064,7 +1064,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         hostState = .loading
         refreshHostsTask?.cancel()
         let metadataClient = metadataClient
-        refreshHostsTask = Task {
+        refreshHostsTask = Task { [weak self] in
             let descriptors = await withTaskGroup(
                 of: ShadowClientRemoteHostDescriptor.self,
                 returning: [ShadowClientRemoteHostDescriptor].self
@@ -1087,41 +1087,44 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 return
             }
 
-            await MainActor.run {
-                hosts = sorted
+            await MainActor.run { [weak self] in
+                guard let self else {
+                    return
+                }
+                self.hosts = sorted
 
                 if sorted.isEmpty {
-                    hostState = .failed("No hosts resolved.")
-                    selectedHostID = nil
-                    apps = []
-                    appState = .idle
+                    self.hostState = .failed("No hosts resolved.")
+                    self.selectedHostID = nil
+                    self.apps = []
+                    self.appState = .idle
                     return
                 }
 
-                hostState = .loaded
+                self.hostState = .loaded
                 let preferredNormalized = Self.normalizeCandidate(preferredHost)
 
-                if let pendingSelectedHostID,
+                if let pendingSelectedHostID = self.pendingSelectedHostID,
                    sorted.contains(where: { $0.id == pendingSelectedHostID })
                 {
                     self.selectedHostID = pendingSelectedHostID
                     self.pendingSelectedHostID = nil
                 } else {
                     self.pendingSelectedHostID = nil
-                    if let selectedHostID,
+                    if let selectedHostID = self.selectedHostID,
                        sorted.contains(where: { $0.id == selectedHostID })
                     {
                         self.selectedHostID = selectedHostID
                     } else if let preferredNormalized,
                               let preferred = sorted.first(where: { $0.host.lowercased() == preferredNormalized })
                     {
-                        selectedHostID = preferred.id
+                        self.selectedHostID = preferred.id
                     } else {
-                        selectedHostID = sorted.first?.id
+                        self.selectedHostID = sorted.first?.id
                     }
                 }
 
-                performRefreshSelectedHostApps()
+                self.performRefreshSelectedHostApps()
             }
         }
     }
@@ -1148,7 +1151,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         pairGeneration &+= 1
         let currentPairGeneration = pairGeneration
         let controlClient = controlClient
-        pairTask = Task {
+        pairTask = Task { [weak self] in
             do {
                 let pairingDeadline = Date().addingTimeInterval(
                     ShadowClientPairingDefaults.retryDeadlineSeconds
@@ -1178,43 +1181,49 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
 
                 if Task.isCancelled {
-                    await MainActor.run {
-                        guard self.pairGeneration == currentPairGeneration,
-                              case .pairing = pairingState
+                    await MainActor.run { [weak self] in
+                        guard let self,
+                              self.pairGeneration == currentPairGeneration,
+                              case .pairing = self.pairingState
                         else {
                             return
                         }
-                        pairingState = .idle
+                        self.pairingState = .idle
                     }
                     return
                 }
 
-                await MainActor.run {
-                    guard self.pairGeneration == currentPairGeneration else {
+                await MainActor.run { [weak self] in
+                    guard let self,
+                          self.pairGeneration == currentPairGeneration
+                    else {
                         return
                     }
-                    pairingState = .paired("Paired")
-                    let candidates = latestHostCandidates.isEmpty ? hosts.map(\.host) : latestHostCandidates
-                    refreshHosts(candidates: candidates, preferredHost: selectedHost.host)
+                    self.pairingState = .paired("Paired")
+                    let candidates = self.latestHostCandidates.isEmpty ? self.hosts.map(\.host) : self.latestHostCandidates
+                    self.refreshHosts(candidates: candidates, preferredHost: selectedHost.host)
                 }
             } catch {
                 if Task.isCancelled {
-                    await MainActor.run {
-                        guard self.pairGeneration == currentPairGeneration,
-                              case .pairing = pairingState
+                    await MainActor.run { [weak self] in
+                        guard let self,
+                              self.pairGeneration == currentPairGeneration,
+                              case .pairing = self.pairingState
                         else {
                             return
                         }
-                        pairingState = .idle
+                        self.pairingState = .idle
                     }
                     return
                 }
 
-                await MainActor.run {
-                    guard self.pairGeneration == currentPairGeneration else {
+                await MainActor.run { [weak self] in
+                    guard let self,
+                          self.pairGeneration == currentPairGeneration
+                    else {
                         return
                     }
-                    pairingState = .failed(error.localizedDescription)
+                    self.pairingState = .failed(error.localizedDescription)
                 }
             }
         }
@@ -1265,22 +1274,23 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             appTitle: launchedAppTitle,
             settings: launchSettingsToUse
         )
-        launchTask = Task {
+        launchTask = Task { [weak self] in
             if let previousLaunchTask {
                 await previousLaunchTask.value
             }
 
             if Task.isCancelled {
                 await sessionConnectionClient.disconnect()
-                await MainActor.run {
-                    guard self.launchGeneration == currentLaunchGeneration,
-                          launchState == .launching
+                await MainActor.run { [weak self] in
+                    guard let self,
+                          self.launchGeneration == currentLaunchGeneration,
+                          self.launchState == .launching
                     else {
                         return
                     }
-                    launchState = .idle
-                    activeSession = nil
-                    lastKnownSessionURL = nil
+                    self.launchState = .idle
+                    self.activeSession = nil
+                    self.lastKnownSessionURL = nil
                 }
                 return
             }
@@ -1342,10 +1352,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     )
                     let forcedSessionURL = try Self.validatedSessionURL(from: forcedLaunchResult)
 
-                    persistCodecFallbackIfNeeded(
-                        attemptedPreferredCodec: launchSettingsToUse.preferredCodec,
-                        fallbackSettings: forcedLaunchSettings
-                    )
+                    await MainActor.run { [weak self] in
+                        self?.persistCodecFallbackIfNeeded(
+                            attemptedPreferredCodec: launchSettingsToUse.preferredCodec,
+                            fallbackSettings: forcedLaunchSettings
+                        )
+                    }
 
                     try await Self.connectWithCodecFallback(
                         sessionConnectionClient: sessionConnectionClient,
@@ -1364,69 +1376,75 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
                 if Task.isCancelled {
                     await sessionConnectionClient.disconnect()
-                    await MainActor.run {
-                        guard self.launchGeneration == currentLaunchGeneration,
-                              launchState == .launching
+                    await MainActor.run { [weak self] in
+                        guard let self,
+                              self.launchGeneration == currentLaunchGeneration,
+                              self.launchState == .launching
                         else {
                             return
                         }
-                        launchState = .idle
-                        activeSession = nil
-                        lastKnownSessionURL = nil
+                        self.launchState = .idle
+                        self.activeSession = nil
+                        self.lastKnownSessionURL = nil
                     }
                     return
                 }
 
-                await MainActor.run {
-                    guard self.launchGeneration == currentLaunchGeneration else {
+                await MainActor.run { [weak self] in
+                    guard let self,
+                          self.launchGeneration == currentLaunchGeneration
+                    else {
                         return
                     }
-                    runtimeCodecRecoveryInProgress = false
+                    self.runtimeCodecRecoveryInProgress = false
 
-                    activeSession = ShadowClientActiveRemoteSession(
+                    self.activeSession = ShadowClientActiveRemoteSession(
                         host: selectedHost.host,
                         appID: appID,
                         appTitle: resolvedTitle,
                         sessionURL: connectedSessionURL
                     )
-                    lastKnownSessionURL = Self.normalizedSessionURL(connectedSessionURL)
-                    if sessionPresentationMode == .externalRuntime {
-                        launchState = .launched(
+                    self.lastKnownSessionURL = Self.normalizedSessionURL(connectedSessionURL)
+                    if self.sessionPresentationMode == .externalRuntime {
+                        self.launchState = .launched(
                             "Remote desktop launched (\(connectedLaunchResult.verb)): \(resolvedTitle) on \(selectedHost.host)"
                         )
                     } else {
-                        launchState = .launched("Remote session transport connected (\(connectedLaunchResult.verb)): \(connectedSessionURL)")
+                        self.launchState = .launched("Remote session transport connected (\(connectedLaunchResult.verb)): \(connectedSessionURL)")
                     }
                 }
             } catch {
                 if Task.isCancelled {
                     await sessionConnectionClient.disconnect()
-                    await MainActor.run {
-                        guard self.launchGeneration == currentLaunchGeneration,
-                              launchState == .launching
+                    await MainActor.run { [weak self] in
+                        guard let self,
+                              self.launchGeneration == currentLaunchGeneration,
+                              self.launchState == .launching
                         else {
                             return
                         }
-                        launchState = .idle
-                        activeSession = nil
-                        lastKnownSessionURL = nil
+                        self.launchState = .idle
+                        self.activeSession = nil
+                        self.lastKnownSessionURL = nil
                     }
                     return
                 }
 
-                await MainActor.run {
-                    guard self.launchGeneration == currentLaunchGeneration else {
+                await MainActor.run { [weak self] in
+                    guard let self,
+                          self.launchGeneration == currentLaunchGeneration
+                    else {
                         return
                     }
-                    runtimeCodecRecoveryInProgress = false
-                    launchState = .failed(
+                    self.runtimeCodecRecoveryInProgress = false
+                    self.launchState = .failed(
                         Self.userFacingLaunchFailureMessage(
                             error,
                             settings: settings
                         )
                     )
-                    activeSession = nil
-                    lastKnownSessionURL = nil
+                    self.activeSession = nil
+                    self.lastKnownSessionURL = nil
                 }
             }
         }
@@ -2090,7 +2108,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let host = hostDescriptor.host
         let httpsPort = hostDescriptor.httpsPort
         let cachedAppsForHost = cachedAppsByHostID[hostDescriptor.id] ?? []
-        refreshAppsTask = Task {
+        refreshAppsTask = Task { [weak self] in
             do {
                 let resolved = try await metadataClient.fetchAppList(
                     host: host,
@@ -2110,21 +2128,27 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
 
                 guard !Task.isCancelled else {
-                    await MainActor.run {
-                        guard appRefreshGeneration == refreshGeneration, appState == .loading else {
+                    await MainActor.run { [weak self] in
+                        guard let self,
+                              self.appRefreshGeneration == refreshGeneration,
+                              self.appState == .loading
+                        else {
                             return
                         }
-                        appState = .idle
+                        self.appState = .idle
                     }
                     return
                 }
 
-                await MainActor.run {
-                    if !sorted.isEmpty {
-                        cachedAppsByHostID[hostDescriptor.id] = sorted
+                await MainActor.run { [weak self] in
+                    guard let self else {
+                        return
                     }
-                    apps = resolvedApps
-                    appState = resolvedApps.isEmpty
+                    if !sorted.isEmpty {
+                        self.cachedAppsByHostID[hostDescriptor.id] = sorted
+                    }
+                    self.apps = resolvedApps
+                    self.appState = resolvedApps.isEmpty
                         ? .failed("No app metadata loaded yet. Pairing may be required before app list queries.")
                         : .loaded
                 }
@@ -2135,22 +2159,28 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     cachedApps: cachedAppsForHost
                 )
                 guard !Task.isCancelled else {
-                    await MainActor.run {
-                        guard appRefreshGeneration == refreshGeneration, appState == .loading else {
+                    await MainActor.run { [weak self] in
+                        guard let self,
+                              self.appRefreshGeneration == refreshGeneration,
+                              self.appState == .loading
+                        else {
                             return
                         }
-                        appState = .idle
+                        self.appState = .idle
                     }
                     return
                 }
 
-                await MainActor.run {
+                await MainActor.run { [weak self] in
+                    guard let self else {
+                        return
+                    }
                     if fallbackApps.isEmpty {
-                        apps = []
-                        appState = .failed(message)
+                        self.apps = []
+                        self.appState = .failed(message)
                     } else {
-                        apps = fallbackApps
-                        appState = .loaded
+                        self.apps = fallbackApps
+                        self.appState = .loaded
                     }
                 }
             }

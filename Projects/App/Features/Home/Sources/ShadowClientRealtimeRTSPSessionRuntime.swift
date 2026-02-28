@@ -1574,19 +1574,36 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             decodeFailureStatus: decodeFailureStatus
         )
         if shouldTreatFailureAsSoftFrameDrop {
-            let shouldRequestSoftRecovery = Self.shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
+            let lastDecodedOutputUptime = effectiveLastDecodedFrameOutputUptime()
+            let hasRecoverableFailureBurst = Self.shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
+                av1RecoverableDecoderFailureCount
+            )
+            let hasOutputStallEvidence = Self.shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
                 recoverableFailureCount: av1RecoverableDecoderFailureCount,
                 now: now,
-                lastDecodedFrameOutputUptime: effectiveLastDecodedFrameOutputUptime(),
+                lastDecodedFrameOutputUptime: lastDecodedOutputUptime,
                 minimumOutputStallSeconds: ShadowClientRealtimeSessionDefaults.videoQueuePressureRecoveryMinimumOutputStallSeconds
             )
-            if hasRenderedFirstFrame, shouldRequestSoftRecovery {
-                logger.notice(
-                    "AV1 decoder recoverable failure burst with output stall detected; requesting reference invalidation without decoder reset or sync-gate transition"
-                )
+            let shouldEnterSyncGateForSoftRecovery = Self.shouldEnterSyncGateForAV1SoftRecoveryRequest(
+                recoverableFailureCount: av1RecoverableDecoderFailureCount,
+                now: now,
+                lastDecodedFrameOutputUptime: lastDecodedOutputUptime,
+                minimumOutputStallSeconds: ShadowClientRealtimeSessionDefaults.videoQueuePressureRecoveryMinimumOutputStallSeconds
+            )
+            if hasRenderedFirstFrame, hasRecoverableFailureBurst {
+                if hasOutputStallEvidence {
+                    logger.notice(
+                        "AV1 decoder recoverable failure burst with output stall detected; requesting reference invalidation with sync-gate transition"
+                    )
+                } else {
+                    logger.notice(
+                        "AV1 decoder recoverable failure burst detected without output stall; forcing sync-gate transition to mask corrupted output"
+                    )
+                }
                 _ = await requestAV1ReferenceFrameInvalidationOrRecovery(
                     reason: "decoder-recoverable-soft",
-                    minimumInterval: 1.0
+                    minimumInterval: 1.0,
+                    enterSyncGate: shouldEnterSyncGateForSoftRecovery
                 )
             } else {
                 logger.notice(
@@ -2227,7 +2244,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     @discardableResult
     private func requestAV1ReferenceFrameInvalidationOrRecovery(
         reason: String,
-        minimumInterval: TimeInterval = ShadowClientRealtimeSessionDefaults.videoRecoveryFrameRequestCooldownSeconds
+        minimumInterval: TimeInterval = ShadowClientRealtimeSessionDefaults.videoRecoveryFrameRequestCooldownSeconds,
+        enterSyncGate: Bool = false
     ) async -> Bool {
         let endFrameIndex =
             lastAV1DecodeSubmissionContext?.depacketizerMetadata?.frameIndex ??
@@ -2239,6 +2257,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         {
             let range = Self.av1ReferenceInvalidationRange(endFrameIndex: endFrameIndex)
             lastAV1ReferenceInvalidationRequestUptime = now
+            if enterSyncGate {
+                awaitingAV1SyncFrame = true
+                av1SyncGateAllowsReferenceInvalidatedFrame = true
+                av1SyncGateDroppedFrameCount = 0
+            }
             logger.notice(
                 "AV1 reference frame invalidation requested (reason=\(reason, privacy: .public), range=\(range.start, privacy: .public)-\(range.end, privacy: .public))"
             )
@@ -2426,6 +2449,29 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             now: now,
             lastDecodedFrameOutputUptime: lastDecodedFrameOutputUptime,
             minimumStallSeconds: minimumOutputStallSeconds
+        )
+    }
+
+    static func shouldEnterSyncGateForAV1SoftRecoveryRequest(
+        recoverableFailureCount: Int,
+        now: TimeInterval,
+        lastDecodedFrameOutputUptime: TimeInterval,
+        minimumOutputStallSeconds: TimeInterval
+    ) -> Bool {
+        // Visual corruption can still be severe even when VT keeps emitting output
+        // (i.e. no output-stall signal). Enter sync gate on bursty recoverable
+        // failures to suppress corrupted reference-chain output until next sync frame.
+        let hasRecoverableFailureBurst = shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
+            recoverableFailureCount
+        )
+        if hasRecoverableFailureBurst {
+            return true
+        }
+        return shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
+            recoverableFailureCount: recoverableFailureCount,
+            now: now,
+            lastDecodedFrameOutputUptime: lastDecodedFrameOutputUptime,
+            minimumOutputStallSeconds: minimumOutputStallSeconds
         )
     }
 
@@ -2762,6 +2808,52 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         let normalizedToleranceRatio = min(1.0, max(0.1, pacingToleranceRatio))
         let minimumInterval = (1.0 / Double(normalizedFPS)) * normalizedToleranceRatio
         return now - lastRenderedFramePublishUptime < minimumInterval
+    }
+
+    static func shouldTreatUDPVideoDatagramReceiveAsStalledAfterStartup(
+        datagramCount: Int,
+        secondsSinceLastDatagram: TimeInterval,
+        inactivityTimeoutSeconds: TimeInterval =
+            ShadowClientRealtimeSessionDefaults.postStartVideoDatagramInactivityTimeoutSeconds
+    ) -> Bool {
+        guard datagramCount > 0 else {
+            return false
+        }
+        return secondsSinceLastDatagram >= max(0, inactivityTimeoutSeconds)
+    }
+
+    static func shouldRequestVideoRecoveryForUDPDatagramInactivity(
+        now: TimeInterval,
+        lastRecoveryRequestUptime: TimeInterval,
+        secondsSinceLastDatagram: TimeInterval,
+        inactivityTimeoutSeconds: TimeInterval =
+            ShadowClientRealtimeSessionDefaults.postStartVideoDatagramInactivityTimeoutSeconds,
+        recoveryRequestCooldownSeconds: TimeInterval =
+            ShadowClientRealtimeSessionDefaults.videoRecoveryFrameRequestUnderPressureCooldownSeconds
+    ) -> Bool {
+        guard secondsSinceLastDatagram >= max(0, inactivityTimeoutSeconds) else {
+            return false
+        }
+        return now - lastRecoveryRequestUptime >= max(0, recoveryRequestCooldownSeconds)
+    }
+
+    static func shouldResetControlChannelAfterTransientInputSendFailures(
+        failureCount: Int,
+        now: TimeInterval,
+        firstFailureUptime: TimeInterval,
+        burstWindowSeconds: TimeInterval =
+            ShadowClientRealtimeSessionDefaults.transientInputSendFailureBurstWindowSeconds,
+        burstThreshold: Int =
+            ShadowClientRealtimeSessionDefaults.transientInputSendFailureBurstThreshold
+    ) -> Bool {
+        let normalizedBurstThreshold = max(1, burstThreshold)
+        guard failureCount >= normalizedBurstThreshold else {
+            return false
+        }
+        guard firstFailureUptime > 0 else {
+            return false
+        }
+        return now - firstFailureUptime <= max(0, burstWindowSeconds)
     }
 
     static func isTransientInputSendError(_ error: Error) -> Bool {
@@ -3524,8 +3616,12 @@ private actor ShadowClientRTSPInterleavedClient {
     private let videoFECUnrecoverableRecoveryRequestCooldownSeconds: TimeInterval = 1.5
     private let videoFECUnrecoverableRecoveryBurstWindowSeconds: TimeInterval = 2.0
     private let videoFECUnrecoverableRecoveryBurstThreshold = 3
+    private let inputChannelUnavailableLogMinimumIntervalSeconds: TimeInterval = 2.0
     private var loggedInputSendKinds = Set<String>()
     private var loggedInputDropKinds = Set<String>()
+    private var transientInputSendFailureCount = 0
+    private var firstTransientInputSendFailureUptime: TimeInterval = 0
+    private var lastInputChannelUnavailableLogUptime: TimeInterval = 0
 
     init(
         timeout: Duration,
@@ -3577,6 +3673,9 @@ private actor ShadowClientRTSPInterleavedClient {
         self.remoteInputKeyID = remoteInputKeyID
         loggedInputSendKinds.removeAll(keepingCapacity: true)
         loggedInputDropKinds.removeAll(keepingCapacity: true)
+        transientInputSendFailureCount = 0
+        firstTransientInputSendFailureUptime = 0
+        lastInputChannelUnavailableLogUptime = 0
         let normalizedURL = normalizeRTSPURL(url)
         guard let host = normalizedURL.host else {
             throw ShadowClientRTSPInterleavedClientError.invalidURL
@@ -4685,6 +4784,9 @@ private actor ShadowClientRTSPInterleavedClient {
         currentServerAppVersion = nil
         loggedInputSendKinds.removeAll(keepingCapacity: false)
         loggedInputDropKinds.removeAll(keepingCapacity: false)
+        transientInputSendFailureCount = 0
+        firstTransientInputSendFailureUptime = 0
+        lastInputChannelUnavailableLogUptime = 0
     }
 
     func sendInput(_ event: ShadowClientRemoteInputEvent) async throws {
@@ -4693,6 +4795,13 @@ private actor ShadowClientRTSPInterleavedClient {
         )
 
         guard let controlChannelRuntime else {
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - lastInputChannelUnavailableLogUptime >= inputChannelUnavailableLogMinimumIntervalSeconds {
+                logger.notice(
+                    "Sunshine input send skipped: control channel unavailable"
+                )
+                lastInputChannelUnavailableLogUptime = now
+            }
             return
         }
         guard let packet = ShadowClientSunshineInputPacketCodec.encode(event) else {
@@ -4715,8 +4824,33 @@ private actor ShadowClientRTSPInterleavedClient {
                 packet.payload,
                 channelID: packet.channelID
             )
+            transientInputSendFailureCount = 0
+            firstTransientInputSendFailureUptime = 0
         } catch {
             if ShadowClientRealtimeRTSPSessionRuntime.isTransientInputSendError(error) {
+                let now = ProcessInfo.processInfo.systemUptime
+                if firstTransientInputSendFailureUptime == 0 ||
+                    now - firstTransientInputSendFailureUptime >
+                    ShadowClientRealtimeSessionDefaults.transientInputSendFailureBurstWindowSeconds
+                {
+                    firstTransientInputSendFailureUptime = now
+                    transientInputSendFailureCount = 0
+                }
+                transientInputSendFailureCount += 1
+                if ShadowClientRealtimeRTSPSessionRuntime.shouldResetControlChannelAfterTransientInputSendFailures(
+                    failureCount: transientInputSendFailureCount,
+                    now: now,
+                    firstFailureUptime: firstTransientInputSendFailureUptime
+                ) {
+                    logger.notice(
+                        "Sunshine input channel reset after transient send failure burst (count=\(self.transientInputSendFailureCount, privacy: .public), window=\(ShadowClientRealtimeSessionDefaults.transientInputSendFailureBurstWindowSeconds, privacy: .public)s)"
+                    )
+                    await controlChannelRuntime.stop()
+                    self.controlChannelRuntime = nil
+                    hasStartedControlChannelBootstrap = false
+                    transientInputSendFailureCount = 0
+                    firstTransientInputSendFailureUptime = 0
+                }
                 return
             }
             if ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(error) {
@@ -4726,6 +4860,8 @@ private actor ShadowClientRTSPInterleavedClient {
                 await controlChannelRuntime.stop()
                 self.controlChannelRuntime = nil
                 hasStartedControlChannelBootstrap = false
+                transientInputSendFailureCount = 0
+                firstTransientInputSendFailureUptime = 0
                 return
             }
             throw error
@@ -5031,6 +5167,9 @@ private actor ShadowClientRTSPInterleavedClient {
         var firstFECUnrecoverableUptime: TimeInterval = 0
         var fecUnrecoverableBurstCount = 0
         let receiveStart = ContinuousClock.now
+        var lastVideoDatagramUptime = ProcessInfo.processInfo.systemUptime
+        var lastVideoDatagramInactivityRecoveryRequestUptime: TimeInterval = 0
+        var hasPendingPostStartDatagramStall = false
 
         while !Task.isCancelled {
             guard let datagram = try udpSocket.receive(
@@ -5043,13 +5182,41 @@ private actor ShadowClientRTSPInterleavedClient {
                         "RTSP UDP video timeout: no video datagram received"
                     )
                 }
+                let now = ProcessInfo.processInfo.systemUptime
+                let secondsSinceLastDatagram = now - lastVideoDatagramUptime
+                if ShadowClientRealtimeRTSPSessionRuntime.shouldTreatUDPVideoDatagramReceiveAsStalledAfterStartup(
+                    datagramCount: datagramCount,
+                    secondsSinceLastDatagram: secondsSinceLastDatagram
+                ) {
+                    hasPendingPostStartDatagramStall = true
+                    if ShadowClientRealtimeRTSPSessionRuntime.shouldRequestVideoRecoveryForUDPDatagramInactivity(
+                        now: now,
+                        lastRecoveryRequestUptime: lastVideoDatagramInactivityRecoveryRequestUptime,
+                        secondsSinceLastDatagram: secondsSinceLastDatagram
+                    ) {
+                        lastVideoDatagramInactivityRecoveryRequestUptime = now
+                        logger.error(
+                            "RTSP UDP video datagram stream stalled after startup (silence=\(secondsSinceLastDatagram, privacy: .public)s); requesting recovery frame without terminating session"
+                        )
+                        await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
+                    }
+                }
                 continue
             }
             guard !datagram.isEmpty else {
                 continue
             }
 
+            if hasPendingPostStartDatagramStall {
+                let resumedAfterSilenceSeconds = ProcessInfo.processInfo.systemUptime - lastVideoDatagramUptime
+                logger.notice(
+                    "RTSP UDP video datagram flow resumed after inactivity stall (silence=\(resumedAfterSilenceSeconds, privacy: .public)s)"
+                )
+                hasPendingPostStartDatagramStall = false
+                lastVideoDatagramInactivityRecoveryRequestUptime = 0
+            }
             datagramCount += 1
+            lastVideoDatagramUptime = ProcessInfo.processInfo.systemUptime
             if datagramCount == 1 {
                 logger.notice(
                     "First UDP video datagram received: bytes=\(datagram.count, privacy: .public), preview=\(Self.hexPreview(datagram), privacy: .public)"

@@ -2125,6 +2125,31 @@ func realtimeRuntimeFECUnrecoverableBurstGateSuppressesStaleOrCooldownViolations
     )
 }
 
+@Test("Realtime runtime UDP video stall detector ignores startup and triggers only after post-start inactivity threshold")
+func realtimeRuntimeUDPVideoStallDetectorUsesPostStartInactivityThreshold() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldTreatUDPVideoDatagramReceiveAsStalledAfterStartup(
+            datagramCount: 0,
+            secondsSinceLastDatagram: 30.0,
+            inactivityTimeoutSeconds: 4.0
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldTreatUDPVideoDatagramReceiveAsStalledAfterStartup(
+            datagramCount: 24,
+            secondsSinceLastDatagram: 3.9,
+            inactivityTimeoutSeconds: 4.0
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldTreatUDPVideoDatagramReceiveAsStalledAfterStartup(
+            datagramCount: 24,
+            secondsSinceLastDatagram: 4.0,
+            inactivityTimeoutSeconds: 4.0
+        )
+    )
+}
+
 @Test("Realtime runtime treats canceled input send errors as transient and does not reset control channel")
 func realtimeRuntimeInputSendClassifierTreatsCanceledAsTransient() {
     let nwCanceled = NSError(domain: "Network.NWError", code: 89)
@@ -2140,6 +2165,37 @@ func realtimeRuntimeInputSendClassifierTreatsCanceledAsTransient() {
     #expect(!ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(nwCanceled))
     #expect(!ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(posixCanceled))
     #expect(!ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(posixNotConnected))
+}
+
+@Test("Realtime runtime resets control channel after transient input-send burst inside short window")
+func realtimeRuntimeResetsControlChannelAfterTransientInputSendBurst() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldResetControlChannelAfterTransientInputSendFailures(
+            failureCount: 5,
+            now: 10.0,
+            firstFailureUptime: 8.0,
+            burstWindowSeconds: 3.0,
+            burstThreshold: 6
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldResetControlChannelAfterTransientInputSendFailures(
+            failureCount: 6,
+            now: 10.0,
+            firstFailureUptime: 8.0,
+            burstWindowSeconds: 3.0,
+            burstThreshold: 6
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldResetControlChannelAfterTransientInputSendFailures(
+            failureCount: 6,
+            now: 12.1,
+            firstFailureUptime: 8.0,
+            burstWindowSeconds: 3.0,
+            burstThreshold: 6
+        )
+    )
 }
 
 @Test("Realtime runtime resets control channel for fatal send errors")
@@ -2339,6 +2395,34 @@ func realtimeRuntimeAV1SoftRecoveryRequestRequiresOutputStall() {
     )
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime.shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
+            recoverableFailureCount: 3,
+            now: 10.0,
+            lastDecodedFrameOutputUptime: 8.0,
+            minimumOutputStallSeconds: 1.5
+        )
+    )
+}
+
+@Test("Realtime runtime AV1 soft-recovery enters sync gate on recoverable-failure burst even without output stall")
+func realtimeRuntimeAV1SoftRecoverySyncGatePolicyUsesFailureBurstGuard() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldEnterSyncGateForAV1SoftRecoveryRequest(
+            recoverableFailureCount: 2,
+            now: 10.0,
+            lastDecodedFrameOutputUptime: 6.0,
+            minimumOutputStallSeconds: 1.5
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldEnterSyncGateForAV1SoftRecoveryRequest(
+            recoverableFailureCount: 3,
+            now: 10.0,
+            lastDecodedFrameOutputUptime: 9.2,
+            minimumOutputStallSeconds: 1.5
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldEnterSyncGateForAV1SoftRecoveryRequest(
             recoverableFailureCount: 3,
             now: 10.0,
             lastDecodedFrameOutputUptime: 8.0,

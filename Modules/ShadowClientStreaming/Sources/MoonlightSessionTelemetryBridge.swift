@@ -21,7 +21,10 @@ public actor MoonlightSessionTelemetryBridge {
 
         return SnapshotStream(bufferingPolicy: bufferingPolicy) { continuation in
             continuations[subscriberID] = continuation
-            continuation.onTermination = { _ in
+            continuation.onTermination = { [weak self] _ in
+                guard let self else {
+                    return
+                }
                 Task {
                     await self.removeSubscriber(subscriberID)
                 }
