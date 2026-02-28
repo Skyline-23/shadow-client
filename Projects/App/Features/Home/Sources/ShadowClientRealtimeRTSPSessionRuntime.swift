@@ -1572,13 +1572,15 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             decodeFailureStatus: decodeFailureStatus
         )
         if shouldTreatFailureAsSoftFrameDrop {
-            if hasRenderedFirstFrame,
-               Self.shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
-                   av1RecoverableDecoderFailureCount
-               )
-            {
+            let shouldRequestSoftRecovery = Self.shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
+                recoverableFailureCount: av1RecoverableDecoderFailureCount,
+                now: now,
+                lastDecodedFrameOutputUptime: effectiveLastDecodedFrameOutputUptime(),
+                minimumOutputStallSeconds: ShadowClientRealtimeSessionDefaults.videoQueuePressureRecoveryMinimumOutputStallSeconds
+            )
+            if hasRenderedFirstFrame, shouldRequestSoftRecovery {
                 logger.notice(
-                    "AV1 decoder recoverable failure burst detected; requesting recovery frame without decoder reset or sync-gate transition"
+                    "AV1 decoder recoverable failure burst with output stall detected; requesting recovery frame without decoder reset or sync-gate transition"
                 )
                 _ = await requestVideoRecoveryFrame(
                     codec: codec,
@@ -1587,7 +1589,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 )
             } else {
                 logger.notice(
-                    "AV1 decoder dropped one recoverable frame; continuing without decoder reset"
+                    "AV1 decoder dropped recoverable frame without output stall; continuing without decoder reset"
                 )
             }
             return true
@@ -2374,6 +2376,24 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         _ recoverableFailureCount: Int
     ) -> Bool {
         recoverableFailureCount >= 3
+    }
+
+    static func shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
+        recoverableFailureCount: Int,
+        now: TimeInterval,
+        lastDecodedFrameOutputUptime: TimeInterval,
+        minimumOutputStallSeconds: TimeInterval
+    ) -> Bool {
+        guard shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
+            recoverableFailureCount
+        ) else {
+            return false
+        }
+        return shouldEscalateQueuePressureToRecovery(
+            now: now,
+            lastDecodedFrameOutputUptime: lastDecodedFrameOutputUptime,
+            minimumStallSeconds: minimumOutputStallSeconds
+        )
     }
 
     static func isRecoverableDecodeFailureStatus(_ status: OSStatus) -> Bool {

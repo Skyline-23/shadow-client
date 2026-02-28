@@ -2327,6 +2327,26 @@ func realtimeRuntimeAV1SoftRecoveryRequestThreshold() {
     )
 }
 
+@Test("Realtime runtime AV1 soft-recovery requires output stall evidence")
+func realtimeRuntimeAV1SoftRecoveryRequestRequiresOutputStall() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
+            recoverableFailureCount: 3,
+            now: 10.0,
+            lastDecodedFrameOutputUptime: 9.4,
+            minimumOutputStallSeconds: 1.5
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
+            recoverableFailureCount: 3,
+            now: 10.0,
+            lastDecodedFrameOutputUptime: 8.0,
+            minimumOutputStallSeconds: 1.5
+        )
+    )
+}
+
 @Test("Realtime runtime decode failure status extraction reports decode status")
 func realtimeRuntimeDecodeFailureStatusExtractionReportsDecodeStatus() {
     #expect(
