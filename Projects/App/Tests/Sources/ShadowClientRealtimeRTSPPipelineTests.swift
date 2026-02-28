@@ -1539,6 +1539,21 @@ func realtimeRuntimeAv1AccessUnitValidatorRejectsMalformedPayloads() {
     #expect(!ShadowClientRealtimeRTSPSessionRuntime.isLikelyValidAV1AccessUnit(invalidSize))
 }
 
+@Test("Realtime runtime drops malformed AV1 access units before VideoToolbox decode")
+func realtimeRuntimeDropsMalformedAv1AccessUnitsBeforeDecode() {
+    let validAccessUnit = Data([0x12, 0x00, 0x32, 0x01, 0x00])
+    let malformedAccessUnit = Data([0x32, 0x05, 0x00])
+
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime
+            .isLikelyValidAV1AccessUnit(validAccessUnit)
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime
+            .isLikelyValidAV1AccessUnit(malformedAccessUnit)
+    )
+}
+
 @Test("Realtime runtime depacketizer shedding follows packet-shedding policy")
 func realtimeRuntimeDepacketizerSheddingClassifier() {
     #expect(

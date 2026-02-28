@@ -1126,9 +1126,18 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             if codec == .av1,
                !Self.isLikelyValidAV1AccessUnit(frame)
             {
-                // AV1 low-latency streams can contain non-canonical OBU packaging.
-                // Avoid pre-decoder drops here and let VideoToolbox decide decode validity.
-                logger.notice("Forwarding non-canonical AV1 access unit to decoder without pre-drop")
+                logger.error(
+                    "Dropping malformed AV1 access unit before decode to avoid VideoToolbox bad-data failure"
+                )
+                if await handleDepacketizerCorruption(codec: .av1) {
+                    throw ShadowClientRealtimeSessionRuntimeError.transportFailure(
+                        Self.runtimeRecoveryExhaustedMessage(
+                            codec: .av1,
+                            reason: "invalid av1 access unit"
+                        )
+                    )
+                }
+                return
             }
             if let videoDecodeQueue {
                 let producerSheddingHighWatermark = max(
