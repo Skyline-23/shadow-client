@@ -125,10 +125,14 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 channels: resolvedTrack.channelCount,
                 packetDurationMs: packetDurationMs
             )
-            // Moonlight's audio backpressure policy is duration-based: drop when pending audio
-            // exceeds the fixed realtime cap (30 ms for default renderer path).
+            // Moonlight's receive/decode backpressure policy drops based on queued packet duration
+            // (LBQ), while renderer output queue is allowed to hold roughly 10 frames.
             realtimePendingDurationCapMs = ShadowClientMoonlightProtocolPolicy.Audio
                 .outputRealtimePendingDurationCapMs
+            let rendererPendingDurationCapMs = max(
+                realtimePendingDurationCapMs,
+                Double(packetDurationMs * 10)
+            )
             decoderImplementationName = ShadowClientRealtimeAudioDecoderFactory.debugName(
                 for: resolvedDecoder
             )
@@ -137,10 +141,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 format: resolvedDecoder.outputFormat,
                 maximumQueuedBufferCount: queuePressureProfile.maximumQueuedBuffers,
                 nominalFramesPerBuffer: AVAudioFrameCount(max(1, nominalPacketFrameCount)),
-                maximumPendingDurationMs: realtimePendingDurationCapMs
+                maximumPendingDurationMs: rendererPendingDurationCapMs
             )
             logger.notice(
-                "Audio output pressure mode=shadow-realtime-backpressure-v2 cap-ms=\(realtimePendingDurationCapMs, privacy: .public) queued-buffers=\(queuePressureProfile.maximumQueuedBuffers, privacy: .public) nominal-frames=\(nominalPacketFrameCount, privacy: .public)"
+                "Audio output pressure mode=moonlight-lbq-pending-duration cap-ms=\(realtimePendingDurationCapMs, privacy: .public) renderer-cap-ms=\(rendererPendingDurationCapMs, privacy: .public) queued-buffers=\(queuePressureProfile.maximumQueuedBuffers, privacy: .public) nominal-frames=\(nominalPacketFrameCount, privacy: .public)"
             )
             if let encryption {
                 payloadDecryptor = try ShadowClientRealtimeAudioPayloadDecryptor(
@@ -378,7 +382,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     logFirstDecodedBufferIfNeeded(pcmBuffer.frameLength, source)
                     return
                 }
-                registerOutputQueuePressureDrop(1, "drop-output-queue-saturation-backlog")
+                registerOutputQueuePressureDrop(1, "drop-output-enqueue-failed")
             }
 
             while !Task.isCancelled {
@@ -387,10 +391,12 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 }
 
                 if Self.shouldRequeueReadyPacketsForPendingOutputPressure(
-                    pendingOutputDurationMs: audioOutput.pendingDurationMs,
+                    pendingOutputDurationMs: Double(
+                        await packetQueue.pendingDurationMs(packetDurationMs: packetDurationMs)
+                    ),
                     realtimePendingDurationCapMs: realtimePendingDurationCapMs
                 ) {
-                    registerOutputQueuePressureDrop(1, "drop-pending-audio-duration")
+                    registerOutputQueuePressureDrop(1, "drop-moonlight-pending-audio-duration")
                     continue
                 }
 
@@ -1914,6 +1920,11 @@ private actor ShadowClientRealtimeAudioPacketQueue {
         let droppedCount = packets.count
         packets.removeAll(keepingCapacity: true)
         return droppedCount
+    }
+
+    func pendingDurationMs(packetDurationMs: Int) -> Int {
+        let normalizedPacketDurationMs = max(1, packetDurationMs)
+        return packets.count * normalizedPacketDurationMs
     }
 
     func shutdown() -> Int {
