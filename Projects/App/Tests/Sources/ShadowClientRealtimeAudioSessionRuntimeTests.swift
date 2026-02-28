@@ -539,15 +539,26 @@ func audioMissingPacketRecoveryGateSkipsWhenNoPacketsAreMissing() {
     )
 }
 
-@Test("Audio missing packet count does not subtract heuristic Moonlight FEC shard observations")
-func audioMissingPacketCountDoesNotSubtractHeuristicMoonlightFECObservations() {
+@Test("Audio missing packet count subtracts observed Moonlight FEC shard observations")
+func audioMissingPacketCountSubtractsObservedMoonlightFECObservations() {
     let adjusted = ShadowClientRealtimeAudioSessionRuntime
         .adjustMissingRTPPacketCountForObservedMoonlightFEC(
             rawMissingPacketCount: 4,
             observedMoonlightFECShardsSinceLastDecodedPacket: 3
         )
 
-    #expect(adjusted == 4)
+    #expect(adjusted == 1)
+}
+
+@Test("Audio missing packet count clamps to zero when observed Moonlight FEC shards exceed raw gap")
+func audioMissingPacketCountClampsToZeroWhenObservedMoonlightFECExceedsRawGap() {
+    let adjusted = ShadowClientRealtimeAudioSessionRuntime
+        .adjustMissingRTPPacketCountForObservedMoonlightFEC(
+            rawMissingPacketCount: 2,
+            observedMoonlightFECShardsSinceLastDecodedPacket: 8
+        )
+
+    #expect(adjusted == 0)
 }
 
 @Test("Audio missing packet count clamps negative raw values to zero")
