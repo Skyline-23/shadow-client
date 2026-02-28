@@ -2850,10 +2850,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         fallbackThresholdSeconds: TimeInterval =
             ShadowClientRealtimeSessionDefaults.postStartVideoDatagramInactivityFallbackThresholdSeconds
     ) -> Bool {
-        guard firstObservedStallUptime > 0 else {
-            return false
-        }
-        return now - firstObservedStallUptime >= max(0, fallbackThresholdSeconds)
+        _ = now
+        _ = firstObservedStallUptime
+        _ = fallbackThresholdSeconds
+        // Prolonged post-start UDP video silence can legitimately happen when the host has no
+        // visual updates. Treat it as an idle stream state, not a reconnect trigger.
+        return false
     }
 
     static func shouldFallbackToInterleavedTransportAfterUDPReceiveError(
@@ -2862,9 +2864,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         let normalized = error.localizedDescription
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        return normalized.contains("udp video timeout: no video datagram received") ||
-            normalized.contains("udp video timeout: video datagram stream stalled after startup") ||
-            normalized.contains("udp video timeout: prolonged datagram inactivity after startup")
+        return normalized.contains("udp video timeout: no video datagram received")
     }
 
     static func shouldResetControlChannelAfterTransientInputSendFailures(
@@ -5257,14 +5257,6 @@ private actor ShadowClientRTSPInterleavedClient {
                             "RTSP UDP video datagram stream stalled after startup (silence=\(secondsSinceLastDatagram, privacy: .public)s); requesting recovery frame without terminating session"
                         )
                         await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
-                    }
-                    if ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateUDPVideoDatagramInactivityToFallback(
-                        now: now,
-                        firstObservedStallUptime: firstObservedPostStartDatagramStallUptime
-                    ) {
-                        throw ShadowClientRTSPInterleavedClientError.requestFailed(
-                            "RTSP UDP video timeout: prolonged datagram inactivity after startup"
-                        )
                     }
                 }
                 continue

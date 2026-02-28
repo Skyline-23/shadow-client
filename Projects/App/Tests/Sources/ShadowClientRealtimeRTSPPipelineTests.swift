@@ -2150,8 +2150,8 @@ func realtimeRuntimeUDPVideoStallDetectorUsesPostStartInactivityThreshold() {
     )
 }
 
-@Test("Realtime runtime escalates prolonged UDP video inactivity to fallback threshold")
-func realtimeRuntimeUDPVideoInactivityEscalationUsesFallbackThreshold() {
+@Test("Realtime runtime does not escalate post-start UDP inactivity to fallback by itself")
+func realtimeRuntimeUDPVideoInactivityEscalationRemainsDisabled() {
     #expect(
         !ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateUDPVideoDatagramInactivityToFallback(
             now: 10.0,
@@ -2167,7 +2167,7 @@ func realtimeRuntimeUDPVideoInactivityEscalationUsesFallbackThreshold() {
         )
     )
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateUDPVideoDatagramInactivityToFallback(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateUDPVideoDatagramInactivityToFallback(
             now: 22.0,
             firstObservedStallUptime: 10.0,
             fallbackThresholdSeconds: 12.0
@@ -2175,8 +2175,8 @@ func realtimeRuntimeUDPVideoInactivityEscalationUsesFallbackThreshold() {
     )
 }
 
-@Test("Realtime runtime falls back to interleaved transport for UDP inactivity timeout errors")
-func realtimeRuntimeInterleavedFallbackClassifierMatchesUDPTimeoutErrors() {
+@Test("Realtime runtime fallback classifier ignores post-start inactivity timeout errors")
+func realtimeRuntimeInterleavedFallbackClassifierIgnoresPostStartInactivityErrors() {
     let noDatagramError = NSError(
         domain: "ShadowClientTest",
         code: 1,
@@ -2203,11 +2203,11 @@ func realtimeRuntimeInterleavedFallbackClassifierMatchesUDPTimeoutErrors() {
             .shouldFallbackToInterleavedTransportAfterUDPReceiveError(noDatagramError)
     )
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime
+        !ShadowClientRealtimeRTSPSessionRuntime
             .shouldFallbackToInterleavedTransportAfterUDPReceiveError(stallError)
     )
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime
+        !ShadowClientRealtimeRTSPSessionRuntime
             .shouldFallbackToInterleavedTransportAfterUDPReceiveError(prolongedError)
     )
     #expect(
