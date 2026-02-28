@@ -710,19 +710,19 @@ func audioQueueProfileKeepsLowLatencyWindowForStereo() {
     #expect(pressureTrimToRecentPackets >= 1)
 }
 
-@Test("Audio realtime pending cap scales to queue window for 5ms Opus")
-func audioRealtimePendingCapScalesToQueueWindowForFiveMsOpus() {
+@Test("Audio realtime pending cap stays moonlight-aligned for 5ms Opus")
+func audioRealtimePendingCapStaysMoonlightAlignedForFiveMsOpus() {
     let capMs = ShadowClientRealtimeAudioSessionRuntime.recommendedAudioRealtimePendingDurationCapMs(
         sampleRate: 48_000,
         channels: 2,
         packetDurationMs: 5
     )
 
-    #expect(capMs == 150)
+    #expect(capMs == 30)
 }
 
-@Test("Audio realtime pending cap honors soft and hard bounds")
-func audioRealtimePendingCapHonorsSoftAndHardBounds() {
+@Test("Audio realtime pending cap remains fixed across queue depth")
+func audioRealtimePendingCapRemainsFixedAcrossQueueDepth() {
     let softBoundCap = ShadowClientRealtimeAudioSessionRuntime.audioRealtimePendingDurationCapMs(
         packetDurationMs: 5,
         maximumQueuedBuffers: 1
@@ -733,7 +733,7 @@ func audioRealtimePendingCapHonorsSoftAndHardBounds() {
     )
 
     #expect(softBoundCap == 30)
-    #expect(hardBoundCap == 100)
+    #expect(hardBoundCap == 30)
 }
 
 @Test("Audio queue profile scales channel slack without unbounded queue growth")

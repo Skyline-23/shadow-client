@@ -125,20 +125,12 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 channels: resolvedTrack.channelCount,
                 packetDurationMs: packetDurationMs
             )
-            // Moonlight's receive/decode backpressure policy drops based on queued packet duration
-            // (LBQ), while renderer output queue is allowed to hold roughly 10 frames.
-            let baseRealtimePendingDurationCapMs = ShadowClientMoonlightProtocolPolicy.Audio
-                .outputRealtimePendingDurationCapMs
-            // Multichannel output has higher scheduling pressure on some hosts (HAL overload spikes).
-            // Keep Moonlight-compatible LBQ behavior, but widen cap for >2ch streams to avoid
-            // excessive drop/recover thrash under short render hiccups.
-            let adaptiveRealtimePendingDurationCapMs = Double(
-                packetDurationMs * (resolvedTrack.channelCount > 2 ? 10 : 6)
+            // Match Moonlight's LBQ pressure policy: skip enqueue above 30ms pending duration.
+            realtimePendingDurationCapMs = Self.audioRealtimePendingDurationCapMs(
+                packetDurationMs: packetDurationMs,
+                maximumQueuedBuffers: queuePressureProfile.maximumQueuedBuffers
             )
-            realtimePendingDurationCapMs = max(
-                baseRealtimePendingDurationCapMs,
-                adaptiveRealtimePendingDurationCapMs
-            )
+            // Keep renderer backpressure aligned with Moonlight SDL behavior (~10 queued frames).
             let rendererPendingDurationCapMs = max(
                 realtimePendingDurationCapMs,
                 Double(packetDurationMs * 10)
@@ -1522,21 +1514,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     }
 
     internal static func audioRealtimePendingDurationCapMs(
-        packetDurationMs: Int,
-        maximumQueuedBuffers: Int
+        packetDurationMs _: Int,
+        maximumQueuedBuffers _: Int
     ) -> Double {
-        let normalizedPacketDurationMs = max(1, packetDurationMs)
-        let normalizedQueuedBuffers = max(1, maximumQueuedBuffers)
-        let queueWindowMs = Double(normalizedPacketDurationMs * normalizedQueuedBuffers)
-        let softCap = max(
-            Double(normalizedPacketDurationMs),
-            ShadowClientMoonlightProtocolPolicy.Audio.outputRealtimePendingDurationCapMs
-        )
-        let hardCap = max(
-            softCap,
-            ShadowClientMoonlightProtocolPolicy.Audio.outputRealtimePendingDurationHardCapMs
-        )
-        return max(softCap, min(hardCap, queueWindowMs))
+        ShadowClientMoonlightProtocolPolicy.Audio.outputRealtimePendingDurationCapMs
     }
 
     internal static func recommendedMaximumQueuedAudioBuffers(

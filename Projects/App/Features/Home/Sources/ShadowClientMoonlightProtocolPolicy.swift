@@ -22,10 +22,9 @@ enum ShadowClientMoonlightProtocolPolicy {
         static let defaultPacketDurationMs = 5
         static let startupResyncWindowMs = 500
         static let packetQueueBound = 30
-        // Keep 30ms as the low-latency target (soft cap), but allow a bounded
-        // hard cap so coalesced Opus frames do not immediately thrash decode/output.
+        // Moonlight renderer policy uses a fixed 30ms pending-audio cap.
         static let outputRealtimePendingDurationCapMs: Double = 30
-        static let outputRealtimePendingDurationHardCapMs: Double = 150
+        static let outputRealtimePendingDurationHardCapMs: Double = 30
 
         static func packetDurationMs(from advertisedPacketDuration: String?) -> Int {
             guard let advertisedPacketDuration,
