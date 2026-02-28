@@ -283,7 +283,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         payloadDecryptor: ShadowClientRealtimeAudioPayloadDecryptor?,
         output audioOutput: ShadowClientRealtimeAudioEngineOutput
     ) {
-        decodeTask = Task { [weak self] in
+        decodeTask = Task(priority: .high) { [weak self] in
             guard let self else {
                 return
             }
@@ -319,6 +319,15 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var firstOutputQueuePressureDropUptime: TimeInterval = 0
             var lossConcealmentEventCount = 0
             var rsFECRecoveryCount = 0
+            let shouldDropOutputDueToPendingPressure: () async -> Bool = {
+                let pendingQueueDurationMs = Double(
+                    await packetQueue.pendingDurationMs(packetDurationMs: packetDurationMs)
+                )
+                return Self.shouldRequeueReadyPacketsForPendingOutputPressure(
+                    pendingOutputDurationMs: pendingQueueDurationMs,
+                    realtimePendingDurationCapMs: realtimePendingDurationCapMs
+                )
+            }
 
             let registerOutputQueuePressureDrop: (Int, String) -> Void = { droppedCount, reason in
                 guard droppedCount > 0 else {
@@ -361,7 +370,12 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 )
             }
 
-            let enqueueDecodedBuffer: (AVAudioPCMBuffer, String) -> Void = { pcmBuffer, source in
+            let enqueueDecodedBuffer: (AVAudioPCMBuffer, String, Bool) -> Void = { pcmBuffer, source, shouldDropDueToPendingPressure in
+                if shouldDropDueToPendingPressure {
+                    registerOutputQueuePressureDrop(1, "drop-moonlight-pending-audio-duration")
+                    return
+                }
+
                 if decoder.requiresPlaybackSafetyGuard,
                    !ShadowClientRealtimeAudioPCMBufferGuard.isSafeForPlayback(pcmBuffer)
                 {
@@ -390,18 +404,6 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     return
                 }
                 let packet = queuedPacket.packet
-
-                if Self.shouldRequeueReadyPacketsForPendingOutputPressure(
-                    pendingOutputDurationMs: Double(
-                        await packetQueue.pendingDurationMs(packetDurationMs: packetDurationMs)
-                    ),
-                    realtimePendingDurationCapMs: realtimePendingDurationCapMs
-                ) {
-                    registerOutputQueuePressureDrop(1, "drop-moonlight-pending-audio-duration")
-                    // Moonlight advances sequence continuity even when renderer pressure drops output.
-                    lastDecodedSequenceNumber = packet.sequenceNumber
-                    continue
-                }
 
                 do {
                     let rawMissingPacketCount = Self.missingRTPPacketCount(
@@ -453,7 +455,13 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 payload: recoveredDecodePayload,
                                 decodeFEC: false
                             ) {
-                                enqueueDecodedBuffer(recoveredPCMBuffer, "rs-fec")
+                                let dropDueToPendingPressure = await
+                                    shouldDropOutputDueToPendingPressure()
+                                enqueueDecodedBuffer(
+                                    recoveredPCMBuffer,
+                                    "rs-fec",
+                                    dropDueToPendingPressure
+                                )
                                 recoveredMissingPacketCount += 1
                             }
                         }
@@ -491,7 +499,13 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             let concealmentBuffer = (try? decoder.decodePacketLossConcealment(
                                 samplesPerChannel: moonlightPLCSamplesPerChannel
                             )) ?? silenceBuffer
-                            enqueueDecodedBuffer(concealmentBuffer, "plc")
+                            let dropDueToPendingPressure = await
+                                shouldDropOutputDueToPendingPressure()
+                            enqueueDecodedBuffer(
+                                concealmentBuffer,
+                                "plc",
+                                dropDueToPendingPressure
+                            )
                         }
                         let previousLossConcealmentEventCount = lossConcealmentEventCount
                         lossConcealmentEventCount += pendingConcealmentPacketCount
@@ -537,7 +551,12 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         payload: decodePayload,
                         decodeFEC: false
                     ) {
-                        enqueueDecodedBuffer(pcmBuffer, "primary")
+                        let dropDueToPendingPressure = await shouldDropOutputDueToPendingPressure()
+                        enqueueDecodedBuffer(
+                            pcmBuffer,
+                            "primary",
+                            dropDueToPendingPressure
+                        )
                     }
 
                     consecutiveDecodeFailures = 0
@@ -578,7 +597,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         packetQueue: ShadowClientRealtimeAudioPacketQueue,
         moonlightRSFECQueue: ShadowClientRealtimeAudioMoonlightRSFECQueue
     ) {
-        receiveTask = Task { [weak self] in
+        receiveTask = Task(priority: .high) { [weak self] in
             guard let self else {
                 return
             }
@@ -2419,16 +2438,29 @@ private final class ShadowClientRealtimeAudioEngineOutput {
 
     func enqueue(pcmBuffer: AVAudioPCMBuffer) -> Bool {
         let incomingFrameCount = max(1, Double(pcmBuffer.frameLength))
-        let nowUptime = ProcessInfo.processInfo.systemUptime
-        queuedBufferLock.lock()
-        refreshQueuedFrameEstimateLocked(nowUptime: nowUptime)
-        if queuedFrameEstimate + incomingFrameCount > maximumQueuedFrameEstimate {
+        let maximumCapacityWaitIterations = 100
+        var reservedOutputSlot = false
+        for iteration in 0 ... maximumCapacityWaitIterations {
+            let nowUptime = ProcessInfo.processInfo.systemUptime
+            queuedBufferLock.lock()
+            refreshQueuedFrameEstimateLocked(nowUptime: nowUptime)
+            if queuedFrameEstimate + incomingFrameCount <= maximumQueuedFrameEstimate {
+                queuedBufferCount += 1
+                queuedFrameEstimate += incomingFrameCount
+                queuedBufferLock.unlock()
+                reservedOutputSlot = true
+                break
+            }
             queuedBufferLock.unlock()
+
+            if iteration == maximumCapacityWaitIterations {
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.001)
+        }
+        guard reservedOutputSlot else {
             return false
         }
-        queuedBufferCount += 1
-        queuedFrameEstimate += incomingFrameCount
-        queuedBufferLock.unlock()
 
         return engineQueue.sync {
             guard !isTerminated else {
