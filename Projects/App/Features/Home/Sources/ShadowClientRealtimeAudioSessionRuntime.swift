@@ -1729,7 +1729,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         // Keep pending audio bounded while allowing enough headroom for coalesced Opus frames.
         let targetQueuedWindowPackets = max(
             12,
-            Int((Double(estimatedPacketsPerSecond) * 0.10).rounded(.up))
+            Int((Double(estimatedPacketsPerSecond) * 0.12).rounded(.up))
         )
         let provisionalMaximumQueuedBuffers = min(
             24,

@@ -657,7 +657,7 @@ func audioRealtimePendingCapScalesToQueueWindowForFiveMsOpus() {
         packetDurationMs: 5
     )
 
-    #expect(capMs == 100)
+    #expect(capMs == 120)
 }
 
 @Test("Audio realtime pending cap honors soft and hard bounds")
@@ -708,7 +708,7 @@ func audioQueueProfileExpandsQueuedBufferBudgetForShortPacketDurations() {
         )
 
     #expect(fiveMsQueuedBuffers > tenMsQueuedBuffers)
-    #expect(fiveMsQueuedBuffers >= 6)
+    #expect(fiveMsQueuedBuffers >= 20)
     #expect(tenMsQueuedBuffers >= 3)
 }
 
