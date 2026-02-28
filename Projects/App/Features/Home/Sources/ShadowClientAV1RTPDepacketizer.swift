@@ -80,6 +80,7 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
     private var sawEOFInCurrentFECBlock = false
     private var tailTruncationStrategy: TailTruncationStrategy
     private var frameHeaderSelectionMode: FrameHeaderSelectionMode = .heuristic
+    private var multiFECCapable = true
     private var lastObservedPacketFrameIndex: UInt32?
     private var currentFrameMetadata: AssembledFrameMetadata?
     private var lastCompletedFrameMetadata: AssembledFrameMetadata?
@@ -94,7 +95,14 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
     }
 
     public mutating func configureFrameHeaderProfile(appVersion: String?) {
-        frameHeaderSelectionMode = Self.frameHeaderSelectionMode(for: appVersion)
+        let parsedVersion = Self.parseServerAppVersion(appVersion)
+        frameHeaderSelectionMode = Self.frameHeaderSelectionMode(for: parsedVersion)
+        multiFECCapable = Self.isServerVersionAtLeast(
+            parsedVersion,
+            major: 7,
+            minor: 1,
+            patch: 431
+        )
     }
 
     public mutating func reset() {
@@ -166,12 +174,18 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
             return .noFrame
         }
         if firstPacket,
-           let nextFrameIndex,
-           packet.frameIndex != nextFrameIndex
+           let expectedNextFrameIndex = nextFrameIndex,
+           packet.frameIndex != expectedNextFrameIndex
         {
-            self.nextFrameIndex = packet.frameIndex &+ 1
-            dropFrameState()
-            return .droppedCorruptFrame
+            if isBefore32(expectedNextFrameIndex, packet.frameIndex) {
+                // Moonlight parity: treat forward frame gaps as frame loss and
+                // force runtime-side recovery instead of decoding the gapped frame.
+                self.nextFrameIndex = packet.frameIndex &+ 1
+                dropFrameState()
+                return .droppedCorruptFrame
+            } else {
+                return .noFrame
+            }
         }
 
         guard validateStreamContinuity(
@@ -299,8 +313,13 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         let fecInfo = readUInt32LE(payload, at: 12) ?? 0
 
         let streamPacketIndex = (streamPacketIndexRaw >> 8) & Self.streamPacketIndexMask
-        let fecCurrentBlockNumber = (multiFecBlocks >> 4) & 0x03
-        let fecLastBlockNumber = (multiFecBlocks >> 6) & 0x03
+        var fecCurrentBlockNumber = (multiFecBlocks >> 4) & 0x03
+        var fecLastBlockNumber = (multiFecBlocks >> 6) & 0x03
+        if !multiFECCapable {
+            // Moonlight queue behavior for legacy servers: normalize to single-block metadata.
+            fecCurrentBlockNumber = 0
+            fecLastBlockNumber = 0
+        }
         let fecShardIndex = (fecInfo & 0x003F_F000) >> 12
         let fecDataShardCount = (fecInfo & 0xFFC0_0000) >> 22
         let packetPayload = payload.dropFirst(Self.nvVideoPacketHeaderSize)
@@ -402,7 +421,6 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
 
         let expectedNextBlockNumber = (currentFECBlockNumber &+ 1) & 0x03
         guard hasSOF,
-              sawEOFInCurrentFECBlock,
               packet.fecCurrentBlockNumber == expectedNextBlockNumber
         else {
             return false
@@ -455,13 +473,13 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
                     return 0
                 }
                 if firstByte == 0x01 {
-                    return payload.count >= 8 ? 8 : 0
+                    return defaultSize
                 }
                 if firstByte == 0x81 {
-                    return payload.count >= headerSizeForExtendedPrefix ? headerSizeForExtendedPrefix : 0
+                    return headerSizeForExtendedPrefix
                 }
             }
-            return payload.count >= defaultSize ? defaultSize : 0
+            return defaultSize
         }
     }
 
@@ -497,8 +515,12 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
     }
 
     private static func frameHeaderSelectionMode(for appVersion: String?) -> FrameHeaderSelectionMode {
-        guard let version = parseServerAppVersion(appVersion) else {
-            return .heuristic
+        frameHeaderSelectionMode(for: parseServerAppVersion(appVersion))
+    }
+
+    private static func frameHeaderSelectionMode(for version: ServerAppVersion?) -> FrameHeaderSelectionMode {
+        guard let version else {
+            return .fixed(defaultSize: 8, headerSizeForExtendedPrefix: nil)
         }
         if version.major < 5 {
             return .fixed(defaultSize: 0, headerSizeForExtendedPrefix: nil)
@@ -520,6 +542,18 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
             return .fixed(defaultSize: 12, headerSizeForExtendedPrefix: nil)
         }
         return .fixed(defaultSize: 8, headerSizeForExtendedPrefix: nil)
+    }
+
+    private static func isServerVersionAtLeast(
+        _ parsedVersion: ServerAppVersion?,
+        major: Int,
+        minor: Int,
+        patch: Int
+    ) -> Bool {
+        guard let parsedVersion else {
+            return true
+        }
+        return parsedVersion >= .init(major: major, minor: minor, patch: patch)
     }
 
     private static func parseServerAppVersion(_ raw: String?) -> ServerAppVersion? {

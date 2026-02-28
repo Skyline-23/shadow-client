@@ -65,9 +65,23 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
     private var activeFrame: FrameState?
     private var lastCompletedFrameIndex: UInt32?
     private var lastDroppedFrameIndex: UInt32?
+    private let fixedShardPayloadSize: Int?
+    private let multiFECCapable: Bool
+
+    init(
+        fixedShardPayloadSize: Int? = Int(ShadowClientRTSPAnnounceProfile.packetSize),
+        multiFECCapable: Bool = true
+    ) {
+        if let fixedShardPayloadSize, fixedShardPayloadSize > 0 {
+            self.fixedShardPayloadSize = fixedShardPayloadSize
+        } else {
+            self.fixedShardPayloadSize = nil
+        }
+        self.multiFECCapable = multiFECCapable
+    }
 
     mutating func ingest(_ packet: ShadowClientRTPPacket) -> IngestResult {
-        guard let metadata = Self.parseMetadata(from: packet.payload, sequenceNumber: packet.sequenceNumber) else {
+        guard let metadata = parseMetadata(from: packet.payload, sequenceNumber: packet.sequenceNumber) else {
             return .empty
         }
 
@@ -200,7 +214,7 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
             return .empty
         }
 
-        guard let orderedDataPackets = Self.reconstructOrderedDataPackets(from: block) else {
+        guard let orderedDataPackets = reconstructOrderedDataPackets(from: block) else {
             if block.receivedShardCount >= block.totalShards {
                 return dropActiveFrame(unrecoverable: true)
             }
@@ -222,7 +236,7 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
         frame.currentBlock = nil
         activeFrame = frame
 
-        guard let orderedDataPackets = Self.reconstructOrderedDataPackets(from: block) else {
+        guard let orderedDataPackets = reconstructOrderedDataPackets(from: block) else {
             return dropActiveFrame(unrecoverable: true)
         }
 
@@ -302,7 +316,7 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
         return state
     }
 
-    private static func reconstructOrderedDataPackets(from block: BlockState) -> [ShadowClientRTPPacket]? {
+    private func reconstructOrderedDataPackets(from block: BlockState) -> [ShadowClientRTPPacket]? {
         var normalizedShardBytes = Array<[UInt8]?>(repeating: nil, count: block.totalShards)
         var maxShardLength = 0
         for (index, packet) in block.packetsByFECIndex {
@@ -316,24 +330,25 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
             }
         }
 
-        guard maxShardLength > 0 else {
+        let shardSize = max(maxShardLength, fixedShardPayloadSize ?? 0)
+        guard shardSize > 0 else {
             return nil
         }
 
         for index in 0 ..< block.totalShards {
-            if var bytes = normalizedShardBytes[index], bytes.count < maxShardLength {
-                bytes.append(contentsOf: repeatElement(UInt8(0), count: maxShardLength - bytes.count))
+            if var bytes = normalizedShardBytes[index], bytes.count < shardSize {
+                bytes.append(contentsOf: repeatElement(UInt8(0), count: shardSize - bytes.count))
                 normalizedShardBytes[index] = bytes
             }
         }
 
         let missingDataIndices = (0 ..< block.dataShards).filter { normalizedShardBytes[$0] == nil }
         if !missingDataIndices.isEmpty {
-            guard let reconstructedDataShards = reconstructMissingDataShards(
+            guard let reconstructedDataShards = Self.reconstructMissingDataShards(
                 shards: normalizedShardBytes,
                 dataShards: block.dataShards,
                 parityShards: block.parityShards,
-                shardSize: maxShardLength
+                shardSize: shardSize
             ) else {
                 return nil
             }
@@ -357,13 +372,13 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
             }
 
             var recoveredPayload = Data(recoveredBytes)
-            patchRecoveredPacketHeaderMinimal(
+            Self.patchRecoveredPacketHeaderMinimal(
                 payload: &recoveredPayload,
                 frameIndex: block.frameIndex,
                 blockNumber: block.blockNumber,
                 lastBlockNumber: block.lastBlockNumber
             )
-            guard isRecoveredPacketSane(
+            guard Self.isRecoveredPacketSane(
                 payload: recoveredPayload,
                 dataShardIndex: dataIndex,
                 dataShards: block.dataShards
@@ -582,25 +597,37 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
         return inverse
     }
 
-    private static func parseMetadata(
+    private func parseMetadata(
         from payload: Data,
         sequenceNumber: UInt16
     ) -> FECMetadata? {
         let bytes = payload.startIndex == 0 ? payload : Data(payload)
         guard bytes.count >= 16,
-              let frameIndex = readUInt32LE(bytes, at: 4),
-              let fecInfo = readUInt32LE(bytes, at: 12)
+              let frameIndex = Self.readUInt32LE(bytes, at: 4),
+              let fecInfo = Self.readUInt32LE(bytes, at: 12)
         else {
             return nil
         }
 
         let multiFecBlocks = bytes[11]
-        let blockNumber = (multiFecBlocks >> 4) & 0x03
-        let lastBlockNumber = (multiFecBlocks >> 6) & 0x03
+        let blockNumber: UInt8
+        let lastBlockNumber: UInt8
+        if multiFECCapable {
+            blockNumber = (multiFecBlocks >> 4) & 0x03
+            lastBlockNumber = (multiFecBlocks >> 6) & 0x03
+        } else {
+            blockNumber = 0
+            lastBlockNumber = 0
+        }
         let fecIndex = Int((fecInfo & 0x003F_F000) >> 12)
         let dataShards = Int((fecInfo & 0xFFC0_0000) >> 22)
-        let fecPercentage = Int((fecInfo & 0x0000_0FF0) >> 4)
-        let parityShards = dataShards > 0 ? ((dataShards * fecPercentage + 99) / 100) : 0
+        let fecPercent: Int = Int((fecInfo & 0x0000_0FF0) >> 4)
+        let parityShards: Int
+        if dataShards > 0 {
+            parityShards = (dataShards * fecPercent + 99) / 100
+        } else {
+            parityShards = 0
+        }
         let baseSequenceNumber = sequenceNumber &- UInt16(truncatingIfNeeded: fecIndex)
 
         return .init(

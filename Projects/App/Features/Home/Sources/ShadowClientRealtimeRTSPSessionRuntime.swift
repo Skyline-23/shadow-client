@@ -530,6 +530,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var awaitingAV1SyncFrame = false
     private var av1SyncGateAllowsReferenceInvalidatedFrame = false
     private var av1SyncGateDroppedFrameCount = 0
+    private var av1PendingRecoveryRequestAfterSuccessfulFrame = false
     private var lastObservedVideoFrameIndex: UInt32?
     private var lastAV1DecodeSubmissionContext: AV1DecodeSubmissionContext?
     private var videoReceiveQueueCapacity = ShadowClientRealtimeSessionDefaults.videoReceiveQueueCapacity
@@ -639,6 +640,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         awaitingAV1SyncFrame = false
         av1SyncGateAllowsReferenceInvalidatedFrame = false
         av1SyncGateDroppedFrameCount = 0
+        av1PendingRecoveryRequestAfterSuccessfulFrame = false
         lastObservedVideoFrameIndex = nil
         lastAV1DecodeSubmissionContext = nil
         configureQueuePressureProfile(for: resolvedVideoConfiguration)
@@ -689,6 +691,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         awaitingAV1SyncFrame = track.codec == .av1
         av1SyncGateAllowsReferenceInvalidatedFrame = false
         av1SyncGateDroppedFrameCount = 0
+        av1PendingRecoveryRequestAfterSuccessfulFrame = false
         lastObservedVideoFrameIndex = nil
         lastAV1DecodeSubmissionContext = nil
         await MainActor.run {
@@ -798,6 +801,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         awaitingAV1SyncFrame = false
         av1SyncGateAllowsReferenceInvalidatedFrame = false
         av1SyncGateDroppedFrameCount = 0
+        av1PendingRecoveryRequestAfterSuccessfulFrame = false
         lastObservedVideoFrameIndex = nil
         lastAV1DecodeSubmissionContext = nil
         resetQueuePressureProfile()
@@ -1037,6 +1041,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             awaitingAV1SyncFrame = true
             av1SyncGateAllowsReferenceInvalidatedFrame = false
             av1SyncGateDroppedFrameCount = 0
+            av1PendingRecoveryRequestAfterSuccessfulFrame = false
             lastAV1DecodeSubmissionContext = nil
         }
     }
@@ -1051,6 +1056,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         awaitingAV1SyncFrame = false
         av1SyncGateAllowsReferenceInvalidatedFrame = false
         av1SyncGateDroppedFrameCount = 0
+        av1PendingRecoveryRequestAfterSuccessfulFrame = false
         lastAV1DecodeSubmissionContext = nil
         await transitionSurfaceState(.failed(message))
         await closeVideoPacketQueue()
@@ -1097,6 +1103,18 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             firstDepacketizerCorruptionUptime = 0
             if let frameIndex = frameMetadata?.frameIndex {
                 lastObservedVideoFrameIndex = frameIndex
+            }
+            if codec == .av1,
+               ShadowClientMoonlightProtocolPolicy.AV1
+               .shouldSendDeferredRecoveryRequestAfterSuccessfulFrame(
+                   isPendingDeferredRequest: av1PendingRecoveryRequestAfterSuccessfulFrame
+               )
+            {
+                _ = await requestVideoRecoveryFrame(
+                    for: .av1,
+                    reason: "depacketizer-discontinuity-post-success",
+                    minimumInterval: 0.0
+                )
             }
 
             updateRuntimeVideoStats(frameBytes: frame.count)
@@ -1397,6 +1415,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             awaitingAV1SyncFrame = true
             av1SyncGateAllowsReferenceInvalidatedFrame = false
             av1SyncGateDroppedFrameCount = 0
+            av1PendingRecoveryRequestAfterSuccessfulFrame = false
             lastAV1DecodeSubmissionContext = nil
         }
     }
@@ -1451,14 +1470,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             depacketizerCorruptionCount = 0
             firstDepacketizerCorruptionUptime = 0
             lastDepacketizerRecoveryUptime = now
+            awaitingAV1SyncFrame = true
+            av1SyncGateAllowsReferenceInvalidatedFrame = false
+            av1PendingRecoveryRequestAfterSuccessfulFrame = ShadowClientMoonlightProtocolPolicy.AV1
+                .shouldDeferRecoveryRequestAfterDiscontinuity()
             logger.error(
-                "Video depacketizer detected stream discontinuity for codec \(String(describing: codec), privacy: .public); requesting immediate recovery frame"
-            )
-            await flushVideoPipelineForRecovery(codec: codec)
-            await requestVideoRecoveryFrame(
-                for: codec,
-                reason: "depacketizer-discontinuity-immediate",
-                minimumInterval: 0.0
+                "Video depacketizer detected stream discontinuity for codec \(String(describing: codec), privacy: .public); deferring recovery request until next complete frame"
             )
             if !hasRenderedFirstFrame {
                 await transitionSurfaceState(.waitingForFirstFrame)
@@ -1903,6 +1920,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             awaitingAV1SyncFrame = false
             av1SyncGateAllowsReferenceInvalidatedFrame = false
             av1SyncGateDroppedFrameCount = 0
+            av1PendingRecoveryRequestAfterSuccessfulFrame = false
             lastAV1DecodeSubmissionContext = nil
         }
         recordDecodedFrameOutputUptime()
@@ -2184,13 +2202,19 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     ) async -> Bool {
         if codec == .av1 {
             awaitingAV1SyncFrame = true
-            av1SyncGateAllowsReferenceInvalidatedFrame = true
+            av1SyncGateAllowsReferenceInvalidatedFrame = false
         }
         let didRequest = await requestVideoRecoveryFrame(
             codec: codec,
             reason: reason,
             minimumInterval: minimumInterval
         )
+        if codec == .av1 {
+            av1SyncGateAllowsReferenceInvalidatedFrame = didRequest
+            if didRequest {
+                av1PendingRecoveryRequestAfterSuccessfulFrame = false
+            }
+        }
         return didRequest
     }
 
@@ -2319,16 +2343,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         _ frameType: UInt8?,
         allowsReferenceInvalidatedFrame: Bool = false
     ) -> Bool {
-        guard let frameType else {
-            return false
-        }
-        if frameType == 2 {
-            return true
-        }
-        if allowsReferenceInvalidatedFrame, frameType == 4 || frameType == 5 {
-            return true
-        }
-        return false
+        ShadowClientMoonlightProtocolPolicy.AV1.isSyncFrameType(
+            frameType,
+            allowsReferenceInvalidatedFrame: allowsReferenceInvalidatedFrame
+        )
     }
 
     private static func optionalOSStatusDescription(_ status: OSStatus?) -> String {
@@ -2789,7 +2807,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     static func shouldAdoptVideoPayloadType(
         observedPayloadType: Int,
         currentPayloadType: Int,
-        audioPayloadType: Int?,
+        audioPayloadType _: Int?,
         videoPayloadCandidates _: Set<Int>
     ) -> Bool {
         guard observedPayloadType != currentPayloadType else {
@@ -2798,17 +2816,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         guard observedPayloadType != ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType else {
             return false
         }
-        if let audioPayloadType,
-           observedPayloadType == audioPayloadType
-        {
-            return false
-        }
         guard (0 ... 127).contains(observedPayloadType) else {
             return false
         }
 
         // Mirror Moonlight startup behavior: before first-frame lock, accept any
-        // valid RTP payload type seen on the video socket except control/audio.
+        // valid RTP payload type seen on the video socket except control payload.
+        // Audio/video payload types may legally overlap across separate RTP streams.
         return true
     }
 
@@ -3357,6 +3371,7 @@ private actor ShadowClientRTSPInterleavedClient {
     private var negotiatedClientPortBase: UInt16 = ShadowClientRTSPProtocolProfile.clientPortBase
     private var rtspHostHeaderValue: String?
     private var rtspClientVersionHeaderValue = ShadowClientRTSPRequestDefaults.clientVersionHeaderValue
+    private var currentServerAppVersion: String?
     private let videoFECUnrecoverableRecoveryRequestCooldownSeconds: TimeInterval = 0.35
     private var loggedInputSendKinds = Set<String>()
     private var loggedInputDropKinds = Set<String>()
@@ -3405,6 +3420,7 @@ private actor ShadowClientRTSPInterleavedClient {
         negotiatedClientPortBase = defaultClientPortBase
         rtspHostHeaderValue = nil
         rtspClientVersionHeaderValue = ShadowClientRTSPRequestDefaults.clientVersionHeaderValue
+        currentServerAppVersion = nil
 
         self.remoteInputKey = remoteInputKey
         self.remoteInputKeyID = remoteInputKeyID
@@ -3415,6 +3431,7 @@ private actor ShadowClientRTSPInterleavedClient {
             throw ShadowClientRTSPInterleavedClientError.invalidURL
         }
         remoteHost = .init(host)
+        currentServerAppVersion = videoConfiguration.serverAppVersion
         let portValue = normalizedURL.port ?? ShadowClientRTSPProtocolProfile.defaultPort
         rtspHostHeaderValue = ShadowClientRTSPProtocolProfile.hostHeaderValue(
             forRTSPURLString: normalizedURL.absoluteString
@@ -4514,6 +4531,7 @@ private actor ShadowClientRTSPInterleavedClient {
         negotiatedClientPortBase = defaultClientPortBase
         rtspHostHeaderValue = nil
         rtspClientVersionHeaderValue = ShadowClientRTSPRequestDefaults.clientVersionHeaderValue
+        currentServerAppVersion = nil
         loggedInputSendKinds.removeAll(keepingCapacity: false)
         loggedInputDropKinds.removeAll(keepingCapacity: false)
     }
@@ -4628,10 +4646,11 @@ private actor ShadowClientRTSPInterleavedClient {
             return
         }
 
-        _ = payloadType
-        _ = videoPayloadCandidates
+        var currentVideoPayloadType = payloadType
+        var payloadTypeObservationCounts: [Int: Int] = [:]
+        var loggedDisallowedPayloadTypes = Set<Int>()
         var packetCount = 0
-        var fecReconstructionQueue = ShadowClientRTPVideoFECReconstructionQueue()
+        var fecReconstructionQueue = makeVideoFECReconstructionQueue()
         var lastFECRecoveryRequestUptime: TimeInterval = 0
 
         while !Task.isCancelled {
@@ -4648,6 +4667,44 @@ private actor ShadowClientRTSPInterleavedClient {
                     logger.notice(
                         "First RTP video packet received: payloadType=\(packet.payloadType, privacy: .public), marker=\(packet.marker, privacy: .public), payloadBytes=\(packet.payload.count, privacy: .public)"
                     )
+                }
+
+                if packet.payloadType != currentVideoPayloadType {
+                    guard ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
+                        observedPayloadType: packet.payloadType,
+                        currentPayloadType: currentVideoPayloadType,
+                        audioPayloadType: audioTrack?.rtpPayloadType,
+                        videoPayloadCandidates: videoPayloadCandidates
+                    ) else {
+                        if loggedDisallowedPayloadTypes.insert(packet.payloadType).inserted {
+                            logger.notice(
+                                "RTSP payload type mismatch ignored for disallowed payload type \(packet.payloadType, privacy: .public)"
+                            )
+                        }
+                        continue
+                    }
+
+                    let observations = (payloadTypeObservationCounts[packet.payloadType] ?? 0) + 1
+                    payloadTypeObservationCounts[packet.payloadType] = observations
+                    let observationThreshold = ShadowClientRealtimeRTSPSessionRuntime.videoPayloadTypeObservationThreshold(
+                        observedPayloadType: packet.payloadType,
+                        videoPayloadCandidates: videoPayloadCandidates
+                    )
+                    if observations == 1 || observations == observationThreshold {
+                        logger.notice(
+                            "RTSP payload type mismatch observed candidate \(packet.payloadType, privacy: .public) (expected \(currentVideoPayloadType, privacy: .public), observations=\(observations, privacy: .public)/\(observationThreshold, privacy: .public))"
+                        )
+                    }
+                    guard observations >= observationThreshold else {
+                        continue
+                    }
+
+                    logger.notice(
+                        "RTSP payload type mismatch; adopting stream payload type \(packet.payloadType, privacy: .public) (expected \(currentVideoPayloadType, privacy: .public), observations=\(observations, privacy: .public))"
+                    )
+                    currentVideoPayloadType = packet.payloadType
+                    payloadTypeObservationCounts.removeAll(keepingCapacity: true)
+                    fecReconstructionQueue = makeVideoFECReconstructionQueue()
                 }
 
                 let ingestResult = fecReconstructionQueue.ingest(packet)
@@ -4775,13 +4832,15 @@ private actor ShadowClientRTSPInterleavedClient {
             udpSocket.close()
         }
 
-        _ = payloadType
-        _ = videoPayloadCandidates
+        var currentVideoPayloadType = payloadType
+        var payloadTypeObservationCounts: [Int: Int] = [:]
+        var loggedDisallowedPayloadTypes = Set<Int>()
+        let audioPayloadType = audioTrack?.rtpPayloadType
         _ = audioTrack
         var packetCount = 0
         var parseFailureCount = 0
         var datagramCount = 0
-        var fecReconstructionQueue = ShadowClientRTPVideoFECReconstructionQueue()
+        var fecReconstructionQueue = makeVideoFECReconstructionQueue()
         var lastFECRecoveryRequestUptime: TimeInterval = 0
         let receiveStart = ContinuousClock.now
 
@@ -4828,6 +4887,44 @@ private actor ShadowClientRTSPInterleavedClient {
                 logger.notice(
                     "First RTP video packet received: payloadType=\(packet.payloadType, privacy: .public), marker=\(packet.marker, privacy: .public), payloadBytes=\(packet.payload.count, privacy: .public)"
                 )
+            }
+
+            if packet.payloadType != currentVideoPayloadType {
+                guard ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
+                    observedPayloadType: packet.payloadType,
+                    currentPayloadType: currentVideoPayloadType,
+                    audioPayloadType: audioPayloadType,
+                    videoPayloadCandidates: videoPayloadCandidates
+                ) else {
+                    if loggedDisallowedPayloadTypes.insert(packet.payloadType).inserted {
+                        logger.notice(
+                            "RTSP payload type mismatch ignored for disallowed payload type \(packet.payloadType, privacy: .public)"
+                        )
+                    }
+                    continue
+                }
+
+                let observations = (payloadTypeObservationCounts[packet.payloadType] ?? 0) + 1
+                payloadTypeObservationCounts[packet.payloadType] = observations
+                let observationThreshold = ShadowClientRealtimeRTSPSessionRuntime.videoPayloadTypeObservationThreshold(
+                    observedPayloadType: packet.payloadType,
+                    videoPayloadCandidates: videoPayloadCandidates
+                )
+                if observations == 1 || observations == observationThreshold {
+                    logger.notice(
+                        "RTSP payload type mismatch observed candidate \(packet.payloadType, privacy: .public) (expected \(currentVideoPayloadType, privacy: .public), observations=\(observations, privacy: .public)/\(observationThreshold, privacy: .public))"
+                    )
+                }
+                guard observations >= observationThreshold else {
+                    continue
+                }
+
+                logger.notice(
+                    "RTSP payload type mismatch; adopting stream payload type \(packet.payloadType, privacy: .public) (expected \(currentVideoPayloadType, privacy: .public), observations=\(observations, privacy: .public))"
+                )
+                currentVideoPayloadType = packet.payloadType
+                payloadTypeObservationCounts.removeAll(keepingCapacity: true)
+                fecReconstructionQueue = makeVideoFECReconstructionQueue()
             }
 
             let ingestResult = fecReconstructionQueue.ingest(packet)
@@ -4885,6 +4982,20 @@ private actor ShadowClientRTSPInterleavedClient {
             logger.notice("RTSP UDP video socket bound \(socket.localEndpointDescription(), privacy: .public) (ephemeral-fallback)")
             return socket
         }
+    }
+
+    private func makeVideoFECReconstructionQueue() -> ShadowClientRTPVideoFECReconstructionQueue {
+        let negotiatedShardPayloadSize = Int(ShadowClientRTSPAnnounceProfile.packetSize)
+        let multiFECCapable = Self.isServerVersionAtLeast(
+            currentServerAppVersion,
+            major: 7,
+            minor: 1,
+            patch: 431
+        )
+        return ShadowClientRTPVideoFECReconstructionQueue(
+            fixedShardPayloadSize: negotiatedShardPayloadSize,
+            multiFECCapable: multiFECCapable
+        )
     }
 
     private func negotiatedVideoPingPort() -> UInt16 {
