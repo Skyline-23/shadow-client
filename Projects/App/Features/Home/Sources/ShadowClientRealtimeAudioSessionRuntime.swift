@@ -320,6 +320,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var outputQueuePressureDropCount = 0
             var firstOutputQueuePressureDropUptime: TimeInterval = 0
             var decodeCooldownUntilUptime: TimeInterval = 0
+            var lastDecodeCooldownActivationUptime: TimeInterval = 0
             var lossConcealmentEventCount = 0
             var rsFECRecoveryCount = 0
             let audioDecodeCooldown = ShadowClientRealtimeSessionDefaults.audioOutputQueueDecodeCooldown
@@ -328,6 +329,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 return TimeInterval(components.seconds) +
                     (TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000)
             }()
+            let outputSlotBackoff: Duration = .milliseconds(2)
+            let decodeCooldownActivationMinimumIntervalSeconds: TimeInterval = 0.25
 
             let registerOutputQueuePressureDrop: (Int, String) -> Void = { droppedCount, reason in
                 guard droppedCount > 0 else {
@@ -370,10 +373,19 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 ) else {
                     return
                 }
+                guard now >= decodeCooldownUntilUptime else {
+                    return
+                }
+                guard now - lastDecodeCooldownActivationUptime >=
+                    decodeCooldownActivationMinimumIntervalSeconds
+                else {
+                    return
+                }
                 decodeCooldownUntilUptime = max(
                     decodeCooldownUntilUptime,
                     now + audioDecodeCooldownSeconds
                 )
+                lastDecodeCooldownActivationUptime = now
                 outputQueuePressureDropCount = 0
                 firstOutputQueuePressureDropUptime = 0
                 self.logger.notice(
@@ -430,11 +442,13 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     maximumDrainBatch: 4
                 ) ?? 0
                 if drainLimit == 0 {
-                    if isDecodeCooldownActive || Self.shouldHoldDecodeWhenReadyPacketsEmpty(
+                    if isDecodeCooldownActive {
+                        try? await Task.sleep(for: audioDecodeCooldown)
+                    } else if Self.shouldHoldDecodeWhenReadyPacketsEmpty(
                         isDecodeCooldownActive: isDecodeCooldownActive,
                         availableOutputSlots: availableOutputSlots
                     ) {
-                        try? await Task.sleep(for: audioDecodeCooldown)
+                        try? await Task.sleep(for: outputSlotBackoff)
                     }
                     continue
                 }
