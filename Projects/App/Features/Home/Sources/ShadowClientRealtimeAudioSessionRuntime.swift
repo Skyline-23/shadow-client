@@ -125,10 +125,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 channels: resolvedTrack.channelCount,
                 packetDurationMs: packetDurationMs
             )
-            realtimePendingDurationCapMs = Self.audioRealtimePendingDurationCapMs(
-                packetDurationMs: packetDurationMs,
-                maximumQueuedBuffers: queuePressureProfile.maximumQueuedBuffers
-            )
+            // Moonlight's audio backpressure policy is duration-based: drop when pending audio
+            // exceeds the fixed realtime cap (30 ms for default renderer path).
+            realtimePendingDurationCapMs = ShadowClientMoonlightProtocolPolicy.Audio
+                .outputRealtimePendingDurationCapMs
             decoderImplementationName = ShadowClientRealtimeAudioDecoderFactory.debugName(
                 for: resolvedDecoder
             )
@@ -315,7 +315,6 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var firstOutputQueuePressureDropUptime: TimeInterval = 0
             var lossConcealmentEventCount = 0
             var rsFECRecoveryCount = 0
-            var saturationRecoveryCount = 0
 
             let registerOutputQueuePressureDrop: (Int, String) -> Void = { droppedCount, reason in
                 guard droppedCount > 0 else {
@@ -390,20 +389,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 if Self.shouldRequeueReadyPacketsForPendingOutputPressure(
                     pendingOutputDurationMs: audioOutput.pendingDurationMs,
                     realtimePendingDurationCapMs: realtimePendingDurationCapMs
-                ) || Self.shouldRequeueReadyPacketsForUnavailableOutputSlots(
-                    availableOutputSlots: audioOutput.availableEnqueueSlots
                 ) {
-                    let droppedBacklogCount = await packetQueue.flush()
-                    registerOutputQueuePressureDrop(
-                        droppedBacklogCount + 1,
-                        "drop-output-queue-saturation-backlog"
-                    )
-                    if audioOutput.recoverPlaybackUnderPressure() {
-                        saturationRecoveryCount += 1
-                        if saturationRecoveryCount == 1 || saturationRecoveryCount.isMultiple(of: 5) {
-                            self.logger.notice("Audio output playback recovered after sustained queue saturation")
-                        }
-                    }
+                    registerOutputQueuePressureDrop(1, "drop-pending-audio-duration")
                     continue
                 }
 
