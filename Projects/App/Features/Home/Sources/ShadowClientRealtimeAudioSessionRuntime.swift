@@ -127,8 +127,18 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             )
             // Moonlight's receive/decode backpressure policy drops based on queued packet duration
             // (LBQ), while renderer output queue is allowed to hold roughly 10 frames.
-            realtimePendingDurationCapMs = ShadowClientMoonlightProtocolPolicy.Audio
+            let baseRealtimePendingDurationCapMs = ShadowClientMoonlightProtocolPolicy.Audio
                 .outputRealtimePendingDurationCapMs
+            // Multichannel output has higher scheduling pressure on some hosts (HAL overload spikes).
+            // Keep Moonlight-compatible LBQ behavior, but widen cap for >2ch streams to avoid
+            // excessive drop/recover thrash under short render hiccups.
+            let adaptiveRealtimePendingDurationCapMs = Double(
+                packetDurationMs * (resolvedTrack.channelCount > 2 ? 10 : 6)
+            )
+            realtimePendingDurationCapMs = max(
+                baseRealtimePendingDurationCapMs,
+                adaptiveRealtimePendingDurationCapMs
+            )
             let rendererPendingDurationCapMs = max(
                 realtimePendingDurationCapMs,
                 Double(packetDurationMs * 10)

@@ -4717,19 +4717,23 @@ private actor ShadowClientRTSPInterleavedClient {
                 }
 
                 let ingestResult = fecReconstructionQueue.ingest(packet)
-                for orderedPacket in ingestResult.orderedDataPackets {
-                    try await onVideoPacket(
-                        orderedPacket.payload,
-                        orderedPacket.marker
-                    )
-                }
                 if ingestResult.droppedUnrecoverableBlock {
                     logger.error("Video FEC reconstruction dropped unrecoverable block")
+                    // Drop the whole reconstructed batch on unrecoverable loss to avoid forwarding
+                    // continuity-tainted payloads to the depacketizer/decoder path.
+                    fecReconstructionQueue = makeVideoFECReconstructionQueue()
                     let now = ProcessInfo.processInfo.systemUptime
                     if now - lastFECRecoveryRequestUptime >= videoFECUnrecoverableRecoveryRequestCooldownSeconds {
                         lastFECRecoveryRequestUptime = now
                         await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
                     }
+                    continue
+                }
+                for orderedPacket in ingestResult.orderedDataPackets {
+                    try await onVideoPacket(
+                        orderedPacket.payload,
+                        orderedPacket.marker
+                    )
                 }
                 continue
             }
@@ -4937,19 +4941,22 @@ private actor ShadowClientRTSPInterleavedClient {
             }
 
             let ingestResult = fecReconstructionQueue.ingest(packet)
-            for orderedPacket in ingestResult.orderedDataPackets {
-                try await onVideoPacket(
-                    orderedPacket.payload,
-                    orderedPacket.marker
-                )
-            }
             if ingestResult.droppedUnrecoverableBlock {
                 logger.error("Video FEC reconstruction dropped unrecoverable block")
+                // Do not forward ordered packets from an unrecoverable FEC block.
+                fecReconstructionQueue = makeVideoFECReconstructionQueue()
                 let now = ProcessInfo.processInfo.systemUptime
                 if now - lastFECRecoveryRequestUptime >= videoFECUnrecoverableRecoveryRequestCooldownSeconds {
                     lastFECRecoveryRequestUptime = now
                     await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
                 }
+                continue
+            }
+            for orderedPacket in ingestResult.orderedDataPackets {
+                try await onVideoPacket(
+                    orderedPacket.payload,
+                    orderedPacket.marker
+                )
             }
         }
     }
