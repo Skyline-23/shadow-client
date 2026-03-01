@@ -2227,6 +2227,47 @@ func realtimeRuntimeInterleavedFallbackClassifierIgnoresPostStartInactivityError
     )
 }
 
+@Test("Realtime runtime in-session UDP retry classifier treats transport termination as retryable")
+func realtimeRuntimeInSessionUDPReceiveRetryClassifier() {
+    let noDatagramError = NSError(
+        domain: "ShadowClientTest",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "RTSP UDP video timeout: no video datagram received"]
+    )
+    let nwStreamError = NSError(
+        domain: "Network.NWError",
+        code: 96,
+        userInfo: [NSLocalizedDescriptionKey: "No message available on STREAM"]
+    )
+    let closedError = NSError(
+        domain: "ShadowClientTest",
+        code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "RTSP transport connection closed"]
+    )
+    let unrelatedError = NSError(
+        domain: "ShadowClientTest",
+        code: 3,
+        userInfo: [NSLocalizedDescriptionKey: "decoder setup failed"]
+    )
+
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime
+            .shouldRetryInSessionAfterUDPVideoReceiveError(noDatagramError)
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime
+            .shouldRetryInSessionAfterUDPVideoReceiveError(nwStreamError)
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime
+            .shouldRetryInSessionAfterUDPVideoReceiveError(closedError)
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime
+            .shouldRetryInSessionAfterUDPVideoReceiveError(unrelatedError)
+    )
+}
+
 @Test("Realtime runtime treats canceled input send errors as transient and does not reset control channel")
 func realtimeRuntimeInputSendClassifierTreatsCanceledAsTransient() {
     let nwCanceled = NSError(domain: "Network.NWError", code: 89)

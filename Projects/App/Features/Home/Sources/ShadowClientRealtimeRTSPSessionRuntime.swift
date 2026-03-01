@@ -2876,6 +2876,18 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         return normalized.contains("udp video timeout: no video datagram received")
     }
 
+    static func shouldRetryInSessionAfterUDPVideoReceiveError(
+        _ error: Error
+    ) -> Bool {
+        if shouldFallbackToInterleavedTransportAfterUDPReceiveError(error) {
+            return true
+        }
+        if isLikelyRTSPTransportTerminationError(error) {
+            return true
+        }
+        return false
+    }
+
     static func shouldResetControlChannelAfterTransientInputSendFailures(
         failureCount: Int,
         now: TimeInterval,
@@ -5016,7 +5028,7 @@ private actor ShadowClientRTSPInterleavedClient {
                     return
                 } catch {
                     guard ShadowClientRealtimeRTSPSessionRuntime
-                        .shouldFallbackToInterleavedTransportAfterUDPReceiveError(error)
+                        .shouldRetryInSessionAfterUDPVideoReceiveError(error)
                     else {
                         throw error
                     }
@@ -5271,20 +5283,30 @@ private actor ShadowClientRTSPInterleavedClient {
         var lastVideoDatagramUptime = ProcessInfo.processInfo.systemUptime
         var lastVideoDatagramInactivityRecoveryRequestUptime: TimeInterval = 0
         var hasPendingPostStartDatagramStall = false
+        let startupInactivityRecoveryCooldownSeconds = max(
+            0,
+            ShadowClientRealtimeSessionDefaults.videoRecoveryFrameRequestUnderPressureCooldownSeconds
+        )
 
         while !Task.isCancelled {
             guard let datagram = try udpSocket.receive(
                 maximumLength: ShadowClientRealtimeSessionDefaults.maximumTransportReadLength
             ) else {
-                if datagramCount == 0,
-                   receiveStart.duration(to: ContinuousClock.now) >= ShadowClientRealtimeSessionDefaults.initialVideoDatagramTimeout
-                {
-                    throw ShadowClientRTSPInterleavedClientError.requestFailed(
-                        "RTSP UDP video timeout: no video datagram received"
-                    )
-                }
                 let now = ProcessInfo.processInfo.systemUptime
                 let secondsSinceLastDatagram = now - lastVideoDatagramUptime
+                if datagramCount == 0,
+                   receiveStart.duration(to: ContinuousClock.now) >=
+                    ShadowClientRealtimeSessionDefaults.initialVideoDatagramTimeout
+                {
+                    if now - lastVideoDatagramInactivityRecoveryRequestUptime >= startupInactivityRecoveryCooldownSeconds {
+                        lastVideoDatagramInactivityRecoveryRequestUptime = now
+                        logger.error(
+                            "RTSP UDP video startup traffic missing (silence=\(secondsSinceLastDatagram, privacy: .public)s); requesting recovery frame while keeping session alive"
+                        )
+                        await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
+                    }
+                    continue
+                }
                 if ShadowClientRealtimeRTSPSessionRuntime.shouldTreatUDPVideoDatagramReceiveAsStalledAfterStartup(
                     datagramCount: datagramCount,
                     secondsSinceLastDatagram: secondsSinceLastDatagram
