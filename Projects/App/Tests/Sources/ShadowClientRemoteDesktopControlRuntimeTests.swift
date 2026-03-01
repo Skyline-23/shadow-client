@@ -1536,6 +1536,58 @@ func remoteDesktopRuntimeForwardsCapturedInputEventsToActiveSessionInputClient()
     #expect(calls.allSatisfy { $0.sessionURL == "rtsp://192.168.0.28:48010/session" })
 }
 
+@Test("Remote desktop runtime sends keepalive when input stays idle during launched session")
+@MainActor
+func remoteDesktopRuntimeSendsInputKeepAliveWhenIdle() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.33": .init(
+                host: "192.168.0.33",
+                displayName: "Idle-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-IDLE"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.33": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.33:48010/session", verb: "launch")
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let sessionInput = FakeSessionInputClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector,
+        sessionInputClient: sessionInput,
+        inputKeepAliveInterval: .milliseconds(40)
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.33"], preferredHost: "192.168.0.33")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+    await waitForSessionInputKeepAliveCalls(sessionInput, expectedCount: 2, maxAttempts: 120)
+
+    let keepAliveCalls = await sessionInput.keepAliveCalls()
+    #expect(keepAliveCalls.count >= 2)
+    #expect(keepAliveCalls.allSatisfy { $0.host == "192.168.0.33" })
+    #expect(keepAliveCalls.allSatisfy { $0.sessionURL == "rtsp://192.168.0.33:48010/session" })
+}
+
 @Test("Remote desktop runtime forwards input in session flow using normalized RTSP URL")
 @MainActor
 func remoteDesktopRuntimeForwardsInputInSessionFlowWithNormalizedURL() async {
@@ -1909,7 +1961,13 @@ private actor FakeSessionInputClient: ShadowClientRemoteSessionInputClient {
         let sessionURL: String
     }
 
+    struct KeepAliveCall: Equatable {
+        let host: String
+        let sessionURL: String
+    }
+
     private var recordedInputCalls: [InputCall] = []
+    private var recordedKeepAliveCalls: [KeepAliveCall] = []
 
     func send(event: ShadowClientRemoteInputEvent, host: String, sessionURL: String) async throws {
         recordedInputCalls.append(
@@ -1917,8 +1975,18 @@ private actor FakeSessionInputClient: ShadowClientRemoteSessionInputClient {
         )
     }
 
+    func sendKeepAlive(host: String, sessionURL: String) async throws {
+        recordedKeepAliveCalls.append(
+            .init(host: host, sessionURL: sessionURL)
+        )
+    }
+
     func inputCalls() -> [InputCall] {
         recordedInputCalls
+    }
+
+    func keepAliveCalls() -> [KeepAliveCall] {
+        recordedKeepAliveCalls
     }
 }
 
@@ -2008,6 +2076,20 @@ private func waitForSessionInputCalls(
 ) async {
     for _ in 0..<maxAttempts {
         if await inputClient.inputCalls().count >= expectedCount {
+            return
+        }
+
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+private func waitForSessionInputKeepAliveCalls(
+    _ inputClient: FakeSessionInputClient,
+    expectedCount: Int,
+    maxAttempts: Int = 50
+) async {
+    for _ in 0..<maxAttempts {
+        if await inputClient.keepAliveCalls().count >= expectedCount {
             return
         }
 

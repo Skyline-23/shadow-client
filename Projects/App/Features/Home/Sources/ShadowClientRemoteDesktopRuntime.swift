@@ -370,6 +370,14 @@ public extension ShadowClientRemoteInputEvent {
 
 public protocol ShadowClientRemoteSessionInputClient: Sendable {
     func send(event: ShadowClientRemoteInputEvent, host: String, sessionURL: String) async throws
+    func sendKeepAlive(host: String, sessionURL: String) async throws
+}
+
+public extension ShadowClientRemoteSessionInputClient {
+    func sendKeepAlive(host: String, sessionURL: String) async throws {
+        _ = host
+        _ = sessionURL
+    }
 }
 
 public struct NoopShadowClientRemoteSessionInputClient: ShadowClientRemoteSessionInputClient {
@@ -393,6 +401,13 @@ public struct NativeShadowClientRemoteSessionInputClient: ShadowClientRemoteSess
         sessionURL _: String
     ) async throws {
         try await sessionRuntime.sendInput(event)
+    }
+
+    public func sendKeepAlive(
+        host _: String,
+        sessionURL _: String
+    ) async throws {
+        try await sessionRuntime.sendInputKeepAlive()
     }
 }
 
@@ -875,6 +890,7 @@ private enum ShadowClientRemoteDesktopCommand: Sendable {
     )
     case clearActiveSession
     case sendInput(ShadowClientRemoteInputEvent)
+    case sendInputKeepAlive
     case openSessionFlow(host: String, appTitle: String)
     case selectHost(String)
     case refreshSelectedHostApps
@@ -906,6 +922,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private let sessionInputClient: any ShadowClientRemoteSessionInputClient
     private let inputSendQueue: ShadowClientRemoteInputSendQueue
     private let pinProvider: any ShadowClientPairingPINProviding
+    private let inputKeepAliveInterval: Duration
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RemoteDesktopRuntime")
     private let commandContinuation: AsyncStream<ShadowClientRemoteDesktopCommand>.Continuation
     private var commandLoopTask: Task<Void, Never>?
@@ -913,6 +930,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var refreshAppsTask: Task<Void, Never>?
     private var pairTask: Task<Void, Never>?
     private var launchTask: Task<Void, Never>?
+    private var inputKeepAliveTask: Task<Void, Never>?
     private var latestHostCandidates: [String] = []
     private var cachedAppsByHostID: [String: [ShadowClientRemoteAppDescriptor]] = [:]
     private var appRefreshGeneration: UInt64 = 0
@@ -932,7 +950,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         controlClient: any ShadowClientGameStreamControlClient = NativeGameStreamControlClient(),
         sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient = NoopShadowClientRemoteSessionConnectionClient(),
         sessionInputClient: any ShadowClientRemoteSessionInputClient = NoopShadowClientRemoteSessionInputClient(),
-        pinProvider: any ShadowClientPairingPINProviding = ShadowClientRandomPairingPINProvider()
+        pinProvider: any ShadowClientPairingPINProviding = ShadowClientRandomPairingPINProvider(),
+        inputKeepAliveInterval: Duration = .seconds(3)
     ) {
         let (commandStream, commandContinuation) = AsyncStream.makeStream(of: ShadowClientRemoteDesktopCommand.self)
 
@@ -960,6 +979,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             }
         )
         self.pinProvider = pinProvider
+        self.inputKeepAliveInterval = inputKeepAliveInterval
         self.sessionPresentationMode = sessionConnectionClient.presentationMode
         self.sessionSurfaceContext = sessionConnectionClient.sessionSurfaceContext
         self.renderStateFailureObservation = self.sessionSurfaceContext.$renderState
@@ -991,6 +1011,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         refreshAppsTask?.cancel()
         pairTask?.cancel()
         launchTask?.cancel()
+        inputKeepAliveTask?.cancel()
         renderStateFailureObservation?.cancel()
     }
 
@@ -1012,6 +1033,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             performClearActiveSession()
         case let .sendInput(event):
             await performSendInput(event)
+        case .sendInputKeepAlive:
+            await performSendInputKeepAlive()
         case let .openSessionFlow(host, appTitle):
             performOpenSessionFlow(host: host, appTitle: appTitle)
         case let .selectHost(hostID):
@@ -1268,6 +1291,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         launchState = .launching
+        stopInputKeepAliveLoop()
         activeSession = nil
         lastKnownSessionURL = nil
         let previousLaunchTask = launchTask
@@ -1422,6 +1446,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     } else {
                         self.launchState = .launched("Remote session transport connected (\(connectedLaunchResult.verb)): \(connectedSessionURL)")
                     }
+                    self.startInputKeepAliveLoop()
                 }
             } catch {
                 if Task.isCancelled {
@@ -1454,6 +1479,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                             settings: settings
                         )
                     )
+                    self.stopInputKeepAliveLoop()
                     self.activeSession = nil
                     self.lastKnownSessionURL = nil
                 }
@@ -1478,6 +1504,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         lastLaunchRequestContext = nil
         runtimeStreamReconnectInProgress = false
         runtimeCodecRecoveryInProgress = false
+        stopInputKeepAliveLoop()
         launchState = .idle
 
         let sessionConnectionClient = sessionConnectionClient
@@ -1512,8 +1539,42 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     @MainActor
     private func performSendInput(_ event: ShadowClientRemoteInputEvent) async {
-        guard let activeSession else {
+        guard let destination = activeSessionInputDestination() else {
             return
+        }
+
+        await inputSendQueue.enqueue(
+            event: event,
+            host: destination.host,
+            sessionURL: destination.sessionURL
+        )
+    }
+
+    @MainActor
+    private func performSendInputKeepAlive() async {
+        guard case .launched = launchState,
+              let destination = activeSessionInputDestination()
+        else {
+            return
+        }
+
+        do {
+            try await sessionInputClient.sendKeepAlive(
+                host: destination.host,
+                sessionURL: destination.sessionURL
+            )
+        } catch {
+            if Self.shouldSuppressInputSendError(error) {
+                return
+            }
+            logger.debug("Remote input keepalive failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    @MainActor
+    private func activeSessionInputDestination() -> (host: String, sessionURL: String)? {
+        guard let activeSession else {
+            return nil
         }
 
         let resolvedSessionURL = Self.normalizedSessionURL(activeSession.sessionURL)
@@ -1522,16 +1583,46 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 ShadowClientRTSPProtocolProfile.withRTSPSchemeIfMissing(activeSession.host)
             )
         guard let sessionURL = resolvedSessionURL else {
-            return
+            return nil
         }
 
         lastKnownSessionURL = sessionURL
-        let host = activeSession.host
-        await inputSendQueue.enqueue(
-            event: event,
-            host: host,
-            sessionURL: sessionURL
-        )
+        return (host: activeSession.host, sessionURL: sessionURL)
+    }
+
+    @MainActor
+    private func startInputKeepAliveLoop() {
+        stopInputKeepAliveLoop()
+        guard inputKeepAliveInterval > .zero else {
+            return
+        }
+
+        inputKeepAliveTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: self.inputKeepAliveInterval)
+                } catch {
+                    break
+                }
+
+                guard !Task.isCancelled else {
+                    break
+                }
+                await MainActor.run { [weak self] in
+                    _ = self?.commandContinuation.yield(.sendInputKeepAlive)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func stopInputKeepAliveLoop() {
+        inputKeepAliveTask?.cancel()
+        inputKeepAliveTask = nil
     }
 
     private static func normalizedSessionURL(_ value: String?) -> String? {

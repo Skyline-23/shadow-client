@@ -827,6 +827,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         try await rtspClient.sendInput(event)
     }
 
+    func sendInputKeepAlive() async throws {
+        guard let rtspClient else {
+            return
+        }
+        try await rtspClient.sendInputKeepAlive()
+    }
+
     private func runReceiveLoop(
         client: ShadowClientRTSPInterleavedClient,
         codec: ShadowClientVideoCodec,
@@ -4899,6 +4906,25 @@ private actor ShadowClientRTSPInterleavedClient {
                 hasStartedControlChannelBootstrap = false
                 transientInputSendFailureCount = 0
                 firstTransientInputSendFailureUptime = 0
+                return
+            }
+            throw error
+        }
+    }
+
+    func sendInputKeepAlive() async throws {
+        await ensureSunshineControlChannelStarted(
+            fallbackHost: remoteHost ?? .init("127.0.0.1")
+        )
+
+        guard let controlChannelRuntime else {
+            throw ShadowClientRealtimeSessionRuntimeError.connectionClosed
+        }
+
+        do {
+            try await controlChannelRuntime.sendInputKeepAlive()
+        } catch {
+            if ShadowClientRealtimeRTSPSessionRuntime.isTransientInputSendError(error) {
                 return
             }
             throw error

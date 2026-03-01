@@ -147,6 +147,18 @@ actor ShadowClientSunshineControlChannelRuntime {
         )
     }
 
+    func sendInputKeepAlive() async throws {
+        guard let connection else {
+            throw ShadowClientSunshineControlChannelError.connectionClosed
+        }
+
+        try await sendReliableControlMessageWithoutBlockingForAcknowledge(
+            type: ShadowClientSunshineControlMessageProfile.periodicPingType,
+            payload: ShadowClientSunshineControlMessageProfile.periodicPingPayload,
+            over: connection
+        )
+    }
+
     func requestVideoRecoveryFrame(lastSeenFrameIndex: UInt32?) async {
         guard let connection else {
             return
