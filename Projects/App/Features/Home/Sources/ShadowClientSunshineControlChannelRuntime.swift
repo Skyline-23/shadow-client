@@ -576,6 +576,14 @@ actor ShadowClientSunshineControlChannelRuntime {
             return "rumble"
         case ShadowClientSunshineControlMessageProfile.rumbleTriggersType:
             return "triggerRumble"
+        case ShadowClientSunshineControlMessageProfile.setMotionEventType:
+            return "setMotionEvent"
+        case ShadowClientSunshineControlMessageProfile.setRGBLEDType:
+            return "setRGBLED"
+        case ShadowClientSunshineControlMessageProfile.adaptiveTriggersType:
+            return "adaptiveTriggers"
+        case ShadowClientSunshineControlMessageProfile.hdrModeType:
+            return "hdrMode"
         default:
             return "unknown"
         }

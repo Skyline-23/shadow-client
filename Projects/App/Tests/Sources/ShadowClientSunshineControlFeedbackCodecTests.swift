@@ -53,6 +53,36 @@ func sunshineControlFeedbackCodecParsesTriggerRumblePayload() {
     )
 }
 
+@Test("Sunshine control feedback codec maps adaptive trigger payload to trigger rumble")
+func sunshineControlFeedbackCodecParsesAdaptiveTriggerPayload() {
+    let payload = Data([
+        0x03, 0x00, // controller id
+        0x0C, // event flags (left + right)
+        0x02, // left trigger type
+        0x03, // right trigger type
+        // left effect payload (peak=0x80)
+        0x10, 0x20, 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01,
+        // right effect payload (peak=0x40)
+        0x04, 0x08, 0x10, 0x20, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02,
+    ])
+
+    let event = ShadowClientSunshineControlFeedbackCodec.parse(
+        type: ShadowClientSunshineControlMessageProfile.adaptiveTriggersType,
+        payload: payload
+    )
+
+    #expect(
+        event ==
+            .triggerRumble(
+                .init(
+                    controllerNumber: 3,
+                    leftTriggerMotor: 0x8080,
+                    rightTriggerMotor: 0x4040
+                )
+            )
+    )
+}
+
 @Test("Sunshine control feedback codec returns nil for unsupported control type")
 func sunshineControlFeedbackCodecIgnoresUnsupportedType() {
     let event = ShadowClientSunshineControlFeedbackCodec.parse(
@@ -62,4 +92,3 @@ func sunshineControlFeedbackCodecIgnoresUnsupportedType() {
 
     #expect(event == nil)
 }
-

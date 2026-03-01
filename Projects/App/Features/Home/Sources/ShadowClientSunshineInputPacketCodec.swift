@@ -34,7 +34,10 @@ enum ShadowClientSunshineInputPacketCodec {
         static let typePlayStation: UInt8 = 0x02
         static let capabilityAnalogTriggers: UInt16 = 0x01
         static let capabilityRumble: UInt16 = 0x02
-        static let defaultCapabilities: UInt16 = capabilityAnalogTriggers | capabilityRumble
+        static let capabilityTriggerRumble: UInt16 = 0x04
+        static let defaultCapabilities: UInt16 = capabilityAnalogTriggers |
+            capabilityRumble |
+            capabilityTriggerRumble
     }
 
     private enum MouseButton {

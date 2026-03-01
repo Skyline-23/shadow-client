@@ -28,6 +28,9 @@ enum ShadowClientSunshineControlFeedbackCodec {
         if type == ShadowClientSunshineControlMessageProfile.rumbleTriggersType {
             return parseTriggerRumble(payload: payload)
         }
+        if type == ShadowClientSunshineControlMessageProfile.adaptiveTriggersType {
+            return parseAdaptiveTriggers(payload: payload)
+        }
         return nil
     }
 
@@ -66,6 +69,59 @@ enum ShadowClientSunshineControlFeedbackCodec {
                 rightTriggerMotor: rightTriggerMotor
             )
         )
+    }
+
+    private static func parseAdaptiveTriggers(
+        payload: Data
+    ) -> ShadowClientSunshineControllerFeedbackEvent? {
+        // Sunshine control_adaptive_triggers_t:
+        // id(2) + event_flags(1) + type_left(1) + type_right(1) + left[10] + right[10]
+        guard payload.count >= 25 else {
+            return nil
+        }
+
+        let controllerNumber = readUInt16LE(payload, at: 0)
+        let eventFlags = payload[2]
+        let leftType = payload[3]
+        let rightType = payload[4]
+        let leftPayload = payload.subdata(in: 5 ..< 15)
+        let rightPayload = payload.subdata(in: 15 ..< 25)
+
+        let leftTriggerMotor = adaptiveTriggerMotorValue(
+            eventFlags: eventFlags,
+            triggerType: leftType,
+            triggerPayload: leftPayload,
+            eventMask: 0x08
+        )
+        let rightTriggerMotor = adaptiveTriggerMotorValue(
+            eventFlags: eventFlags,
+            triggerType: rightType,
+            triggerPayload: rightPayload,
+            eventMask: 0x04
+        )
+
+        return .triggerRumble(
+            .init(
+                controllerNumber: controllerNumber,
+                leftTriggerMotor: leftTriggerMotor,
+                rightTriggerMotor: rightTriggerMotor
+            )
+        )
+    }
+
+    private static func adaptiveTriggerMotorValue(
+        eventFlags: UInt8,
+        triggerType: UInt8,
+        triggerPayload: Data,
+        eventMask: UInt8
+    ) -> UInt16 {
+        // Disabled trigger effects should not generate a haptic pulse.
+        guard (eventFlags & eventMask) != 0, triggerType != 0 else {
+            return 0
+        }
+
+        let peak = triggerPayload.max() ?? 0
+        return UInt16(peak) * 257
     }
 
     private static func readUInt16LE(_ data: Data, at offset: Int) -> UInt16 {

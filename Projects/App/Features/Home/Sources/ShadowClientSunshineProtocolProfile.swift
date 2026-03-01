@@ -79,6 +79,10 @@ enum ShadowClientSunshineControlMessageProfile {
     static let inputDataType: UInt16 = 0x0206
     static let rumbleType: UInt16 = 0x010b
     static let rumbleTriggersType: UInt16 = 0x5500
+    static let setMotionEventType: UInt16 = 0x5501
+    static let setRGBLEDType: UInt16 = 0x5502
+    static let adaptiveTriggersType: UInt16 = 0x5503
+    static let hdrModeType: UInt16 = 0x010e
 
     static let startAPayload = Data([0x00, 0x00])
     static let startBPayload = Data([0x00])
