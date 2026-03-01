@@ -84,7 +84,7 @@ public struct DualSenseFeedbackResult: Equatable, Sendable {
 public struct DualSenseFeedbackContract: Sendable {
     public let requiresUSBTransport: Bool
 
-    public init(requiresUSBTransport: Bool = true) {
+    public init(requiresUSBTransport: Bool = false) {
         self.requiresUSBTransport = requiresUSBTransport
     }
 

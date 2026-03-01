@@ -19,7 +19,7 @@ func inputRTTGateEvaluatorThresholds() {
     #expect(!evaluator.evaluate(samples: failing).passes)
 }
 
-@Test("DualSense feedback contract requires USB plus rumble, adaptive triggers, and LED")
+@Test("DualSense feedback contract defaults to Apple capability checks")
 func dualSenseFeedbackFirstPassRequirements() {
     let contract = DualSenseFeedbackContract()
     let complete = DualSenseFeedbackCapabilities(
@@ -33,14 +33,28 @@ func dualSenseFeedbackFirstPassRequirements() {
         supportsLED: false
     )
 
-    let passing = contract.evaluate(capabilities: complete, transport: .usb)
-    let failingCapability = contract.evaluate(capabilities: missingLED, transport: .usb)
-    let failingTransport = contract.evaluate(capabilities: complete, transport: .bluetooth)
+    let passing = contract.evaluate(capabilities: complete, transport: .bluetooth)
+    let failingCapability = contract.evaluate(capabilities: missingLED, transport: .bluetooth)
 
     #expect(complete.isFirstPassComplete)
     #expect(passing.passes)
     #expect(!failingCapability.passes)
     #expect(failingCapability.missingCapabilities.contains("led"))
+}
+
+@Test("DualSense feedback contract can optionally enforce USB transport")
+func dualSenseFeedbackOptionalUSBPolicy() {
+    let contract = DualSenseFeedbackContract(requiresUSBTransport: true)
+    let complete = DualSenseFeedbackCapabilities(
+        supportsRumble: true,
+        supportsAdaptiveTriggers: true,
+        supportsLED: true
+    )
+
+    let passing = contract.evaluate(capabilities: complete, transport: .usb)
+    let failingTransport = contract.evaluate(capabilities: complete, transport: .bluetooth)
+
+    #expect(passing.passes)
     #expect(!failingTransport.passes)
     #expect(failingTransport.missingCapabilities.contains("usbTransport"))
 }

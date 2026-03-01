@@ -2,7 +2,7 @@ import ShadowClientInput
 import Testing
 @testable import ShadowClientUI
 
-@Test("Controller feedback presenter emits ready state when USB and capabilities satisfy contract")
+@Test("Controller feedback presenter emits ready state when capabilities satisfy contract")
 func controllerFeedbackPresenterReadyState() {
     let presenter = ControllerFeedbackStatusPresenter()
     let state = ControllerFeedbackSimulationState(
@@ -16,7 +16,7 @@ func controllerFeedbackPresenterReadyState() {
 
     #expect(model.tone == .healthy)
     #expect(model.title == "Controller Feedback Ready")
-    #expect(model.detail == "DualSense feedback contract satisfies USB-first requirements.")
+    #expect(model.detail == "DualSense feedback contract satisfies Apple Game Controller capability requirements.")
     #expect(model.rows.contains(where: { !$0.passes }) == false)
 }
 
@@ -34,8 +34,7 @@ func controllerFeedbackPresenterMissingRequirements() {
 
     #expect(model.tone == .warning)
     #expect(model.title == "Feedback Contract Warning")
-    #expect(model.detail == "Missing: USB transport, adaptive triggers, LED indicator")
-    #expect(model.rows.first(where: { $0.title == "USB transport enforced" })?.passes == false)
+    #expect(model.detail == "Missing: adaptive triggers, LED indicator")
     #expect(model.rows.first(where: { $0.title == "Adaptive triggers" })?.passes == false)
     #expect(model.rows.first(where: { $0.title == "LED indicator" })?.passes == false)
 }
@@ -52,7 +51,7 @@ func controllerFeedbackPresenterRowsMirrorSimulationState() {
 
     let model = presenter.makeModel(state: state)
 
-    #expect(model.rows.count == 4)
+    #expect(model.rows.count == 3)
     #expect(model.rows.first(where: { $0.title == "Rumble requires support" })?.passes == false)
     #expect(model.rows.first(where: { $0.title == "Adaptive triggers" })?.passes == true)
 }
@@ -73,8 +72,7 @@ func controllerFeedbackPresenterMapsRuntimeEvaluationReadyState() {
 
     #expect(model.tone == .healthy)
     #expect(model.title == "Controller Feedback Ready")
-    #expect(model.detail == "DualSense feedback contract satisfies USB-first requirements.")
-    #expect(model.rows.first(where: { $0.title == "USB transport enforced" })?.passes == true)
+    #expect(model.detail == "DualSense feedback contract satisfies Apple Game Controller capability requirements.")
     #expect(model.rows.first(where: { $0.title == "Rumble requires support" })?.passes == true)
     #expect(model.rows.first(where: { $0.title == "Adaptive triggers" })?.passes == true)
     #expect(model.rows.first(where: { $0.title == "LED indicator" })?.passes == true)
@@ -87,7 +85,7 @@ func controllerFeedbackPresenterMapsRuntimeEvaluationMissingRequirements() {
         state: .init(pressedButtons: [], axisValues: [:]),
         feedback: .init(
             passes: false,
-            missingCapabilities: ["usbTransport", "led"],
+            missingCapabilities: ["led"],
             transport: .bluetooth
         )
     )
@@ -96,8 +94,7 @@ func controllerFeedbackPresenterMapsRuntimeEvaluationMissingRequirements() {
 
     #expect(model.tone == .warning)
     #expect(model.title == "Feedback Contract Warning")
-    #expect(model.detail == "Missing: USB transport, LED indicator")
-    #expect(model.rows.first(where: { $0.title == "USB transport enforced" })?.passes == false)
+    #expect(model.detail == "Missing: LED indicator")
     #expect(model.rows.first(where: { $0.title == "Rumble requires support" })?.passes == true)
     #expect(model.rows.first(where: { $0.title == "Adaptive triggers" })?.passes == true)
     #expect(model.rows.first(where: { $0.title == "LED indicator" })?.passes == false)

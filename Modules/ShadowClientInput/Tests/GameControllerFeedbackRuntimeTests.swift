@@ -29,8 +29,8 @@ func gameControllerFeedbackRuntimeEmitsPassingEvaluation() async {
     #expect(evaluation.feedback.passes)
 }
 
-@Test("GameController feedback runtime fails feedback contract when transport is bluetooth")
-func gameControllerFeedbackRuntimeFailsForBluetoothTransport() async {
+@Test("GameController feedback runtime treats bluetooth transport as valid by default")
+func gameControllerFeedbackRuntimeAllowsBluetoothTransportByDefault() async {
     let runtime = GameControllerFeedbackRuntime()
     let state = GameControllerStateStub(faceSouthPressed: true)
     let device = DualSenseFeedbackDeviceStub(
@@ -44,8 +44,8 @@ func gameControllerFeedbackRuntimeFailsForBluetoothTransport() async {
 
     let evaluation = await runtime.ingest(gameControllerState: state, device: device)
 
-    #expect(!evaluation.feedback.passes)
-    #expect(evaluation.feedback.missingCapabilities.contains("usbTransport"))
+    #expect(evaluation.feedback.passes)
+    #expect(!evaluation.feedback.missingCapabilities.contains("usbTransport"))
 }
 
 @Test("GameController feedback runtime stores latest evaluation for pull-based consumers")
@@ -125,10 +125,10 @@ func gameControllerFeedbackRuntimeStreamsAndRemovesSubscribers() async {
     #expect(await runtime.activeSubscriberCount() == 0)
 }
 
-@Test("GameController feedback runtime honors injected feedback contract policy")
+@Test("GameController feedback runtime honors injected USB enforcement policy")
 func gameControllerFeedbackRuntimeHonorsInjectedContractPolicy() async {
     let runtime = GameControllerFeedbackRuntime(
-        contract: .init(requiresUSBTransport: false)
+        contract: .init(requiresUSBTransport: true)
     )
     let device = DualSenseFeedbackDeviceStub(
         transport: .bluetooth,
@@ -144,8 +144,8 @@ func gameControllerFeedbackRuntimeHonorsInjectedContractPolicy() async {
         device: device
     )
 
-    #expect(evaluation.feedback.passes)
-    #expect(!evaluation.feedback.missingCapabilities.contains("usbTransport"))
+    #expect(!evaluation.feedback.passes)
+    #expect(evaluation.feedback.missingCapabilities.contains("usbTransport"))
 }
 
 @Test("GameController feedback runtime publishes evaluation through Combine publisher")

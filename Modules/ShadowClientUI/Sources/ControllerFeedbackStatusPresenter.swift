@@ -71,7 +71,6 @@ public struct ControllerFeedbackStatusPresenter: Sendable {
 
         return makeModel(
             feedback: evaluation,
-            usbTransportPasses: state.transport == .usb,
             rumblePasses: state.supportsRumble,
             adaptiveTriggerPasses: state.supportsAdaptiveTriggers,
             ledPasses: state.supportsLED
@@ -83,7 +82,6 @@ public struct ControllerFeedbackStatusPresenter: Sendable {
     ) -> ControllerFeedbackStatusModel {
         makeModel(
             feedback: evaluation.feedback,
-            usbTransportPasses: !evaluation.feedback.missingCapabilities.contains("usbTransport"),
             rumblePasses: !evaluation.feedback.missingCapabilities.contains("rumble"),
             adaptiveTriggerPasses: !evaluation.feedback.missingCapabilities.contains("adaptiveTriggers"),
             ledPasses: !evaluation.feedback.missingCapabilities.contains("led")
@@ -107,14 +105,13 @@ public struct ControllerFeedbackStatusPresenter: Sendable {
 
     private func makeModel(
         feedback: DualSenseFeedbackResult,
-        usbTransportPasses: Bool,
         rumblePasses: Bool,
         adaptiveTriggerPasses: Bool,
         ledPasses: Bool
     ) -> ControllerFeedbackStatusModel {
         let detail: String
         if feedback.passes {
-            detail = "DualSense feedback contract satisfies USB-first requirements."
+            detail = "DualSense feedback contract satisfies Apple Game Controller capability requirements."
         } else {
             let missing = feedback.missingCapabilities
                 .map(readableCapabilityName(_:))
@@ -127,7 +124,6 @@ public struct ControllerFeedbackStatusPresenter: Sendable {
             detail: detail,
             tone: feedback.passes ? .healthy : .warning,
             rows: [
-                .init(title: "USB transport enforced", passes: usbTransportPasses),
                 .init(title: "Rumble requires support", passes: rumblePasses),
                 .init(title: "Adaptive triggers", passes: adaptiveTriggerPasses),
                 .init(title: "LED indicator", passes: ledPasses),
