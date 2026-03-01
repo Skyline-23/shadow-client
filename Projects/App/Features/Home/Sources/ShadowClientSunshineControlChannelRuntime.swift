@@ -32,6 +32,8 @@ actor ShadowClientSunshineControlChannelRuntime {
     private var controlEncryptionCodec: ShadowClientSunshineControlEncryptionCodec?
     private var controlEncryptionSequenceNumber: UInt32 = 0
     private var receivedControllerFeedbackEventCount: Int = 0
+    private var receivedControlMessageTypeCounts: [UInt16: Int] = [:]
+    private var controlDecryptFailureCount: Int = 0
 
     init(
         connectTimeout: Duration = ShadowClientSunshineControlChannelDefaults.connectTimeout,
@@ -494,9 +496,12 @@ actor ShadowClientSunshineControlChannelRuntime {
             do {
                 controlPayload = try controlEncryptionCodec.decryptControlMessageToV1(controlPayload)
             } catch {
-                logger.debug(
-                    "Sunshine control payload decrypt skipped: \(error.localizedDescription, privacy: .public)"
-                )
+                controlDecryptFailureCount &+= 1
+                if controlDecryptFailureCount <= 8 || controlDecryptFailureCount.isMultiple(of: 60) {
+                    logger.error(
+                        "RUMBLE TRACE control decrypt failed #\(self.controlDecryptFailureCount, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                    )
+                }
                 return nil
             }
         }
@@ -507,6 +512,7 @@ actor ShadowClientSunshineControlChannelRuntime {
 
         let type = readUInt16LE(controlPayload, at: 0)
         let payload = Data(controlPayload.dropFirst(2))
+        reportControlMessageTypeIfNeeded(type: type, payloadBytes: payload.count)
         return ShadowClientSunshineControlFeedbackCodec.parse(type: type, payload: payload)
     }
 
@@ -533,6 +539,45 @@ actor ShadowClientSunshineControlChannelRuntime {
             return "rumble controller=\(rumble.controllerNumber) low=\(rumble.lowFrequencyMotor) high=\(rumble.highFrequencyMotor)"
         case let .triggerRumble(trigger):
             return "trigger controller=\(trigger.controllerNumber) left=\(trigger.leftTriggerMotor) right=\(trigger.rightTriggerMotor)"
+        }
+    }
+
+    private func reportControlMessageTypeIfNeeded(
+        type: UInt16,
+        payloadBytes: Int
+    ) {
+        let count = (receivedControlMessageTypeCounts[type] ?? 0) + 1
+        receivedControlMessageTypeCounts[type] = count
+
+        guard count <= 6 || count.isMultiple(of: 120) else {
+            return
+        }
+
+        logger.notice(
+            "RUMBLE TRACE control message type=0x\(String(type, radix: 16), privacy: .public) name=\(self.controlMessageName(type), privacy: .public) count=\(count, privacy: .public) payloadBytes=\(payloadBytes, privacy: .public)"
+        )
+    }
+
+    private func controlMessageName(_ type: UInt16) -> String {
+        switch type {
+        case ShadowClientSunshineControlMessageProfile.startATypeLegacy:
+            return "startA-legacy"
+        case ShadowClientSunshineControlMessageProfile.startATypeEncryptedV2:
+            return "startA-encryptedV2"
+        case ShadowClientSunshineControlMessageProfile.startBType:
+            return "startB"
+        case ShadowClientSunshineControlMessageProfile.periodicPingType:
+            return "periodicPing"
+        case ShadowClientSunshineControlMessageProfile.inputDataType:
+            return "inputData"
+        case ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesType:
+            return "invalidateReferenceFrames"
+        case ShadowClientSunshineControlMessageProfile.rumbleType:
+            return "rumble"
+        case ShadowClientSunshineControlMessageProfile.rumbleTriggersType:
+            return "triggerRumble"
+        default:
+            return "unknown"
         }
     }
 
@@ -645,6 +690,8 @@ actor ShadowClientSunshineControlChannelRuntime {
         connectID = 0
         controlEncryptionSequenceNumber = 0
         receivedControllerFeedbackEventCount = 0
+        receivedControlMessageTypeCounts.removeAll(keepingCapacity: false)
+        controlDecryptFailureCount = 0
     }
 
     private func nextReliableSequenceNumber(for channelID: UInt8) -> UInt16 {
