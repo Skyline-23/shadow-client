@@ -19,9 +19,6 @@ var homeTab: some View {
                     )
                     .id(currentSettings.streamingIdentityKey)
                     .frame(maxWidth: .infinity, alignment: .top)
-
-                    ControllerFeedbackStatusPanel()
-                        .frame(maxWidth: .infinity)
                 }
                 .frame(maxWidth: contentMaxWidth)
                 .frame(maxWidth: .infinity)
@@ -579,7 +576,7 @@ var settingsTab: some View {
 
                     settingsSection(title: "Controller") {
                         settingsRow {
-                            Label("USB-first DualSense feedback contract remains enabled.", systemImage: "gamecontroller.fill")
+                            Label("DualSense feedback contract follows Apple Game Controller capabilities.", systemImage: "gamecontroller.fill")
                                 .font(.callout.weight(.semibold))
                                 .foregroundStyle(Color.white.opacity(0.82))
                             Spacer(minLength: 0)
