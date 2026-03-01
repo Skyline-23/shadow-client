@@ -2854,15 +2854,23 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     static func shouldEscalateUDPVideoDatagramInactivityToFallback(
         now: TimeInterval,
         firstObservedStallUptime: TimeInterval,
+        lastInteractiveInputUptime: TimeInterval,
+        lastVideoDatagramUptime: TimeInterval,
         fallbackThresholdSeconds: TimeInterval =
             ShadowClientRealtimeSessionDefaults.postStartVideoDatagramInactivityFallbackThresholdSeconds
     ) -> Bool {
-        _ = now
-        _ = firstObservedStallUptime
-        _ = fallbackThresholdSeconds
-        // Prolonged post-start UDP video silence can legitimately happen when the host has no
-        // visual updates. Treat it as an idle stream state, not a reconnect trigger.
-        return false
+        guard firstObservedStallUptime > 0 else {
+            return false
+        }
+        guard now - firstObservedStallUptime >= max(0, fallbackThresholdSeconds) else {
+            return false
+        }
+        guard lastVideoDatagramUptime > 0 else {
+            return false
+        }
+        // Escalate only when the user interacted after the last received video datagram.
+        // This avoids reconnect loops when the host is simply idle/static.
+        return lastInteractiveInputUptime >= lastVideoDatagramUptime
     }
 
     static func shouldFallbackToInterleavedTransportAfterUDPReceiveError(
@@ -3661,6 +3669,7 @@ private actor ShadowClientRTSPInterleavedClient {
     private var transientInputSendFailureCount = 0
     private var firstTransientInputSendFailureUptime: TimeInterval = 0
     private var lastInputChannelUnavailableLogUptime: TimeInterval = 0
+    private var lastInteractiveInputEventUptime: TimeInterval = 0
 
     init(
         timeout: Duration,
@@ -3719,6 +3728,7 @@ private actor ShadowClientRTSPInterleavedClient {
         transientInputSendFailureCount = 0
         firstTransientInputSendFailureUptime = 0
         lastInputChannelUnavailableLogUptime = 0
+        lastInteractiveInputEventUptime = 0
         let normalizedURL = normalizeRTSPURL(url)
         guard let host = normalizedURL.host else {
             throw ShadowClientRTSPInterleavedClientError.invalidURL
@@ -4831,9 +4841,13 @@ private actor ShadowClientRTSPInterleavedClient {
         transientInputSendFailureCount = 0
         firstTransientInputSendFailureUptime = 0
         lastInputChannelUnavailableLogUptime = 0
+        lastInteractiveInputEventUptime = 0
     }
 
     func sendInput(_ event: ShadowClientRemoteInputEvent) async throws {
+        if isInteractiveInputEvent(event) {
+            lastInteractiveInputEventUptime = ProcessInfo.processInfo.systemUptime
+        }
         await ensureSunshineControlChannelStarted(
             fallbackHost: remoteHost ?? .init("127.0.0.1")
         )
@@ -4975,6 +4989,15 @@ private actor ShadowClientRTSPInterleavedClient {
             return "gamepadState"
         case .gamepadArrival:
             return "gamepadArrival"
+        }
+    }
+
+    private func isInteractiveInputEvent(_ event: ShadowClientRemoteInputEvent) -> Bool {
+        switch event {
+        case .gamepadArrival:
+            return false
+        case .keyDown, .keyUp, .pointerMoved, .pointerButton, .scroll, .gamepadState:
+            return true
         }
     }
 
@@ -5283,6 +5306,19 @@ private actor ShadowClientRTSPInterleavedClient {
                             "RTSP UDP video datagram stream stalled after startup (silence=\(secondsSinceLastDatagram, privacy: .public)s); requesting recovery frame without terminating session"
                         )
                         await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
+                    }
+                    if ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateUDPVideoDatagramInactivityToFallback(
+                        now: now,
+                        firstObservedStallUptime: firstObservedPostStartDatagramStallUptime,
+                        lastInteractiveInputUptime: lastInteractiveInputEventUptime,
+                        lastVideoDatagramUptime: lastVideoDatagramUptime
+                    ) {
+                        logger.error(
+                            "RTSP UDP video datagram inactivity persisted after interactive input; escalating to reconnect (silence=\(secondsSinceLastDatagram, privacy: .public)s)"
+                        )
+                        throw ShadowClientRTSPInterleavedClientError.requestFailed(
+                            "RTSP UDP video timeout: prolonged datagram inactivity after startup"
+                        )
                     }
                 }
                 continue
