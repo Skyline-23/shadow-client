@@ -2858,19 +2858,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         fallbackThresholdSeconds: TimeInterval =
             ShadowClientRealtimeSessionDefaults.postStartVideoDatagramInactivityFallbackThresholdSeconds
     ) -> Bool {
-        guard firstObservedStallUptime > 0 else {
-            return false
-        }
-        guard now - firstObservedStallUptime >= max(0, fallbackThresholdSeconds) else {
-            return false
-        }
-        guard lastInteractiveInputUptime > 0 else {
-            return false
-        }
-        // Escalate only for sessions that had interactive input.
-        // This keeps passive/idle visual sessions non-escalating while allowing faster recovery
-        // when the user is actively interacting with a frozen stream.
-        return true
+        // Runtime policy: keep stalled UDP sessions alive and continue recovery-frame requests.
+        // Do not escalate to reconnect from this path.
+        _ = now
+        _ = firstObservedStallUptime
+        _ = lastInteractiveInputUptime
+        _ = fallbackThresholdSeconds
+        return false
     }
 
     static func shouldFallbackToInterleavedTransportAfterUDPReceiveError(
@@ -5273,7 +5267,6 @@ private actor ShadowClientRTSPInterleavedClient {
         var lastVideoDatagramUptime = ProcessInfo.processInfo.systemUptime
         var lastVideoDatagramInactivityRecoveryRequestUptime: TimeInterval = 0
         var hasPendingPostStartDatagramStall = false
-        var firstObservedPostStartDatagramStallUptime: TimeInterval = 0
 
         while !Task.isCancelled {
             guard let datagram = try udpSocket.receive(
@@ -5292,9 +5285,6 @@ private actor ShadowClientRTSPInterleavedClient {
                     datagramCount: datagramCount,
                     secondsSinceLastDatagram: secondsSinceLastDatagram
                 ) {
-                    if firstObservedPostStartDatagramStallUptime == 0 {
-                        firstObservedPostStartDatagramStallUptime = now
-                    }
                     hasPendingPostStartDatagramStall = true
                     if ShadowClientRealtimeRTSPSessionRuntime.shouldRequestVideoRecoveryForUDPDatagramInactivity(
                         now: now,
@@ -5306,18 +5296,6 @@ private actor ShadowClientRTSPInterleavedClient {
                             "RTSP UDP video datagram stream stalled after startup (silence=\(secondsSinceLastDatagram, privacy: .public)s); requesting recovery frame without terminating session"
                         )
                         await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
-                    }
-                    if ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateUDPVideoDatagramInactivityToFallback(
-                        now: now,
-                        firstObservedStallUptime: firstObservedPostStartDatagramStallUptime,
-                        lastInteractiveInputUptime: lastInteractiveInputEventUptime
-                    ) {
-                        logger.error(
-                            "RTSP UDP video datagram inactivity persisted after interactive input; escalating to reconnect (silence=\(secondsSinceLastDatagram, privacy: .public)s)"
-                        )
-                        throw ShadowClientRTSPInterleavedClientError.requestFailed(
-                            "RTSP UDP video timeout: prolonged datagram inactivity after startup"
-                        )
                     }
                 }
                 continue
@@ -5332,7 +5310,6 @@ private actor ShadowClientRTSPInterleavedClient {
                     "RTSP UDP video datagram flow resumed after inactivity stall (silence=\(resumedAfterSilenceSeconds, privacy: .public)s)"
                 )
                 hasPendingPostStartDatagramStall = false
-                firstObservedPostStartDatagramStallUptime = 0
                 lastVideoDatagramInactivityRecoveryRequestUptime = 0
             }
             datagramCount += 1

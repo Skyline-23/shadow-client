@@ -2150,8 +2150,8 @@ func realtimeRuntimeUDPVideoStallDetectorUsesPostStartInactivityThreshold() {
     )
 }
 
-@Test("Realtime runtime escalates post-start UDP inactivity only after interactive input and threshold")
-func realtimeRuntimeUDPVideoInactivityEscalationRequiresInteractiveInput() {
+@Test("Realtime runtime keeps post-start UDP inactivity in non-escalating recovery mode")
+func realtimeRuntimeUDPVideoInactivityEscalationRemainsDisabled() {
     #expect(
         !ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateUDPVideoDatagramInactivityToFallback(
             now: 10.0,
@@ -2177,7 +2177,7 @@ func realtimeRuntimeUDPVideoInactivityEscalationRequiresInteractiveInput() {
         )
     )
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateUDPVideoDatagramInactivityToFallback(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateUDPVideoDatagramInactivityToFallback(
             now: 22.0,
             firstObservedStallUptime: 10.0,
             lastInteractiveInputUptime: 10.5,
