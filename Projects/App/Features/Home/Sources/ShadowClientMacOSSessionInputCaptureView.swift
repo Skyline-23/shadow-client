@@ -38,7 +38,6 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     private var isMouseCursorAssociationDisabled = false
     private var dropNextPointerDelta = false
     private var locallyHandledKeyCodes = Set<UInt16>()
-    private var lastSessionReactivationRequestUptime: TimeInterval = 0
 
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { true }
@@ -306,7 +305,6 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
             return
         }
         deactivatePointerCaptureIfNeeded()
-        requestSessionReactivationIfNeeded(reason: "window-resign-key")
     }
 
     @objc
@@ -320,7 +318,6 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         _ = notification
         locallyHandledKeyCodes.removeAll(keepingCapacity: true)
         deactivatePointerCaptureIfNeeded()
-        requestSessionReactivationIfNeeded(reason: "application-resign-active")
     }
 
     @objc
@@ -379,33 +376,6 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         locallyHandledKeyCodes.insert(event.keyCode)
         onSessionTerminateCommand?()
         return true
-    }
-
-    private func requestSessionReactivationIfNeeded(reason: String) {
-        guard let window else {
-            return
-        }
-
-        let now = ProcessInfo.processInfo.systemUptime
-        if lastSessionReactivationRequestUptime > 0,
-           now - lastSessionReactivationRequestUptime < 0.75
-        {
-            return
-        }
-        lastSessionReactivationRequestUptime = now
-
-        logger.notice(
-            "Input capture requested session reactivation (\(reason, privacy: .public))"
-        )
-
-        Task { @MainActor [weak self] in
-            guard let self else {
-                return
-            }
-            NSApp.activate(ignoringOtherApps: true)
-            window.makeKeyAndOrderFront(nil)
-            self.requestInputFocusIfNeeded(forceRecapture: true)
-        }
     }
 
     private func logFirstCaptureEventIfNeeded(_ event: ShadowClientRemoteInputEvent) {
