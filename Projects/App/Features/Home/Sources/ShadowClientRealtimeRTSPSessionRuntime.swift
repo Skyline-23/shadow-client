@@ -5002,29 +5002,33 @@ private actor ShadowClientRTSPInterleavedClient {
     ) async throws {
         let audioTrack = audioTrackDescriptor
         if let remoteHost, let videoServerPort {
-            do {
-                try await receiveUDPVideoPackets(
-                    host: remoteHost,
-                    port: videoServerPort,
-                    payloadType: payloadType,
-                    videoPayloadCandidates: videoPayloadCandidates,
-                    audioTrack: audioTrack,
-                    onVideoPacket: onVideoPacket
-                )
-                return
-            } catch {
-                guard ShadowClientRealtimeRTSPSessionRuntime
-                    .shouldFallbackToInterleavedTransportAfterUDPReceiveError(error)
-                else {
-                    throw error
+            var udpReceiveRetryCount = 0
+            while !Task.isCancelled {
+                do {
+                    try await receiveUDPVideoPackets(
+                        host: remoteHost,
+                        port: videoServerPort,
+                        payloadType: payloadType,
+                        videoPayloadCandidates: videoPayloadCandidates,
+                        audioTrack: audioTrack,
+                        onVideoPacket: onVideoPacket
+                    )
+                    return
+                } catch {
+                    guard ShadowClientRealtimeRTSPSessionRuntime
+                        .shouldFallbackToInterleavedTransportAfterUDPReceiveError(error)
+                    else {
+                        throw error
+                    }
+                    udpReceiveRetryCount &+= 1
+                    logger.error(
+                        "RTSP UDP video receive became inactive; retrying in-session UDP receive (attempt=\(udpReceiveRetryCount, privacy: .public))"
+                    )
+                    await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
+                    try? await Task.sleep(for: .milliseconds(200))
                 }
-                logger.notice(
-                    "RTSP UDP video receive became inactive; escalating to session reconnect"
-                )
-                throw ShadowClientRTSPInterleavedClientError.requestFailed(
-                    "RTSP UDP video receive inactive; reconnect required"
-                )
             }
+            throw CancellationError()
         }
 
         var currentVideoPayloadType = payloadType
