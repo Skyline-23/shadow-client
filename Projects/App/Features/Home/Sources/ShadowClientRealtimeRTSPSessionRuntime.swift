@@ -2855,7 +2855,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         now: TimeInterval,
         firstObservedStallUptime: TimeInterval,
         lastInteractiveInputUptime: TimeInterval,
-        lastVideoDatagramUptime: TimeInterval,
         fallbackThresholdSeconds: TimeInterval =
             ShadowClientRealtimeSessionDefaults.postStartVideoDatagramInactivityFallbackThresholdSeconds
     ) -> Bool {
@@ -2865,12 +2864,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         guard now - firstObservedStallUptime >= max(0, fallbackThresholdSeconds) else {
             return false
         }
-        guard lastVideoDatagramUptime > 0 else {
+        guard lastInteractiveInputUptime > 0 else {
             return false
         }
-        // Escalate only when the user interacted after the last received video datagram.
-        // This avoids reconnect loops when the host is simply idle/static.
-        return lastInteractiveInputUptime >= lastVideoDatagramUptime
+        // Escalate only for sessions that had interactive input.
+        // This keeps passive/idle visual sessions non-escalating while allowing faster recovery
+        // when the user is actively interacting with a frozen stream.
+        return true
     }
 
     static func shouldFallbackToInterleavedTransportAfterUDPReceiveError(
@@ -5310,8 +5310,7 @@ private actor ShadowClientRTSPInterleavedClient {
                     if ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateUDPVideoDatagramInactivityToFallback(
                         now: now,
                         firstObservedStallUptime: firstObservedPostStartDatagramStallUptime,
-                        lastInteractiveInputUptime: lastInteractiveInputEventUptime,
-                        lastVideoDatagramUptime: lastVideoDatagramUptime
+                        lastInteractiveInputUptime: lastInteractiveInputEventUptime
                     ) {
                         logger.error(
                             "RTSP UDP video datagram inactivity persisted after interactive input; escalating to reconnect (silence=\(secondsSinceLastDatagram, privacy: .public)s)"
