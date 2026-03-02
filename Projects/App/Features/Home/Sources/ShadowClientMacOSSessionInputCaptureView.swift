@@ -38,6 +38,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     private var isMouseCursorAssociationDisabled = false
     private var dropNextPointerDelta = false
     private var locallyHandledKeyCodes = Set<UInt16>()
+    private var pendingRecaptureAfterActivation = false
 
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { true }
@@ -162,7 +163,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
             return true
         }
 
-        requestInputFocusIfNeeded()
+        requestInputFocusIfNeeded(allowWindowActivation: true)
         emit(.keyDown(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers))
         return true
     }
@@ -190,7 +191,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        requestInputFocusIfNeeded()
+        requestInputFocusIfNeeded(allowWindowActivation: true)
         emitPointerMove(from: event)
         emit(.pointerButton(button: .left, isPressed: true))
     }
@@ -201,7 +202,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        requestInputFocusIfNeeded()
+        requestInputFocusIfNeeded(allowWindowActivation: true)
         emitPointerMove(from: event)
         emit(.pointerButton(button: .right, isPressed: true))
     }
@@ -212,7 +213,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     }
 
     override func otherMouseDown(with event: NSEvent) {
-        requestInputFocusIfNeeded()
+        requestInputFocusIfNeeded(allowWindowActivation: true)
         emitPointerMove(from: event)
         let button = event.buttonNumber == 2 ? ShadowClientRemoteMouseButton.middle : .other(Int(event.buttonNumber))
         emit(.pointerButton(button: button, isPressed: true))
@@ -267,11 +268,20 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         onInputEvent(event)
     }
 
-    func requestInputFocusIfNeeded(forceRecapture: Bool = false) {
+    func requestInputFocusIfNeeded(
+        forceRecapture: Bool = false,
+        allowWindowActivation: Bool = false
+    ) {
         guard let window else {
             return
         }
         if !window.isKeyWindow {
+            guard allowWindowActivation, NSApp.isActive else {
+                if forceRecapture {
+                    deactivatePointerCaptureIfNeeded()
+                }
+                return
+            }
             window.makeKey()
         }
         if window.firstResponder !== self {
@@ -296,6 +306,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         guard notification.object as? NSWindow === window else {
             return
         }
+        pendingRecaptureAfterActivation = false
         requestInputFocusIfNeeded(forceRecapture: true)
     }
 
@@ -310,13 +321,19 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     @objc
     private func applicationDidBecomeActive(_ notification: Notification) {
         _ = notification
-        requestInputFocusIfNeeded(forceRecapture: true)
+        let shouldForceWindowActivation = pendingRecaptureAfterActivation || window?.isKeyWindow != true
+        pendingRecaptureAfterActivation = false
+        requestInputFocusIfNeeded(
+            forceRecapture: true,
+            allowWindowActivation: shouldForceWindowActivation
+        )
     }
 
     @objc
     private func applicationWillResignActive(_ notification: Notification) {
         _ = notification
         locallyHandledKeyCodes.removeAll(keepingCapacity: true)
+        pendingRecaptureAfterActivation = true
         deactivatePointerCaptureIfNeeded()
     }
 
@@ -325,7 +342,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         guard notification.object as? NSWindow === window else {
             return
         }
-        requestInputFocusIfNeeded(forceRecapture: true)
+        handleSessionWindowTransition(reason: "screen-change")
     }
 
     @objc
@@ -333,7 +350,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         guard notification.object as? NSWindow === window else {
             return
         }
-        requestInputFocusIfNeeded(forceRecapture: true)
+        handleSessionWindowTransition(reason: "enter-fullscreen")
     }
 
     @objc
@@ -341,13 +358,32 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         guard notification.object as? NSWindow === window else {
             return
         }
-        requestInputFocusIfNeeded(forceRecapture: true)
+        handleSessionWindowTransition(reason: "exit-fullscreen")
     }
 
     @objc
     private func activeSpaceDidChange(_ notification: Notification) {
         _ = notification
-        requestInputFocusIfNeeded(forceRecapture: true)
+        handleSessionWindowTransition(reason: "active-space-change")
+    }
+
+    private func handleSessionWindowTransition(reason: String) {
+        guard let window else {
+            return
+        }
+
+        // During Space/fullscreen transitions AppKit can fire window notifications
+        // while the app is inactive. Defer recapture until activation to avoid
+        // ending up with a dropped pointer-capture state.
+        guard NSApp.isActive else {
+            pendingRecaptureAfterActivation = true
+            deactivatePointerCaptureIfNeeded()
+            logger.notice("Input capture deferred focus recapture (\(reason, privacy: .public)) while app inactive")
+            return
+        }
+
+        pendingRecaptureAfterActivation = false
+        requestInputFocusIfNeeded(forceRecapture: true, allowWindowActivation: !window.isKeyWindow)
     }
 
     private func handleLocalSessionTerminateShortcutIfNeeded(_ event: NSEvent) -> Bool {
