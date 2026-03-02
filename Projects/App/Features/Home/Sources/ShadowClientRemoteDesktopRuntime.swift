@@ -1703,17 +1703,15 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return false
         }
 
+        // Inactivity/stall class errors should stay in-session recovery only.
+        // Runtime relaunch is reserved for explicit transport-termination class errors.
         let reconnectSignatures = [
-            "rtsp udp video receive inactive",
-            "udp video receive became inactive",
-            "rtsp udp video timeout",
-            "prolonged datagram inactivity",
-            "video datagram stream stalled after startup",
             "no message available on stream",
             "rtsp transport connection closed",
             "transport connection timed out",
             "connection reset by peer",
             "network.nwerror error 96",
+            "udp video timeout: prolonged datagram inactivity after startup",
         ]
         return reconnectSignatures.contains(where: normalized.contains)
     }

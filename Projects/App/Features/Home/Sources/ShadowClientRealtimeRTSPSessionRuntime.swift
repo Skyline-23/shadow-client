@@ -1003,13 +1003,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 if await handleDecoderFailure(codec: accessUnit.codec, error: error) {
                     continue
                 }
-                await failStreamingSession(
-                    message: Self.runtimeRecoveryExhaustedMessage(
-                        codec: accessUnit.codec,
-                        reason: "decoder recovery exhausted"
-                    )
+                await handleRuntimeRecoveryExhaustedNonFatal(
+                    codec: accessUnit.codec,
+                    reason: "decoder-recovery-exhausted"
                 )
-                return
+                try? await Task.sleep(for: .milliseconds(200))
+                continue
             }
         }
     }
@@ -1721,13 +1720,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 if await handleDecoderFailure(codec: codec, error: pendingDecodeFailure) {
                     continue
                 }
-                await failStreamingSession(
-                    message: Self.runtimeRecoveryExhaustedMessage(
-                        codec: codec,
-                        reason: "decoder recovery exhausted"
-                    )
+                await handleRuntimeRecoveryExhaustedNonFatal(
+                    codec: codec,
+                    reason: "decoder-recovery-exhausted-monitor"
                 )
-                return
+                try? await Task.sleep(for: .milliseconds(200))
+                continue
             }
 
             let now = ProcessInfo.processInfo.systemUptime
@@ -1793,13 +1791,43 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             ) {
                 continue
             }
-            await failStreamingSession(
-                message: Self.runtimeRecoveryExhaustedMessage(
-                    codec: codec,
-                    reason: "decoder output stalled"
-                )
+            await handleRuntimeRecoveryExhaustedNonFatal(
+                codec: codec,
+                reason: "decoder-output-stall-exhausted"
             )
-            return
+            try? await Task.sleep(for: .milliseconds(200))
+            continue
+        }
+    }
+
+    private func handleRuntimeRecoveryExhaustedNonFatal(
+        codec: ShadowClientVideoCodec,
+        reason: String
+    ) async {
+        logger.error(
+            "Runtime recovery exhausted for codec \(String(describing: codec), privacy: .public) (reason=\(reason, privacy: .public)); suppressing fatal escalation and keeping session alive"
+        )
+        resetVideoQueuePressureTracking()
+        await flushVideoPipelineForRecovery(codec: codec)
+        await decoder.resetForRecovery()
+        if let configuration = activeVideoConfiguration {
+            await decoder.setPreferredOutputDimensions(
+                width: configuration.width,
+                height: configuration.height,
+                fps: configuration.fps
+            )
+            await decoder.configureAV1Fallback(
+                hdrEnabled: configuration.enableHDR,
+                yuv444Enabled: configuration.enableYUV444
+            )
+        }
+        await requestVideoRecoveryFrame(
+            for: codec,
+            reason: reason,
+            minimumInterval: 0.35
+        )
+        if !hasRenderedFirstFrame {
+            await transitionSurfaceState(.waitingForFirstFrame)
         }
     }
 
@@ -1848,14 +1876,38 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         decoderOutputStallRecoveryCount += 1
         let underPressureSignal = isPipelineUnderIngressPressure || hasRecentConsumerTrimPressure
+
+        if Self.shouldKeepDecoderOutputStallRecoveryNonFatal(
+            now: now,
+            lastDecodeSubmitUptime: lastDecodeSubmitUptime
+        ) {
+            logger.notice(
+                "Video decoder output stall detected without recent decode submissions for codec \(String(describing: codec), privacy: .public); keeping session alive and requesting recovery frame only"
+            )
+            lastDecoderOutputStallRecoveryUptime = now
+            _ = await requestVideoRecoveryFrame(
+                for: codec,
+                reason: "decoder-output-stall-no-recent-ingress"
+            )
+            return true
+        }
+
         if Self.shouldAbortDecoderOutputStallRecovery(
             recoveryAttemptCount: decoderOutputStallRecoveryCount,
             maxRecoveryAttempts: ShadowClientRealtimeSessionDefaults.decoderMaxOutputStallRecoveries
         ) {
+            // Keep the session alive under prolonged no-output conditions.
+            // Runtime should continue non-fatal recovery-frame requests instead
+            // of escalating to a terminal stream failure.
             logger.error(
-                "Video decoder output stall recoveries exceeded threshold for codec \(String(describing: codec), privacy: .public); aborting runtime recovery"
+                "Video decoder output stall recoveries exceeded threshold for codec \(String(describing: codec), privacy: .public); suppressing fatal escalation and requesting recovery frame only"
             )
-            return false
+            lastDecoderOutputStallRecoveryUptime = now
+            _ = await requestVideoRecoveryFrame(
+                for: codec,
+                reason: "decoder-output-stall-nonfatal"
+            )
+            return true
         }
         lastDecoderOutputStallRecoveryUptime = now
         if hasRecentConsumerTrimPressure {
@@ -1883,7 +1935,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 for: codec,
                 reason: "decoder-output-stall-pressure"
             )
-            lastDecodeSubmitUptime = now
             return true
         }
 
@@ -1901,7 +1952,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     for: codec,
                     reason: "decoder-output-stall-pressure-extended"
                 )
-                lastDecodeSubmitUptime = now
                 return true
             }
             logger.error(
@@ -1930,8 +1980,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             for: codec,
             reason: "decoder-output-stall"
         )
-        lastDecodeSubmitUptime = now
-        lastDecodedFrameOutputUptime = now
         if !hasRenderedFirstFrame {
             await transitionSurfaceState(.waitingForFirstFrame)
         }
@@ -2619,6 +2667,18 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         return secondsSinceDecodedFrameOutput >= max(0, stallThresholdSeconds)
     }
 
+    static func shouldKeepDecoderOutputStallRecoveryNonFatal(
+        now: TimeInterval,
+        lastDecodeSubmitUptime: TimeInterval,
+        recentIngressGraceSeconds: TimeInterval =
+            ShadowClientRealtimeSessionDefaults.decoderOutputStallRecentIngressGraceSeconds
+    ) -> Bool {
+        guard lastDecodeSubmitUptime > 0 else {
+            return true
+        }
+        return now - lastDecodeSubmitUptime > max(0, recentIngressGraceSeconds)
+    }
+
     static func effectiveDecoderOutputStallThresholdSeconds(
         baseThreshold: TimeInterval = ShadowClientRealtimeSessionDefaults.decoderOutputStallThresholdSeconds,
         isPipelineUnderIngressPressure: Bool,
@@ -2839,16 +2899,47 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     static func shouldRequestVideoRecoveryForUDPDatagramInactivity(
         now: TimeInterval,
         lastRecoveryRequestUptime: TimeInterval,
+        lastInteractiveInputEventUptime: TimeInterval,
         secondsSinceLastDatagram: TimeInterval,
         inactivityTimeoutSeconds: TimeInterval =
             ShadowClientRealtimeSessionDefaults.postStartVideoDatagramInactivityTimeoutSeconds,
         recoveryRequestCooldownSeconds: TimeInterval =
-            ShadowClientRealtimeSessionDefaults.videoRecoveryFrameRequestUnderPressureCooldownSeconds
+            ShadowClientRealtimeSessionDefaults.videoRecoveryFrameRequestUnderPressureCooldownSeconds,
+        recentInputWindowSeconds: TimeInterval =
+            ShadowClientRealtimeSessionDefaults.postStartVideoDatagramRecoveryInputWindowSeconds
     ) -> Bool {
         guard secondsSinceLastDatagram >= max(0, inactivityTimeoutSeconds) else {
             return false
         }
+        _ = lastInteractiveInputEventUptime
+        _ = recentInputWindowSeconds
         return now - lastRecoveryRequestUptime >= max(0, recoveryRequestCooldownSeconds)
+    }
+
+    static func shouldTreatGamepadStateAsInteractiveForUDPDatagramRecovery(
+        _ state: ShadowClientRemoteGamepadState
+    ) -> Bool {
+        state.buttonFlags != 0
+    }
+
+    static func shouldRecycleUDPVideoSocketAfterInactivity(
+        datagramCount: Int,
+        secondsSinceLastDatagram: TimeInterval,
+        recycleThresholdSeconds: TimeInterval =
+            ShadowClientRealtimeSessionDefaults.postStartVideoDatagramInactivitySocketRecycleThresholdSeconds
+    ) -> Bool {
+        guard datagramCount > 0 else {
+            return false
+        }
+        return secondsSinceLastDatagram >= max(0, recycleThresholdSeconds)
+    }
+
+    static func shouldRecycleUDPVideoSocketForStartupInactivity(
+        secondsSinceReceiveStart: TimeInterval,
+        recycleThresholdSeconds: TimeInterval =
+            ShadowClientRealtimeSessionDefaults.postStartVideoDatagramInactivitySocketRecycleThresholdSeconds
+    ) -> Bool {
+        return secondsSinceReceiveStart >= max(0, recycleThresholdSeconds)
     }
 
     static func shouldEscalateUDPVideoDatagramInactivityToFallback(
@@ -2858,8 +2949,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         fallbackThresholdSeconds: TimeInterval =
             ShadowClientRealtimeSessionDefaults.postStartVideoDatagramInactivityFallbackThresholdSeconds
     ) -> Bool {
-        // Runtime policy: keep stalled UDP sessions alive and continue recovery-frame requests.
-        // Do not escalate to reconnect from this path.
+        // Moonlight-compatible behavior: once startup succeeds, post-start UDP
+        // video inactivity is treated as a recoverable stall instead of a
+        // terminal transport failure.
         _ = now
         _ = firstObservedStallUptime
         _ = lastInteractiveInputUptime
@@ -2879,13 +2971,32 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     static func shouldRetryInSessionAfterUDPVideoReceiveError(
         _ error: Error
     ) -> Bool {
+        if error is CancellationError {
+            return false
+        }
+        let normalized = error.localizedDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if normalized.contains("udp video timeout: no video datagram received") ||
+            normalized.contains("udp video timeout: no startup datagrams received")
+        {
+            // Moonlight-compatible policy: treat sustained UDP video inactivity as terminal
+            // for this session attempt instead of looping in in-session recovery forever.
+            return false
+        }
+        if normalized.contains("udp video receive recycle requested") {
+            return true
+        }
         if shouldFallbackToInterleavedTransportAfterUDPReceiveError(error) {
             return true
         }
         if isLikelyRTSPTransportTerminationError(error) {
             return true
         }
-        return false
+        // Runtime policy for Sunshine UDP path: keep session alive and continue
+        // in-session receive recovery for non-cancellation failures instead of
+        // surfacing terminal transport errors to the launcher.
+        return true
     }
 
     static func shouldResetControlChannelAfterTransientInputSendFailures(
@@ -3665,6 +3776,9 @@ private actor ShadowClientRTSPInterleavedClient {
     private var negotiatedClientPortBase: UInt16 = ShadowClientRTSPProtocolProfile.clientPortBase
     private var rtspHostHeaderValue: String?
     private var rtspClientVersionHeaderValue = ShadowClientRTSPRequestDefaults.clientVersionHeaderValue
+    private var rtspSessionHost: String?
+    private var rtspSessionPort: NWEndpoint.Port?
+    private var playRecoveryTargets: [String] = ["/"]
     private var currentServerAppVersion: String?
     private let videoFECUnrecoverableRecoveryRequestCooldownSeconds: TimeInterval = 1.5
     private let videoFECUnrecoverableRecoveryBurstWindowSeconds: TimeInterval = 2.0
@@ -3725,6 +3839,9 @@ private actor ShadowClientRTSPInterleavedClient {
         negotiatedClientPortBase = defaultClientPortBase
         rtspHostHeaderValue = nil
         rtspClientVersionHeaderValue = ShadowClientRTSPRequestDefaults.clientVersionHeaderValue
+        rtspSessionHost = nil
+        rtspSessionPort = nil
+        playRecoveryTargets = ["/"]
         currentServerAppVersion = nil
 
         self.remoteInputKey = remoteInputKey
@@ -3751,6 +3868,8 @@ private actor ShadowClientRTSPInterleavedClient {
         guard let port = NWEndpoint.Port(rawValue: UInt16(portValue)) else {
             throw ShadowClientRTSPInterleavedClientError.invalidURL
         }
+        rtspSessionHost = host
+        rtspSessionPort = port
 
         let connection = try await connectWithMoonlightRetry(
             host: host,
@@ -3883,6 +4002,7 @@ private actor ShadowClientRTSPInterleavedClient {
             minor: 1,
             patch: 431
         )
+        playRecoveryTargets = useModernControlStreamIdentifier ? ["/"] : ["streamid=video", "streamid=audio"]
         let preferredControlStreamPath = useModernControlStreamIdentifier ?
             "streamid=control/13/0" :
             "streamid=control/1/0"
@@ -5002,7 +5122,10 @@ private actor ShadowClientRTSPInterleavedClient {
         switch event {
         case .gamepadArrival:
             return false
-        case .keyDown, .keyUp, .pointerMoved, .pointerButton, .scroll, .gamepadState:
+        case let .gamepadState(state):
+            return ShadowClientRealtimeRTSPSessionRuntime
+                .shouldTreatGamepadStateAsInteractiveForUDPDatagramRecovery(state)
+        case .keyDown, .keyUp, .pointerMoved, .pointerButton, .scroll:
             return true
         }
     }
@@ -5015,6 +5138,7 @@ private actor ShadowClientRTSPInterleavedClient {
         let audioTrack = audioTrackDescriptor
         if let remoteHost, let videoServerPort {
             var udpReceiveRetryCount = 0
+            let maxInSessionUDPVideoReceiveRetries = 3
             while !Task.isCancelled {
                 do {
                     try await receiveUDPVideoPackets(
@@ -5033,6 +5157,14 @@ private actor ShadowClientRTSPInterleavedClient {
                         throw error
                     }
                     udpReceiveRetryCount &+= 1
+                    if udpReceiveRetryCount > maxInSessionUDPVideoReceiveRetries {
+                        logger.error(
+                            "RTSP UDP video in-session receive retry exhausted (attempts=\(udpReceiveRetryCount, privacy: .public)); escalating to transport reconnect"
+                        )
+                        throw ShadowClientRealtimeSessionRuntimeError.transportFailure(
+                            "RTSP UDP video timeout: prolonged datagram inactivity after startup"
+                        )
+                    }
                     logger.error(
                         "RTSP UDP video receive became inactive; retrying in-session UDP receive (attempt=\(udpReceiveRetryCount, privacy: .public))"
                     )
@@ -5298,14 +5430,12 @@ private actor ShadowClientRTSPInterleavedClient {
                    receiveStart.duration(to: ContinuousClock.now) >=
                     ShadowClientRealtimeSessionDefaults.initialVideoDatagramTimeout
                 {
-                    if now - lastVideoDatagramInactivityRecoveryRequestUptime >= startupInactivityRecoveryCooldownSeconds {
-                        lastVideoDatagramInactivityRecoveryRequestUptime = now
-                        logger.error(
-                            "RTSP UDP video startup traffic missing (silence=\(secondsSinceLastDatagram, privacy: .public)s); requesting recovery frame while keeping session alive"
-                        )
-                        await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
-                    }
-                    continue
+                    logger.error(
+                        "RTSP UDP video startup traffic missing (silence=\(secondsSinceLastDatagram, privacy: .public)s); terminating session"
+                    )
+                    throw ShadowClientRealtimeSessionRuntimeError.transportFailure(
+                        "RTSP UDP video timeout: no startup datagrams received"
+                    )
                 }
                 if ShadowClientRealtimeRTSPSessionRuntime.shouldTreatUDPVideoDatagramReceiveAsStalledAfterStartup(
                     datagramCount: datagramCount,
@@ -5315,6 +5445,7 @@ private actor ShadowClientRTSPInterleavedClient {
                     if ShadowClientRealtimeRTSPSessionRuntime.shouldRequestVideoRecoveryForUDPDatagramInactivity(
                         now: now,
                         lastRecoveryRequestUptime: lastVideoDatagramInactivityRecoveryRequestUptime,
+                        lastInteractiveInputEventUptime: lastInteractiveInputEventUptime,
                         secondsSinceLastDatagram: secondsSinceLastDatagram
                     ) {
                         lastVideoDatagramInactivityRecoveryRequestUptime = now
@@ -5322,6 +5453,18 @@ private actor ShadowClientRTSPInterleavedClient {
                             "RTSP UDP video datagram stream stalled after startup (silence=\(secondsSinceLastDatagram, privacy: .public)s); requesting recovery frame without terminating session"
                         )
                         await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
+                    }
+                    if ShadowClientRealtimeRTSPSessionRuntime.shouldRecycleUDPVideoSocketAfterInactivity(
+                        datagramCount: datagramCount,
+                        secondsSinceLastDatagram: secondsSinceLastDatagram
+                    ) {
+                        logger.error(
+                            "RTSP UDP video datagram inactivity exceeded in-session socket recycle threshold (silence=\(secondsSinceLastDatagram, privacy: .public)s); recycling UDP receive socket without relaunch"
+                        )
+                        await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
+                        throw ShadowClientRealtimeSessionRuntimeError.transportFailure(
+                            "RTSP UDP video receive recycle requested: prolonged datagram inactivity after startup"
+                        )
                     }
                 }
                 continue
