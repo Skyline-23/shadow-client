@@ -65,6 +65,10 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @State var isLaunchFailureAlertPresented = false
     @State var gamepadInputRuntime = ShadowClientGamepadInputPassthroughRuntime()
     @State var sessionVisiblePointerRegions: [CGRect] = []
+    @State var launchViewportMetrics = ShadowClientLaunchViewportMetrics(
+        logicalSize: .zero,
+        safeAreaInsets: .init()
+    )
 #if os(macOS)
     @State var activeSessionProcessActivity: NSObjectProtocol?
 #endif
@@ -86,6 +90,17 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
             backgroundGradient
             rootContentView
         }
+        .background(
+            GeometryReader { geometry in
+                Color.clear.preference(
+                    key: ShadowClientLaunchViewportPreferenceKey.self,
+                    value: ShadowClientLaunchViewportMetrics(
+                        logicalSize: geometry.size,
+                        safeAreaInsets: geometry.safeAreaInsets
+                    )
+                )
+            }
+        )
         .tint(accentColor)
         .preferredColorScheme(.dark)
         .task {
@@ -188,6 +203,9 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
             Button("OK", role: .cancel) {}
         } message: {
             Text(launchFailureAlertMessage)
+        }
+        .onPreferenceChange(ShadowClientLaunchViewportPreferenceKey.self) { metrics in
+            launchViewportMetrics = metrics
         }
         .animation(.easeInOut(duration: 0.2), value: remoteDesktopRuntime.activeSession != nil)
         .shadowClientRemoteSessionAutoFullscreen(
@@ -556,7 +574,7 @@ func preferredLaunchApp(from apps: [ShadowClientRemoteAppDescriptor]) -> ShadowC
 
     @MainActor
 func launchRemoteApp(_ app: ShadowClientRemoteAppDescriptor) {
-        let settings = currentSettings.launchSettings(
+        let settings = resolvedLaunchSettings(
             hostApp: app,
             networkSignal: launchBitrateNetworkSignal,
             localHDRDisplayAvailable: isLocalHDRDisplayAvailable
@@ -581,7 +599,7 @@ func launchDesktopFallbackIfNeeded() async {
             return
         }
 
-        let settings = currentSettings.launchSettings(
+        let settings = resolvedLaunchSettings(
             hostApp: nil,
             networkSignal: launchBitrateNetworkSignal,
             localHDRDisplayAvailable: isLocalHDRDisplayAvailable
@@ -616,6 +634,45 @@ func launchDesktopFallbackIfNeeded() async {
             }
             try? await Task.sleep(for: ShadowClientUIRuntimeDefaults.pollingInterval)
         }
+    }
+
+    @MainActor
+    private func resolvedLaunchSettings(
+        hostApp: ShadowClientRemoteAppDescriptor?,
+        networkSignal: StreamingNetworkSignal?,
+        localHDRDisplayAvailable: Bool
+    ) -> ShadowClientGameStreamLaunchSettings {
+        let base = currentSettings.launchSettings(
+            hostApp: hostApp,
+            networkSignal: networkSignal,
+            localHDRDisplayAvailable: localHDRDisplayAvailable
+        )
+        guard selectedResolution == .retinaAuto else {
+            return base
+        }
+
+        let pixelSize = ShadowClientAutoResolutionPolicy.resolvePixelSize(
+            logicalSize: launchViewportMetrics.logicalSize,
+            safeAreaInsets: launchViewportMetrics.safeAreaInsets
+        )
+        return .init(
+            width: Int(pixelSize.width),
+            height: Int(pixelSize.height),
+            fps: base.fps,
+            bitrateKbps: base.bitrateKbps,
+            preferredCodec: base.preferredCodec,
+            enableHDR: base.enableHDR,
+            enableSurroundAudio: base.enableSurroundAudio,
+            lowLatencyMode: base.lowLatencyMode,
+            enableVSync: base.enableVSync,
+            enableFramePacing: base.enableFramePacing,
+            enableYUV444: base.enableYUV444,
+            unlockBitrateLimit: base.unlockBitrateLimit,
+            forceHardwareDecoding: base.forceHardwareDecoding,
+            optimizeGameSettingsForStreaming: base.optimizeGameSettingsForStreaming,
+            quitAppOnHostAfterStreamEnds: base.quitAppOnHostAfterStreamEnds,
+            playAudioOnHost: base.playAudioOnHost
+        )
     }
 
     @MainActor

@@ -42,6 +42,7 @@ struct ShadowClientStreamingFrameRatePresetMetadata: Sendable {
 
 enum ShadowClientStreamingPresetCatalogs {
     static let resolution = ShadowClientPresetCatalog<ShadowClientStreamingResolutionPreset, ShadowClientStreamingResolutionPresetMetadata>([
+        (.retinaAuto, .init(width: 1920, height: 1080, label: "Retina Display (Auto)")),
         (.p720, .init(width: 1280, height: 720, label: "720p")),
         (.p1080, .init(width: 1920, height: 1080, label: "1080p")),
         (.p1440, .init(width: 2560, height: 1440, label: "1440p")),

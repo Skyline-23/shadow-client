@@ -125,6 +125,14 @@ func appSettingsMapToLaunchSettings() {
     #expect(launch.playAudioOnHost == false)
 }
 
+@Test("Retina auto resolution preset keeps distinct identity key")
+func retinaAutoResolutionPresetParticipatesInIdentityKey() {
+    let auto = ShadowClientAppSettings(resolution: .retinaAuto)
+    let standard = ShadowClientAppSettings(resolution: .p1080)
+
+    #expect(auto.identityKey != standard.identityKey)
+}
+
 @Test("Launch settings disable HDR when selected app does not support HDR")
 func launchSettingsDisableHDRForNonHDRApp() {
     let settings = ShadowClientAppSettings(preferHDR: true)

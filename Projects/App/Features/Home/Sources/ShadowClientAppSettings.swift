@@ -2,6 +2,7 @@ import Foundation
 import ShadowClientStreaming
 
 public enum ShadowClientStreamingResolutionPreset: String, CaseIterable, Sendable {
+    case retinaAuto = "retina-auto"
     case p720 = "1280x720"
     case p1080 = "1920x1080"
     case p1440 = "2560x1440"
