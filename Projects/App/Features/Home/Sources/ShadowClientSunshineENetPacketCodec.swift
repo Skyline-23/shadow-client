@@ -111,6 +111,32 @@ enum ShadowClientSunshineENetPacketCodec {
         return packet
     }
 
+    static func makePingPacket(
+        outgoingPeerID: UInt16,
+        outgoingSessionID: UInt8,
+        reliableSequenceNumber: UInt16,
+        sentTime: UInt16
+    ) -> Data {
+        var packet = Data()
+        packet.reserveCapacity(8)
+
+        let sessionBits = UInt16(outgoingSessionID & ShadowClientSunshineENetProtocolProfile.sessionValueMask) <<
+            ShadowClientSunshineENetProtocolProfile.protocolHeaderSessionShift
+        let peerIDWithSession =
+            (outgoingPeerID & maximumPeerID) |
+            sessionBits |
+            ShadowClientSunshineENetProtocolProfile.protocolHeaderFlagSentTime
+        packet.appendUInt16BE(peerIDWithSession)
+        packet.appendUInt16BE(sentTime)
+        packet.append(
+            ShadowClientSunshineENetProtocolProfile.protocolCommandPing |
+                ShadowClientSunshineENetProtocolProfile.protocolCommandFlagAcknowledge
+        )
+        packet.append(ShadowClientSunshineENetProtocolProfile.wildcardSessionID)
+        packet.appendUInt16BE(reliableSequenceNumber)
+        return packet
+    }
+
     static func makeSendReliablePacket(
         outgoingPeerID: UInt16,
         outgoingSessionID: UInt8,

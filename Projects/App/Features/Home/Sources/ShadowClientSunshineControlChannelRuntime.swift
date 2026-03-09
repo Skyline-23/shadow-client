@@ -656,8 +656,32 @@ actor ShadowClientSunshineControlChannelRuntime {
 
     private func periodicPingLoop(over connection: NWConnection) async {
         var didLogFailure = false
+        var didLogENetPing = 0
+        var lastPeerPingUptime: UInt64 = 0
         while !Task.isCancelled {
             do {
+                let nowUptime = DispatchTime.now().uptimeNanoseconds
+                if lastPeerPingUptime == 0 ||
+                    nowUptime - lastPeerPingUptime >= ShadowClientSunshineENetProtocolProfile.peerPingIntervalNanoseconds {
+                    let reliableSequenceNumber = nextReliableSequenceNumber(
+                        for: ShadowClientSunshineENetProtocolProfile.wildcardSessionID
+                    )
+                    let pingPacket = ShadowClientSunshineENetPacketCodec.makePingPacket(
+                        outgoingPeerID: outgoingPeerID,
+                        outgoingSessionID: outgoingSessionID,
+                        reliableSequenceNumber: reliableSequenceNumber,
+                        sentTime: currentSentTime()
+                    )
+                    try await Self.send(bytes: pingPacket, over: connection)
+                    lastPeerPingUptime = nowUptime
+                    if didLogENetPing < 4 {
+                        logger.notice(
+                            "Sunshine low-level ENet ping sent relSeq=\(reliableSequenceNumber, privacy: .public)"
+                        )
+                        didLogENetPing += 1
+                    }
+                }
+
                 try await sendReliableControlMessageWithoutBlockingForAcknowledge(
                     type: ShadowClientSunshineControlMessageProfile.periodicPingType,
                     payload: ShadowClientSunshineControlMessageProfile.periodicPingPayload,

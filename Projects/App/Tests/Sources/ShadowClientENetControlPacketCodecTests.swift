@@ -120,6 +120,23 @@ func enetSendReliablePacketEncodesHeaderAndPayload() throws {
     #expect(Array(packet[10...13]) == [0x05, 0x03, 0x00, 0x00]) // control payload
 }
 
+@Test("ENet ping packet uses wildcard channel and acknowledge flag")
+func enetPingPacketEncodesWildcardChannel() {
+    let packet = ShadowClientSunshineENetPacketCodec.makePingPacket(
+        outgoingPeerID: 0x0123,
+        outgoingSessionID: 0x02,
+        reliableSequenceNumber: 0x3456,
+        sentTime: 0x7788
+    )
+
+    #expect(packet.count == 8)
+    #expect(Array(packet[0...1]) == [0xA1, 0x23])
+    #expect(Array(packet[2...3]) == [0x77, 0x88])
+    #expect(packet[4] == 0x85) // PING | ACK flag
+    #expect(packet[5] == 0xFF) // wildcard/control channel
+    #expect(Array(packet[6...7]) == [0x34, 0x56])
+}
+
 @Test("ENet send-reliable packet rejects oversized payloads without trapping")
 func enetSendReliablePacketRejectsOversizedPayload() throws {
     let oversizedPayload = Data(repeating: 0xFF, count: Int(UInt16.max) + 1)

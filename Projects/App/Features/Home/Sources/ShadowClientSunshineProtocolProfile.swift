@@ -50,6 +50,8 @@ enum ShadowClientSunshineENetProtocolProfile {
     static let packetThrottleIntervalMs: UInt32 = 5_000
     static let packetThrottleAcceleration: UInt32 = 2
     static let packetThrottleDeceleration: UInt32 = 2
+    static let peerPingInterval: Duration = .milliseconds(500)
+    static let peerPingIntervalNanoseconds: UInt64 = 500_000_000
 }
 
 enum ShadowClientSunshineHandshakeProfile {
