@@ -37,6 +37,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "InputCapture")
     private var loggedInputKinds = Set<String>()
     private var loggedFocusFailure = false
+    private var isCursorHidden = false
     private var locallyHandledKeyCodes = Set<UInt16>()
     private var pendingRecaptureAfterActivation = false
 
@@ -469,12 +470,24 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     }
 
     private func activatePointerCaptureIfNeeded() {
-        // Absolute mouse mode keeps the local cursor visible and mapped directly
-        // into the rendered video region. No hidden-cursor recapture is used.
+        guard !isCursorHidden,
+              window?.isKeyWindow == true,
+              NSApp.isActive
+        else {
+            return
+        }
+
+        NSCursor.hide()
+        isCursorHidden = true
     }
 
     private func deactivatePointerCaptureIfNeeded() {
-        // Absolute mouse mode keeps the local cursor visible and unwarped.
+        guard isCursorHidden else {
+            return
+        }
+
+        NSCursor.unhide()
+        isCursorHidden = false
     }
 }
 #endif

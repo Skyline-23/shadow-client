@@ -4,12 +4,14 @@ import UIKit
 
 struct ShadowClientSessionInputInteractionPlatformView: UIViewRepresentable {
     let referenceVideoSizeProvider: @MainActor () -> CGSize?
+    let visiblePointerRegionsProvider: @MainActor () -> [CGRect]
     let onInputEvent: @MainActor (ShadowClientRemoteInputEvent) -> Void
     let onSessionTerminateCommand: @MainActor () -> Void
 
     func makeUIView(context: Context) -> ShadowClientIOSSessionInputCaptureView {
         let view = ShadowClientIOSSessionInputCaptureView()
         view.referenceVideoSizeProvider = referenceVideoSizeProvider
+        view.visiblePointerRegionsProvider = visiblePointerRegionsProvider
         view.onInputEvent = onInputEvent
         view.onSessionTerminateCommand = onSessionTerminateCommand
         return view
@@ -17,9 +19,11 @@ struct ShadowClientSessionInputInteractionPlatformView: UIViewRepresentable {
 
     func updateUIView(_ uiView: ShadowClientIOSSessionInputCaptureView, context: Context) {
         uiView.referenceVideoSizeProvider = referenceVideoSizeProvider
+        uiView.visiblePointerRegionsProvider = visiblePointerRegionsProvider
         uiView.onInputEvent = onInputEvent
         uiView.onSessionTerminateCommand = onSessionTerminateCommand
         uiView.requestInputFocusIfNeeded()
+        uiView.invalidatePointerSuppressionRegions()
     }
 }
 
@@ -52,12 +56,14 @@ private final class ShadowClientIOSSoftwareKeyboardInputView: UIView, UIKeyInput
 }
 
 @MainActor
-final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerDelegate {
+final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerDelegate, UIPointerInteractionDelegate {
     var referenceVideoSizeProvider: (@MainActor () -> CGSize?)?
+    var visiblePointerRegionsProvider: (@MainActor () -> [CGRect])?
     var onInputEvent: (@MainActor (ShadowClientRemoteInputEvent) -> Void)?
     var onSessionTerminateCommand: (@MainActor () -> Void)?
 
     private let softwareKeyboardInputView = ShadowClientIOSSoftwareKeyboardInputView(frame: .zero)
+    private var pointerInteractionRef: UIPointerInteraction?
     private var isPrimaryButtonHeld = false
     private var lastPrimaryDragLocation: CGPoint?
     private var keyboardCaptureRequested = false
@@ -70,6 +76,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         isMultipleTouchEnabled = true
         backgroundColor = .clear
         setupSoftwareKeyboardInputView()
+        setupPointerInteractionIfNeeded()
         setupGestures()
     }
 
@@ -78,6 +85,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         isMultipleTouchEnabled = true
         backgroundColor = .clear
         setupSoftwareKeyboardInputView()
+        setupPointerInteractionIfNeeded()
         setupGestures()
     }
 
@@ -91,6 +99,22 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
             self?.emitSoftwareKeyboardText("\u{08}")
         }
         addSubview(softwareKeyboardInputView)
+    }
+
+    private func setupPointerInteractionIfNeeded() {
+        guard #available(iOS 13.4, *) else {
+            return
+        }
+        let interaction = UIPointerInteraction(delegate: self)
+        addInteraction(interaction)
+        pointerInteractionRef = interaction
+    }
+
+    func invalidatePointerSuppressionRegions() {
+        guard #available(iOS 13.4, *) else {
+            return
+        }
+        pointerInteractionRef?.invalidate()
     }
 
     override func layoutSubviews() {
@@ -417,6 +441,27 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
 
     private func emit(_ event: ShadowClientRemoteInputEvent) {
         onInputEvent?(event)
+    }
+
+    @available(iOS 13.4, *)
+    func pointerInteraction(
+        _: UIPointerInteraction,
+        regionFor request: UIPointerRegionRequest,
+        defaultRegion: UIPointerRegion
+    ) -> UIPointerRegion? {
+        let visibleRegions = visiblePointerRegionsProvider?() ?? []
+        if visibleRegions.contains(where: { $0.contains(request.location) }) {
+            return nil
+        }
+        return defaultRegion
+    }
+
+    @available(iOS 13.4, *)
+    func pointerInteraction(
+        _: UIPointerInteraction,
+        styleFor _: UIPointerRegion
+    ) -> UIPointerStyle? {
+        .hidden()
     }
 
     func gestureRecognizer(

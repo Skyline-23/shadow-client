@@ -37,6 +37,9 @@ var remoteSessionFlowView: some View {
                     ShadowClientSessionInputInteractionView(
                         referenceVideoSizeProvider: {
                             sessionSurfaceContext.videoPresentationSize
+                        },
+                        visiblePointerRegionsProvider: {
+                            sessionVisiblePointerRegions
                         }
                     ) { event in
                         remoteDesktopRuntime.sendInput(event)
@@ -95,6 +98,15 @@ var remoteSessionFlowView: some View {
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("shadow.remote.session.terminate")
                         .accessibilityLabel("Terminate Remote Session")
+                        .background(
+                            GeometryReader { geometry in
+                                Color.clear
+                                    .preference(
+                                        key: ShadowClientSessionPointerVisibleRegionsPreferenceKey.self,
+                                        value: [geometry.frame(in: .named("shadow.remote.session.root"))]
+                                    )
+                            }
+                        )
 
                         Spacer(minLength: 0)
                     }
@@ -106,6 +118,10 @@ var remoteSessionFlowView: some View {
 #endif
             }
             .ignoresSafeArea()
+            .coordinateSpace(name: "shadow.remote.session.root")
+            .onPreferenceChange(ShadowClientSessionPointerVisibleRegionsPreferenceKey.self) { regions in
+                sessionVisiblePointerRegions = regions
+            }
         }
     }
 

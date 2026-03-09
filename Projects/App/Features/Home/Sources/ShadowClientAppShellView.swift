@@ -64,6 +64,7 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @State var launchFailureAlertMessage = ""
     @State var isLaunchFailureAlertPresented = false
     @State var gamepadInputRuntime = ShadowClientGamepadInputPassthroughRuntime()
+    @State var sessionVisiblePointerRegions: [CGRect] = []
 #if os(macOS)
     @State var activeSessionProcessActivity: NSObjectProtocol?
 #endif
