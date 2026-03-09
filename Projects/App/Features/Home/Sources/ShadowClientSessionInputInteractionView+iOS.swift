@@ -102,18 +102,12 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
     }
 
     private func setupPointerInteractionIfNeeded() {
-        guard #available(iOS 13.4, *) else {
-            return
-        }
         let interaction = UIPointerInteraction(delegate: self)
         addInteraction(interaction)
         pointerInteractionRef = interaction
     }
 
     func invalidatePointerSuppressionRegions() {
-        guard #available(iOS 13.4, *) else {
-            return
-        }
         pointerInteractionRef?.invalidate()
     }
 
@@ -220,14 +214,12 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         threeFingerTap.delegate = self
         addGestureRecognizer(threeFingerTap)
 
-        if #available(iOS 13.4, *) {
-            let hover = UIHoverGestureRecognizer(
-                target: self,
-                action: #selector(handlePointerHover(_:))
-            )
-            hover.delegate = self
-            addGestureRecognizer(hover)
-        }
+        let hover = UIHoverGestureRecognizer(
+            target: self,
+            action: #selector(handlePointerHover(_:))
+        )
+        hover.delegate = self
+        addGestureRecognizer(hover)
 
         singleTap.require(toFail: longPress)
         singleTap.require(toFail: threeFingerTap)
@@ -443,7 +435,6 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         onInputEvent?(event)
     }
 
-    @available(iOS 13.4, *)
     func pointerInteraction(
         _: UIPointerInteraction,
         regionFor request: UIPointerRegionRequest,
@@ -456,7 +447,6 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         return defaultRegion
     }
 
-    @available(iOS 13.4, *)
     func pointerInteraction(
         _: UIPointerInteraction,
         styleFor _: UIPointerRegion
