@@ -34,6 +34,30 @@ var remoteSessionFlowView: some View {
                         .allowsHitTesting(false)
                     }
 
+                    if let hudDisplayState = realtimeSessionHUDDisplayState {
+                        VStack {
+                            HStack {
+                                Spacer()
+                                switch hudDisplayState {
+                                case let .telemetry(model):
+                                    realtimeSessionDiagnosticsHUD(model)
+                                case let .waitingForTelemetry(controlRoundTripMs):
+                                    realtimeSessionBootstrapDiagnosticsHUD(controlRoundTripMs: controlRoundTripMs)
+                                case let .connectionIssue(title, message):
+                                    realtimeSessionConnectionIssueHUD(
+                                        title: title,
+                                        message: message
+                                    )
+                                }
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.top, 12)
+                        .padding(.trailing, 12)
+                        .safeAreaPadding([.top, .trailing])
+                        .allowsHitTesting(false)
+                    }
+
                     ShadowClientSessionInputInteractionView(
                         referenceVideoSizeProvider: {
                             sessionSurfaceContext.videoPresentationSize
@@ -52,30 +76,6 @@ var remoteSessionFlowView: some View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
-
-                if let hudDisplayState = realtimeSessionHUDDisplayState {
-                    VStack {
-                        HStack {
-                            Spacer()
-                            switch hudDisplayState {
-                            case let .telemetry(model):
-                                realtimeSessionDiagnosticsHUD(model)
-                            case let .waitingForTelemetry(controlRoundTripMs):
-                                realtimeSessionBootstrapDiagnosticsHUD(controlRoundTripMs: controlRoundTripMs)
-                            case let .connectionIssue(title, message):
-                                realtimeSessionConnectionIssueHUD(
-                                    title: title,
-                                    message: message
-                                )
-                            }
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.top, 12)
-                    .padding(.trailing, 12)
-                    .safeAreaPadding([.top, .trailing])
-                    .allowsHitTesting(false)
-                }
 
 #if os(iOS)
                 VStack {
