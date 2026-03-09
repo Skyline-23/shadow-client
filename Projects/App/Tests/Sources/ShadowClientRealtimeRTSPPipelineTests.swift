@@ -1226,17 +1226,13 @@ func av1VideoFECReconstructionQueueRecoversSingleMissingDataShard() {
         multiFecBlocks: blockInfo
     )
 
-    let presentDataPacket = ShadowClientRTPPacket(
-        isRTP: true,
-        channel: 0,
+    let presentDataPacket = makeVideoRTPPacket(
         sequenceNumber: baseSequenceNumber &+ 1,
         marker: true,
         payloadType: 98,
         payload: presentDataPayload
     )
-    let parityPacket = ShadowClientRTPPacket(
-        isRTP: true,
-        channel: 0,
+    let parityPacket = makeVideoRTPPacket(
         sequenceNumber: baseSequenceNumber &+ 2,
         marker: false,
         payloadType: 98,
@@ -1281,17 +1277,13 @@ func av1VideoFECReconstructionQueueMarksUnrecoverableTransitionBlockDrop() {
         multiFecBlocks: makeMultiFecBlocks(currentBlock: 1, lastBlock: 1)
     )
 
-    let firstBlockPacket = ShadowClientRTPPacket(
-        isRTP: true,
-        channel: 0,
+    let firstBlockPacket = makeVideoRTPPacket(
         sequenceNumber: 1_500,
         marker: false,
         payloadType: 98,
         payload: firstBlockDataPayload
     )
-    let nextBlockPacket = ShadowClientRTPPacket(
-        isRTP: true,
-        channel: 0,
+    let nextBlockPacket = makeVideoRTPPacket(
         sequenceNumber: 1_502,
         marker: false,
         payloadType: 98,
@@ -1331,17 +1323,13 @@ func av1VideoFECReconstructionQueueDefersSubmissionUntilFinalBlock() {
         multiFecBlocks: makeMultiFecBlocks(currentBlock: 1, lastBlock: 1)
     )
 
-    let block0Packet = ShadowClientRTPPacket(
-        isRTP: true,
-        channel: 0,
+    let block0Packet = makeVideoRTPPacket(
         sequenceNumber: 2_000,
         marker: false,
         payloadType: 98,
         payload: block0Payload
     )
-    let block1Packet = ShadowClientRTPPacket(
-        isRTP: true,
-        channel: 0,
+    let block1Packet = makeVideoRTPPacket(
         sequenceNumber: 2_001,
         marker: true,
         payloadType: 98,
@@ -1382,17 +1370,13 @@ func av1VideoFECReconstructionQueueDropsFrameOnMissingIntermediateBlock() {
         multiFecBlocks: makeMultiFecBlocks(currentBlock: 2, lastBlock: 2)
     )
 
-    let block0Packet = ShadowClientRTPPacket(
-        isRTP: true,
-        channel: 0,
+    let block0Packet = makeVideoRTPPacket(
         sequenceNumber: 2_100,
         marker: false,
         payloadType: 98,
         payload: block0Payload
     )
-    let block2Packet = ShadowClientRTPPacket(
-        isRTP: true,
-        channel: 0,
+    let block2Packet = makeVideoRTPPacket(
         sequenceNumber: 2_102,
         marker: true,
         payloadType: 98,
@@ -1414,9 +1398,7 @@ func av1VideoFECReconstructionQueueNormalizesLegacyNonMultiFECMetadata() {
         fixedShardPayloadSize: nil,
         multiFECCapable: false
     )
-    let packet = ShadowClientRTPPacket(
-        isRTP: true,
-        channel: 0,
+    let packet = makeVideoRTPPacket(
         sequenceNumber: 2_200,
         marker: true,
         payloadType: 98,
@@ -1442,9 +1424,7 @@ func av1VideoFECReconstructionQueueUsesFixedShardPayloadSizeForRecoveredShard() 
         multiFECCapable: true
     )
 
-    let parityPacket = ShadowClientRTPPacket(
-        isRTP: true,
-        channel: 0,
+    let parityPacket = makeVideoRTPPacket(
         sequenceNumber: 2_301,
         marker: true,
         payloadType: 98,
@@ -2951,12 +2931,38 @@ private func makeVideoRTPPacket(
     sequenceNumber: UInt16,
     payloadByte: UInt8
 ) -> ShadowClientRTPPacket {
-    ShadowClientRTPPacket(
-        isRTP: true,
-        channel: 0,
+    makeVideoRTPPacket(
         sequenceNumber: sequenceNumber,
         marker: false,
         payloadType: 0,
         payload: Data([payloadByte])
+    )
+}
+
+private func makeVideoRTPPacket(
+    sequenceNumber: UInt16,
+    marker: Bool,
+    payloadType: Int,
+    payload: Data
+) -> ShadowClientRTPPacket {
+    var rawBytes = Data([
+        0x80 | 0x10,
+        UInt8((marker ? 0x80 : 0x00) | UInt8(payloadType & 0x7F)),
+        UInt8(sequenceNumber >> 8),
+        UInt8(truncatingIfNeeded: sequenceNumber),
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+    ])
+    rawBytes.append(payload)
+    return ShadowClientRTPPacket(
+        isRTP: true,
+        channel: 0,
+        sequenceNumber: sequenceNumber,
+        marker: marker,
+        payloadType: payloadType,
+        payloadOffset: 16,
+        rawBytes: rawBytes,
+        payload: payload
     )
 }

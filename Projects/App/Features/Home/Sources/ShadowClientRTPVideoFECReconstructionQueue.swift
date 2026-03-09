@@ -39,6 +39,11 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
         let samplePayloadType: Int
         let sampleChannel: Int
         let sampleIsRTP: Bool
+        let samplePayloadOffset: Int
+        let fixedPacketSize: Int?
+        let sampleHeader: UInt8
+        let sampleTimestamp: UInt32
+        let sampleSSRC: UInt32
         var packetsByFECIndex: [Int: ShadowClientRTPPacket]
 
         var totalShards: Int {
@@ -161,7 +166,7 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
                 return result
             }
 
-            transitionedFrame.currentBlock = Self.makeBlockState(from: packet, metadata: metadata)
+            transitionedFrame.currentBlock = makeBlockState(from: packet, metadata: metadata)
             activeFrame = transitionedFrame
             result.merge(finalizeCurrentBlockIfRecoverable())
             return result
@@ -177,7 +182,7 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
             return dropActiveFrame(unrecoverable: true)
         }
 
-        frame.currentBlock = Self.makeBlockState(from: packet, metadata: metadata)
+        frame.currentBlock = makeBlockState(from: packet, metadata: metadata)
         activeFrame = frame
         return finalizeCurrentBlockIfRecoverable()
     }
@@ -200,7 +205,7 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
             lastBlockNumber: metadata.lastBlockNumber,
             expectedBlockNumber: 0,
             completedBlocks: [:],
-            currentBlock: Self.makeBlockState(from: packet, metadata: metadata)
+            currentBlock: makeBlockState(from: packet, metadata: metadata)
         )
         return finalizeCurrentBlockIfRecoverable()
     }
@@ -296,7 +301,7 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
         return IngestResult(orderedDataPackets: [], droppedUnrecoverableBlock: true)
     }
 
-    private static func makeBlockState(
+    private func makeBlockState(
         from packet: ShadowClientRTPPacket,
         metadata: FECMetadata
     ) -> BlockState {
@@ -310,6 +315,11 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
             samplePayloadType: packet.payloadType,
             sampleChannel: packet.channel,
             sampleIsRTP: packet.isRTP,
+            samplePayloadOffset: packet.payloadOffset,
+            fixedPacketSize: fixedShardPayloadSize.map { $0 + packet.payloadOffset },
+            sampleHeader: packet.rawBytes.count > 0 ? packet.rawBytes[0] : 0,
+            sampleTimestamp: Self.readUInt32BE(packet.rawBytes, at: 4) ?? 0,
+            sampleSSRC: Self.readUInt32BE(packet.rawBytes, at: 8) ?? 0,
             packetsByFECIndex: [:]
         )
         state.insert(packet, metadata: metadata)
@@ -323,14 +333,14 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
             guard index >= 0, index < block.totalShards else {
                 continue
             }
-            let bytes = Array(packet.payload)
+            let bytes = Array(packet.rawBytes)
             normalizedShardBytes[index] = bytes
             if bytes.count > maxShardLength {
                 maxShardLength = bytes.count
             }
         }
 
-        let shardSize = max(maxShardLength, fixedShardPayloadSize ?? 0)
+        let shardSize = max(maxShardLength, block.fixedPacketSize ?? 0)
         guard shardSize > 0 else {
             return nil
         }
@@ -367,33 +377,35 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
                 continue
             }
 
-            guard let recoveredBytes = normalizedShardBytes[dataIndex] else {
+            guard var recoveredBytes = normalizedShardBytes[dataIndex] else {
                 return nil
             }
 
-            var recoveredPayload = Data(recoveredBytes)
             Self.patchRecoveredPacketHeaderMinimal(
-                payload: &recoveredPayload,
+                packetBytes: &recoveredBytes,
+                payloadOffset: block.samplePayloadOffset,
                 frameIndex: block.frameIndex,
                 blockNumber: block.blockNumber,
-                lastBlockNumber: block.lastBlockNumber
+                lastBlockNumber: block.lastBlockNumber,
+                sampleHeader: block.sampleHeader,
+                sequenceNumber: block.baseSequenceNumber &+ UInt16(dataIndex),
+                timestamp: block.sampleTimestamp,
+                ssrc: block.sampleSSRC
             )
-            guard Self.isRecoveredPacketSane(
-                payload: recoveredPayload,
+            let recoveredPacketBytes = Data(recoveredBytes)
+            let parsedRecoveredPacket = Self.makeRecoveredPacket(
+                packetBytes: recoveredPacketBytes,
+                channel: block.sampleChannel,
+                isRTP: block.sampleIsRTP
+            )
+            guard let recoveredPacket = parsedRecoveredPacket,
+                  Self.isRecoveredPacketSane(
+                payload: recoveredPacket.payload,
                 dataShardIndex: dataIndex,
                 dataShards: block.dataShards
             ) else {
                 return nil
             }
-            let marker = recoveredPayload.count > 8 ? ((recoveredPayload[8] & 0x02) != 0) : false
-            let recoveredPacket = ShadowClientRTPPacket(
-                isRTP: block.sampleIsRTP,
-                channel: block.sampleChannel,
-                sequenceNumber: block.baseSequenceNumber &+ UInt16(dataIndex),
-                marker: marker,
-                payloadType: block.samplePayloadType,
-                payload: recoveredPayload
-            )
             orderedPackets.append(recoveredPacket)
         }
 
@@ -432,18 +444,30 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
     }
 
     private static func patchRecoveredPacketHeaderMinimal(
-        payload: inout Data,
+        packetBytes: inout [UInt8],
+        payloadOffset: Int,
         frameIndex: UInt32,
         blockNumber: UInt8,
-        lastBlockNumber: UInt8
+        lastBlockNumber: UInt8,
+        sampleHeader: UInt8,
+        sequenceNumber: UInt16,
+        timestamp: UInt32,
+        ssrc: UInt32
     ) {
-        guard payload.count >= 12 else {
+        guard packetBytes.count >= payloadOffset + 12 else {
             return
         }
 
-        // Mirror Moonlight behavior: only patch frame-index and block-id fields.
-        writeUInt32LE(frameIndex, to: &payload, at: 4)
-        payload[11] = (blockNumber << 4) | (lastBlockNumber << 6)
+        packetBytes[0] = sampleHeader
+        packetBytes[2] = UInt8(sequenceNumber >> 8)
+        packetBytes[3] = UInt8(truncatingIfNeeded: sequenceNumber)
+        writeUInt32BE(timestamp, to: &packetBytes, at: 4)
+        writeUInt32BE(ssrc, to: &packetBytes, at: 8)
+
+        // Mirror Moonlight behavior: patch frame-index and block-id fields in the
+        // recovered NV packet while preserving the reconstructed payload bytes.
+        writeUInt32LE(frameIndex, to: &packetBytes, at: payloadOffset + 4)
+        packetBytes[payloadOffset + 11] = (blockNumber << 4) | (lastBlockNumber << 6)
     }
 
     private static func reconstructMissingDataShards(
@@ -651,7 +675,17 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
             (UInt32(bytes[offset + 3]) << 24)
     }
 
-    private static func writeUInt32LE(_ value: UInt32, to bytes: inout Data, at offset: Int) {
+    private static func readUInt32BE(_ bytes: Data, at offset: Int) -> UInt32? {
+        guard offset >= 0, bytes.count >= offset + 4 else {
+            return nil
+        }
+        return (UInt32(bytes[offset]) << 24) |
+            (UInt32(bytes[offset + 1]) << 16) |
+            (UInt32(bytes[offset + 2]) << 8) |
+            UInt32(bytes[offset + 3])
+    }
+
+    private static func writeUInt32LE(_ value: UInt32, to bytes: inout [UInt8], at offset: Int) {
         guard offset >= 0, bytes.count >= offset + 4 else {
             return
         }
@@ -659,6 +693,37 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
         bytes[offset + 1] = UInt8(truncatingIfNeeded: value >> 8)
         bytes[offset + 2] = UInt8(truncatingIfNeeded: value >> 16)
         bytes[offset + 3] = UInt8(truncatingIfNeeded: value >> 24)
+    }
+
+    private static func writeUInt32BE(_ value: UInt32, to bytes: inout [UInt8], at offset: Int) {
+        guard offset >= 0, bytes.count >= offset + 4 else {
+            return
+        }
+        bytes[offset] = UInt8(truncatingIfNeeded: value >> 24)
+        bytes[offset + 1] = UInt8(truncatingIfNeeded: value >> 16)
+        bytes[offset + 2] = UInt8(truncatingIfNeeded: value >> 8)
+        bytes[offset + 3] = UInt8(truncatingIfNeeded: value)
+    }
+
+    private static func makeRecoveredPacket(
+        packetBytes: Data,
+        channel: Int,
+        isRTP: Bool
+    ) -> ShadowClientRTPPacket? {
+        guard let parsed = try? ShadowClientRTPPacketPayloadParser.parse(packetBytes) else {
+            return nil
+        }
+
+        return ShadowClientRTPPacket(
+            isRTP: isRTP,
+            channel: channel,
+            sequenceNumber: parsed.sequenceNumber,
+            marker: parsed.marker,
+            payloadType: parsed.payloadType,
+            payloadOffset: parsed.payloadOffset,
+            rawBytes: parsed.rawBytes,
+            payload: parsed.payload
+        )
     }
 
     private static func isBefore32(_ lhs: UInt32, _ rhs: UInt32) -> Bool {

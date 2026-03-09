@@ -3645,6 +3645,8 @@ struct ShadowClientRTPPacket {
     let sequenceNumber: UInt16
     let marker: Bool
     let payloadType: Int
+    let payloadOffset: Int
+    let rawBytes: Data
     let payload: Data
 }
 
@@ -3652,6 +3654,8 @@ struct ShadowClientRTPPacketPayloadParseResult: Equatable, Sendable {
     let sequenceNumber: UInt16
     let marker: Bool
     let payloadType: Int
+    let payloadOffset: Int
+    let rawBytes: Data
     let payload: Data
 }
 
@@ -3710,6 +3714,8 @@ enum ShadowClientRTPPacketPayloadParser {
             sequenceNumber: sequenceNumber,
             marker: marker,
             payloadType: payloadType,
+            payloadOffset: headerLength,
+            rawBytes: packetBytes,
             payload: Data(packetBytes[headerLength..<endIndex])
         )
     }
@@ -6053,6 +6059,8 @@ private actor ShadowClientRTSPInterleavedClient {
                 sequenceNumber: 0,
                 marker: false,
                 payloadType: -1,
+                payloadOffset: 0,
+                rawBytes: Data(),
                 payload: Data()
             )
         }
@@ -6077,6 +6085,8 @@ private actor ShadowClientRTSPInterleavedClient {
             sequenceNumber: parsed.sequenceNumber,
             marker: parsed.marker,
             payloadType: parsed.payloadType,
+            payloadOffset: parsed.payloadOffset,
+            rawBytes: parsed.rawBytes,
             payload: parsed.payload
         )
     }
