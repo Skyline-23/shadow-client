@@ -1865,6 +1865,8 @@ private actor FakeSessionConnectionClient: ShadowClientRemoteSessionConnectionCl
         disconnectCallCount += 1
     }
 
+    func requestVideoRefresh(reason _: String) async {}
+
     func connectCalls() -> [String] {
         recordedConnectCalls
     }
@@ -1906,6 +1908,8 @@ private actor BlockingFirstSessionConnectionClient: ShadowClientRemoteSessionCon
         disconnectCallCount += 1
     }
 
+    func requestVideoRefresh(reason _: String) async {}
+
     func connectCalls() -> [String] {
         recordedConnectCalls
     }
@@ -1940,6 +1944,8 @@ private actor SerializingLaunchSessionConnectionClient: ShadowClientRemoteSessio
     func disconnect() async {
         disconnectCallCount += 1
     }
+
+    func requestVideoRefresh(reason _: String) async {}
 
     func connectCalls() -> Int {
         connectCallCount

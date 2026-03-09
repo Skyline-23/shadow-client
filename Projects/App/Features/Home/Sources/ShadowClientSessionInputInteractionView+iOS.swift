@@ -5,17 +5,20 @@ import UIKit
 struct ShadowClientSessionInputInteractionPlatformView: UIViewRepresentable {
     let onInputEvent: @MainActor (ShadowClientRemoteInputEvent) -> Void
     let onSessionTerminateCommand: @MainActor () -> Void
+    let onSessionReactivationRequest: @MainActor () -> Void
 
     func makeUIView(context: Context) -> ShadowClientIOSSessionInputCaptureView {
         let view = ShadowClientIOSSessionInputCaptureView()
         view.onInputEvent = onInputEvent
         view.onSessionTerminateCommand = onSessionTerminateCommand
+        let _ = onSessionReactivationRequest
         return view
     }
 
     func updateUIView(_ uiView: ShadowClientIOSSessionInputCaptureView, context: Context) {
         uiView.onInputEvent = onInputEvent
         uiView.onSessionTerminateCommand = onSessionTerminateCommand
+        let _ = onSessionReactivationRequest
     }
 }
 

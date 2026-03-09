@@ -38,6 +38,10 @@ var remoteSessionFlowView: some View {
                         remoteDesktopRuntime.sendInput(event)
                     } onSessionTerminateCommand: {
                         remoteDesktopRuntime.clearActiveSession()
+                    } onSessionReactivationRequest: {
+                        remoteDesktopRuntime.requestSessionVideoRefresh(
+                            reason: "application-reactivation"
+                        )
                     }
                     .ignoresSafeArea()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
