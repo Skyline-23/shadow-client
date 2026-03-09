@@ -538,7 +538,7 @@ public actor ShadowClientPairingIdentityStore {
             certificate: certificate,
             privateKey: privateKey,
             certificateDER: certDER
-        ) ?? SecIdentityCreate(nil, certificate, privateKey)
+        )
 
         guard let identity else {
             throw ShadowClientGameStreamControlError.invalidKeyMaterial
