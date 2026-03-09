@@ -28,6 +28,8 @@ enum ShadowClientIOSAudioSessionCoordinator {
         let session = AVAudioSession.sharedInstance()
 
         func activate(options: AVAudioSession.CategoryOptions) throws {
+            try session.setPreferredSampleRate(48_000)
+            try session.setPreferredIOBufferDuration(0.005)
             try session.setCategory(.playback, mode: .default, options: options)
             try session.setActive(true, options: [])
         }

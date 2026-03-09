@@ -2557,7 +2557,6 @@ private final class ShadowClientRealtimeAudioEngineOutput {
         private let sampleRate: Double
         private var queuedBufferCount = 0
         private var queuedFrameEstimate: Double = 0
-        private var lastQueueEstimateUptime = ProcessInfo.processInfo.systemUptime
 
         init(
             maximumQueuedBufferCount: Int,
@@ -2572,10 +2571,8 @@ private final class ShadowClientRealtimeAudioEngineOutput {
         }
 
         func reserve(
-            incomingFrameCount: Double,
-            nowUptime: TimeInterval
+            incomingFrameCount: Double
         ) -> Bool {
-            refreshQueuedFrameEstimate(nowUptime: nowUptime)
             guard queuedFrameEstimate + incomingFrameCount <= maximumQueuedFrameEstimate else {
                 return false
             }
@@ -2584,21 +2581,18 @@ private final class ShadowClientRealtimeAudioEngineOutput {
             return true
         }
 
-        func hasCapacity(nowUptime: TimeInterval) -> Bool {
-            refreshQueuedFrameEstimate(nowUptime: nowUptime)
+        func hasCapacity() -> Bool {
             return queuedFrameEstimate < maximumQueuedFrameEstimate
         }
 
-        func pendingDurationMs(nowUptime: TimeInterval) -> Double {
-            refreshQueuedFrameEstimate(nowUptime: nowUptime)
+        func pendingDurationMs() -> Double {
             guard sampleRate > 0 else {
                 return 0
             }
             return (queuedFrameEstimate / sampleRate) * 1_000.0
         }
 
-        func availableEnqueueSlots(nowUptime: TimeInterval) -> Int {
-            refreshQueuedFrameEstimate(nowUptime: nowUptime)
+        func availableEnqueueSlots() -> Int {
             let remainingFrames = max(0, maximumQueuedFrameEstimate - queuedFrameEstimate)
             return max(
                 0,
@@ -2609,27 +2603,14 @@ private final class ShadowClientRealtimeAudioEngineOutput {
             )
         }
 
-        func reset(nowUptime: TimeInterval) {
+        func reset() {
             queuedBufferCount = 0
             queuedFrameEstimate = 0
-            lastQueueEstimateUptime = nowUptime
         }
 
-        func didConsume(nowUptime: TimeInterval) {
-            refreshQueuedFrameEstimate(nowUptime: nowUptime)
+        func didConsume(consumedFrameCount: Double) {
             queuedBufferCount = max(0, queuedBufferCount - 1)
-        }
-
-        private func refreshQueuedFrameEstimate(nowUptime: TimeInterval) {
-            let elapsed = max(0, nowUptime - lastQueueEstimateUptime)
-            guard elapsed > 0 else {
-                return
-            }
-            let consumedFrames = elapsed * sampleRate
-            if consumedFrames > 0 {
-                queuedFrameEstimate = max(0, queuedFrameEstimate - consumedFrames)
-            }
-            lastQueueEstimateUptime = nowUptime
+            queuedFrameEstimate = max(0, queuedFrameEstimate - consumedFrameCount)
         }
     }
 
@@ -2725,10 +2706,8 @@ private final class ShadowClientRealtimeAudioEngineOutput {
 
     func enqueue(pcmBuffer: AVAudioPCMBuffer) async -> Bool {
         let incomingFrameCount = max(1, Double(pcmBuffer.frameLength))
-        let nowUptime = ProcessInfo.processInfo.systemUptime
         guard await queuedBufferState.reserve(
-            incomingFrameCount: incomingFrameCount,
-            nowUptime: nowUptime
+            incomingFrameCount: incomingFrameCount
         ) else {
             return false
         }
@@ -2745,29 +2724,29 @@ private final class ShadowClientRealtimeAudioEngineOutput {
             player.scheduleBuffer(
                 pcmBuffer,
                 completionCallbackType: .dataConsumed
-            ) { [queuedBufferState] _ in
+            ) { [queuedBufferState, incomingFrameCount] _ in
                 Task {
-                    await queuedBufferState.didConsume(nowUptime: ProcessInfo.processInfo.systemUptime)
+                    await queuedBufferState.didConsume(consumedFrameCount: incomingFrameCount)
                 }
             }
             return true
         }
         if !enqueued {
-            await queuedBufferState.didConsume(nowUptime: ProcessInfo.processInfo.systemUptime)
+            await queuedBufferState.didConsume(consumedFrameCount: incomingFrameCount)
         }
         return enqueued
     }
 
     func hasEnqueueCapacity() async -> Bool {
-        await queuedBufferState.hasCapacity(nowUptime: ProcessInfo.processInfo.systemUptime)
+        await queuedBufferState.hasCapacity()
     }
 
     func pendingDurationMs() async -> Double {
-        await queuedBufferState.pendingDurationMs(nowUptime: ProcessInfo.processInfo.systemUptime)
+        await queuedBufferState.pendingDurationMs()
     }
 
     func availableEnqueueSlots() async -> Int {
-        await queuedBufferState.availableEnqueueSlots(nowUptime: ProcessInfo.processInfo.systemUptime)
+        await queuedBufferState.availableEnqueueSlots()
     }
 
     func stop() {
@@ -2790,7 +2769,7 @@ private final class ShadowClientRealtimeAudioEngineOutput {
 
         let queuedBufferState = self.queuedBufferState
         Task {
-            await queuedBufferState.reset(nowUptime: ProcessInfo.processInfo.systemUptime)
+            await queuedBufferState.reset()
         }
     }
 
@@ -2804,7 +2783,7 @@ private final class ShadowClientRealtimeAudioEngineOutput {
             }
             let queuedBufferState = self.queuedBufferState
             Task {
-                await queuedBufferState.reset(nowUptime: ProcessInfo.processInfo.systemUptime)
+                await queuedBufferState.reset()
             }
             return true
         }
