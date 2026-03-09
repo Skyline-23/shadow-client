@@ -938,8 +938,8 @@ public actor ShadowClientVideoToolboxDecoder {
         }
 
         let pixelFormat: OSType = av1FallbackHDR
-            ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
-            : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
+            : kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         attributes[kCVPixelBufferPixelFormatTypeKey as String] = pixelFormat
         return attributes
     }
@@ -1037,7 +1037,7 @@ public actor ShadowClientVideoToolboxDecoder {
     }
 
     private func av1FormatColorExtensions() -> [CFString: Any] {
-        let fullRangeValue: CFBoolean = kCFBooleanFalse
+        let fullRangeValue: CFBoolean = kCFBooleanTrue
         if av1FallbackHDR {
             return [
                 kCVImageBufferColorPrimariesKey: kCVImageBufferColorPrimaries_ITU_R_2020,
