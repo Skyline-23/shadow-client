@@ -27,6 +27,7 @@ func colorPipelineEnablesEDRForHDRPQFrames() throws {
     #expect(configuration.prefersExtendedDynamicRange)
     #expect(configuration.pixelFormat == .rgba16Float)
     #expect(configuration.renderColorSpace.name == CGColorSpace.itur_2100_PQ)
+    #expect(configuration.videoRangeExpansion == nil)
     let displayColorName = configuration.displayColorSpace.name
     #expect(
         displayColorName == CGColorSpace.extendedLinearDisplayP3 ||
@@ -56,7 +57,13 @@ func colorPipelineKeepsSDRForBT709Frames() throws {
     )
     #expect(!configuration.prefersExtendedDynamicRange)
     #expect(configuration.pixelFormat == .bgra8Unorm)
-    #expect(configuration.displayColorSpace.name == CGColorSpace.sRGB)
+    #expect(configuration.displayColorSpace.name == CGColorSpace.itur_709)
+    #expect(
+        configuration.videoRangeExpansion == .init(
+            scale: CGFloat(255.0 / 219.0),
+            bias: CGFloat(-16.0 / 219.0)
+        )
+    )
 }
 
 @Test("Color pipeline prefers PQ transfer metadata over attached base color space")
@@ -137,6 +144,12 @@ func colorPipelineKeepsSDRForBT20208BitWithoutTransferMetadata() throws {
     )
     #expect(!configuration.prefersExtendedDynamicRange)
     #expect(configuration.pixelFormat == .bgra8Unorm)
+    #expect(
+        configuration.videoRangeExpansion == .init(
+            scale: CGFloat(255.0 / 219.0),
+            bias: CGFloat(-16.0 / 219.0)
+        )
+    )
 }
 
 @Test("Color pipeline leaves YUV surfaces to Core Image attachment-based color handling")
@@ -181,7 +194,8 @@ func colorPipelineKeepsHDRTransferMetadataOutOfSDRMode() throws {
     )
     #expect(!configuration.prefersExtendedDynamicRange)
     #expect(configuration.pixelFormat == .bgra8Unorm)
-    #expect(configuration.displayColorSpace.name == CGColorSpace.sRGB)
+    #expect(configuration.displayColorSpace.name == CGColorSpace.itur_709)
+    #expect(configuration.videoRangeExpansion == nil)
 }
 
 @Test("Color pipeline uses stronger SDR tone-map headroom for HDR content")

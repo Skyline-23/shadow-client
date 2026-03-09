@@ -53,7 +53,7 @@ enum ShadowClientAutoResolutionPolicy {
         #if os(macOS)
         if let screen = NSApp.keyWindow?.screen ?? NSScreen.main {
             return (
-                logicalSize: screen.visibleFrame.size,
+                logicalSize: screen.frame.size,
                 safeAreaInsets: .init(),
                 scale: screen.backingScaleFactor
             )
@@ -62,7 +62,12 @@ enum ShadowClientAutoResolutionPolicy {
         if let window = activeWindow() {
             return (
                 logicalSize: window.bounds.size,
-                safeAreaInsets: .init(),
+                safeAreaInsets: EdgeInsets(
+                    top: window.safeAreaInsets.top,
+                    leading: window.safeAreaInsets.left,
+                    bottom: window.safeAreaInsets.bottom,
+                    trailing: window.safeAreaInsets.right
+                ),
                 scale: window.screen.scale
             )
         }

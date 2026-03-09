@@ -149,6 +149,13 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 cvPixelBuffer: pixelBuffer,
                 options: sourceOptions
             )
+            if let expansion = colorConfiguration.videoRangeExpansion {
+                sourceImage = expandVideoRange(
+                    sourceImage,
+                    scale: expansion.scale,
+                    bias: expansion.bias
+                )
+            }
             if shouldToneMapHDRToSDR {
                 sourceImage = toneMapHDRToSDRSoftwareFallback(sourceImage)
             }
@@ -268,6 +275,23 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             forKey: "inputTargetHeadroom"
         )
         return filter.outputImage ?? image
+    }
+
+    private func expandVideoRange(
+        _ image: CIImage,
+        scale: CGFloat,
+        bias: CGFloat
+    ) -> CIImage {
+        image.applyingFilter(
+            "CIColorMatrix",
+            parameters: [
+                "inputRVector": CIVector(x: scale, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: 0, y: scale, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: scale, w: 0),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+                "inputBiasVector": CIVector(x: bias, y: bias, z: bias, w: 0),
+            ]
+        )
     }
 }
 #endif

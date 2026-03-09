@@ -8,6 +8,12 @@ struct ShadowClientRealtimeSessionColorConfiguration {
     let displayColorSpace: CGColorSpace
     let pixelFormat: MTLPixelFormat
     let prefersExtendedDynamicRange: Bool
+    let videoRangeExpansion: ShadowClientVideoRangeExpansion?
+}
+
+struct ShadowClientVideoRangeExpansion: Equatable, Sendable {
+    let scale: CGFloat
+    let bias: CGFloat
 }
 
 enum ShadowClientRealtimeSessionColorPipeline {
@@ -49,7 +55,8 @@ enum ShadowClientRealtimeSessionColorPipeline {
                 renderColorSpace: defaultSDRSourceColorSpace,
                 displayColorSpace: defaultSDRDisplayColorSpace,
                 pixelFormat: .bgra8Unorm,
-                prefersExtendedDynamicRange: false
+                prefersExtendedDynamicRange: false,
+                videoRangeExpansion: nil
             )
         }
 
@@ -72,13 +79,34 @@ enum ShadowClientRealtimeSessionColorPipeline {
         )
         let displayColorSpace = prefersExtendedDynamicRange ? defaultHDRDisplayColorSpace : defaultSDRDisplayColorSpace
         let pixelFormat: MTLPixelFormat = prefersExtendedDynamicRange ? .rgba16Float : .bgra8Unorm
+        let videoRangeExpansion = prefersExtendedDynamicRange
+            ? nil
+            : Self.videoRangeExpansion(for: pixelBuffer)
 
         return ShadowClientRealtimeSessionColorConfiguration(
             renderColorSpace: renderColorSpace,
             displayColorSpace: displayColorSpace,
             pixelFormat: pixelFormat,
-            prefersExtendedDynamicRange: prefersExtendedDynamicRange
+            prefersExtendedDynamicRange: prefersExtendedDynamicRange,
+            videoRangeExpansion: videoRangeExpansion
         )
+    }
+
+    static func videoRangeExpansion(for pixelBuffer: CVPixelBuffer) -> ShadowClientVideoRangeExpansion? {
+        switch CVPixelBufferGetPixelFormatType(pixelBuffer) {
+        case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+            return .init(
+                scale: CGFloat(255.0 / 219.0),
+                bias: CGFloat(-16.0 / 219.0)
+            )
+        case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+            return .init(
+                scale: CGFloat(1023.0 / 876.0),
+                bias: CGFloat(-64.0 / 876.0)
+            )
+        default:
+            return nil
+        }
     }
 
     private static func sourceColorSpace(
