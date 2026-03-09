@@ -74,7 +74,7 @@ private struct LiveSunshineRTSPIntegrationConfiguration: Sendable {
         }
 
         return .init(
-            host: stringValue(environment["SHADOWCLIENT_LIVE_HOST"], fallback: "wifi.skyline23.com"),
+            host: stringValue(environment["SHADOWCLIENT_LIVE_HOST"], fallback: "stream-host.example.invalid"),
             rtspPort: intValue(environment["SHADOWCLIENT_LIVE_RTSP_PORT"], fallback: 48010),
             externalHTTPPort: intValue(environment["SHADOWCLIENT_LIVE_HTTP_PORT"], fallback: 47989),
             timeout: doubleValue(environment["SHADOWCLIENT_LIVE_RTSP_TIMEOUT_SECONDS"], fallback: 4.0),

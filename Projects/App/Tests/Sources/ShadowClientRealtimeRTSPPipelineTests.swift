@@ -19,13 +19,13 @@ func rtspSdpParserExtractsH264Track() throws {
 
     let track = try ShadowClientRTSPSessionDescriptionParser.parseVideoTrack(
         sdp: sdp,
-        contentBase: "rtsp://wifi.skyline23.com:48010/",
-        fallbackSessionURL: "rtsp://wifi.skyline23.com:48010"
+        contentBase: "rtsp://stream-host.example.invalid:48010/",
+        fallbackSessionURL: "rtsp://stream-host.example.invalid:48010"
     )
 
     #expect(track.codec == .h264)
     #expect(track.rtpPayloadType == 96)
-    #expect(track.controlURL == "rtsp://wifi.skyline23.com:48010/streamid=0")
+    #expect(track.controlURL == "rtsp://stream-host.example.invalid:48010/streamid=0")
     #expect(track.parameterSets.count == 2)
     #expect(track.parameterSets[0].count > 4)
 }
@@ -46,8 +46,8 @@ func rtspSdpParserInfersPayloadTypeFromRTPMap() throws {
 
     let track = try ShadowClientRTSPSessionDescriptionParser.parseVideoTrack(
         sdp: sdp,
-        contentBase: "rtsp://skyline23-pc.local:48010/",
-        fallbackSessionURL: "rtsp://skyline23-pc.local:48010"
+        contentBase: "rtsp://example-pc.local:48010/",
+        fallbackSessionURL: "rtsp://example-pc.local:48010"
     )
 
     #expect(track.rtpPayloadType == 97)
@@ -70,8 +70,8 @@ func rtspSdpParserExtractsAV1Track() throws {
 
     let track = try ShadowClientRTSPSessionDescriptionParser.parseVideoTrack(
         sdp: sdp,
-        contentBase: "rtsp://skyline23-pc.local:48010/",
-        fallbackSessionURL: "rtsp://skyline23-pc.local:48010"
+        contentBase: "rtsp://example-pc.local:48010/",
+        fallbackSessionURL: "rtsp://example-pc.local:48010"
     )
 
     #expect(track.rtpPayloadType == 98)
@@ -93,8 +93,8 @@ func rtspSdpParserHandlesDescribeWithoutMediaSection() throws {
 
     let track = try ShadowClientRTSPSessionDescriptionParser.parseVideoTrack(
         sdp: sdp,
-        contentBase: "rtsp://skyline23-pc.local:48010/",
-        fallbackSessionURL: "rtsp://skyline23-pc.local:48010"
+        contentBase: "rtsp://example-pc.local:48010/",
+        fallbackSessionURL: "rtsp://example-pc.local:48010"
     )
 
     #expect(track.rtpPayloadType == 98)
@@ -143,8 +143,8 @@ func rtspSdpParserExtractsOpusAudioTrack() {
 
     let track = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
         sdp: sdp,
-        contentBase: "rtsp://skyline23-pc.local:48010/",
-        fallbackSessionURL: "rtsp://skyline23-pc.local:48010/"
+        contentBase: "rtsp://example-pc.local:48010/",
+        fallbackSessionURL: "rtsp://example-pc.local:48010/"
     )
 
     #expect(track != nil)
@@ -152,7 +152,7 @@ func rtspSdpParserExtractsOpusAudioTrack() {
     #expect(track?.rtpPayloadType == 97)
     #expect(track?.sampleRate == 48_000)
     #expect(track?.channelCount == 2)
-    #expect(track?.controlURL == "rtsp://skyline23-pc.local:48010/audio/0/0")
+    #expect(track?.controlURL == "rtsp://example-pc.local:48010/audio/0/0")
 }
 
 @Test("RTSP SDP parser infers Opus for Sunshine PT97 surround params without rtpmap")
@@ -169,8 +169,8 @@ func rtspSdpParserInfersSunshineOpusWithoutRtpmap() {
 
     let track = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
         sdp: sdp,
-        contentBase: "rtsp://skyline23-pc.local:48010/",
-        fallbackSessionURL: "rtsp://skyline23-pc.local:48010/"
+        contentBase: "rtsp://example-pc.local:48010/",
+        fallbackSessionURL: "rtsp://example-pc.local:48010/"
     )
 
     #expect(track != nil)
@@ -194,8 +194,8 @@ func rtspSdpParserInfersSurroundChannelCountFromSurroundParams() {
 
     let track = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
         sdp: sdp,
-        contentBase: "rtsp://skyline23-pc.local:48010/",
-        fallbackSessionURL: "rtsp://skyline23-pc.local:48010/"
+        contentBase: "rtsp://example-pc.local:48010/",
+        fallbackSessionURL: "rtsp://example-pc.local:48010/"
     )
 
     #expect(track != nil)
@@ -217,8 +217,8 @@ func rtspSdpParserIgnoresMalformedSurroundParams() {
 
     let track = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
         sdp: sdp,
-        contentBase: "rtsp://skyline23-pc.local:48010/",
-        fallbackSessionURL: "rtsp://skyline23-pc.local:48010/"
+        contentBase: "rtsp://example-pc.local:48010/",
+        fallbackSessionURL: "rtsp://example-pc.local:48010/"
     )
 
     #expect(track != nil)
@@ -241,8 +241,8 @@ func rtspSdpParserInfersAudioTrackWithoutAudioMediaSection() {
 
     let track = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
         sdp: sdp,
-        contentBase: "rtsp://skyline23-pc.local:48010/",
-        fallbackSessionURL: "rtsp://skyline23-pc.local:48010/"
+        contentBase: "rtsp://example-pc.local:48010/",
+        fallbackSessionURL: "rtsp://example-pc.local:48010/"
     )
 
     #expect(track != nil)
@@ -262,8 +262,8 @@ func rtspSdpParserPrefersStereoSurroundParamsForStereoRequest() {
 
     let track = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
         sdp: sdp,
-        contentBase: "rtsp://skyline23-pc.local:48010/",
-        fallbackSessionURL: "rtsp://skyline23-pc.local:48010/",
+        contentBase: "rtsp://example-pc.local:48010/",
+        fallbackSessionURL: "rtsp://example-pc.local:48010/",
         preferredOpusChannelCount: 2
     )
 
@@ -282,8 +282,8 @@ func rtspSdpParserPrefersSurroundParamsForSurroundRequest() {
 
     let track = ShadowClientRTSPSessionDescriptionParser.parseAudioTrack(
         sdp: sdp,
-        contentBase: "rtsp://skyline23-pc.local:48010/",
-        fallbackSessionURL: "rtsp://skyline23-pc.local:48010/",
+        contentBase: "rtsp://example-pc.local:48010/",
+        fallbackSessionURL: "rtsp://example-pc.local:48010/",
         preferredOpusChannelCount: 6
     )
 
@@ -308,8 +308,8 @@ func rtspSdpParserExtractsAV1CodecConfigurationFromFmtpConfig() throws {
 
     let track = try ShadowClientRTSPSessionDescriptionParser.parseVideoTrack(
         sdp: sdp,
-        contentBase: "rtsp://skyline23-pc.local:48010/",
-        fallbackSessionURL: "rtsp://skyline23-pc.local:48010"
+        contentBase: "rtsp://example-pc.local:48010/",
+        fallbackSessionURL: "rtsp://example-pc.local:48010"
     )
 
     #expect(track.codec == .av1)
@@ -331,13 +331,13 @@ func rtspSdpParserHandlesSunshineVideoMediaWithoutPayloadType() throws {
 
     let track = try ShadowClientRTSPSessionDescriptionParser.parseVideoTrack(
         sdp: sdp,
-        contentBase: "rtsp://skyline23-pc.local:48010/",
-        fallbackSessionURL: "rtsp://skyline23-pc.local:48010"
+        contentBase: "rtsp://example-pc.local:48010/",
+        fallbackSessionURL: "rtsp://example-pc.local:48010"
     )
 
     #expect(track.codec == .av1)
     #expect(track.rtpPayloadType == ShadowClientRTSPProtocolProfile.fallbackVideoPayloadType)
-    #expect(track.controlURL == "rtsp://skyline23-pc.local:48010/streamid=video")
+    #expect(track.controlURL == "rtsp://example-pc.local:48010/streamid=video")
 }
 
 @Test("RTSP fallback payload inference prefers codec-specific RTP map")
@@ -387,9 +387,9 @@ func rtspTransportParserExtractsServerPort() {
 @Test("RTSP host header includes explicit URL port")
 func rtspHostHeaderIncludesExplicitPort() {
     let header = ShadowClientRTSPProtocolProfile.hostHeaderValue(
-        forRTSPURLString: "rtsp://wifi.skyline23.com:48010/streamid=video"
+        forRTSPURLString: "rtsp://stream-host.example.invalid:48010/streamid=video"
     )
-    #expect(header == "wifi.skyline23.com:48010")
+    #expect(header == "stream-host.example.invalid:48010")
 }
 
 @Test("RTSP host header brackets IPv6 literal when URL has explicit port")

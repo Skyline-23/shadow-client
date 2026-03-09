@@ -16,7 +16,7 @@ func remoteSessionPresentationMapperMissingEndpoint() {
 @Test("Remote session presentation mapper emits connecting state while launching")
 func remoteSessionPresentationMapperLaunching() {
     let model = ShadowClientRemoteSessionPresentationMapper.make(
-        activeSessionEndpoint: "rtsp://wifi.skyline23.com:48010",
+        activeSessionEndpoint: "rtsp://stream-host.example.invalid:48010",
         launchState: .launching
     )
 
@@ -28,7 +28,7 @@ func remoteSessionPresentationMapperLaunching() {
 @Test("Remote session presentation mapper emits decoder wait state after launch")
 func remoteSessionPresentationMapperLaunched() {
     let model = ShadowClientRemoteSessionPresentationMapper.make(
-        activeSessionEndpoint: "rtsp://wifi.skyline23.com:48010",
+        activeSessionEndpoint: "rtsp://stream-host.example.invalid:48010",
         launchState: .launched("Remote session transport connected")
     )
 
@@ -40,7 +40,7 @@ func remoteSessionPresentationMapperLaunched() {
 @Test("Remote session presentation mapper hides overlay once native rendering is live")
 func remoteSessionPresentationMapperRenderingLive() {
     let model = ShadowClientRemoteSessionPresentationMapper.make(
-        activeSessionEndpoint: "rtsp://wifi.skyline23.com:48010",
+        activeSessionEndpoint: "rtsp://stream-host.example.invalid:48010",
         launchState: .launched("Remote session transport connected"),
         renderState: .rendering
     )
@@ -53,7 +53,7 @@ func remoteSessionPresentationMapperRenderingLive() {
 @Test("Remote session presentation mapper emits disconnected state when render transport drops")
 func remoteSessionPresentationMapperDisconnected() {
     let model = ShadowClientRemoteSessionPresentationMapper.make(
-        activeSessionEndpoint: "rtsp://wifi.skyline23.com:48010",
+        activeSessionEndpoint: "rtsp://stream-host.example.invalid:48010",
         launchState: .launched("Remote session transport connected"),
         renderState: .disconnected("Connection reset by peer")
     )
@@ -67,7 +67,7 @@ func remoteSessionPresentationMapperDisconnected() {
 @Test("Remote session presentation mapper preserves launch failure reason")
 func remoteSessionPresentationMapperFailure() {
     let model = ShadowClientRemoteSessionPresentationMapper.make(
-        activeSessionEndpoint: "rtsp://wifi.skyline23.com:48010",
+        activeSessionEndpoint: "rtsp://stream-host.example.invalid:48010",
         launchState: .failed("transport failed")
     )
 

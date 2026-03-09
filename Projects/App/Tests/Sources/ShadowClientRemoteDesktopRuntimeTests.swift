@@ -38,7 +38,7 @@ func gameStreamParserMapsServerInfoXML() throws {
 func gameStreamParserNormalizesStaleCurrentGameInFreeState() throws {
     let xml = """
     <root status_code="200" status_message="OK">
-      <hostname>Skyline23-PC</hostname>
+      <hostname>Example-PC</hostname>
       <PairStatus>1</PairStatus>
       <currentgame>881448767</currentgame>
       <state>SUNSHINE_SERVER_FREE</state>
@@ -59,7 +59,7 @@ func gameStreamParserNormalizesStaleCurrentGameInFreeState() throws {
 func gameStreamParserPreservesCurrentGameInBusyState() throws {
     let xml = """
     <root status_code="200" status_message="OK">
-      <hostname>Skyline23-PC</hostname>
+      <hostname>Example-PC</hostname>
       <PairStatus>1</PairStatus>
       <currentgame>881448767</currentgame>
       <state>SUNSHINE_SERVER_BUSY</state>
@@ -187,7 +187,7 @@ func metadataClientFallsBackToHTTPAfterRejectedHTTPSServerInfo() async throws {
                 result: .success(
                     """
                     <root status_code="200">
-                        <hostname>Skyline23-PC</hostname>
+                        <hostname>Example-PC</hostname>
                         <PairStatus>0</PairStatus>
                         <currentgame>0</currentgame>
                         <state>SUNSHINE_SERVER_FREE</state>
@@ -205,8 +205,8 @@ func metadataClientFallsBackToHTTPAfterRejectedHTTPSServerInfo() async throws {
         transport: transport
     )
 
-    let info = try await client.fetchServerInfo(host: "wifi.skyline23.com")
-    #expect(info.displayName == "Skyline23-PC")
+    let info = try await client.fetchServerInfo(host: "stream-host.example.invalid")
+    #expect(info.displayName == "Example-PC")
     #expect(info.pairStatus == .notPaired)
 
     #expect(
@@ -249,9 +249,9 @@ func metadataClientReturnsUnpairedHostWhenHTTPFallbackIsBlockedByATS() async thr
         transport: transport
     )
 
-    let info = try await client.fetchServerInfo(host: "wifi.skyline23.com")
-    #expect(info.host == "wifi.skyline23.com")
-    #expect(info.displayName == "wifi.skyline23.com")
+    let info = try await client.fetchServerInfo(host: "stream-host.example.invalid")
+    #expect(info.host == "stream-host.example.invalid")
+    #expect(info.displayName == "stream-host.example.invalid")
     #expect(info.pairStatus == .notPaired)
     #expect(info.httpsPort == 47984)
     #expect(
@@ -292,7 +292,7 @@ func metadataClientKeepsAppListOnHTTPSOnly() async {
     )
 
     do {
-        _ = try await client.fetchAppList(host: "wifi.skyline23.com", httpsPort: 47984)
+        _ = try await client.fetchAppList(host: "stream-host.example.invalid", httpsPort: 47984)
         Issue.record("Expected app list HTTPS error")
     } catch let error as ShadowClientGameStreamError {
         #expect(
@@ -342,7 +342,7 @@ func metadataClientKeepsAppListOnHTTPSWhenTransportFails() async {
 
     do {
         _ = try await client.fetchAppList(
-            host: "wifi.skyline23.com:48010",
+            host: "stream-host.example.invalid:48010",
             httpsPort: 47984
         )
         Issue.record("Expected HTTPS transport failure")

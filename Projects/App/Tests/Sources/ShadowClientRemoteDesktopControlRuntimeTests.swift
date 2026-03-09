@@ -180,9 +180,9 @@ func remoteDesktopRuntimeDoesNotRetryCertificateRequiredFailure() async {
 func remoteDesktopRuntimeAppliesPendingHostSelectionAfterCatalogLoad() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
-            "wifi.skyline23.com": .init(
-                host: "wifi.skyline23.com",
-                displayName: "Skyline23-PC",
+            "stream-host.example.invalid": .init(
+                host: "stream-host.example.invalid",
+                displayName: "Example-PC",
                 pairStatus: .paired,
                 currentGameID: 881_448_767,
                 serverState: "SUNSHINE_SERVER_BUSY",
@@ -193,7 +193,7 @@ func remoteDesktopRuntimeAppliesPendingHostSelectionAfterCatalogLoad() async {
             ),
         ],
         appListByHost: [
-            "wifi.skyline23.com": [
+            "stream-host.example.invalid": [
                 .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
         ]
@@ -203,12 +203,12 @@ func remoteDesktopRuntimeAppliesPendingHostSelectionAfterCatalogLoad() async {
         controlClient: FakeControlClient()
     )
 
-    runtime.selectHost("wifi.skyline23.com")
-    runtime.refreshHosts(candidates: ["wifi.skyline23.com"])
+    runtime.selectHost("stream-host.example.invalid")
+    runtime.refreshHosts(candidates: ["stream-host.example.invalid"])
     await waitForControlHostLoaded(runtime)
 
-    #expect(runtime.selectedHostID == "wifi.skyline23.com")
-    #expect(runtime.selectedHost?.host == "wifi.skyline23.com")
+    #expect(runtime.selectedHostID == "stream-host.example.invalid")
+    #expect(runtime.selectedHost?.host == "stream-host.example.invalid")
 }
 
 @Test("Remote desktop runtime launches selected app through injected control client")
@@ -422,9 +422,9 @@ func remoteDesktopRuntimeForwardsRemoteInputKeyToSessionConfiguration() async {
 func remoteDesktopRuntimePreservesHostProvidedSessionURL() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
-            "wifi.skyline23.com": .init(
-                host: "wifi.skyline23.com",
-                displayName: "Skyline23-PC",
+            "stream-host.example.invalid": .init(
+                host: "stream-host.example.invalid",
+                displayName: "Example-PC",
                 pairStatus: .paired,
                 currentGameID: 881_448_767,
                 serverState: "SUNSHINE_SERVER_BUSY",
@@ -435,7 +435,7 @@ func remoteDesktopRuntimePreservesHostProvidedSessionURL() async {
             ),
         ],
         appListByHost: [
-            "wifi.skyline23.com": [
+            "stream-host.example.invalid": [
                 .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
         ]
@@ -450,7 +450,7 @@ func remoteDesktopRuntimePreservesHostProvidedSessionURL() async {
         sessionConnectionClient: sessionConnector
     )
 
-    runtime.refreshHosts(candidates: ["wifi.skyline23.com"], preferredHost: "wifi.skyline23.com")
+    runtime.refreshHosts(candidates: ["stream-host.example.invalid"], preferredHost: "stream-host.example.invalid")
     await waitForControlHostLoaded(runtime)
 
     runtime.launchSelectedApp(
@@ -473,9 +473,9 @@ func remoteDesktopRuntimePreservesHostProvidedSessionURL() async {
 func remoteDesktopRuntimeRetriesForceLaunchAfterResumeConnectTimeout() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
-            "wifi.skyline23.com": .init(
-                host: "wifi.skyline23.com",
-                displayName: "Skyline23-PC",
+            "stream-host.example.invalid": .init(
+                host: "stream-host.example.invalid",
+                displayName: "Example-PC",
                 pairStatus: .paired,
                 currentGameID: 881_448_767,
                 serverState: "SUNSHINE_SERVER_BUSY",
@@ -486,7 +486,7 @@ func remoteDesktopRuntimeRetriesForceLaunchAfterResumeConnectTimeout() async {
             ),
         ],
         appListByHost: [
-            "wifi.skyline23.com": [
+            "stream-host.example.invalid": [
                 .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
         ]
@@ -511,7 +511,7 @@ func remoteDesktopRuntimeRetriesForceLaunchAfterResumeConnectTimeout() async {
         sessionConnectionClient: sessionConnector
     )
 
-    runtime.refreshHosts(candidates: ["wifi.skyline23.com"], preferredHost: "wifi.skyline23.com")
+    runtime.refreshHosts(candidates: ["stream-host.example.invalid"], preferredHost: "stream-host.example.invalid")
     await waitForControlHostLoaded(runtime)
 
     runtime.launchSelectedApp(
@@ -539,9 +539,9 @@ func remoteDesktopRuntimeRetriesForceLaunchAfterResumeConnectTimeout() async {
 func remoteDesktopRuntimeDoesNotForceLaunchRetryForRTSPSetup404() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
-            "wifi.skyline23.com": .init(
-                host: "wifi.skyline23.com",
-                displayName: "Skyline23-PC",
+            "stream-host.example.invalid": .init(
+                host: "stream-host.example.invalid",
+                displayName: "Example-PC",
                 pairStatus: .paired,
                 currentGameID: 881_448_767,
                 serverState: "SUNSHINE_SERVER_BUSY",
@@ -552,7 +552,7 @@ func remoteDesktopRuntimeDoesNotForceLaunchRetryForRTSPSetup404() async {
             ),
         ],
         appListByHost: [
-            "wifi.skyline23.com": [
+            "stream-host.example.invalid": [
                 .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
         ]
@@ -572,7 +572,7 @@ func remoteDesktopRuntimeDoesNotForceLaunchRetryForRTSPSetup404() async {
         sessionConnectionClient: sessionConnector
     )
 
-    runtime.refreshHosts(candidates: ["wifi.skyline23.com"], preferredHost: "wifi.skyline23.com")
+    runtime.refreshHosts(candidates: ["stream-host.example.invalid"], preferredHost: "stream-host.example.invalid")
     await waitForControlHostLoaded(runtime)
 
     runtime.launchSelectedApp(
@@ -932,9 +932,9 @@ func remoteDesktopRuntimePersistsRuntimeFallbackCodecForSubsequentAutoLaunches()
 func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterResumeDecoderFailures() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
-            "wifi.skyline23.com": .init(
-                host: "wifi.skyline23.com",
-                displayName: "Skyline23-PC",
+            "stream-host.example.invalid": .init(
+                host: "stream-host.example.invalid",
+                displayName: "Example-PC",
                 pairStatus: .paired,
                 currentGameID: 881_448_767,
                 serverState: "SUNSHINE_SERVER_BUSY",
@@ -945,7 +945,7 @@ func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterResumeDecoderFailures(
             ),
         ],
         appListByHost: [
-            "wifi.skyline23.com": [
+            "stream-host.example.invalid": [
                 .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
         ]
@@ -972,7 +972,7 @@ func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterResumeDecoderFailures(
         sessionConnectionClient: sessionConnector
     )
 
-    runtime.refreshHosts(candidates: ["wifi.skyline23.com"], preferredHost: "wifi.skyline23.com")
+    runtime.refreshHosts(candidates: ["stream-host.example.invalid"], preferredHost: "stream-host.example.invalid")
     await waitForControlHostLoaded(runtime)
 
     runtime.launchSelectedApp(
@@ -1013,9 +1013,9 @@ func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterResumeDecoderFailures(
 func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterResumeFirstFrameTimeout() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
-            "wifi.skyline23.com": .init(
-                host: "wifi.skyline23.com",
-                displayName: "Skyline23-PC",
+            "stream-host.example.invalid": .init(
+                host: "stream-host.example.invalid",
+                displayName: "Example-PC",
                 pairStatus: .paired,
                 currentGameID: 881_448_767,
                 serverState: "SUNSHINE_SERVER_BUSY",
@@ -1026,7 +1026,7 @@ func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterResumeFirstFrameTimeou
             ),
         ],
         appListByHost: [
-            "wifi.skyline23.com": [
+            "stream-host.example.invalid": [
                 .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
         ]
@@ -1051,7 +1051,7 @@ func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterResumeFirstFrameTimeou
         sessionConnectionClient: sessionConnector
     )
 
-    runtime.refreshHosts(candidates: ["wifi.skyline23.com"], preferredHost: "wifi.skyline23.com")
+    runtime.refreshHosts(candidates: ["stream-host.example.invalid"], preferredHost: "stream-host.example.invalid")
     await waitForControlHostLoaded(runtime)
 
     runtime.launchSelectedApp(

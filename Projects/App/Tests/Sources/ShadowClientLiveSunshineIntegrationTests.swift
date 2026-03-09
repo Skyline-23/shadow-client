@@ -206,7 +206,7 @@ private struct LiveSunshineIntegrationConfiguration: Sendable {
 
         let host = Self.stringValue(
             environment["SHADOWCLIENT_LIVE_HOST"],
-            fallback: "wifi.skyline23.com"
+            fallback: "stream-host.example.invalid"
         )
         let preferredAppID = Self.intValue(
             environment["SHADOWCLIENT_LIVE_APP_ID"],

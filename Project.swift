@@ -15,7 +15,7 @@ let project = Project(
                         "NSAllowsArbitraryLoads": true,
                         "NSAllowsLocalNetworking": true,
                         "NSExceptionDomains": [
-                            "wifi.skyline23.com": [
+                            "stream-host.example.invalid": [
                                 "NSIncludesSubdomains": true,
                                 "NSExceptionAllowsInsecureHTTPLoads": true,
                                 "NSTemporaryExceptionAllowsInsecureHTTPLoads": true,
@@ -71,7 +71,7 @@ let project = Project(
                         "NSAllowsArbitraryLoads": true,
                         "NSAllowsLocalNetworking": true,
                         "NSExceptionDomains": [
-                            "wifi.skyline23.com": [
+                            "stream-host.example.invalid": [
                                 "NSIncludesSubdomains": true,
                                 "NSExceptionAllowsInsecureHTTPLoads": true,
                                 "NSTemporaryExceptionAllowsInsecureHTTPLoads": true,
@@ -108,7 +108,7 @@ let project = Project(
                         "NSAllowsArbitraryLoads": true,
                         "NSAllowsLocalNetworking": true,
                         "NSExceptionDomains": [
-                            "wifi.skyline23.com": [
+                            "stream-host.example.invalid": [
                                 "NSIncludesSubdomains": true,
                                 "NSExceptionAllowsInsecureHTTPLoads": true,
                                 "NSTemporaryExceptionAllowsInsecureHTTPLoads": true,
@@ -149,7 +149,7 @@ let project = Project(
                         "NSAllowsArbitraryLoads": true,
                         "NSAllowsLocalNetworking": true,
                         "NSExceptionDomains": [
-                            "wifi.skyline23.com": [
+                            "stream-host.example.invalid": [
                                 "NSIncludesSubdomains": true,
                                 "NSExceptionAllowsInsecureHTTPLoads": true,
                                 "NSTemporaryExceptionAllowsInsecureHTTPLoads": true,
