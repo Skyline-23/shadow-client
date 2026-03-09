@@ -140,8 +140,8 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let decoderRecoveryAttemptWindowSeconds: TimeInterval = 8.0
     public static let decoderMaxRecoveryAttempts = 3
     public static let av1MaxDecoderRecoveryAttempts = 2
-    public static let av1DecoderFastFallbackWindowSeconds: TimeInterval = 20.0
-    public static let av1DecoderFastFallbackFailureThreshold = 3
+    public static let av1DecoderFastFallbackWindowSeconds: TimeInterval = 8.0
+    public static let av1DecoderFastFallbackFailureThreshold = 2
     public static let decoderOutputStallThresholdSeconds: TimeInterval = 2.2
     public static let decoderOutputStallActiveDecodeWindowSeconds: TimeInterval = 0.45
     public static let decoderOutputStallRecentIngressGraceSeconds: TimeInterval = 1.25
@@ -181,8 +181,8 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let audioJitterBufferTargetDepth = 6
     public static let audioJitterBufferMaximumDepth = 30
     public static let audioJitterBufferOutOfOrderWaitSeconds: TimeInterval = 0.010
-    public static let audioOutputQueueSaturationBurstThreshold = 8
-    public static let audioOutputQueueDecodeCooldown: Duration = .milliseconds(24)
+    public static let audioOutputQueueSaturationBurstThreshold = 12
+    public static let audioOutputQueueDecodeCooldown: Duration = .milliseconds(48)
     public static let audioPayloadTypeAdaptationObservationThreshold = 3
     public static let audioUnexpectedPayloadTypeLogInterval = 240
     public static let audioDecodeFailureAbortThreshold = 240

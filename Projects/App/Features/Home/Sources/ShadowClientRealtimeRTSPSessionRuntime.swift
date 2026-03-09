@@ -1824,6 +1824,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         codec: ShadowClientVideoCodec,
         reason: String
     ) async {
+        if codec == .av1 {
+            let message =
+                "AV1 runtime recovery exhausted (\(reason)). Runtime recovery exhausted; retry with fallback codec."
+            logger.error("\(message, privacy: .public)")
+            await transitionSurfaceState(.failed(message))
+            return
+        }
+
         logger.error(
             "Runtime recovery exhausted for codec \(String(describing: codec), privacy: .public) (reason=\(reason, privacy: .public)); suppressing fatal escalation and keeping session alive"
         )
