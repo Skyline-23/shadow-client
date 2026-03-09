@@ -830,10 +830,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         try await rtspClient.sendInput(event)
     }
 
-    public func requestVideoRefresh(reason: String = "application-reactivation") async {
-        await requestVideoRecoveryFrame(reason: reason)
-    }
-
     func sendInputKeepAlive() async throws {
         guard let rtspClient else {
             return

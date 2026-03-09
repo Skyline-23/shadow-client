@@ -240,7 +240,6 @@ public protocol ShadowClientRemoteSessionConnectionClient: Sendable {
         videoConfiguration: ShadowClientRemoteSessionVideoConfiguration
     ) async throws
     func disconnect() async
-    func requestVideoRefresh(reason: String) async
 }
 
 public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
@@ -426,8 +425,6 @@ public struct NoopShadowClientRemoteSessionConnectionClient: ShadowClientRemoteS
     ) async throws {}
 
     public func disconnect() async {}
-
-    public func requestVideoRefresh(reason _: String) async {}
 }
 
 public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
@@ -461,10 +458,6 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
 
     public func disconnect() async {
         try? await sessionRuntime.disconnect()
-    }
-
-    public func requestVideoRefresh(reason: String) async {
-        await sessionRuntime.requestVideoRefresh(reason: reason)
     }
 }
 
@@ -898,7 +891,6 @@ private enum ShadowClientRemoteDesktopCommand: Sendable {
     case clearActiveSession
     case sendInput(ShadowClientRemoteInputEvent)
     case sendInputKeepAlive
-    case requestSessionVideoRefresh(String)
     case openSessionFlow(host: String, appTitle: String)
     case selectHost(String)
     case refreshSelectedHostApps
@@ -1043,8 +1035,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             await performSendInput(event)
         case .sendInputKeepAlive:
             await performSendInputKeepAlive()
-        case let .requestSessionVideoRefresh(reason):
-            await performRequestSessionVideoRefresh(reason: reason)
         case let .openSessionFlow(host, appTitle):
             performOpenSessionFlow(host: host, appTitle: appTitle)
         case let .selectHost(hostID):
@@ -1534,11 +1524,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    public func requestSessionVideoRefresh(reason: String = "application-reactivation") {
-        commandContinuation.yield(.requestSessionVideoRefresh(reason))
-    }
-
-    @MainActor
     public func handleSessionRenderStateTransition(
         _ state: ShadowClientRealtimeSessionSurfaceContext.RenderState
     ) {
@@ -1584,15 +1569,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             }
             logger.debug("Remote input keepalive failed: \(error.localizedDescription, privacy: .public)")
         }
-    }
-
-    @MainActor
-    private func performRequestSessionVideoRefresh(reason: String) async {
-        guard activeSessionInputDestination() != nil else {
-            return
-        }
-
-        await sessionConnectionClient.requestVideoRefresh(reason: reason)
     }
 
     @MainActor

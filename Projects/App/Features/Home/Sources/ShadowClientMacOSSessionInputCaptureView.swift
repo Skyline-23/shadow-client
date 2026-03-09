@@ -7,20 +7,17 @@ import SwiftUI
 struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
     let onInputEvent: @MainActor (ShadowClientRemoteInputEvent) -> Void
     let onSessionTerminateCommand: @MainActor () -> Void
-    let onSessionReactivationRequest: @MainActor () -> Void
 
     func makeNSView(context: Context) -> ShadowClientMacOSInputCaptureNSView {
         let view = ShadowClientMacOSInputCaptureNSView()
         view.onInputEvent = onInputEvent
         view.onSessionTerminateCommand = onSessionTerminateCommand
-        view.onSessionReactivationRequest = onSessionReactivationRequest
         return view
     }
 
     func updateNSView(_ nsView: ShadowClientMacOSInputCaptureNSView, context: Context) {
         nsView.onInputEvent = onInputEvent
         nsView.onSessionTerminateCommand = onSessionTerminateCommand
-        nsView.onSessionReactivationRequest = onSessionReactivationRequest
         nsView.requestInputFocusIfNeeded()
     }
 }
@@ -29,7 +26,6 @@ struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
 final class ShadowClientMacOSInputCaptureNSView: NSView {
     var onInputEvent: (@MainActor (ShadowClientRemoteInputEvent) -> Void)?
     var onSessionTerminateCommand: (@MainActor () -> Void)?
-    var onSessionReactivationRequest: (@MainActor () -> Void)?
 
     private var trackingAreaToken: NSTrackingArea?
     private var activeModifierFlags: NSEvent.ModifierFlags = []
@@ -325,17 +321,12 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     @objc
     private func applicationDidBecomeActive(_ notification: Notification) {
         _ = notification
-        let shouldRequestReactivation = pendingRecaptureAfterActivation
-        let shouldForceWindowActivation = shouldRequestReactivation || window?.isKeyWindow != true
+        let shouldForceWindowActivation = pendingRecaptureAfterActivation || window?.isKeyWindow != true
         pendingRecaptureAfterActivation = false
         requestInputFocusIfNeeded(
             forceRecapture: true,
             allowWindowActivation: shouldForceWindowActivation
         )
-        if shouldRequestReactivation {
-            logger.notice("Input capture requested session video refresh after application reactivation")
-            onSessionReactivationRequest?()
-        }
     }
 
     @objc
@@ -344,8 +335,6 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         locallyHandledKeyCodes.removeAll(keepingCapacity: true)
         pendingRecaptureAfterActivation = true
         deactivatePointerCaptureIfNeeded()
-        logger.notice("Input capture requested session video refresh before application resign active")
-        onSessionReactivationRequest?()
     }
 
     @objc
@@ -390,7 +379,6 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
             pendingRecaptureAfterActivation = true
             deactivatePointerCaptureIfNeeded()
             logger.notice("Input capture deferred focus recapture (\(reason, privacy: .public)) while app inactive")
-            onSessionReactivationRequest?()
             return
         }
 
