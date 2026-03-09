@@ -17,6 +17,19 @@ enum ShadowClientSunshineControllerFeedbackEvent: Equatable, Sendable {
     case triggerRumble(ShadowClientSunshineControllerTriggerRumbleEvent)
 }
 
+struct ShadowClientSunshineTerminationEvent: Equatable, Sendable {
+    let reasonCode: UInt32
+
+    var message: String {
+        switch reasonCode {
+        case 0x80030023:
+            return "Sunshine terminated the session gracefully (0x80030023)."
+        default:
+            return String(format: "Sunshine terminated the session (0x%08X).", reasonCode)
+        }
+    }
+}
+
 enum ShadowClientSunshineControlFeedbackCodec {
     static func parse(
         type: UInt16,
@@ -32,6 +45,20 @@ enum ShadowClientSunshineControlFeedbackCodec {
             return parseAdaptiveTriggers(payload: payload)
         }
         return nil
+    }
+
+    static func parseTermination(
+        type: UInt16,
+        payload: Data
+    ) -> ShadowClientSunshineTerminationEvent? {
+        guard type == ShadowClientSunshineControlMessageProfile.terminationType,
+              payload.count >= 4
+        else {
+            return nil
+        }
+
+        let reasonCode = readUInt32BE(payload, at: 0)
+        return .init(reasonCode: reasonCode)
     }
 
     private static func parseRumble(
@@ -128,5 +155,13 @@ enum ShadowClientSunshineControlFeedbackCodec {
         let b0 = UInt16(data[offset])
         let b1 = UInt16(data[offset + 1]) << 8
         return b0 | b1
+    }
+
+    private static func readUInt32BE(_ data: Data, at offset: Int) -> UInt32 {
+        let b0 = UInt32(data[offset]) << 24
+        let b1 = UInt32(data[offset + 1]) << 16
+        let b2 = UInt32(data[offset + 2]) << 8
+        let b3 = UInt32(data[offset + 3])
+        return b0 | b1 | b2 | b3
     }
 }

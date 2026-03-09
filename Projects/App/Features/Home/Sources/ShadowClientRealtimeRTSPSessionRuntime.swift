@@ -681,6 +681,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             onControllerFeedback: { [sessionSurfaceContext] feedbackEvent in
                 sessionSurfaceContext.publishControllerFeedbackEvent(feedbackEvent)
             },
+            onTermination: { [runtime = self] terminationEvent in
+                await runtime.handleSunshineTerminationEvent(terminationEvent)
+            },
             audioSessionActivation: audioSessionActivation
         )
         let track = try await client.start(
@@ -1077,6 +1080,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         await transitionSurfaceState(.failed(message))
         await closeVideoPacketQueue()
         await closeVideoDecodeQueue()
+    }
+
+    private func handleSunshineTerminationEvent(
+        _ event: ShadowClientSunshineTerminationEvent
+    ) async {
+        await failStreamingSession(message: event.message)
     }
 
     private func consumeRTPPayload(
@@ -3747,6 +3756,7 @@ private actor ShadowClientRTSPInterleavedClient {
     private let onControlRoundTripSample: (@Sendable (Double) async -> Void)?
     private let onAudioOutputStateChanged: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)?
     private let onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)?
+    private let onTermination: (@Sendable (ShadowClientSunshineTerminationEvent) async -> Void)?
     private let audioSessionActivation: (@Sendable () async -> Void)?
     private let defaultClientPortBase: UInt16 = ShadowClientRTSPProtocolProfile.clientPortBase
     private let queue = DispatchQueue(label: "com.skyline23.shadowclient.rtsp.connection")
@@ -3796,12 +3806,14 @@ private actor ShadowClientRTSPInterleavedClient {
         onControlRoundTripSample: (@Sendable (Double) async -> Void)? = nil,
         onAudioOutputStateChanged: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)? = nil,
         onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)? = nil,
+        onTermination: (@Sendable (ShadowClientSunshineTerminationEvent) async -> Void)? = nil,
         audioSessionActivation: (@Sendable () async -> Void)? = nil
     ) {
         self.timeout = timeout
         self.onControlRoundTripSample = onControlRoundTripSample
         self.onAudioOutputStateChanged = onAudioOutputStateChanged
         self.onControllerFeedback = onControllerFeedback
+        self.onTermination = onTermination
         self.audioSessionActivation = audioSessionActivation
     }
 
@@ -4910,7 +4922,8 @@ private actor ShadowClientRTSPInterleavedClient {
         let controlHost = remoteHost ?? .init(host)
         let runtime = ShadowClientSunshineControlChannelRuntime(
             onRoundTripSample: onControlRoundTripSample,
-            onControllerFeedback: onControllerFeedback
+            onControllerFeedback: onControllerFeedback,
+            onTermination: onTermination
         )
 
         do {

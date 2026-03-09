@@ -92,3 +92,16 @@ func sunshineControlFeedbackCodecIgnoresUnsupportedType() {
 
     #expect(event == nil)
 }
+
+@Test("Sunshine control feedback codec parses termination payload")
+func sunshineControlFeedbackCodecParsesTerminationPayload() {
+    let payload = Data([0x80, 0x03, 0x00, 0x23])
+
+    let event = ShadowClientSunshineControlFeedbackCodec.parseTermination(
+        type: ShadowClientSunshineControlMessageProfile.terminationType,
+        payload: payload
+    )
+
+    #expect(event == .init(reasonCode: 0x80030023))
+    #expect(event?.message == "Sunshine terminated the session gracefully (0x80030023).")
+}

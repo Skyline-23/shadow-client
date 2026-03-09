@@ -17,6 +17,7 @@ actor ShadowClientSunshineControlChannelRuntime {
     private let commandAcknowledgeTimeout: Duration
     private let onRoundTripSample: (@Sendable (Double) async -> Void)?
     private let onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)?
+    private let onTermination: (@Sendable (ShadowClientSunshineTerminationEvent) async -> Void)?
     private let queue = DispatchQueue(label: "com.skyline23.shadowclient.control.enet")
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "ControlChannel")
 
@@ -39,12 +40,14 @@ actor ShadowClientSunshineControlChannelRuntime {
         connectTimeout: Duration = ShadowClientSunshineControlChannelDefaults.connectTimeout,
         commandAcknowledgeTimeout: Duration = ShadowClientSunshineControlChannelDefaults.commandAcknowledgeTimeout,
         onRoundTripSample: (@Sendable (Double) async -> Void)? = nil,
-        onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)? = nil
+        onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)? = nil,
+        onTermination: (@Sendable (ShadowClientSunshineTerminationEvent) async -> Void)? = nil
     ) {
         self.connectTimeout = connectTimeout
         self.commandAcknowledgeTimeout = commandAcknowledgeTimeout
         self.onRoundTripSample = onRoundTripSample
         self.onControllerFeedback = onControllerFeedback
+        self.onTermination = onTermination
     }
 
     func start(
@@ -280,6 +283,16 @@ actor ShadowClientSunshineControlChannelRuntime {
                         await onControllerFeedback?(feedbackEvent)
                     }
 
+                    if let terminationEvent = parseTerminationEvent(
+                        from: packet,
+                        command: command
+                    ) {
+                        logger.error(
+                            "Sunshine control termination received reason=0x\(String(terminationEvent.reasonCode, radix: 16), privacy: .public)"
+                        )
+                        await onTermination?(terminationEvent)
+                    }
+
                     guard command.isAcknowledgeRequired else {
                         continue
                     }
@@ -485,6 +498,36 @@ actor ShadowClientSunshineControlChannelRuntime {
         from packet: ShadowClientSunshineENetPacketCodec.ParsedPacket,
         command: ShadowClientSunshineENetPacketCodec.ParsedPacket.Command
     ) -> ShadowClientSunshineControllerFeedbackEvent? {
+        guard let controlPayload = parseControlPayload(from: packet, command: command) else {
+            return nil
+        }
+
+        let type = readUInt16LE(controlPayload, at: 0)
+        let payload = Data(controlPayload.dropFirst(2))
+        reportControlMessageTypeIfNeeded(type: type, payloadBytes: payload.count)
+        return ShadowClientSunshineControlFeedbackCodec.parse(type: type, payload: payload)
+    }
+
+    private func parseTerminationEvent(
+        from packet: ShadowClientSunshineENetPacketCodec.ParsedPacket,
+        command: ShadowClientSunshineENetPacketCodec.ParsedPacket.Command
+    ) -> ShadowClientSunshineTerminationEvent? {
+        guard let controlPayload = parseControlPayload(from: packet, command: command) else {
+            return nil
+        }
+
+        let type = readUInt16LE(controlPayload, at: 0)
+        let payload = Data(controlPayload.dropFirst(2))
+        return ShadowClientSunshineControlFeedbackCodec.parseTermination(
+            type: type,
+            payload: payload
+        )
+    }
+
+    private func parseControlPayload(
+        from packet: ShadowClientSunshineENetPacketCodec.ParsedPacket,
+        command: ShadowClientSunshineENetPacketCodec.ParsedPacket.Command
+    ) -> Data? {
         guard command.number == ShadowClientSunshineENetProtocolProfile.protocolCommandSendReliable else {
             return nil
         }
@@ -521,11 +564,7 @@ actor ShadowClientSunshineControlChannelRuntime {
         guard controlPayload.count >= 2 else {
             return nil
         }
-
-        let type = readUInt16LE(controlPayload, at: 0)
-        let payload = Data(controlPayload.dropFirst(2))
-        reportControlMessageTypeIfNeeded(type: type, payloadBytes: payload.count)
-        return ShadowClientSunshineControlFeedbackCodec.parse(type: type, payload: payload)
+        return controlPayload
     }
 
     private func reportControllerFeedbackEventIfNeeded(
@@ -584,6 +623,8 @@ actor ShadowClientSunshineControlChannelRuntime {
             return "inputData"
         case ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesType:
             return "invalidateReferenceFrames"
+        case ShadowClientSunshineControlMessageProfile.terminationType:
+            return "termination"
         case ShadowClientSunshineControlMessageProfile.rumbleType:
             return "rumble"
         case ShadowClientSunshineControlMessageProfile.rumbleTriggersType:
