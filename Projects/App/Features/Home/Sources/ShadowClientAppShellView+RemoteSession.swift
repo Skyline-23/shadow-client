@@ -332,8 +332,6 @@ func realtimeSessionDiagnosticsHUD(_ model: SettingsDiagnosticsHUDModel) -> some
                 }
 
                 HStack(spacing: 10) {
-                    diagnosticsStatChip(label: "Codec", value: activeSessionVideoCodecLabel)
-                    diagnosticsStatChip(label: "Res", value: diagnosticsResolutionValue())
                     diagnosticsStatChip(label: "HDR", value: diagnosticsHDRValue(model: model))
                     diagnosticsStatChip(label: "FPS", value: diagnosticsFPSValue())
                     diagnosticsStatChip(label: "Bitrate", value: diagnosticsBitrateValue())
@@ -346,6 +344,10 @@ func realtimeSessionDiagnosticsHUD(_ model: SettingsDiagnosticsHUDModel) -> some
                     )
                     diagnosticsStatChip(label: "Drop", value: String(format: "%.1f%%", model.frameDropPercent))
                 }
+
+                Text("Codec \(activeSessionVideoCodecLabel) · Resolution \(diagnosticsResolutionValue())")
+                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(Color.mint.opacity(0.86))
 
                 diagnosticsSparklineRow(
                     title: "Ping Spike",
@@ -394,15 +396,11 @@ func realtimeSessionBootstrapDiagnosticsHUD(controlRoundTripMs: Int?) -> some Vi
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(Color.white.opacity(0.74))
 
-                Text("Codec \(activeSessionVideoCodecLabel)")
+                Text("Codec \(activeSessionVideoCodecLabel) · Resolution \(diagnosticsResolutionValue())")
                     .font(.caption2.monospacedDigit().weight(.semibold))
                     .foregroundStyle(Color.mint.opacity(0.86))
 
                 HStack(spacing: 10) {
-                    diagnosticsStatChip(
-                        label: "Res",
-                        value: diagnosticsResolutionValue()
-                    )
                     diagnosticsStatChip(
                         label: "HDR",
                         value: diagnosticsHDRValue(model: nil)
