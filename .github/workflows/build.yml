@@ -1,0 +1,35 @@
+name: build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout SwiftOpus sibling dependency
+        run: git clone --depth 1 https://github.com/Skyline-23/SwiftOpus.git ../SwiftOpus
+
+      - name: Install Tuist
+        run: brew install tuist
+
+      - name: Resolve dependencies
+        run: tuist install
+
+      - name: Generate workspace
+        run: tuist generate --no-open
+
+      - name: Build macOS app
+        run: xcodebuild build -workspace shadow-client.xcworkspace -scheme ShadowClientmacOS -destination 'platform=macOS'
+
+      - name: Build app test target compile gate
+        run: xcodebuild build -workspace shadow-client.xcworkspace -scheme ShadowClientTests -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+
+      - name: Run module tests
+        run: cd Modules && swift test
