@@ -837,10 +837,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         try await rtspClient.sendInputKeepAlive()
     }
 
-    func sendFrameFECStatus(_ status: ShadowClientSunshineFrameFECStatus) async {
-        await rtspClient?.sendFrameFECStatus(status)
-    }
-
     private func runReceiveLoop(
         client: ShadowClientRTSPInterleavedClient,
         codec: ShadowClientVideoCodec,
@@ -5166,16 +5162,6 @@ private actor ShadowClientRTSPInterleavedClient {
         )
     }
 
-    func sendFrameFECStatus(_ status: ShadowClientSunshineFrameFECStatus) async {
-        await ensureSunshineControlChannelStarted(
-            fallbackHost: remoteHost ?? .init("127.0.0.1")
-        )
-        guard let controlChannelRuntime else {
-            return
-        }
-        await controlChannelRuntime.sendFrameFECStatus(status)
-    }
-
     private func inputEventKind(_ event: ShadowClientRemoteInputEvent) -> String {
         switch event {
         case .keyDown:
@@ -5275,9 +5261,6 @@ private actor ShadowClientRTSPInterleavedClient {
                 }
 
                 let ingestResult = fecReconstructionQueue.ingest(packet)
-                for status in ingestResult.frameFECStatuses {
-                    await sendFrameFECStatus(status)
-                }
                 if ingestResult.droppedUnrecoverableBlock {
                     logger.error("Video FEC reconstruction dropped unrecoverable block")
                     // Drop the whole reconstructed batch on unrecoverable loss to avoid forwarding
@@ -5521,9 +5504,6 @@ private actor ShadowClientRTSPInterleavedClient {
             }
 
             let ingestResult = fecReconstructionQueue.ingest(packet)
-            for status in ingestResult.frameFECStatuses {
-                await sendFrameFECStatus(status)
-            }
             if ingestResult.droppedUnrecoverableBlock {
                 logger.error("Video FEC reconstruction dropped unrecoverable block")
                 // Do not forward ordered packets from an unrecoverable FEC block.

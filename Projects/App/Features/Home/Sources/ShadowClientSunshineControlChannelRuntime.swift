@@ -27,7 +27,6 @@ actor ShadowClientSunshineControlChannelRuntime {
     private var outgoingPeerID: UInt16 = ShadowClientSunshineENetPacketCodec.maximumPeerID
     private var outgoingSessionID: UInt8 = 0
     private var controlReliableSequenceNumber: UInt16 = 0
-    private var outgoingUnsequencedGroup: UInt16 = 0
     private var outgoingReliableSequenceByChannel: [UInt8: UInt16] = [:]
     private var connectID: UInt32 = 0
     private var controlChannelMode: ShadowClientSunshineControlChannelMode = .plaintext
@@ -213,25 +212,6 @@ actor ShadowClientSunshineControlChannelRuntime {
         }
     }
 
-    func sendFrameFECStatus(_ status: ShadowClientSunshineFrameFECStatus) async {
-        guard let connection else {
-            return
-        }
-
-        do {
-            try await sendUnsequencedControlMessage(
-                type: ShadowClientSunshineControlMessageProfile.frameFECStatusType,
-                payload: status.payload,
-                channelID: ShadowClientSunshineControlMessageProfile.genericChannelID,
-                over: connection
-            )
-        } catch {
-            logger.debug(
-                "Sunshine frame FEC status send failed: \(error.localizedDescription, privacy: .public)"
-            )
-        }
-    }
-
     private func waitForVerifyConnect(
         over connection: NWConnection,
         expectedConnectID: UInt32
@@ -390,27 +370,6 @@ actor ShadowClientSunshineControlChannelRuntime {
             reliableSequenceNumber: reliableSequenceNumber,
             channelID: channelID,
             sentTime: currentSentTime(),
-            payload: controlPayload
-        )
-        try await Self.send(bytes: packet, over: connection)
-    }
-
-    private func sendUnsequencedControlMessage(
-        type: UInt16,
-        payload: Data,
-        channelID: UInt8,
-        over connection: NWConnection
-    ) async throws {
-        let controlPayload = try buildControlPayload(type: type, payload: payload)
-        let reliableSequenceNumber = nextReliableSequenceNumber(for: channelID)
-        outgoingUnsequencedGroup &+= 1
-        let packet = try ShadowClientSunshineENetPacketCodec.makeSendUnsequencedPacket(
-            outgoingPeerID: outgoingPeerID,
-            outgoingSessionID: outgoingSessionID,
-            reliableSequenceNumber: reliableSequenceNumber,
-            channelID: channelID,
-            sentTime: currentSentTime(),
-            unsequencedGroup: outgoingUnsequencedGroup,
             payload: controlPayload
         )
         try await Self.send(bytes: packet, over: connection)
@@ -788,7 +747,6 @@ actor ShadowClientSunshineControlChannelRuntime {
         outgoingPeerID = ShadowClientSunshineENetPacketCodec.maximumPeerID
         outgoingSessionID = 0
         controlReliableSequenceNumber = 0
-        outgoingUnsequencedGroup = 0
         outgoingReliableSequenceByChannel.removeAll(keepingCapacity: false)
         connectID = 0
         controlEncryptionSequenceNumber = 0

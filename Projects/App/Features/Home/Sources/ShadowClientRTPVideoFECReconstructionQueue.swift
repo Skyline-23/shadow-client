@@ -4,22 +4,14 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
     struct IngestResult: Sendable {
         var orderedDataPackets: [ShadowClientRTPPacket]
         var droppedUnrecoverableBlock: Bool
-        var frameFECStatuses: [ShadowClientSunshineFrameFECStatus]
 
-        static let empty = IngestResult(
-            orderedDataPackets: [],
-            droppedUnrecoverableBlock: false,
-            frameFECStatuses: []
-        )
+        static let empty = IngestResult(orderedDataPackets: [], droppedUnrecoverableBlock: false)
 
         mutating func merge(_ other: IngestResult) {
             if !other.orderedDataPackets.isEmpty {
                 orderedDataPackets.append(contentsOf: other.orderedDataPackets)
             }
             droppedUnrecoverableBlock = droppedUnrecoverableBlock || other.droppedUnrecoverableBlock
-            if !other.frameFECStatuses.isEmpty {
-                frameFECStatuses.append(contentsOf: other.frameFECStatuses)
-            }
         }
     }
 
@@ -60,39 +52,6 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
 
         var receivedShardCount: Int {
             packetsByFECIndex.count
-        }
-
-        var receivedDataPackets: Int {
-            packetsByFECIndex.keys.filter { $0 < dataShards }.count
-        }
-
-        var receivedParityPackets: Int {
-            packetsByFECIndex.keys.filter { $0 >= dataShards }.count
-        }
-
-        var highestReceivedSequenceNumber: UInt16 {
-            let highestIndex = packetsByFECIndex.keys.max() ?? 0
-            return baseSequenceNumber &+ UInt16(highestIndex)
-        }
-
-        var nextContiguousSequenceNumber: UInt16 {
-            var nextIndex = 0
-            while nextIndex < totalShards, packetsByFECIndex[nextIndex] != nil {
-                nextIndex += 1
-            }
-            return baseSequenceNumber &+ UInt16(nextIndex)
-        }
-
-        var missingPacketsBeforeHighestReceived: Int {
-            let highestIndex = packetsByFECIndex.keys.max() ?? -1
-            guard highestIndex >= 0 else {
-                return 0
-            }
-            var missing = 0
-            for index in 0 ... highestIndex where packetsByFECIndex[index] == nil {
-                missing += 1
-            }
-            return missing
         }
 
         mutating func insert(_ packet: ShadowClientRTPPacket, metadata: FECMetadata) {
@@ -238,11 +197,7 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
     ) -> IngestResult {
         guard metadata.blockNumber == 0 else {
             lastDroppedFrameIndex = metadata.frameIndex
-            return IngestResult(
-                orderedDataPackets: [],
-                droppedUnrecoverableBlock: true,
-                frameFECStatuses: []
-            )
+            return IngestResult(orderedDataPackets: [], droppedUnrecoverableBlock: true)
         }
 
         activeFrame = FrameState(
@@ -271,17 +226,11 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
             return .empty
         }
 
-        let neededRecovery = block.receivedDataPackets < block.dataShards
-
         frame.currentBlock = nil
         frame.completedBlocks[block.blockNumber] = orderedDataPackets
         frame.expectedBlockNumber = block.blockNumber &+ 1
         activeFrame = frame
-        var result = emitCompletedFrameIfReady()
-        if neededRecovery {
-            result.frameFECStatuses.append(makeFrameFECStatus(from: block))
-        }
-        return result
+        return emitCompletedFrameIfReady()
     }
 
     private mutating func finalizeCurrentBlockOnTransition() -> IngestResult {
@@ -296,19 +245,13 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
             return dropActiveFrame(unrecoverable: true)
         }
 
-        let neededRecovery = block.receivedDataPackets < block.dataShards
-
         guard var updatedFrame = activeFrame else {
             return .empty
         }
         updatedFrame.completedBlocks[block.blockNumber] = orderedDataPackets
         updatedFrame.expectedBlockNumber = block.blockNumber &+ 1
         activeFrame = updatedFrame
-        var result = emitCompletedFrameIfReady()
-        if neededRecovery {
-            result.frameFECStatuses.append(makeFrameFECStatus(from: block))
-        }
-        return result
+        return emitCompletedFrameIfReady()
     }
 
     private mutating func emitCompletedFrameIfReady() -> IngestResult {
@@ -342,8 +285,7 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
 
         return IngestResult(
             orderedDataPackets: orderedFramePackets,
-            droppedUnrecoverableBlock: false,
-            frameFECStatuses: []
+            droppedUnrecoverableBlock: false
         )
     }
 
@@ -352,21 +294,11 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
             return .empty
         }
 
-        let statuses: [ShadowClientSunshineFrameFECStatus]
-        if let activeFrame, let currentBlock = activeFrame.currentBlock {
-            statuses = [makeFrameFECStatus(from: currentBlock)]
-        } else {
-            statuses = []
-        }
         if let activeFrame {
             lastDroppedFrameIndex = activeFrame.frameIndex
         }
         activeFrame = nil
-        return IngestResult(
-            orderedDataPackets: [],
-            droppedUnrecoverableBlock: true,
-            frameFECStatuses: statuses
-        )
+        return IngestResult(orderedDataPackets: [], droppedUnrecoverableBlock: true)
     }
 
     private func makeBlockState(
@@ -392,34 +324,6 @@ struct ShadowClientRTPVideoFECReconstructionQueue: Sendable {
         )
         state.insert(packet, metadata: metadata)
         return state
-    }
-
-    private func makeFrameFECStatus(from block: BlockState) -> ShadowClientSunshineFrameFECStatus {
-        let highestReceivedSequenceNumber = block.highestReceivedSequenceNumber
-        let nextContiguousSequenceNumber = block.nextContiguousSequenceNumber
-        let missingPacketsBeforeHighestReceived = UInt16(block.missingPacketsBeforeHighestReceived)
-        let fecPercentage = UInt8(
-            min(
-                255,
-                max(
-                    0,
-                    block.dataShards > 0 ? ((100 * block.parityShards) / block.dataShards) : 0
-                )
-            )
-        )
-        return .init(
-            frameIndex: block.frameIndex,
-            highestReceivedSequenceNumber: highestReceivedSequenceNumber,
-            nextContiguousSequenceNumber: nextContiguousSequenceNumber,
-            missingPacketsBeforeHighestReceived: missingPacketsBeforeHighestReceived,
-            totalDataPackets: UInt16(block.dataShards),
-            totalParityPackets: UInt16(block.parityShards),
-            receivedDataPackets: UInt16(block.receivedDataPackets),
-            receivedParityPackets: UInt16(block.receivedParityPackets),
-            fecPercentage: fecPercentage,
-            multiFecBlockIndex: block.blockNumber,
-            multiFecBlockCount: block.lastBlockNumber &+ 1
-        )
     }
 
     private func reconstructOrderedDataPackets(from block: BlockState) -> [ShadowClientRTPPacket]? {

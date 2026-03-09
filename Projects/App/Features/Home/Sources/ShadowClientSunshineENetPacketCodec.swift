@@ -145,42 +145,6 @@ enum ShadowClientSunshineENetPacketCodec {
         return packet
     }
 
-    static func makeSendUnsequencedPacket(
-        outgoingPeerID: UInt16,
-        outgoingSessionID: UInt8,
-        reliableSequenceNumber: UInt16,
-        channelID: UInt8,
-        sentTime: UInt16,
-        unsequencedGroup: UInt16,
-        payload: Data
-    ) throws -> Data {
-        guard payload.count <= Int(UInt16.max) else {
-            throw ShadowClientSunshineENetPacketCodecError.reliablePayloadTooLarge(payload.count)
-        }
-
-        var packet = Data()
-        packet.reserveCapacity(12 + payload.count)
-
-        let sessionBits = UInt16(outgoingSessionID & ShadowClientSunshineENetProtocolProfile.sessionValueMask) <<
-            ShadowClientSunshineENetProtocolProfile.protocolHeaderSessionShift
-        let peerIDWithSession =
-            (outgoingPeerID & maximumPeerID) |
-            sessionBits |
-            ShadowClientSunshineENetProtocolProfile.protocolHeaderFlagSentTime
-        packet.appendUInt16BE(peerIDWithSession)
-        packet.appendUInt16BE(sentTime)
-
-        packet.append(
-            ShadowClientSunshineENetProtocolProfile.protocolCommandSendUnsequenced
-        )
-        packet.append(channelID)
-        packet.appendUInt16BE(reliableSequenceNumber)
-        packet.appendUInt16BE(unsequencedGroup)
-        packet.appendUInt16BE(UInt16(payload.count))
-        packet.append(payload)
-        return packet
-    }
-
     static func makeControlMessagePayload(type: UInt16, payload: Data) -> Data {
         var message = Data()
         message.reserveCapacity(2 + payload.count)
