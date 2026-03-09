@@ -192,6 +192,7 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
         .shadowClientRemoteSessionAutoFullscreen(
             isSessionActive: remoteDesktopRuntime.activeSession != nil
         )
+        .shadowClientMobileSessionLifecycle(remoteDesktopRuntime: remoteDesktopRuntime)
     }
 
 var rootContentView: AnyView {
