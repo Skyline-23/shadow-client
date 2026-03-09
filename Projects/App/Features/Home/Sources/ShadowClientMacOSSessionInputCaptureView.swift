@@ -344,6 +344,8 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         locallyHandledKeyCodes.removeAll(keepingCapacity: true)
         pendingRecaptureAfterActivation = true
         deactivatePointerCaptureIfNeeded()
+        logger.notice("Input capture requested session video refresh before application resign active")
+        onSessionReactivationRequest?()
     }
 
     @objc
@@ -388,6 +390,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
             pendingRecaptureAfterActivation = true
             deactivatePointerCaptureIfNeeded()
             logger.notice("Input capture deferred focus recapture (\(reason, privacy: .public)) while app inactive")
+            onSessionReactivationRequest?()
             return
         }
 
