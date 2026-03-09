@@ -47,8 +47,8 @@ cd Modules && swift test
 
 ## Dependencies
 
-- `SwiftOpus` is consumed as a sibling checkout because the project treats it as a separate source-of-truth repository.
-- The GitHub Actions workflow checks out `Skyline-23/SwiftOpus` into the expected sibling path before generating the workspace.
+- `SwiftOpus` is consumed from the public `0.3.0` release tag of `Skyline-23/SwiftOpus`.
+- Local workflow and CI both resolve the same tagged package dependency through Tuist.
 
 ## Public Repository Notes
 

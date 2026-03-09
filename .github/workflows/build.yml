@@ -13,9 +13,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Checkout SwiftOpus sibling dependency
-        run: git clone --depth 1 https://github.com/Skyline-23/SwiftOpus.git ../SwiftOpus
-
       - name: Install Tuist
         run: brew install tuist
 
