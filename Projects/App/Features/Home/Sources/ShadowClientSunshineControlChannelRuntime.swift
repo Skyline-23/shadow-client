@@ -248,11 +248,9 @@ actor ShadowClientSunshineControlChannelRuntime {
         receivedSentTime: UInt16,
         over connection: NWConnection
     ) async throws {
-        let acknowledgeSequence = nextReliableSequenceNumber(for: commandChannelID)
         let packet = ShadowClientSunshineENetPacketCodec.makeAcknowledgePacket(
             outgoingPeerID: outgoingPeerID,
             outgoingSessionID: outgoingSessionID,
-            outgoingReliableSequenceNumber: acknowledgeSequence,
             commandChannelID: commandChannelID,
             receivedReliableSequenceNumber: receivedReliableSequenceNumber,
             receivedSentTime: receivedSentTime,

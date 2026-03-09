@@ -85,7 +85,6 @@ enum ShadowClientSunshineENetPacketCodec {
     static func makeAcknowledgePacket(
         outgoingPeerID: UInt16,
         outgoingSessionID: UInt8,
-        outgoingReliableSequenceNumber: UInt16,
         commandChannelID: UInt8,
         receivedReliableSequenceNumber: UInt16,
         receivedSentTime: UInt16,
@@ -105,7 +104,7 @@ enum ShadowClientSunshineENetPacketCodec {
 
         packet.append(ShadowClientSunshineENetProtocolProfile.protocolCommandAcknowledge)
         packet.append(commandChannelID)
-        packet.appendUInt16BE(outgoingReliableSequenceNumber)
+        packet.appendUInt16BE(receivedReliableSequenceNumber)
         packet.appendUInt16BE(receivedReliableSequenceNumber)
         packet.appendUInt16BE(receivedSentTime)
         return packet
