@@ -1,0 +1,103 @@
+name: Streaming bug
+about: Report a streaming/runtime issue with enough detail to reproduce and triage.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: dropdown
+    id: client_platform
+    attributes:
+      label: Client platform
+      options:
+        - macOS
+        - iOS
+        - iPadOS
+        - tvOS
+    validations:
+      required: true
+  - type: input
+    id: client_os
+    attributes:
+      label: Client OS version
+      placeholder: "macOS 15.4 / iPadOS 18.0 / iOS 18.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: host_os
+    attributes:
+      label: Host OS
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: sunshine_version
+    attributes:
+      label: Sunshine version
+      placeholder: "2026.309.21603 (commit ...)"
+    validations:
+      required: true
+  - type: dropdown
+    id: codec
+    attributes:
+      label: Codec
+      options:
+        - Auto
+        - H.264
+        - HEVC / H.265
+        - AV1
+    validations:
+      required: true
+  - type: dropdown
+    id: hdr
+    attributes:
+      label: HDR
+      options:
+        - On
+        - Off
+    validations:
+      required: true
+  - type: dropdown
+    id: display_mode
+    attributes:
+      label: Display mode
+      options:
+        - Fullscreen
+        - Borderless fullscreen
+        - Windowed
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: List the exact sequence that triggers the issue.
+      placeholder: |
+        1. Launch stream
+        2. Enter fullscreen
+        3. Switch Space
+        4. Wait for freeze / termination
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Include both client logs and Sunshine logs if possible.
+      render: shell
+    validations:
+      required: true
