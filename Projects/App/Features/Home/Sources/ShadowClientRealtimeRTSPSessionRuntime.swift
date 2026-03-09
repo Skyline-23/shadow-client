@@ -5236,9 +5236,6 @@ private actor ShadowClientRTSPInterleavedClient {
             throw CancellationError()
         }
 
-        var currentVideoPayloadType = payloadType
-        var payloadTypeObservationCounts: [Int: Int] = [:]
-        var loggedDisallowedPayloadTypes = Set<Int>()
         var packetCount = 0
         var fecReconstructionQueue = makeVideoFECReconstructionQueue()
         var lastFECRecoveryRequestUptime: TimeInterval = 0
@@ -5259,44 +5256,6 @@ private actor ShadowClientRTSPInterleavedClient {
                     logger.notice(
                         "First RTP video packet received: payloadType=\(packet.payloadType, privacy: .public), marker=\(packet.marker, privacy: .public), payloadBytes=\(packet.payload.count, privacy: .public)"
                     )
-                }
-
-                if packet.payloadType != currentVideoPayloadType {
-                    guard ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
-                        observedPayloadType: packet.payloadType,
-                        currentPayloadType: currentVideoPayloadType,
-                        audioPayloadType: audioTrack?.rtpPayloadType,
-                        videoPayloadCandidates: videoPayloadCandidates
-                    ) else {
-                        if loggedDisallowedPayloadTypes.insert(packet.payloadType).inserted {
-                            logger.notice(
-                                "RTSP payload type mismatch ignored for disallowed payload type \(packet.payloadType, privacy: .public)"
-                            )
-                        }
-                        continue
-                    }
-
-                    let observations = (payloadTypeObservationCounts[packet.payloadType] ?? 0) + 1
-                    payloadTypeObservationCounts[packet.payloadType] = observations
-                    let observationThreshold = ShadowClientRealtimeRTSPSessionRuntime.videoPayloadTypeObservationThreshold(
-                        observedPayloadType: packet.payloadType,
-                        videoPayloadCandidates: videoPayloadCandidates
-                    )
-                    if observations == 1 || observations == observationThreshold {
-                        logger.notice(
-                            "RTSP payload type mismatch observed candidate \(packet.payloadType, privacy: .public) (expected \(currentVideoPayloadType, privacy: .public), observations=\(observations, privacy: .public)/\(observationThreshold, privacy: .public))"
-                        )
-                    }
-                    guard observations >= observationThreshold else {
-                        continue
-                    }
-
-                    logger.notice(
-                        "RTSP payload type mismatch; adopting stream payload type \(packet.payloadType, privacy: .public) (expected \(currentVideoPayloadType, privacy: .public), observations=\(observations, privacy: .public))"
-                    )
-                    currentVideoPayloadType = packet.payloadType
-                    payloadTypeObservationCounts.removeAll(keepingCapacity: true)
-                    fecReconstructionQueue = makeVideoFECReconstructionQueue()
                 }
 
                 let ingestResult = fecReconstructionQueue.ingest(packet)
@@ -5460,10 +5419,6 @@ private actor ShadowClientRTSPInterleavedClient {
             udpSocket.close()
         }
 
-        var currentVideoPayloadType = payloadType
-        var payloadTypeObservationCounts: [Int: Int] = [:]
-        var loggedDisallowedPayloadTypes = Set<Int>()
-        let audioPayloadType = audioTrack?.rtpPayloadType
         _ = audioTrack
         var packetCount = 0
         var parseFailureCount = 0
@@ -5544,44 +5499,6 @@ private actor ShadowClientRTSPInterleavedClient {
                 logger.notice(
                     "First RTP video packet received: payloadType=\(packet.payloadType, privacy: .public), marker=\(packet.marker, privacy: .public), payloadBytes=\(packet.payload.count, privacy: .public)"
                 )
-            }
-
-            if packet.payloadType != currentVideoPayloadType {
-                guard ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
-                    observedPayloadType: packet.payloadType,
-                    currentPayloadType: currentVideoPayloadType,
-                    audioPayloadType: audioPayloadType,
-                    videoPayloadCandidates: videoPayloadCandidates
-                ) else {
-                    if loggedDisallowedPayloadTypes.insert(packet.payloadType).inserted {
-                        logger.notice(
-                            "RTSP payload type mismatch ignored for disallowed payload type \(packet.payloadType, privacy: .public)"
-                        )
-                    }
-                    continue
-                }
-
-                let observations = (payloadTypeObservationCounts[packet.payloadType] ?? 0) + 1
-                payloadTypeObservationCounts[packet.payloadType] = observations
-                let observationThreshold = ShadowClientRealtimeRTSPSessionRuntime.videoPayloadTypeObservationThreshold(
-                    observedPayloadType: packet.payloadType,
-                    videoPayloadCandidates: videoPayloadCandidates
-                )
-                if observations == 1 || observations == observationThreshold {
-                    logger.notice(
-                        "RTSP payload type mismatch observed candidate \(packet.payloadType, privacy: .public) (expected \(currentVideoPayloadType, privacy: .public), observations=\(observations, privacy: .public)/\(observationThreshold, privacy: .public))"
-                    )
-                }
-                guard observations >= observationThreshold else {
-                    continue
-                }
-
-                logger.notice(
-                    "RTSP payload type mismatch; adopting stream payload type \(packet.payloadType, privacy: .public) (expected \(currentVideoPayloadType, privacy: .public), observations=\(observations, privacy: .public))"
-                )
-                currentVideoPayloadType = packet.payloadType
-                payloadTypeObservationCounts.removeAll(keepingCapacity: true)
-                fecReconstructionQueue = makeVideoFECReconstructionQueue()
             }
 
             let ingestResult = fecReconstructionQueue.ingest(packet)
@@ -6429,6 +6346,18 @@ private final class ShadowClientUDPDatagramSocket: @unchecked Sendable {
             Darwin.close(descriptor)
             throw ShadowClientUDPDatagramSocketError.socketFailure(message)
         }
+
+        var connectedRemoteAddress = self.remoteAddress
+        let connectStatus = withUnsafePointer(to: &connectedRemoteAddress) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                connect(descriptor, sockaddrPointer, addressLength)
+            }
+        }
+        if connectStatus != 0 {
+            let message = "connect() failed: \(String(cString: strerror(errno)))"
+            Darwin.close(descriptor)
+            throw ShadowClientUDPDatagramSocketError.socketFailure(message)
+        }
     }
 
     deinit {
@@ -6436,25 +6365,18 @@ private final class ShadowClientUDPDatagramSocket: @unchecked Sendable {
     }
 
     func send(_ datagram: Data) throws {
-        var remoteAddress = remoteAddress
         let sentBytes = datagram.withUnsafeBytes { bytes in
-            withUnsafePointer(to: &remoteAddress) { pointer in
-                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
-                    sendto(
-                        descriptor,
-                        bytes.baseAddress,
-                        datagram.count,
-                        0,
-                        sockaddrPointer,
-                        addressLength
-                    )
-                }
-            }
+            Darwin.send(
+                descriptor,
+                bytes.baseAddress,
+                datagram.count,
+                0
+            )
         }
 
         if sentBytes < 0 {
             throw ShadowClientUDPDatagramSocketError.socketFailure(
-                "sendto() failed: \(String(cString: strerror(errno)))"
+                "send() failed: \(String(cString: strerror(errno)))"
             )
         }
     }
@@ -6463,21 +6385,13 @@ private final class ShadowClientUDPDatagramSocket: @unchecked Sendable {
         if receiveBuffer.count < maximumLength {
             receiveBuffer = Array(repeating: 0, count: maximumLength)
         }
-        var sourceAddress = sockaddr_storage()
-        var sourceLength = socklen_t(MemoryLayout<sockaddr_storage>.size)
         let receivedBytes = receiveBuffer.withUnsafeMutableBytes { bytes in
-            withUnsafeMutablePointer(to: &sourceAddress) { pointer in
-                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
-                    recvfrom(
-                        descriptor,
-                        bytes.baseAddress,
-                        min(maximumLength, bytes.count),
-                        0,
-                        sockaddrPointer,
-                        &sourceLength
-                    )
-                }
-            }
+            Darwin.recv(
+                descriptor,
+                bytes.baseAddress,
+                min(maximumLength, bytes.count),
+                0
+            )
         }
 
         if receivedBytes < 0 {
@@ -6489,7 +6403,7 @@ private final class ShadowClientUDPDatagramSocket: @unchecked Sendable {
                 return nil
             }
             throw ShadowClientUDPDatagramSocketError.socketFailure(
-                "recvfrom() failed (\(errorCode)): \(String(cString: strerror(errorCode)))"
+                "recv() failed (\(errorCode)): \(String(cString: strerror(errorCode)))"
             )
         }
 
