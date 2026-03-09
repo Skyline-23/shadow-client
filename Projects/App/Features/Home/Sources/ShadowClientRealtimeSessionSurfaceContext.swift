@@ -2,43 +2,47 @@ import CoreGraphics
 import CoreVideo
 import Foundation
 
-public final class ShadowClientRealtimeSessionFrameStore: @unchecked Sendable {
-    private let lock = NSLock()
-    private var latestPixelBuffer: CVPixelBuffer?
-    private var latestRevision: UInt64 = 0
+struct ShadowClientSendableFramePixelBuffer: @unchecked Sendable {
+    let value: CVPixelBuffer
+}
+
+public actor ShadowClientRealtimeSessionFrameStore {
+    struct Snapshot: Sendable {
+        let pixelBuffer: ShadowClientSendableFramePixelBuffer?
+        let revision: UInt64
+    }
+
+    private var latestSnapshot = Snapshot(pixelBuffer: nil, revision: 0)
+    private var continuations: [UUID: AsyncStream<Snapshot>.Continuation] = [:]
 
     public init() {}
 
     public func update(pixelBuffer: CVPixelBuffer?) {
-        lock.lock()
-        latestPixelBuffer = pixelBuffer
-        latestRevision &+= 1
-        lock.unlock()
-    }
-
-    public func snapshot() -> CVPixelBuffer? {
-        snapshotWithRevision().pixelBuffer
-    }
-
-    public func snapshotSize() -> CGSize? {
-        lock.lock()
-        let buffer = latestPixelBuffer
-        lock.unlock()
-        guard let buffer else {
-            return nil
-        }
-        return CGSize(
-            width: CVPixelBufferGetWidth(buffer),
-            height: CVPixelBufferGetHeight(buffer)
+        latestSnapshot = Snapshot(
+            pixelBuffer: pixelBuffer.map(ShadowClientSendableFramePixelBuffer.init),
+            revision: latestSnapshot.revision &+ 1
         )
+        continuations.values.forEach { $0.yield(latestSnapshot) }
     }
 
-    public func snapshotWithRevision() -> (pixelBuffer: CVPixelBuffer?, revision: UInt64) {
-        lock.lock()
-        let buffer = latestPixelBuffer
-        let revision = latestRevision
-        lock.unlock()
-        return (buffer, revision)
+    func snapshotStream() -> AsyncStream<Snapshot> {
+        AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            let identifier = UUID()
+            continuations[identifier] = continuation
+            continuation.yield(latestSnapshot)
+            continuation.onTermination = { [weak self] _ in
+                guard let self else {
+                    return
+                }
+                Task {
+                    await self.unregisterContinuation(id: identifier)
+                }
+            }
+        }
+    }
+
+    private func unregisterContinuation(id: UUID) {
+        continuations.removeValue(forKey: id)
     }
 }
 
@@ -118,6 +122,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     @Published public private(set) var audioOutputState: ShadowClientRealtimeAudioOutputState = .idle
     @Published public private(set) var activeDynamicRangeMode: DynamicRangeMode = .unknown
     @Published public private(set) var preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
+    @Published public private(set) var videoPresentationSize: CGSize?
     private var lastControlRoundTripPublishUptime: TimeInterval = 0
     private let controlRoundTripStreamHub = ShadowClientControlRoundTripStreamHub()
     private let controllerFeedbackStreamHub = ShadowClientControllerFeedbackStreamHub()
@@ -138,7 +143,10 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     }
 
     public func reset() {
-        frameStore.update(pixelBuffer: nil)
+        let frameStore = self.frameStore
+        Task {
+            await frameStore.update(pixelBuffer: nil)
+        }
         renderState = .idle
         controlRoundTripMs = nil
         publishControlRoundTripSample(nil)
@@ -148,6 +156,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         audioOutputState = .idle
         activeDynamicRangeMode = .unknown
         preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
+        videoPresentationSize = nil
         lastControlRoundTripPublishUptime = 0
     }
 
@@ -262,6 +271,13 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
             return
         }
         activeDynamicRangeMode = mode
+    }
+
+    public func updateVideoPresentationSize(_ size: CGSize?) {
+        if videoPresentationSize == size {
+            return
+        }
+        videoPresentationSize = size
     }
 
     public func updatePreferredRenderFPS(_ fps: Int) {

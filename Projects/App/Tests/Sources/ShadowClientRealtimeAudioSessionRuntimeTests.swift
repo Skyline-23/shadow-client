@@ -912,11 +912,11 @@ func customAudioDecoderPacketLossConcealmentOverrideReceivesRequestedSampleCount
 }
 
 @Test("Custom audio decoder registry prioritizes preferred providers")
-func customAudioDecoderRegistryPrioritizesPreferredProviders() throws {
-    ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
-    defer { ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() }
+func customAudioDecoderRegistryPrioritizesPreferredProviders() async throws {
+    await ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
+    defer { Task { await ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() } }
 
-    ShadowClientRealtimeCustomAudioDecoderRegistry.register(
+    await ShadowClientRealtimeCustomAudioDecoderRegistry.register(
         provider: { _ in
             MockCustomAudioDecoder(
                 codec: .opus,
@@ -926,7 +926,7 @@ func customAudioDecoderRegistryPrioritizesPreferredProviders() throws {
         },
         preferred: false
     )
-    ShadowClientRealtimeCustomAudioDecoderRegistry.register(
+    await ShadowClientRealtimeCustomAudioDecoderRegistry.register(
         provider: { _ in
             MockCustomAudioDecoder(
                 codec: .opus,
@@ -945,7 +945,7 @@ func customAudioDecoderRegistryPrioritizesPreferredProviders() throws {
         controlURL: nil,
         formatParameters: [:]
     )
-    let decoder = try ShadowClientRealtimeCustomAudioDecoderRegistry.makeDecoder(
+    let decoder = try await ShadowClientRealtimeCustomAudioDecoderRegistry.makeDecoder(
         for: track
     )
 
@@ -955,11 +955,11 @@ func customAudioDecoderRegistryPrioritizesPreferredProviders() throws {
 }
 
 @Test("Audio negotiation downgrades surround request to stereo without multichannel decoder")
-func audioNegotiationDowngradesSurroundWhenDecoderUnavailable() {
-    ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
-    defer { ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() }
+func audioNegotiationDowngradesSurroundWhenDecoderUnavailable() async {
+    await ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
+    defer { Task { await ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() } }
 
-    let preferredChannels = ShadowClientRealtimeAudioSessionRuntime.preferredOpusChannelCountForNegotiation(
+    let preferredChannels = await ShadowClientRealtimeAudioSessionRuntime.preferredOpusChannelCountForNegotiation(
         surroundRequested: true,
         preferredSurroundChannelCount: 6
     )
@@ -968,9 +968,9 @@ func audioNegotiationDowngradesSurroundWhenDecoderUnavailable() {
 }
 
 @Test("Opus decoding requires external decoder provider")
-func opusDecodingRequiresExternalDecoderProvider() {
-    ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
-    defer { ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() }
+func opusDecodingRequiresExternalDecoderProvider() async {
+    await ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
+    defer { Task { await ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() } }
 
     let stereoTrack = ShadowClientRTSPAudioTrackDescriptor(
         codec: .opus,
@@ -981,15 +981,15 @@ func opusDecodingRequiresExternalDecoderProvider() {
         formatParameters: [:]
     )
 
-    #expect(!ShadowClientRealtimeAudioSessionRuntime.canDecode(track: stereoTrack))
+    #expect(!(await ShadowClientRealtimeAudioSessionRuntime.canDecode(track: stereoTrack)))
 }
 
 @Test("Opus decoding succeeds when external decoder provider is available")
-func opusDecodingSucceedsWithExternalDecoderProvider() {
-    ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
-    defer { ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() }
+func opusDecodingSucceedsWithExternalDecoderProvider() async {
+    await ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
+    defer { Task { await ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() } }
 
-    ShadowClientRealtimeCustomAudioDecoderRegistry.register(
+    await ShadowClientRealtimeCustomAudioDecoderRegistry.register(
         provider: { track in
             guard track.codec == .opus else {
                 return nil
@@ -1011,15 +1011,15 @@ func opusDecodingSucceedsWithExternalDecoderProvider() {
         formatParameters: [:]
     )
 
-    #expect(ShadowClientRealtimeAudioSessionRuntime.canDecode(track: stereoTrack))
+    #expect(await ShadowClientRealtimeAudioSessionRuntime.canDecode(track: stereoTrack))
 }
 
 @Test("Audio negotiation keeps surround request when multichannel decoder is available")
-func audioNegotiationKeepsSurroundWhenDecoderAvailable() {
-    ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
-    defer { ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() }
+func audioNegotiationKeepsSurroundWhenDecoderAvailable() async {
+    await ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
+    defer { Task { await ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() } }
 
-    ShadowClientRealtimeCustomAudioDecoderRegistry.register(
+    await ShadowClientRealtimeCustomAudioDecoderRegistry.register(
         provider: { track in
             guard track.codec == .opus, track.channelCount > 2 else {
                 return nil
@@ -1032,7 +1032,7 @@ func audioNegotiationKeepsSurroundWhenDecoderAvailable() {
         }
     )
 
-    let preferredChannels = ShadowClientRealtimeAudioSessionRuntime.preferredOpusChannelCountForNegotiation(
+    let preferredChannels = await ShadowClientRealtimeAudioSessionRuntime.preferredOpusChannelCountForNegotiation(
         surroundRequested: true,
         preferredSurroundChannelCount: 6,
         maximumOutputChannels: 8
@@ -1042,11 +1042,11 @@ func audioNegotiationKeepsSurroundWhenDecoderAvailable() {
 }
 
 @Test("Audio negotiation downgrades surround request when playback output is stereo-only")
-func audioNegotiationDowngradesSurroundWhenOutputIsStereoOnly() {
-    ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
-    defer { ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() }
+func audioNegotiationDowngradesSurroundWhenOutputIsStereoOnly() async {
+    await ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
+    defer { Task { await ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() } }
 
-    ShadowClientRealtimeCustomAudioDecoderRegistry.register(
+    await ShadowClientRealtimeCustomAudioDecoderRegistry.register(
         provider: { track in
             guard track.codec == .opus, track.channelCount > 2 else {
                 return nil
@@ -1059,7 +1059,7 @@ func audioNegotiationDowngradesSurroundWhenOutputIsStereoOnly() {
         }
     )
 
-    let preferredChannels = ShadowClientRealtimeAudioSessionRuntime.preferredOpusChannelCountForNegotiation(
+    let preferredChannels = await ShadowClientRealtimeAudioSessionRuntime.preferredOpusChannelCountForNegotiation(
         surroundRequested: true,
         preferredSurroundChannelCount: 6,
         maximumOutputChannels: 2

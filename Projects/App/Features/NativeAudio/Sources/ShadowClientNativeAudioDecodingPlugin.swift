@@ -4,23 +4,9 @@ import ShadowClientFeatureHome
 import SwiftOpus
 
 public enum ShadowClientNativeAudioDecodingPlugin {
-    private static let lock = NSLock()
-    private static var isRegistered = false
     private static let compatibilityProfile = ShadowClientNativeOpusCompatibilityProfile.detect()
-
-    static var currentCompatibilityProfile: ShadowClientNativeOpusCompatibilityProfile {
-        compatibilityProfile
-    }
-
-    public static func registerDefaultDecoders() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !isRegistered else {
-            return
-        }
-        isRegistered = true
-
-        ShadowClientRealtimeCustomAudioDecoderRegistry.register(
+    private static let registrationTask: Task<Void, Never> = Task {
+        await ShadowClientRealtimeCustomAudioDecoderRegistry.register(
             provider: { track in
                 guard track.codec == .opus, track.channelCount > 0 else {
                     return nil
@@ -32,6 +18,14 @@ public enum ShadowClientNativeAudioDecodingPlugin {
                 )
             }
         )
+    }
+
+    static var currentCompatibilityProfile: ShadowClientNativeOpusCompatibilityProfile {
+        compatibilityProfile
+    }
+
+    public static func registerDefaultDecoders() {
+        _ = registrationTask
     }
 }
 

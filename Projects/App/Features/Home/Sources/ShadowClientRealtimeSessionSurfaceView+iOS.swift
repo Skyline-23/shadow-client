@@ -57,11 +57,17 @@ struct ShadowClientRealtimeSessionSurfaceRepresentable: UIViewRepresentable {
     }
 }
 
+@MainActor
 final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate {
     private let surfaceContext: ShadowClientRealtimeSessionSurfaceContext
     private let frameStore: ShadowClientRealtimeSessionFrameStore
     private let commandQueue: MTLCommandQueue
     private let ciContext: CIContext
+    private var frameStreamTask: Task<Void, Never>?
+    private var latestSnapshot = ShadowClientRealtimeSessionFrameStore.Snapshot(
+        pixelBuffer: nil,
+        revision: 0
+    )
     private var cachedSourceRect: CGRect = .null
     private var cachedDrawableRect: CGRect = .null
     private var cachedTransform: CGAffineTransform = .identity
@@ -88,12 +94,25 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             ]
         )
         super.init()
+        frameStreamTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            let stream = await frameStore.snapshotStream()
+            for await snapshot in stream {
+                self.latestSnapshot = snapshot
+            }
+        }
+    }
+
+    deinit {
+        frameStreamTask?.cancel()
     }
 
     func mtkView(_: MTKView, drawableSizeWillChange _: CGSize) {}
 
     func draw(in view: MTKView) {
-        let snapshot = frameStore.snapshotWithRevision()
+        let snapshot = latestSnapshot
         let drawableSize = view.drawableSize
         if snapshot.revision == lastRenderedFrameRevision,
            drawableSize == lastRenderedDrawableSize
@@ -107,7 +126,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             return
         }
 
-        if let pixelBuffer = snapshot.pixelBuffer {
+        if let pixelBuffer = snapshot.pixelBuffer?.value {
             let colorConfiguration = ShadowClientRealtimeSessionColorPipeline.configuration(
                 for: pixelBuffer,
                 allowExtendedDynamicRange: surfaceContext.activeDynamicRangeMode == .hdr

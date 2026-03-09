@@ -164,61 +164,6 @@ private struct ShadowClientDecoderSendablePixelBuffer: @unchecked Sendable {
     let value: CVPixelBuffer
 }
 
-private final class ShadowClientDecodeSlotCounter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var inFlightRequests = 0
-
-    func tryAcquire(limit: Int) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard inFlightRequests < limit else {
-            return false
-        }
-        inFlightRequests += 1
-        return true
-    }
-
-    func release() {
-        lock.lock()
-        inFlightRequests = max(0, inFlightRequests - 1)
-        lock.unlock()
-    }
-
-    func reset() {
-        lock.lock()
-        inFlightRequests = 0
-        lock.unlock()
-    }
-}
-
-private final class ShadowClientRealtimeDecoderFailureSignal: @unchecked Sendable {
-    private let lock = NSLock()
-    private var latestFailureStatus: OSStatus?
-
-    func record(status: OSStatus) {
-        guard status != noErr else {
-            return
-        }
-        lock.lock()
-        latestFailureStatus = status
-        lock.unlock()
-    }
-
-    func consume() -> OSStatus? {
-        lock.lock()
-        defer { lock.unlock() }
-        let status = latestFailureStatus
-        latestFailureStatus = nil
-        return status
-    }
-
-    func reset() {
-        lock.lock()
-        latestFailureStatus = nil
-        lock.unlock()
-    }
-}
-
 public actor ShadowClientVideoToolboxDecoder {
     private var codec: ShadowClientVideoCodec?
     private var latestParameterSets: [Data] = []
@@ -231,12 +176,12 @@ public actor ShadowClientVideoToolboxDecoder {
     private var preferredOutputDimensions: CMVideoDimensions?
     private var decodePresentationTimeScale: CMTimeScale
     private var maximumInFlightDecodeRequests: Int
-    private let decodeSlotCounter = ShadowClientDecodeSlotCounter()
+    private var inFlightDecodeRequests = 0
     private var decodePacingPenalty = 0
     private var decodeSubmitPacingMultiplier = 1.0
     private var lastDecodeSubmitUptime: TimeInterval = 0
     private var lastDecoderInstabilitySignalUptime: TimeInterval = 0
-    private let decodeFailureSignal = ShadowClientRealtimeDecoderFailureSignal()
+    private var latestPendingDecodeFailure: OSStatus?
     private var av1FallbackHDR = false
     private var av1FallbackYUV444 = false
     private var av1CodecConfigurationOrigin: ShadowClientAV1CodecConfigurationOrigin?
@@ -343,9 +288,10 @@ public actor ShadowClientVideoToolboxDecoder {
     }
 
     public func consumePendingDecodeFailure() -> ShadowClientVideoToolboxDecoderError? {
-        guard let status = decodeFailureSignal.consume() else {
+        guard let status = latestPendingDecodeFailure else {
             return nil
         }
+        latestPendingDecodeFailure = nil
         return .decodeFailed(status)
     }
 
@@ -473,15 +419,18 @@ public actor ShadowClientVideoToolboxDecoder {
         )
 
         let bridge = ShadowClientRealtimeDecoderOutputBridge(onFrame: onFrame)
-        let decodeSlotCounter = self.decodeSlotCounter
-        let decodeFailureSignal = self.decodeFailureSignal
+        let decoder = self
         let callbackContext = ShadowClientRealtimeDecoderOutputCallbackContext(
             bridge: bridge,
             onDecodeCompleted: {
-                decodeSlotCounter.release()
+                Task {
+                    await decoder.releaseDecodeSlot()
+                }
             },
             onDecodeFailed: { status in
-                decodeFailureSignal.record(status: status)
+                Task {
+                    await decoder.recordPendingDecodeFailure(status: status)
+                }
             }
         )
         let callbackContextRef = ShadowClientRetainedRef.retain(callbackContext)
@@ -602,8 +551,8 @@ public actor ShadowClientVideoToolboxDecoder {
         outputCallbackContextRef = nil
         configuredParameterSets = []
         frameIndex = 0
-        decodeSlotCounter.reset()
-        decodeFailureSignal.reset()
+        inFlightDecodeRequests = 0
+        latestPendingDecodeFailure = nil
         decodePacingPenalty = 0
         decodeSubmitPacingMultiplier = 1.0
         lastDecodeSubmitUptime = 0
@@ -641,7 +590,7 @@ public actor ShadowClientVideoToolboxDecoder {
 
     private func waitForDecodeSlot(backlogHint: Int) async throws {
         var spinAttempts = 0
-        while !decodeSlotCounter.tryAcquire(
+        while !tryAcquireDecodeSlot(
             limit: effectiveMaximumInFlightDecodeRequests(backlogHint: backlogHint)
         ) {
             try Task.checkCancellation()
@@ -655,7 +604,22 @@ public actor ShadowClientVideoToolboxDecoder {
     }
 
     private func releaseDecodeSlot() {
-        decodeSlotCounter.release()
+        inFlightDecodeRequests = max(0, inFlightDecodeRequests - 1)
+    }
+
+    private func tryAcquireDecodeSlot(limit: Int) -> Bool {
+        guard inFlightDecodeRequests < limit else {
+            return false
+        }
+        inFlightDecodeRequests += 1
+        return true
+    }
+
+    private func recordPendingDecodeFailure(status: OSStatus) {
+        guard status != noErr else {
+            return
+        }
+        latestPendingDecodeFailure = status
     }
 
     private func recalculateDecodeConcurrencyBudget() {

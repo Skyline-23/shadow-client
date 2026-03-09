@@ -26,29 +26,6 @@ extension ShadowClientRealtimeSessionRuntimeError: LocalizedError {
     }
 }
 
-private final class ShadowClientRealtimeUptimeSignal: @unchecked Sendable {
-    private let lock = NSLock()
-    private var uptime: TimeInterval = 0
-
-    func recordNow() {
-        lock.lock()
-        uptime = ProcessInfo.processInfo.systemUptime
-        lock.unlock()
-    }
-
-    func current() -> TimeInterval {
-        lock.lock()
-        defer { lock.unlock() }
-        return uptime
-    }
-
-    func reset() {
-        lock.lock()
-        uptime = 0
-        lock.unlock()
-    }
-}
-
 private actor ShadowClientVideoDecodeQueue {
     private let capacity: Int
     private var bufferedUnits: [ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?]
@@ -514,7 +491,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var firstDecoderOutputStallCandidateUptime: TimeInterval = 0
     private var lastDecodeSubmitUptime: TimeInterval = 0
     private var lastDecodedFrameOutputUptime: TimeInterval = 0
-    private let decodedFrameCallbackSignal = ShadowClientRealtimeUptimeSignal()
+    private var lastDecodedFrameCallbackUptime: TimeInterval = 0
     private var hasRenderedFirstFrame = false
     private var hasPublishedRenderingState = false
     private var frameAssemblyLogCount = 0
@@ -627,7 +604,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         firstDecoderOutputStallCandidateUptime = 0
         lastDecodeSubmitUptime = 0
         lastDecodedFrameOutputUptime = 0
-        decodedFrameCallbackSignal.reset()
+        lastDecodedFrameCallbackUptime = 0
         hasRenderedFirstFrame = false
         hasPublishedRenderingState = false
         frameAssemblyLogCount = 0
@@ -655,6 +632,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             sessionSurfaceContext.updatePreferredRenderFPS(resolvedVideoConfiguration.fps)
             sessionSurfaceContext.updateActiveDynamicRangeMode(
                 resolvedVideoConfiguration.enableHDR ? .hdr : .sdr
+            )
+            sessionSurfaceContext.updateVideoPresentationSize(
+                CGSize(
+                    width: resolvedVideoConfiguration.width,
+                    height: resolvedVideoConfiguration.height
+                )
             )
             sessionSurfaceContext.transition(to: .connecting)
         }
@@ -796,7 +779,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         firstDecoderOutputStallCandidateUptime = 0
         lastDecodeSubmitUptime = 0
         lastDecodedFrameOutputUptime = 0
-        decodedFrameCallbackSignal.reset()
+        lastDecodedFrameCallbackUptime = 0
         hasRenderedFirstFrame = false
         hasPublishedRenderingState = false
         frameAssemblyLogCount = 0
@@ -2030,14 +2013,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         remainingDecodeQueueBacklog: Int
     ) async throws {
         let runtime = self
-        let decodedFrameCallbackSignal = self.decodedFrameCallbackSignal
         try await decoder.decode(
             accessUnit: accessUnit,
             codec: codec,
             parameterSets: parameterSets,
             backlogHint: remainingDecodeQueueBacklog
         ) { pixelBuffer in
-            decodedFrameCallbackSignal.recordNow()
+            await runtime.recordDecodedFrameCallbackUptime()
             let sendableFrame = ShadowClientSendablePixelBuffer(value: pixelBuffer)
             await runtime.handleDecodedFrameOutput(
                 codec: codec,
@@ -2066,7 +2048,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             codec: codec,
             pixelBuffer: pixelBuffer
         )
-        surfaceContext.frameStore.update(pixelBuffer: pixelBuffer)
+        await surfaceContext.frameStore.update(pixelBuffer: pixelBuffer)
         lastRenderedFramePublishUptime = now
         if !hasPublishedRenderingState {
             hasPublishedRenderingState = true
@@ -2310,6 +2292,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
     private func recordDecodedFrameOutputUptime() {
         lastDecodedFrameOutputUptime = ProcessInfo.processInfo.systemUptime
+        lastDecodedFrameCallbackUptime = 0
         decoderOutputStallCandidateCount = 0
         firstDecoderOutputStallCandidateUptime = 0
         resetVideoQueuePressureTracking()
@@ -2328,7 +2311,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     }
 
     private func effectiveLastDecodedFrameOutputUptime() -> TimeInterval {
-        max(lastDecodedFrameOutputUptime, decodedFrameCallbackSignal.current())
+        max(lastDecodedFrameOutputUptime, lastDecodedFrameCallbackUptime)
+    }
+
+    private func recordDecodedFrameCallbackUptime() {
+        lastDecodedFrameCallbackUptime = ProcessInfo.processInfo.systemUptime
     }
 
     private func resetVideoQueuePressureTracking() {
@@ -3879,7 +3866,9 @@ private actor ShadowClientRTSPInterleavedClient {
         controlChannelRuntime = nil
         hasStartedControlChannelBootstrap = false
         cancelPrePlayPingWarmupTasks()
-        prePlayVideoUDPSocket?.close()
+        if let prePlayVideoUDPSocket {
+            await prePlayVideoUDPSocket.close()
+        }
         prePlayVideoUDPSocket = nil
         connection?.cancel()
         connection = nil
@@ -4090,7 +4079,7 @@ private actor ShadowClientRTSPInterleavedClient {
             sessionURL: normalizedURL.absoluteString
         )
         let preferredOpusChannelCount =
-            ShadowClientRealtimeAudioSessionRuntime.preferredOpusChannelCountForNegotiation(
+            await ShadowClientRealtimeAudioSessionRuntime.preferredOpusChannelCountForNegotiation(
                 surroundRequested: videoConfiguration.enableSurroundAudio
             )
         if videoConfiguration.enableSurroundAudio, preferredOpusChannelCount <= 2 {
@@ -4105,7 +4094,7 @@ private actor ShadowClientRTSPInterleavedClient {
             preferredOpusChannelCount: preferredOpusChannelCount
         )
         if let negotiatedAudioTrack = parsedAudioTrack,
-           !ShadowClientRealtimeAudioSessionRuntime.canDecode(track: negotiatedAudioTrack)
+           !(await ShadowClientRealtimeAudioSessionRuntime.canDecode(track: negotiatedAudioTrack))
         {
             logger.notice(
                 "RTSP selected audio track is not decodable at runtime (codec=\(negotiatedAudioTrack.codec.label, privacy: .public), channels=\(negotiatedAudioTrack.channelCount, privacy: .public)); retrying with stereo-preferred negotiation"
@@ -4117,7 +4106,7 @@ private actor ShadowClientRTSPInterleavedClient {
                 preferredOpusChannelCount: 2
             )
             if let stereoPreferredTrack,
-               ShadowClientRealtimeAudioSessionRuntime.canDecode(track: stereoPreferredTrack)
+               await ShadowClientRealtimeAudioSessionRuntime.canDecode(track: stereoPreferredTrack)
             {
                 parsedAudioTrack = stereoPreferredTrack
             } else {
@@ -4280,7 +4269,7 @@ private actor ShadowClientRTSPInterleavedClient {
             logger.notice("RTSP video ping payload token unavailable; legacy ping fallback only")
         }
         logger.notice("RTSP video SETUP ok for payload type \(track.rtpPayloadType, privacy: .public) via \(selectedSetupURL ?? track.controlURL, privacy: .public)")
-        prepareVideoPingBeforePlay(host: controlHost)
+        await prepareVideoPingBeforePlay(host: controlHost)
 
         var parsedControlConnectData: UInt32?
         var parsedControlServerPort: NWEndpoint.Port?
@@ -5013,7 +5002,9 @@ private actor ShadowClientRTSPInterleavedClient {
         audioPingPayload = nil
         videoPingPayload = nil
         audioTrackDescriptor = nil
-        prePlayVideoUDPSocket?.close()
+        if let prePlayVideoUDPSocket {
+            await prePlayVideoUDPSocket.close()
+        }
         prePlayVideoUDPSocket = nil
         controlConnectData = nil
         controlChannelMode = .plaintext
@@ -5338,7 +5329,7 @@ private actor ShadowClientRTSPInterleavedClient {
             prePlayVideoUDPSocket = nil
             logger.notice("RTSP UDP video socket reused from pre-PLAY bootstrap")
         } else {
-            udpSocket = try makeVideoUDPSocket(
+            udpSocket = try await makeVideoUDPSocket(
                 host: host,
                 port: port,
                 localHost: localHost
@@ -5360,7 +5351,7 @@ private actor ShadowClientRTSPInterleavedClient {
                 negotiatedPayload: pingPayload
             )
             for initialVideoPing in initialVideoPings {
-                try udpSocket.send(initialVideoPing)
+                try await udpSocket.send(initialVideoPing)
             }
             rtspLogger.notice("RTSP UDP video initial ping sent (variants=\(initialVideoPings.count, privacy: .public), bytes=\(initialVideoPings.first?.count ?? 0, privacy: .public))")
         } catch {
@@ -5401,7 +5392,7 @@ private actor ShadowClientRTSPInterleavedClient {
                         negotiatedPayload: pingPayload
                     )
                     for pingPacket in pingPackets {
-                        try sendableVideoSocket.send(pingPacket)
+                        try await sendableVideoSocket.send(pingPacket)
                     }
                     if loggedPingCount < 3 {
                         rtspLogger.notice("RTSP UDP video ping sent (sequence=\(sequence, privacy: .public), variants=\(pingPackets.count, privacy: .public), bytes=\(pingPackets.first?.count ?? 0, privacy: .public))")
@@ -5420,7 +5411,9 @@ private actor ShadowClientRTSPInterleavedClient {
         defer {
             pingTask.cancel()
             audioRuntime.stop()
-            udpSocket.close()
+            Task {
+                await udpSocket.close()
+            }
         }
 
         _ = audioTrack
@@ -5436,7 +5429,7 @@ private actor ShadowClientRTSPInterleavedClient {
         var hasPendingPostStartDatagramStall = false
 
         while !Task.isCancelled {
-            guard let datagram = try udpSocket.receive(
+            guard let datagram = try await udpSocket.receive(
                 maximumLength: ShadowClientRealtimeSessionDefaults.maximumTransportReadLength
             ) else {
                 let now = ProcessInfo.processInfo.systemUptime
@@ -5566,7 +5559,7 @@ private actor ShadowClientRTSPInterleavedClient {
         host: NWEndpoint.Host,
         port: NWEndpoint.Port,
         localHost: NWEndpoint.Host?
-    ) throws -> ShadowClientUDPDatagramSocket {
+    ) async throws -> ShadowClientUDPDatagramSocket {
         let preferredLocalPort = negotiatedVideoPingPort()
         do {
             let socket = try ShadowClientUDPDatagramSocket(
@@ -5575,8 +5568,9 @@ private actor ShadowClientRTSPInterleavedClient {
                 remoteHost: host,
                 remotePort: port.rawValue
             )
+            let endpointDescription = await socket.localEndpointDescription()
             logger.notice(
-                "RTSP UDP video socket bound \(socket.localEndpointDescription(), privacy: .public) (preferred-client-port \(preferredLocalPort, privacy: .public))"
+                "RTSP UDP video socket bound \(endpointDescription, privacy: .public) (preferred-client-port \(preferredLocalPort, privacy: .public))"
             )
             return socket
         } catch {
@@ -5589,7 +5583,8 @@ private actor ShadowClientRTSPInterleavedClient {
                 remoteHost: host,
                 remotePort: port.rawValue
             )
-            logger.notice("RTSP UDP video socket bound \(socket.localEndpointDescription(), privacy: .public) (ephemeral-fallback)")
+            let endpointDescription = await socket.localEndpointDescription()
+            logger.notice("RTSP UDP video socket bound \(endpointDescription, privacy: .public) (ephemeral-fallback)")
             return socket
         }
     }
@@ -5612,7 +5607,7 @@ private actor ShadowClientRTSPInterleavedClient {
         negotiatedClientPortBase
     }
 
-    private func prepareVideoPingBeforePlay(host: NWEndpoint.Host) {
+    private func prepareVideoPingBeforePlay(host: NWEndpoint.Host) async {
         guard prePlayVideoUDPSocket == nil,
               let videoServerPort
         else {
@@ -5620,7 +5615,7 @@ private actor ShadowClientRTSPInterleavedClient {
         }
 
         do {
-            let socket = try makeVideoUDPSocket(
+            let socket = try await makeVideoUDPSocket(
                 host: host,
                 port: videoServerPort,
                 localHost: localHost
@@ -5632,7 +5627,7 @@ private actor ShadowClientRTSPInterleavedClient {
                 negotiatedPayload: videoPingPayload
             )
             for packet in prePlayPings {
-                try socket.send(packet)
+                try await socket.send(packet)
             }
             logger.notice(
                 "RTSP UDP video pre-PLAY ping sent (variants=\(prePlayPings.count, privacy: .public), bytes=\(prePlayPings.first?.count ?? 0, privacy: .public))"
@@ -5649,7 +5644,7 @@ private actor ShadowClientRTSPInterleavedClient {
                         negotiatedPayload: payload
                     )
                     for packet in pingPackets {
-                        try? socket.send(packet)
+                        try? await socket.send(packet)
                     }
                     if loggedSendCount < 2 {
                         logger.debug("RTSP UDP video pre-PLAY warmup ping sent (sequence=\(sequence, privacy: .public), variants=\(pingPackets.count, privacy: .public))")
@@ -5661,7 +5656,9 @@ private actor ShadowClientRTSPInterleavedClient {
         } catch {
             prePlayVideoPingWarmupTask?.cancel()
             prePlayVideoPingWarmupTask = nil
-            prePlayVideoUDPSocket?.close()
+            if let prePlayVideoUDPSocket {
+                await prePlayVideoUDPSocket.close()
+            }
             prePlayVideoUDPSocket = nil
             logger.error("RTSP UDP video pre-PLAY ping setup failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -6101,73 +6098,76 @@ private actor ShadowClientRTSPInterleavedClient {
         _ connection: NWConnection,
         timeout: Duration
     ) async throws {
-        final class ReadyWaitGate: @unchecked Sendable {
-            private let lock = NSLock()
-            private let connection: NWConnection
+        actor ReadyWaitGate {
             private var continuation: CheckedContinuation<Void, Error>?
             private var timeoutTask: Task<Void, Never>?
-
-            init(connection: NWConnection) {
-                self.connection = connection
-            }
 
             func install(
                 continuation: CheckedContinuation<Void, Error>,
                 timeout: Duration,
-                timeoutError: @autoclosure @escaping () -> Error
+                timeoutError: @escaping @Sendable () -> Error,
+                onTimeout: @escaping @Sendable () -> Void
             ) {
-                lock.lock()
                 self.continuation = continuation
-                lock.unlock()
                 timeoutTask = Task {
                     do {
                         try await Task.sleep(for: timeout)
                     } catch {
                         return
                     }
-                    self.finish(.failure(timeoutError()))
-                    self.connection.cancel()
+                    if await self.finish(.failure(timeoutError())) {
+                        onTimeout()
+                    }
                 }
             }
 
-            func finish(_ result: Result<Void, Error>) {
-                lock.lock()
+            func finish(_ result: Result<Void, Error>) -> Bool {
                 guard let continuation else {
-                    lock.unlock()
-                    return
+                    return false
                 }
                 self.continuation = nil
                 let timeoutTask = self.timeoutTask
                 self.timeoutTask = nil
-                lock.unlock()
-
-                connection.stateUpdateHandler = nil
                 timeoutTask?.cancel()
                 continuation.resume(with: result)
-            }
-
-            func cancel() {
-                finish(.failure(CancellationError()))
-                connection.cancel()
+                return true
             }
         }
 
-        let gate = ReadyWaitGate(connection: connection)
+        let gate = ReadyWaitGate()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                gate.install(
-                    continuation: continuation,
-                    timeout: timeout,
-                    timeoutError: ShadowClientRTSPInterleavedClientError.connectionFailed
-                )
+                Task {
+                    await gate.install(
+                        continuation: continuation,
+                        timeout: timeout,
+                        timeoutError: { ShadowClientRTSPInterleavedClientError.connectionFailed },
+                        onTimeout: {
+                            connection.stateUpdateHandler = nil
+                            connection.cancel()
+                        }
+                    )
+                }
                 connection.stateUpdateHandler = { state in
                     switch state {
                     case .ready:
-                        gate.finish(.success(()))
+                        Task {
+                            if await gate.finish(.success(())) {
+                                connection.stateUpdateHandler = nil
+                            }
+                        }
                     case let .failed(error):
-                        gate.finish(.failure(error))
+                        Task {
+                            if await gate.finish(.failure(error)) {
+                                connection.stateUpdateHandler = nil
+                            }
+                        }
                     case .cancelled:
-                        gate.finish(.failure(ShadowClientRTSPInterleavedClientError.connectionClosed))
+                        Task {
+                            if await gate.finish(.failure(ShadowClientRTSPInterleavedClientError.connectionClosed)) {
+                                connection.stateUpdateHandler = nil
+                            }
+                        }
                     default:
                         break
                     }
@@ -6175,7 +6175,12 @@ private actor ShadowClientRTSPInterleavedClient {
                 connection.start(queue: self.queue)
             }
         } onCancel: {
-            gate.cancel()
+            Task {
+                if await gate.finish(.failure(CancellationError())) {
+                    connection.stateUpdateHandler = nil
+                    connection.cancel()
+                }
+            }
         }
     }
 
@@ -6279,11 +6284,10 @@ private enum ShadowClientUDPDatagramSocketError: Error {
     case socketFailure(String)
 }
 
-private final class ShadowClientUDPDatagramSocket: @unchecked Sendable {
+private actor ShadowClientUDPDatagramSocket {
     private let descriptor: Int32
     private var remoteAddress: sockaddr_in
     private let addressLength = socklen_t(MemoryLayout<sockaddr_in>.size)
-    private let closeLock = NSLock()
     private var isClosed = false
     private var receiveBuffer: [UInt8] = Array(
         repeating: 0,
@@ -6355,7 +6359,7 @@ private final class ShadowClientUDPDatagramSocket: @unchecked Sendable {
             throw ShadowClientUDPDatagramSocketError.socketFailure(message)
         }
 
-        var connectedRemoteAddress = self.remoteAddress
+        var connectedRemoteAddress = remoteAddress
         let connectStatus = withUnsafePointer(to: &connectedRemoteAddress) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
                 connect(descriptor, sockaddrPointer, addressLength)
@@ -6366,10 +6370,6 @@ private final class ShadowClientUDPDatagramSocket: @unchecked Sendable {
             Darwin.close(descriptor)
             throw ShadowClientUDPDatagramSocketError.socketFailure(message)
         }
-    }
-
-    deinit {
-        close()
     }
 
     func send(_ datagram: Data) throws {
@@ -6462,23 +6462,14 @@ private final class ShadowClientUDPDatagramSocket: @unchecked Sendable {
     }
 
     func close() {
-        closeLock.lock()
-        let shouldClose = !isClosed
-        if shouldClose {
+        if !isClosed {
             isClosed = true
-        }
-        closeLock.unlock()
-
-        if shouldClose {
             Darwin.close(descriptor)
         }
     }
 
     private func isSocketMarkedClosed() -> Bool {
-        closeLock.lock()
-        let closed = isClosed
-        closeLock.unlock()
-        return closed
+        isClosed
     }
 
     private static func makeLocalIPv4Address(

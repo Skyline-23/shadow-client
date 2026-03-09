@@ -117,7 +117,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             .outputRealtimePendingDurationCapMs
 
         do {
-            let resolvedDecoder = try ShadowClientRealtimeAudioDecoderFactory.make(
+            let resolvedDecoder = try await ShadowClientRealtimeAudioDecoderFactory.make(
                 for: resolvedTrack
             )
             let queuePressureProfile = Self.audioQueuePressureProfile(
@@ -403,7 +403,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 )
             }
 
-            let enqueueDecodedBuffer: (AVAudioPCMBuffer, String, Bool) -> Void = { pcmBuffer, source, shouldDropDueToPendingPressure in
+            let enqueueDecodedBuffer: (AVAudioPCMBuffer, String, Bool) async -> Void = { pcmBuffer, source, shouldDropDueToPendingPressure in
                 if shouldDropDueToPendingPressure {
                     registerOutputQueuePressureDrop(1, "drop-shadow-lbq-pending-audio-duration")
                     return
@@ -425,7 +425,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     consecutiveDroppedOutputBuffers = 0
                 }
 
-                if audioOutput.enqueue(pcmBuffer: pcmBuffer) {
+                if await audioOutput.enqueue(pcmBuffer: pcmBuffer) {
                     logFirstDecodedBufferIfNeeded(pcmBuffer.frameLength, source)
                     return
                 }
@@ -435,7 +435,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             while !Task.isCancelled {
                 let nowUptime = ProcessInfo.processInfo.systemUptime
                 let isDecodeCooldownActive = nowUptime < decodeCooldownUntilUptime
-                let availableOutputSlots = audioOutput.availableEnqueueSlots
+                let availableOutputSlots = await audioOutput.availableEnqueueSlots()
                 let drainLimit = Self.audioReadyPacketDrainLimit(
                     isDecodeCooldownActive: isDecodeCooldownActive,
                     availableOutputSlots: availableOutputSlots,
@@ -484,7 +484,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         lastDecodedSequenceNumber = packet.sequenceNumber
                         continue
                     }
-                    let availableOutputSlotsForPacket = audioOutput.availableEnqueueSlots
+                    let availableOutputSlotsForPacket = await audioOutput.availableEnqueueSlots()
                     if Self.shouldRequeueReadyPacketsForUnavailableOutputSlots(
                         availableOutputSlots: availableOutputSlotsForPacket
                     ) {
@@ -556,7 +556,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                     payload: recoveredDecodePayload,
                                     decodeFEC: false
                                 ) {
-                                    enqueueDecodedBuffer(
+                                    await enqueueDecodedBuffer(
                                         recoveredPCMBuffer,
                                         "rs-fec",
                                         false
@@ -598,7 +598,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                                 let concealmentBuffer = (try? decoder.decodePacketLossConcealment(
                                     samplesPerChannel: moonlightPLCSamplesPerChannel
                                 )) ?? silenceBuffer
-                                enqueueDecodedBuffer(
+                                await enqueueDecodedBuffer(
                                     concealmentBuffer,
                                     "plc",
                                     false
@@ -648,7 +648,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                             payload: decodePayload,
                             decodeFEC: false
                         ) {
-                            enqueueDecodedBuffer(
+                            await enqueueDecodedBuffer(
                                 pcmBuffer,
                                 "primary",
                                 false
@@ -1004,79 +1004,84 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         _ connection: NWConnection,
         timeout: Duration
     ) async throws {
-        final class ReadyWaitGate: @unchecked Sendable {
-            private let lock = NSLock()
-            private let connection: NWConnection
+        actor ReadyWaitGate {
             private var continuation: CheckedContinuation<Void, Error>?
             private var timeoutTask: Task<Void, Never>?
-
-            init(connection: NWConnection) {
-                self.connection = connection
-            }
 
             func install(
                 continuation: CheckedContinuation<Void, Error>,
                 timeout: Duration,
-                timeoutError: @autoclosure @escaping () -> Error
+                timeoutError: @escaping @Sendable () -> Error,
+                onTimeout: @escaping @Sendable () -> Void
             ) {
-                lock.lock()
                 self.continuation = continuation
-                lock.unlock()
                 timeoutTask = Task {
                     do {
                         try await Task.sleep(for: timeout)
                     } catch {
                         return
                     }
-                    self.finish(.failure(timeoutError()))
-                    self.connection.cancel()
+                    if await self.finish(.failure(timeoutError())) {
+                        onTimeout()
+                    }
                 }
             }
 
-            func finish(_ result: Result<Void, Error>) {
-                lock.lock()
+            func finish(_ result: Result<Void, Error>) -> Bool {
                 guard let continuation else {
-                    lock.unlock()
-                    return
+                    return false
                 }
                 self.continuation = nil
                 let timeoutTask = self.timeoutTask
                 self.timeoutTask = nil
-                lock.unlock()
-
-                connection.stateUpdateHandler = nil
                 timeoutTask?.cancel()
                 continuation.resume(with: result)
-            }
-
-            func cancel() {
-                finish(.failure(CancellationError()))
-                connection.cancel()
+                return true
             }
         }
 
-        let gate = ReadyWaitGate(connection: connection)
+        let gate = ReadyWaitGate()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                gate.install(
-                    continuation: continuation,
-                    timeout: timeout,
-                    timeoutError: NSError(
-                        domain: "ShadowClientRealtimeAudioSessionRuntime",
-                        code: 1,
-                        userInfo: [
-                            NSLocalizedDescriptionKey: "Audio UDP connection timed out.",
-                        ]
+                Task {
+                    await gate.install(
+                        continuation: continuation,
+                        timeout: timeout,
+                        timeoutError: {
+                            NSError(
+                                domain: "ShadowClientRealtimeAudioSessionRuntime",
+                                code: 1,
+                                userInfo: [
+                                    NSLocalizedDescriptionKey: "Audio UDP connection timed out.",
+                                ]
+                            )
+                        },
+                        onTimeout: {
+                            connection.stateUpdateHandler = nil
+                            connection.cancel()
+                        }
                     )
-                )
+                }
                 connection.stateUpdateHandler = { state in
                     switch state {
                     case .ready:
-                        gate.finish(.success(()))
+                        Task {
+                            if await gate.finish(.success(())) {
+                                connection.stateUpdateHandler = nil
+                            }
+                        }
                     case let .failed(error):
-                        gate.finish(.failure(error))
+                        Task {
+                            if await gate.finish(.failure(error)) {
+                                connection.stateUpdateHandler = nil
+                            }
+                        }
                     case .cancelled:
-                        gate.finish(.failure(CancellationError()))
+                        Task {
+                            if await gate.finish(.failure(CancellationError())) {
+                                connection.stateUpdateHandler = nil
+                            }
+                        }
                     default:
                         break
                     }
@@ -1084,7 +1089,12 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 connection.start(queue: connectionQueue)
             }
         } onCancel: {
-            gate.cancel()
+            Task {
+                if await gate.finish(.failure(CancellationError())) {
+                    connection.stateUpdateHandler = nil
+                    connection.cancel()
+                }
+            }
         }
     }
 
@@ -1675,7 +1685,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         preferredSurroundChannelCount: Int = 6,
         sampleRate: Int = 48_000,
         maximumOutputChannels: Int? = nil
-    ) -> Int {
+    ) async -> Int {
         guard surroundRequested else {
             return 2
         }
@@ -1704,14 +1714,14 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             controlURL: nil,
             formatParameters: [:]
         )
-        guard ShadowClientRealtimeAudioDecoderFactory.canDecode(track: surroundTrack) else {
+        guard await ShadowClientRealtimeAudioDecoderFactory.canDecode(track: surroundTrack) else {
             return 2
         }
         return negotiatedSurroundChannels
     }
 
-    public static func canDecode(track: ShadowClientRTSPAudioTrackDescriptor) -> Bool {
-        ShadowClientRealtimeAudioDecoderFactory.canDecode(track: track)
+    public static func canDecode(track: ShadowClientRTSPAudioTrackDescriptor) async -> Bool {
+        await ShadowClientRealtimeAudioDecoderFactory.canDecode(track: track)
     }
 }
 
@@ -2182,9 +2192,9 @@ private extension ShadowClientRealtimeAudioPacketDecoding {
 }
 
 private enum ShadowClientRealtimeAudioDecoderFactory {
-    static func canDecode(track: ShadowClientRTSPAudioTrackDescriptor) -> Bool {
+    static func canDecode(track: ShadowClientRTSPAudioTrackDescriptor) async -> Bool {
         do {
-            _ = try make(for: track)
+            _ = try await make(for: track)
             return true
         } catch {
             return false
@@ -2193,8 +2203,8 @@ private enum ShadowClientRealtimeAudioDecoderFactory {
 
     static func make(
         for track: ShadowClientRTSPAudioTrackDescriptor
-    ) throws -> any ShadowClientRealtimeAudioPacketDecoding {
-        let customDecoderAttempt = makeCustomDecoderAttempt(for: track)
+    ) async throws -> any ShadowClientRealtimeAudioPacketDecoding {
+        let customDecoderAttempt = await makeCustomDecoderAttempt(for: track)
         switch track.codec {
         case .opus:
             if let customDecoder = customDecoderAttempt.decoder {
@@ -2256,9 +2266,9 @@ private enum ShadowClientRealtimeAudioDecoderFactory {
 
     private static func makeCustomDecoderAttempt(
         for track: ShadowClientRTSPAudioTrackDescriptor
-    ) -> (decoder: (any ShadowClientRealtimeCustomAudioDecoder)?, error: Error?) {
+    ) async -> (decoder: (any ShadowClientRealtimeCustomAudioDecoder)?, error: Error?) {
         do {
-            let decoder = try ShadowClientRealtimeCustomAudioDecoderRegistry.makeDecoder(
+            let decoder = try await ShadowClientRealtimeCustomAudioDecoderRegistry.makeDecoder(
                 for: track
             )
             return (decoder, nil)
@@ -2540,6 +2550,89 @@ private final class ShadowClientRealtimeG711AudioDecoder: ShadowClientRealtimeAu
 private final class ShadowClientRealtimeAudioEngineOutput {
     private static let minimumQueuedBufferCount = 4
 
+    private actor QueuedBufferState {
+        private let maximumQueuedBufferCount: Int
+        private let nominalFramesPerBuffer: Double
+        private let maximumQueuedFrameEstimate: Double
+        private let sampleRate: Double
+        private var queuedBufferCount = 0
+        private var queuedFrameEstimate: Double = 0
+        private var lastQueueEstimateUptime = ProcessInfo.processInfo.systemUptime
+
+        init(
+            maximumQueuedBufferCount: Int,
+            nominalFramesPerBuffer: Double,
+            maximumQueuedFrameEstimate: Double,
+            sampleRate: Double
+        ) {
+            self.maximumQueuedBufferCount = maximumQueuedBufferCount
+            self.nominalFramesPerBuffer = nominalFramesPerBuffer
+            self.maximumQueuedFrameEstimate = maximumQueuedFrameEstimate
+            self.sampleRate = sampleRate
+        }
+
+        func reserve(
+            incomingFrameCount: Double,
+            nowUptime: TimeInterval
+        ) -> Bool {
+            refreshQueuedFrameEstimate(nowUptime: nowUptime)
+            guard queuedFrameEstimate + incomingFrameCount <= maximumQueuedFrameEstimate else {
+                return false
+            }
+            queuedBufferCount += 1
+            queuedFrameEstimate += incomingFrameCount
+            return true
+        }
+
+        func hasCapacity(nowUptime: TimeInterval) -> Bool {
+            refreshQueuedFrameEstimate(nowUptime: nowUptime)
+            return queuedFrameEstimate < maximumQueuedFrameEstimate
+        }
+
+        func pendingDurationMs(nowUptime: TimeInterval) -> Double {
+            refreshQueuedFrameEstimate(nowUptime: nowUptime)
+            guard sampleRate > 0 else {
+                return 0
+            }
+            return (queuedFrameEstimate / sampleRate) * 1_000.0
+        }
+
+        func availableEnqueueSlots(nowUptime: TimeInterval) -> Int {
+            refreshQueuedFrameEstimate(nowUptime: nowUptime)
+            let remainingFrames = max(0, maximumQueuedFrameEstimate - queuedFrameEstimate)
+            return max(
+                0,
+                min(
+                    maximumQueuedBufferCount,
+                    Int((remainingFrames / nominalFramesPerBuffer).rounded(.down))
+                )
+            )
+        }
+
+        func reset(nowUptime: TimeInterval) {
+            queuedBufferCount = 0
+            queuedFrameEstimate = 0
+            lastQueueEstimateUptime = nowUptime
+        }
+
+        func didConsume(nowUptime: TimeInterval) {
+            refreshQueuedFrameEstimate(nowUptime: nowUptime)
+            queuedBufferCount = max(0, queuedBufferCount - 1)
+        }
+
+        private func refreshQueuedFrameEstimate(nowUptime: TimeInterval) {
+            let elapsed = max(0, nowUptime - lastQueueEstimateUptime)
+            guard elapsed > 0 else {
+                return
+            }
+            let consumedFrames = elapsed * sampleRate
+            if consumedFrames > 0 {
+                queuedFrameEstimate = max(0, queuedFrameEstimate - consumedFrames)
+            }
+            lastQueueEstimateUptime = nowUptime
+        }
+    }
+
     private let engine = AVAudioEngine()
     private var player = AVAudioPlayerNode()
     private let engineQueue = DispatchQueue(
@@ -2550,10 +2643,7 @@ private final class ShadowClientRealtimeAudioEngineOutput {
     private let maximumQueuedBufferCount: Int
     private let nominalFramesPerBuffer: Double
     private let maximumQueuedFrameEstimate: Double
-    private let queuedBufferLock = NSLock()
-    private var queuedBufferCount = 0
-    private var queuedFrameEstimate: Double = 0
-    private var lastQueueEstimateUptime = ProcessInfo.processInfo.systemUptime
+    private let queuedBufferState: QueuedBufferState
     private var isStarted = false
     private var isTerminated = false
     private var isGraphConfigured = false
@@ -2580,6 +2670,12 @@ private final class ShadowClientRealtimeAudioEngineOutput {
         self.maximumQueuedFrameEstimate = min(
             maximumPendingFramesFromCount,
             max(self.nominalFramesPerBuffer, maximumPendingFramesFromDuration)
+        )
+        self.queuedBufferState = QueuedBufferState(
+            maximumQueuedBufferCount: self.maximumQueuedBufferCount,
+            nominalFramesPerBuffer: self.nominalFramesPerBuffer,
+            maximumQueuedFrameEstimate: self.maximumQueuedFrameEstimate,
+            sampleRate: format.sampleRate
         )
         var initializationState = 0
         engineQueue.sync {
@@ -2627,72 +2723,51 @@ private final class ShadowClientRealtimeAudioEngineOutput {
         }
     }
 
-    func enqueue(pcmBuffer: AVAudioPCMBuffer) -> Bool {
+    func enqueue(pcmBuffer: AVAudioPCMBuffer) async -> Bool {
         let incomingFrameCount = max(1, Double(pcmBuffer.frameLength))
         let nowUptime = ProcessInfo.processInfo.systemUptime
-        queuedBufferLock.lock()
-        refreshQueuedFrameEstimateLocked(nowUptime: nowUptime)
-        guard queuedFrameEstimate + incomingFrameCount <= maximumQueuedFrameEstimate else {
-            queuedBufferLock.unlock()
+        guard await queuedBufferState.reserve(
+            incomingFrameCount: incomingFrameCount,
+            nowUptime: nowUptime
+        ) else {
             return false
         }
-        queuedBufferCount += 1
-        queuedFrameEstimate += incomingFrameCount
-        queuedBufferLock.unlock()
 
-        return engineQueue.sync {
+        let enqueued = engineQueue.sync {
             guard !isTerminated else {
-                didConsumeQueuedBuffer()
                 return false
             }
 
             guard ensurePlaybackReadyLocked() else {
-                didConsumeQueuedBuffer()
                 return false
             }
 
             player.scheduleBuffer(
                 pcmBuffer,
                 completionCallbackType: .dataConsumed
-            ) { [weak self] _ in
-                self?.didConsumeQueuedBuffer()
+            ) { [queuedBufferState] _ in
+                Task {
+                    await queuedBufferState.didConsume(nowUptime: ProcessInfo.processInfo.systemUptime)
+                }
             }
             return true
         }
-    }
-
-    var hasEnqueueCapacity: Bool {
-        queuedBufferLock.lock()
-        refreshQueuedFrameEstimateLocked(nowUptime: ProcessInfo.processInfo.systemUptime)
-        let hasCapacity = queuedFrameEstimate < maximumQueuedFrameEstimate
-        queuedBufferLock.unlock()
-        return hasCapacity
-    }
-
-    var pendingDurationMs: Double {
-        queuedBufferLock.lock()
-        refreshQueuedFrameEstimateLocked(nowUptime: ProcessInfo.processInfo.systemUptime)
-        let pendingFrames = queuedFrameEstimate
-        queuedBufferLock.unlock()
-        guard format.sampleRate > 0 else {
-            return 0
+        if !enqueued {
+            await queuedBufferState.didConsume(nowUptime: ProcessInfo.processInfo.systemUptime)
         }
-        return (pendingFrames / format.sampleRate) * 1_000.0
+        return enqueued
     }
 
-    var availableEnqueueSlots: Int {
-        queuedBufferLock.lock()
-        refreshQueuedFrameEstimateLocked(nowUptime: ProcessInfo.processInfo.systemUptime)
-        let remainingFrames = max(0, maximumQueuedFrameEstimate - queuedFrameEstimate)
-        let available = max(
-            0,
-            min(
-                maximumQueuedBufferCount,
-                Int((remainingFrames / nominalFramesPerBuffer).rounded(.down))
-            )
-        )
-        queuedBufferLock.unlock()
-        return available
+    func hasEnqueueCapacity() async -> Bool {
+        await queuedBufferState.hasCapacity(nowUptime: ProcessInfo.processInfo.systemUptime)
+    }
+
+    func pendingDurationMs() async -> Double {
+        await queuedBufferState.pendingDurationMs(nowUptime: ProcessInfo.processInfo.systemUptime)
+    }
+
+    func availableEnqueueSlots() async -> Int {
+        await queuedBufferState.availableEnqueueSlots(nowUptime: ProcessInfo.processInfo.systemUptime)
     }
 
     func stop() {
@@ -2713,11 +2788,10 @@ private final class ShadowClientRealtimeAudioEngineOutput {
             isStarted = false
         }
 
-        queuedBufferLock.lock()
-        queuedBufferCount = 0
-        queuedFrameEstimate = 0
-        lastQueueEstimateUptime = ProcessInfo.processInfo.systemUptime
-        queuedBufferLock.unlock()
+        let queuedBufferState = self.queuedBufferState
+        Task {
+            await queuedBufferState.reset(nowUptime: ProcessInfo.processInfo.systemUptime)
+        }
     }
 
     func recoverPlaybackUnderPressure() -> Bool {
@@ -2728,11 +2802,10 @@ private final class ShadowClientRealtimeAudioEngineOutput {
             guard rebuildGraphAndStartLocked() else {
                 return false
             }
-            queuedBufferLock.lock()
-            queuedBufferCount = 0
-            queuedFrameEstimate = 0
-            lastQueueEstimateUptime = ProcessInfo.processInfo.systemUptime
-            queuedBufferLock.unlock()
+            let queuedBufferState = self.queuedBufferState
+            Task {
+                await queuedBufferState.reset(nowUptime: ProcessInfo.processInfo.systemUptime)
+            }
             return true
         }
     }
@@ -2740,25 +2813,6 @@ private final class ShadowClientRealtimeAudioEngineOutput {
     var debugFormatDescription: String {
         let interleaving = format.isInterleaved ? "interleaved" : "planar"
         return "\(String(describing: format.commonFormat))/\(format.channelCount)ch/\(Int(format.sampleRate))Hz/\(interleaving)"
-    }
-
-    private func didConsumeQueuedBuffer() {
-        queuedBufferLock.lock()
-        refreshQueuedFrameEstimateLocked(nowUptime: ProcessInfo.processInfo.systemUptime)
-        queuedBufferCount = max(0, queuedBufferCount - 1)
-        queuedBufferLock.unlock()
-    }
-
-    private func refreshQueuedFrameEstimateLocked(nowUptime: TimeInterval) {
-        let elapsed = max(0, nowUptime - lastQueueEstimateUptime)
-        guard elapsed > 0 else {
-            return
-        }
-        let consumedFrames = elapsed * format.sampleRate
-        if consumedFrames > 0 {
-            queuedFrameEstimate = max(0, queuedFrameEstimate - consumedFrames)
-        }
-        lastQueueEstimateUptime = nowUptime
     }
 
     private func configureGraphLocked() -> Bool {

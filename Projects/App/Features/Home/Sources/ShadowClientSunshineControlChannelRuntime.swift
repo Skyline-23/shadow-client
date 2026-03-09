@@ -703,42 +703,44 @@ actor ShadowClientSunshineControlChannelRuntime {
         ) { group in
             group.addTask {
                 await withCheckedContinuation { continuation in
-                    final class ResumeGate: @unchecked Sendable {
-                        private let lock = NSLock()
-                        private let connection: NWConnection
+                    actor ResumeGate {
                         private var continuation: CheckedContinuation<Result<Void, Error>, Never>?
 
-                        init(
-                            connection: NWConnection,
-                            continuation: CheckedContinuation<Result<Void, Error>, Never>
-                        ) {
-                            self.connection = connection
+                        init(continuation: CheckedContinuation<Result<Void, Error>, Never>) {
                             self.continuation = continuation
                         }
 
-                        func finish(_ result: Result<Void, Error>) {
-                            lock.lock()
+                        func finish(_ result: Result<Void, Error>) -> Bool {
                             guard let continuation else {
-                                lock.unlock()
-                                return
+                                return false
                             }
                             self.continuation = nil
-                            lock.unlock()
-
-                            connection.stateUpdateHandler = nil
                             continuation.resume(returning: result)
+                            return true
                         }
                     }
 
-                    let gate = ResumeGate(connection: connection, continuation: continuation)
+                    let gate = ResumeGate(continuation: continuation)
                     connection.stateUpdateHandler = { state in
                         switch state {
                         case .ready:
-                            gate.finish(.success(()))
+                            Task {
+                                if await gate.finish(.success(())) {
+                                    connection.stateUpdateHandler = nil
+                                }
+                            }
                         case let .failed(error):
-                            gate.finish(.failure(error))
+                            Task {
+                                if await gate.finish(.failure(error)) {
+                                    connection.stateUpdateHandler = nil
+                                }
+                            }
                         case .cancelled:
-                            gate.finish(.failure(ShadowClientSunshineControlChannelError.connectionClosed))
+                            Task {
+                                if await gate.finish(.failure(ShadowClientSunshineControlChannelError.connectionClosed)) {
+                                    connection.stateUpdateHandler = nil
+                                }
+                            }
                         default:
                             break
                         }

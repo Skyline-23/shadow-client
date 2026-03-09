@@ -27,40 +27,53 @@ public extension ShadowClientRealtimeCustomAudioDecoder {
 public typealias ShadowClientRealtimeCustomAudioDecoderProvider =
     (ShadowClientRTSPAudioTrackDescriptor) throws -> (any ShadowClientRealtimeCustomAudioDecoder)?
 
-public enum ShadowClientRealtimeCustomAudioDecoderRegistry {
-    private static let lock = NSLock()
-    private static var providers: [ShadowClientRealtimeCustomAudioDecoderProvider] = []
+private actor ShadowClientRealtimeCustomAudioDecoderProviderStore {
+    private var providers: [ShadowClientRealtimeCustomAudioDecoderProvider] = []
 
-    public static func register(
+    func register(
         provider: @escaping ShadowClientRealtimeCustomAudioDecoderProvider,
-        preferred: Bool = true
+        preferred: Bool
     ) {
-        lock.lock()
         if preferred {
             providers.insert(provider, at: 0)
         } else {
             providers.append(provider)
         }
-        lock.unlock()
     }
 
-    public static func clearProviders() {
-        lock.lock()
+    func clearProviders() {
         providers.removeAll(keepingCapacity: false)
-        lock.unlock()
     }
 
-    static func makeDecoder(
+    func makeDecoder(
         for track: ShadowClientRTSPAudioTrackDescriptor
     ) throws -> (any ShadowClientRealtimeCustomAudioDecoder)? {
-        lock.lock()
-        let providers = self.providers
-        lock.unlock()
         for provider in providers {
             if let decoder = try provider(track) {
                 return decoder
             }
         }
         return nil
+    }
+}
+
+public enum ShadowClientRealtimeCustomAudioDecoderRegistry {
+    private static let store = ShadowClientRealtimeCustomAudioDecoderProviderStore()
+
+    public static func register(
+        provider: @escaping ShadowClientRealtimeCustomAudioDecoderProvider,
+        preferred: Bool = true
+    ) async {
+        await store.register(provider: provider, preferred: preferred)
+    }
+
+    public static func clearProviders() async {
+        await store.clearProviders()
+    }
+
+    static func makeDecoder(
+        for track: ShadowClientRTSPAudioTrackDescriptor
+    ) async throws -> (any ShadowClientRealtimeCustomAudioDecoder)? {
+        try await store.makeDecoder(for: track)
     }
 }

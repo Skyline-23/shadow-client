@@ -36,7 +36,7 @@ var remoteSessionFlowView: some View {
 
                     ShadowClientSessionInputInteractionView(
                         referenceVideoSizeProvider: {
-                            sessionSurfaceContext.frameStore.snapshotSize()
+                            sessionSurfaceContext.videoPresentationSize
                         }
                     ) { event in
                         remoteDesktopRuntime.sendInput(event)

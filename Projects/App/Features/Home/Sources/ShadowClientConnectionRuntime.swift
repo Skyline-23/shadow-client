@@ -245,46 +245,39 @@ public enum NativeTCPHostProbe {
         queue: DispatchQueue
     ) async -> Bool {
         await withCheckedContinuation { continuation in
-            final class ResumeGate: @unchecked Sendable {
-                private let lock = NSLock()
-                private let connection: NWConnection
+            actor ResumeGate {
                 private var continuation: CheckedContinuation<Bool, Never>?
 
-                init(
-                    connection: NWConnection,
-                    continuation: CheckedContinuation<Bool, Never>
-                ) {
-                    self.connection = connection
+                init(continuation: CheckedContinuation<Bool, Never>) {
                     self.continuation = continuation
                 }
 
-                func finish(with result: Bool) {
-                    lock.lock()
+                func finish(with result: Bool) -> Bool {
                     guard let continuation else {
-                        lock.unlock()
-                        return
+                        return false
                     }
                     self.continuation = nil
-                    lock.unlock()
-
-                    connection.stateUpdateHandler = nil
-                    if result {
-                        connection.cancel()
-                    }
                     continuation.resume(returning: result)
+                    return true
                 }
             }
 
-            let gate = ResumeGate(
-                connection: connection,
-                continuation: continuation
-            )
+            let gate = ResumeGate(continuation: continuation)
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    gate.finish(with: true)
+                    Task {
+                        if await gate.finish(with: true) {
+                            connection.stateUpdateHandler = nil
+                            connection.cancel()
+                        }
+                    }
                 case .failed, .cancelled:
-                    gate.finish(with: false)
+                    Task {
+                        if await gate.finish(with: false) {
+                            connection.stateUpdateHandler = nil
+                        }
+                    }
                 default:
                     break
                 }
