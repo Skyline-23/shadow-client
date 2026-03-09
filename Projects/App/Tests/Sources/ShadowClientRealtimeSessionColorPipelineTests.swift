@@ -139,11 +139,11 @@ func colorPipelineKeepsSDRForBT20208BitWithoutTransferMetadata() throws {
     #expect(configuration.pixelFormat == .bgra8Unorm)
 }
 
-@Test("Color pipeline attaches explicit source color space for 10-bit YUV surfaces")
-func colorPipelineAttachesExplicitSourceColorSpaceForTenBitYUV() throws {
+@Test("Color pipeline leaves YUV surfaces to Core Image attachment-based color handling")
+func colorPipelineSkipsExplicitSourceColorSpaceForTenBitYUV() throws {
     let pixelBuffer = try makePixelBuffer(pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
     #expect(
-        ShadowClientRealtimeSessionColorPipeline.shouldAttachExplicitSourceColorSpace(
+        !ShadowClientRealtimeSessionColorPipeline.shouldAttachExplicitSourceColorSpace(
             for: pixelBuffer
         )
     )

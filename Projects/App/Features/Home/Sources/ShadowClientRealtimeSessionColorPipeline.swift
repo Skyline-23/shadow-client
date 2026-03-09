@@ -30,11 +30,7 @@ enum ShadowClientRealtimeSessionColorPipeline {
         case kCVPixelFormatType_32BGRA,
              kCVPixelFormatType_32RGBA,
              kCVPixelFormatType_64RGBAHalf,
-             kCVPixelFormatType_128RGBAFloat,
-             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-             kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
-             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
+             kCVPixelFormatType_128RGBAFloat:
             return true
         default:
             return false
