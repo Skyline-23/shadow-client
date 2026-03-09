@@ -830,6 +830,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         try await rtspClient.sendInput(event)
     }
 
+    public func requestVideoRefresh(reason: String = "application-reactivation") async {
+        await requestVideoRecoveryFrame(reason: reason)
+    }
+
     func sendInputKeepAlive() async throws {
         guard let rtspClient else {
             return
@@ -1613,6 +1617,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 minimumOutputStallSeconds: ShadowClientRealtimeSessionDefaults.videoQueuePressureRecoveryMinimumOutputStallSeconds
             )
             if hasRenderedFirstFrame, hasRecoverableFailureBurst {
+                let shouldPerformLocalDecoderReset =
+                    Self.shouldResetAV1DecoderAfterRecoverableFailureBurst(
+                        recoverableFailureCount: av1RecoverableDecoderFailureCount,
+                        now: now,
+                        lastDecoderRecoveryUptime: lastDecoderRecoveryUptime,
+                        recoveryCooldownSeconds: ShadowClientRealtimeSessionDefaults.decoderRecoveryCooldownSeconds
+                    )
                 if hasOutputStallEvidence {
                     logger.notice(
                         "AV1 decoder recoverable failure burst with output stall detected; requesting reference invalidation with sync-gate transition"
@@ -1621,6 +1632,27 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     logger.notice(
                         "AV1 decoder recoverable failure burst detected without output stall; forcing sync-gate transition to mask corrupted output"
                     )
+                }
+                if shouldPerformLocalDecoderReset {
+                    logger.notice(
+                        "AV1 decoder recoverable failure burst exceeded local-reset threshold; resetting decoder before recovery request"
+                    )
+                    lastDecoderRecoveryUptime = now
+                    await flushVideoPipelineForRecovery(codec: codec)
+                    await decoder.resetForRecovery()
+                    if let configuration = activeVideoConfiguration {
+                        await decoder.setPreferredOutputDimensions(
+                            width: configuration.width,
+                            height: configuration.height,
+                            fps: configuration.fps
+                        )
+                        await decoder.configureAV1Fallback(
+                            hdrEnabled: configuration.enableHDR,
+                            yuv444Enabled: configuration.enableYUV444
+                        )
+                    }
+                    av1RecoverableDecoderFailureCount = 0
+                    firstAV1RecoverableDecoderFailureUptime = 0
                 }
                 _ = await requestAV1ReferenceFrameInvalidationOrRecovery(
                     reason: "decoder-recoverable-soft",
@@ -2499,6 +2531,20 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         status == -12903
     }
 
+    static func shouldResetAV1DecoderAfterRecoverableFailureBurst(
+        recoverableFailureCount: Int,
+        now: TimeInterval,
+        lastDecoderRecoveryUptime: TimeInterval,
+        recoveryCooldownSeconds: TimeInterval
+    ) -> Bool {
+        guard shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
+            recoverableFailureCount
+        ) else {
+            return false
+        }
+        return now - lastDecoderRecoveryUptime >= max(0, recoveryCooldownSeconds)
+    }
+
     static func shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
         _ recoverableFailureCount: Int
     ) -> Bool {
@@ -3219,7 +3265,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     static func shouldAdoptVideoPayloadType(
         observedPayloadType: Int,
         currentPayloadType: Int,
-        audioPayloadType _: Int?,
+        audioPayloadType: Int?,
         videoPayloadCandidates _: Set<Int>
     ) -> Bool {
         guard observedPayloadType != currentPayloadType else {
@@ -3228,13 +3274,15 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         guard observedPayloadType != ShadowClientRealtimeSessionDefaults.ignoredRTPControlPayloadType else {
             return false
         }
+        guard observedPayloadType != audioPayloadType else {
+            return false
+        }
         guard (0 ... 127).contains(observedPayloadType) else {
             return false
         }
 
-        // Mirror Moonlight startup behavior: before first-frame lock, accept any
-        // valid RTP payload type seen on the video socket except control payload.
-        // Audio/video payload types may legally overlap across separate RTP streams.
+        // Before first-frame lock, accept video-socket RTP payload mismatches, but
+        // never adopt the negotiated audio payload type on the video path.
         return true
     }
 
@@ -5426,12 +5474,7 @@ private actor ShadowClientRTSPInterleavedClient {
         var fecUnrecoverableBurstCount = 0
         let receiveStart = ContinuousClock.now
         var lastVideoDatagramUptime = ProcessInfo.processInfo.systemUptime
-        var lastVideoDatagramInactivityRecoveryRequestUptime: TimeInterval = 0
         var hasPendingPostStartDatagramStall = false
-        let startupInactivityRecoveryCooldownSeconds = max(
-            0,
-            ShadowClientRealtimeSessionDefaults.videoRecoveryFrameRequestUnderPressureCooldownSeconds
-        )
 
         while !Task.isCancelled {
             guard let datagram = try udpSocket.receive(
@@ -5454,30 +5497,11 @@ private actor ShadowClientRTSPInterleavedClient {
                     datagramCount: datagramCount,
                     secondsSinceLastDatagram: secondsSinceLastDatagram
                 ) {
-                    hasPendingPostStartDatagramStall = true
-                    if ShadowClientRealtimeRTSPSessionRuntime.shouldRequestVideoRecoveryForUDPDatagramInactivity(
-                        now: now,
-                        lastRecoveryRequestUptime: lastVideoDatagramInactivityRecoveryRequestUptime,
-                        lastInteractiveInputEventUptime: lastInteractiveInputEventUptime,
-                        secondsSinceLastDatagram: secondsSinceLastDatagram
-                    ) {
-                        lastVideoDatagramInactivityRecoveryRequestUptime = now
-                        logger.error(
-                            "RTSP UDP video datagram stream stalled after startup (silence=\(secondsSinceLastDatagram, privacy: .public)s); requesting recovery frame without terminating session"
+                    if !hasPendingPostStartDatagramStall {
+                        logger.notice(
+                            "RTSP UDP video datagram silence observed after startup (silence=\(secondsSinceLastDatagram, privacy: .public)s); treating as idle video suppression and keeping session alive"
                         )
-                        await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
-                    }
-                    if ShadowClientRealtimeRTSPSessionRuntime.shouldRecycleUDPVideoSocketAfterInactivity(
-                        datagramCount: datagramCount,
-                        secondsSinceLastDatagram: secondsSinceLastDatagram
-                    ) {
-                        logger.error(
-                            "RTSP UDP video datagram inactivity exceeded in-session socket recycle threshold (silence=\(secondsSinceLastDatagram, privacy: .public)s); recycling UDP receive socket without relaunch"
-                        )
-                        await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
-                        throw ShadowClientRealtimeSessionRuntimeError.transportFailure(
-                            "RTSP UDP video receive recycle requested: prolonged datagram inactivity after startup"
-                        )
+                        hasPendingPostStartDatagramStall = true
                     }
                 }
                 continue
@@ -5492,7 +5516,6 @@ private actor ShadowClientRTSPInterleavedClient {
                     "RTSP UDP video datagram flow resumed after inactivity stall (silence=\(resumedAfterSilenceSeconds, privacy: .public)s)"
                 )
                 hasPendingPostStartDatagramStall = false
-                lastVideoDatagramInactivityRecoveryRequestUptime = 0
             }
             datagramCount += 1
             lastVideoDatagramUptime = ProcessInfo.processInfo.systemUptime

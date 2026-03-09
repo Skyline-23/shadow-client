@@ -459,8 +459,8 @@ func rtpPayloadParserSupportsSlicedDataInput() throws {
     #expect(parsed.payload.startIndex == 0)
 }
 
-@Test("RTSP video payload adoption allows audio PT overlap and still rejects control payload type")
-func rtspVideoPayloadAdoptionAllowsAudioPayloadOverlapAndRejectsControlPayloadType() {
+@Test("RTSP video payload adoption rejects audio payload type and control payload type")
+func rtspVideoPayloadAdoptionRejectsAudioAndControlPayloadTypes() {
     let audioTrack = ShadowClientRTSPAudioTrackDescriptor(
         codec: .opus,
         rtpPayloadType: 97,
@@ -471,7 +471,7 @@ func rtspVideoPayloadAdoptionAllowsAudioPayloadOverlapAndRejectsControlPayloadTy
     )
 
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldAdoptVideoPayloadType(
             observedPayloadType: 97,
             currentPayloadType: 98,
             audioPayloadType: audioTrack.rtpPayloadType,
@@ -1811,6 +1811,30 @@ func realtimeRuntimeStallDetectorRequiresFirstRenderedFrame() {
     #expect(!shouldRecover)
 }
 
+@Test("Realtime runtime keeps decoder stall recovery non-fatal when decode submissions are stale")
+func realtimeRuntimeKeepsDecoderStallRecoveryNonFatalWithoutRecentDecodeSubmit() {
+    let shouldKeepNonFatal =
+        ShadowClientRealtimeRTSPSessionRuntime.shouldKeepDecoderOutputStallRecoveryNonFatal(
+            now: 100.0,
+            lastDecodeSubmitUptime: 98.0,
+            recentIngressGraceSeconds: 1.25
+        )
+
+    #expect(shouldKeepNonFatal)
+}
+
+@Test("Realtime runtime allows normal decoder stall escalation when decode submissions are recent")
+func realtimeRuntimeAllowsDecoderStallEscalationWithRecentDecodeSubmit() {
+    let shouldKeepNonFatal =
+        ShadowClientRealtimeRTSPSessionRuntime.shouldKeepDecoderOutputStallRecoveryNonFatal(
+            now: 100.0,
+            lastDecodeSubmitUptime: 99.4,
+            recentIngressGraceSeconds: 1.25
+        )
+
+    #expect(!shouldKeepNonFatal)
+}
+
 @Test("Realtime runtime expands stall threshold when queue pressure and consumer-trim pressure are both active")
 func realtimeRuntimeStallThresholdExpansionUnderPressure() {
     let baseThreshold =
@@ -2150,8 +2174,8 @@ func realtimeRuntimeUDPVideoStallDetectorUsesPostStartInactivityThreshold() {
     )
 }
 
-@Test("Realtime runtime keeps post-start UDP inactivity in non-escalating recovery mode")
-func realtimeRuntimeUDPVideoInactivityEscalationRemainsDisabled() {
+@Test("Realtime runtime keeps post-start UDP inactivity non-terminal")
+func realtimeRuntimeUDPVideoInactivityEscalationThreshold() {
     #expect(
         !ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateUDPVideoDatagramInactivityToFallback(
             now: 10.0,
@@ -2178,10 +2202,51 @@ func realtimeRuntimeUDPVideoInactivityEscalationRemainsDisabled() {
     )
     #expect(
         !ShadowClientRealtimeRTSPSessionRuntime.shouldEscalateUDPVideoDatagramInactivityToFallback(
-            now: 22.0,
+            now: 25.0,
             firstObservedStallUptime: 10.0,
             lastInteractiveInputUptime: 10.5,
             fallbackThresholdSeconds: 12.0
+        )
+    )
+}
+
+@Test("Realtime runtime requests in-session UDP socket recycle after prolonged post-start inactivity")
+func realtimeRuntimeUDPVideoSocketRecycleClassifier() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldRecycleUDPVideoSocketAfterInactivity(
+            datagramCount: 0,
+            secondsSinceLastDatagram: 30.0,
+            recycleThresholdSeconds: 15.0
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldRecycleUDPVideoSocketAfterInactivity(
+            datagramCount: 24,
+            secondsSinceLastDatagram: 14.9,
+            recycleThresholdSeconds: 15.0
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldRecycleUDPVideoSocketAfterInactivity(
+            datagramCount: 24,
+            secondsSinceLastDatagram: 15.0,
+            recycleThresholdSeconds: 15.0
+        )
+    )
+}
+
+@Test("Realtime runtime requests in-session UDP socket recycle after prolonged startup inactivity")
+func realtimeRuntimeUDPVideoStartupSocketRecycleClassifier() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldRecycleUDPVideoSocketForStartupInactivity(
+            secondsSinceReceiveStart: 14.9,
+            recycleThresholdSeconds: 15.0
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldRecycleUDPVideoSocketForStartupInactivity(
+            secondsSinceReceiveStart: 15.0,
+            recycleThresholdSeconds: 15.0
         )
     )
 }
@@ -2227,12 +2292,22 @@ func realtimeRuntimeInterleavedFallbackClassifierIgnoresPostStartInactivityError
     )
 }
 
-@Test("Realtime runtime in-session UDP retry classifier treats transport termination as retryable")
+@Test("Realtime runtime in-session UDP retry classifier treats sustained inactivity as terminal")
 func realtimeRuntimeInSessionUDPReceiveRetryClassifier() {
-    let noDatagramError = NSError(
+    let noStartupDatagramError = NSError(
         domain: "ShadowClientTest",
         code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "RTSP UDP video timeout: no video datagram received"]
+        userInfo: [NSLocalizedDescriptionKey: "RTSP UDP video timeout: no startup datagrams received"]
+    )
+    let prolongedInactivityError = NSError(
+        domain: "ShadowClientTest",
+        code: 10,
+        userInfo: [NSLocalizedDescriptionKey: "RTSP UDP video timeout: prolonged datagram inactivity after startup"]
+    )
+    let recycleRequestedError = NSError(
+        domain: "ShadowClientTest",
+        code: 11,
+        userInfo: [NSLocalizedDescriptionKey: "RTSP UDP video receive recycle requested: prolonged datagram inactivity after startup"]
     )
     let nwStreamError = NSError(
         domain: "Network.NWError",
@@ -2251,8 +2326,16 @@ func realtimeRuntimeInSessionUDPReceiveRetryClassifier() {
     )
 
     #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime
+            .shouldRetryInSessionAfterUDPVideoReceiveError(noStartupDatagramError)
+    )
+    #expect(
         ShadowClientRealtimeRTSPSessionRuntime
-            .shouldRetryInSessionAfterUDPVideoReceiveError(noDatagramError)
+            .shouldRetryInSessionAfterUDPVideoReceiveError(prolongedInactivityError)
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime
+            .shouldRetryInSessionAfterUDPVideoReceiveError(recycleRequestedError)
     )
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime
@@ -2263,8 +2346,121 @@ func realtimeRuntimeInSessionUDPReceiveRetryClassifier() {
             .shouldRetryInSessionAfterUDPVideoReceiveError(closedError)
     )
     #expect(
-        !ShadowClientRealtimeRTSPSessionRuntime
+        ShadowClientRealtimeRTSPSessionRuntime
             .shouldRetryInSessionAfterUDPVideoReceiveError(unrelatedError)
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime
+            .shouldRetryInSessionAfterUDPVideoReceiveError(CancellationError())
+    )
+}
+
+@Test("Realtime runtime UDP inactivity recovery request is input-agnostic and cooldown-driven")
+func realtimeRuntimeUDPInactivityRecoveryRequestRequiresRecentInput() {
+    let now: TimeInterval = 100
+    let lastRecoveryRequest: TimeInterval = 95
+    let secondsSinceLastDatagram: TimeInterval = 5
+
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime
+            .shouldRequestVideoRecoveryForUDPDatagramInactivity(
+                now: now,
+                lastRecoveryRequestUptime: lastRecoveryRequest,
+                lastInteractiveInputEventUptime: 0,
+                secondsSinceLastDatagram: secondsSinceLastDatagram
+            )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime
+            .shouldRequestVideoRecoveryForUDPDatagramInactivity(
+                now: now,
+                lastRecoveryRequestUptime: lastRecoveryRequest,
+                lastInteractiveInputEventUptime: 80,
+                secondsSinceLastDatagram: secondsSinceLastDatagram
+            )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime
+            .shouldRequestVideoRecoveryForUDPDatagramInactivity(
+                now: now,
+                lastRecoveryRequestUptime: lastRecoveryRequest,
+                lastInteractiveInputEventUptime: 98,
+                secondsSinceLastDatagram: secondsSinceLastDatagram
+            )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime
+            .shouldRequestVideoRecoveryForUDPDatagramInactivity(
+                now: now,
+                lastRecoveryRequestUptime: 99.5,
+                lastInteractiveInputEventUptime: 99,
+                secondsSinceLastDatagram: secondsSinceLastDatagram
+            )
+    )
+}
+
+@Test("Realtime runtime gamepad interaction classifier requires explicit gamepad button input for UDP inactivity recovery")
+func realtimeRuntimeGamepadInteractionClassifierForUDPInactivityRecovery() {
+    let neutralJitterState = ShadowClientRemoteGamepadState(
+        controllerNumber: 0,
+        activeGamepadMask: 1,
+        buttonFlags: 0,
+        leftTrigger: 2,
+        rightTrigger: 1,
+        leftStickX: 320,
+        leftStickY: -512,
+        rightStickX: 780,
+        rightStickY: -640
+    )
+    let buttonPressedState = ShadowClientRemoteGamepadState(
+        controllerNumber: 0,
+        activeGamepadMask: 1,
+        buttonFlags: 1,
+        leftTrigger: 0,
+        rightTrigger: 0,
+        leftStickX: 0,
+        leftStickY: 0,
+        rightStickX: 0,
+        rightStickY: 0
+    )
+    let triggerActiveState = ShadowClientRemoteGamepadState(
+        controllerNumber: 0,
+        activeGamepadMask: 1,
+        buttonFlags: 0,
+        leftTrigger: 18,
+        rightTrigger: 0,
+        leftStickX: 0,
+        leftStickY: 0,
+        rightStickX: 0,
+        rightStickY: 0
+    )
+    let stickActiveState = ShadowClientRemoteGamepadState(
+        controllerNumber: 0,
+        activeGamepadMask: 1,
+        buttonFlags: 0,
+        leftTrigger: 0,
+        rightTrigger: 0,
+        leftStickX: 2400,
+        leftStickY: 0,
+        rightStickX: 0,
+        rightStickY: 0
+    )
+
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime
+            .shouldTreatGamepadStateAsInteractiveForUDPDatagramRecovery(neutralJitterState)
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime
+            .shouldTreatGamepadStateAsInteractiveForUDPDatagramRecovery(buttonPressedState)
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime
+            .shouldTreatGamepadStateAsInteractiveForUDPDatagramRecovery(triggerActiveState)
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime
+            .shouldTreatGamepadStateAsInteractiveForUDPDatagramRecovery(stickActiveState)
     )
 }
 
@@ -2497,6 +2693,34 @@ func realtimeRuntimeAV1SoftRecoveryRequestThreshold() {
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime.shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
             3
+        )
+    )
+}
+
+@Test("Realtime runtime AV1 recoverable failure burst can trigger local decoder reset")
+func realtimeRuntimeAV1RecoverableFailureBurstLocalResetThreshold() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldResetAV1DecoderAfterRecoverableFailureBurst(
+            recoverableFailureCount: 2,
+            now: 10.0,
+            lastDecoderRecoveryUptime: 0,
+            recoveryCooldownSeconds: 0.75
+        )
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldResetAV1DecoderAfterRecoverableFailureBurst(
+            recoverableFailureCount: 3,
+            now: 10.0,
+            lastDecoderRecoveryUptime: 0,
+            recoveryCooldownSeconds: 0.75
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldResetAV1DecoderAfterRecoverableFailureBurst(
+            recoverableFailureCount: 3,
+            now: 10.0,
+            lastDecoderRecoveryUptime: 9.6,
+            recoveryCooldownSeconds: 0.75
         )
     )
 }

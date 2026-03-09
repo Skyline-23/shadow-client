@@ -85,6 +85,8 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let initialVideoDatagramTimeout: Duration = .seconds(10)
     public static let postStartVideoDatagramInactivityTimeoutSeconds: TimeInterval = 4.0
     public static let postStartVideoDatagramInactivityFallbackThresholdSeconds: TimeInterval = 12.0
+    public static let postStartVideoDatagramInactivitySocketRecycleThresholdSeconds: TimeInterval = 15.0
+    public static let postStartVideoDatagramRecoveryInputWindowSeconds: TimeInterval = 3.0
     public static let udpParseFailureLogLimit = 6
     public static let minimumTransportReadLength = 1
     public static let maximumTransportReadLength = 64 * 1_024
@@ -142,6 +144,7 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let av1DecoderFastFallbackFailureThreshold = 3
     public static let decoderOutputStallThresholdSeconds: TimeInterval = 2.2
     public static let decoderOutputStallActiveDecodeWindowSeconds: TimeInterval = 0.45
+    public static let decoderOutputStallRecentIngressGraceSeconds: TimeInterval = 1.25
     public static let decoderOutputStallThresholdUnderPressureMultiplier: TimeInterval = 1.75
     public static let decoderOutputStallThresholdConsumerTrimMultiplier: TimeInterval = 2.25
     public static let decoderOutputStallActiveDecodeWindowUnderPressureMultiplier: TimeInterval = 1.35
