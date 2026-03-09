@@ -8,14 +8,20 @@ Native Apple-platform game streaming client for Sunshine, intended as a Moonligh
 - low-latency native decode and rendering on Apple platforms
 - stable recovery under packet loss, decoder faults, and display-mode transitions
 
-## Repository Structure
+## Project Layout
 
-- `Project.swift`, `Tuist.swift`, `Tuist/Package.swift`: Tuist manifests and dependency wiring
+Tuist is the source of truth for targets and dependency wiring.
+
+```bash
+tuist graph --skip-test-targets --format svg --no-open
+```
+
+Relevant source roots:
+
+- `Projects/App/Features/Home`: session runtime, protocol/client implementation, and platform glue
 - `Projects/App/iOS`, `Projects/App/macOS`, `Projects/App/tvOS`: platform app entrypoints
-- `Projects/App/Features/Home`: session runtime, app shell, protocol/client implementation, and platform glue
 - `Projects/App/Tests`: app-level Swift Testing suites and compile-gate coverage
-- `Modules/ShadowClientCore`, `Modules/ShadowClientStreaming`, `Modules/ShadowClientInput`, `Modules/ShadowClientUI`: reusable package modules
-- `external/`: upstream reference trees used for research only and not tracked in this public repository
+- `Modules/`: reusable package modules
 
 ## Validation
 
