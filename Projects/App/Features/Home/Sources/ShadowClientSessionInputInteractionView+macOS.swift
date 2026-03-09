@@ -2,15 +2,15 @@
 import SwiftUI
 
 struct ShadowClientSessionInputInteractionPlatformView: View {
-    let referenceVideoSizeProvider: @MainActor () -> CGSize?
-    let visiblePointerRegionsProvider: @MainActor () -> [CGRect]
+    let referenceVideoSize: CGSize?
+    let visiblePointerRegions: [CGRect]
     let onInputEvent: @MainActor (ShadowClientRemoteInputEvent) -> Void
     let onSessionTerminateCommand: @MainActor () -> Void
 
     var body: some View {
-        let _ = visiblePointerRegionsProvider
+        let _ = visiblePointerRegions
         ShadowClientMacOSSessionInputCaptureView(
-            referenceVideoSizeProvider: referenceVideoSizeProvider,
+            referenceVideoSize: referenceVideoSize,
             onInputEvent: onInputEvent,
             onSessionTerminateCommand: onSessionTerminateCommand
         )

@@ -59,12 +59,8 @@ var remoteSessionFlowView: some View {
                     }
 
                     ShadowClientSessionInputInteractionView(
-                        referenceVideoSizeProvider: {
-                            sessionSurfaceContext.videoPresentationSize
-                        },
-                        visiblePointerRegionsProvider: {
-                            sessionVisiblePointerRegions
-                        }
+                        referenceVideoSize: sessionSurfaceContext.videoPresentationSize,
+                        visiblePointerRegions: sessionVisiblePointerRegions
                     ) { event in
                         remoteDesktopRuntime.sendInput(event)
                     } onSessionTerminateCommand: {

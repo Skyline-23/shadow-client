@@ -3,23 +3,23 @@ import SwiftUI
 import UIKit
 
 struct ShadowClientSessionInputInteractionPlatformView: UIViewRepresentable {
-    let referenceVideoSizeProvider: @MainActor () -> CGSize?
-    let visiblePointerRegionsProvider: @MainActor () -> [CGRect]
+    let referenceVideoSize: CGSize?
+    let visiblePointerRegions: [CGRect]
     let onInputEvent: @MainActor (ShadowClientRemoteInputEvent) -> Void
     let onSessionTerminateCommand: @MainActor () -> Void
 
     func makeUIView(context: Context) -> ShadowClientIOSSessionInputCaptureView {
         let view = ShadowClientIOSSessionInputCaptureView()
-        view.referenceVideoSizeProvider = referenceVideoSizeProvider
-        view.visiblePointerRegionsProvider = visiblePointerRegionsProvider
+        view.referenceVideoSize = referenceVideoSize
+        view.visiblePointerRegions = visiblePointerRegions
         view.onInputEvent = onInputEvent
         view.onSessionTerminateCommand = onSessionTerminateCommand
         return view
     }
 
     func updateUIView(_ uiView: ShadowClientIOSSessionInputCaptureView, context: Context) {
-        uiView.referenceVideoSizeProvider = referenceVideoSizeProvider
-        uiView.visiblePointerRegionsProvider = visiblePointerRegionsProvider
+        uiView.referenceVideoSize = referenceVideoSize
+        uiView.visiblePointerRegions = visiblePointerRegions
         uiView.onInputEvent = onInputEvent
         uiView.onSessionTerminateCommand = onSessionTerminateCommand
         uiView.requestInputFocusIfNeeded()
@@ -57,8 +57,8 @@ private final class ShadowClientIOSSoftwareKeyboardInputView: UIView, UIKeyInput
 
 @MainActor
 final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerDelegate, UIPointerInteractionDelegate {
-    var referenceVideoSizeProvider: (@MainActor () -> CGSize?)?
-    var visiblePointerRegionsProvider: (@MainActor () -> [CGRect])?
+    var referenceVideoSize: CGSize?
+    var visiblePointerRegions: [CGRect] = []
     var onInputEvent: (@MainActor (ShadowClientRemoteInputEvent) -> Void)?
     var onSessionTerminateCommand: (@MainActor () -> Void)?
 
@@ -398,7 +398,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         guard let pointerState = ShadowClientSessionPointerGeometry.absolutePointerState(
             for: location,
             containerBounds: bounds,
-            videoSize: referenceVideoSizeProvider?()
+            videoSize: referenceVideoSize
         ) else {
             return
         }
@@ -440,8 +440,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         regionFor request: UIPointerRegionRequest,
         defaultRegion: UIPointerRegion
     ) -> UIPointerRegion? {
-        let visibleRegions = visiblePointerRegionsProvider?() ?? []
-        if visibleRegions.contains(where: { $0.contains(request.location) }) {
+        if visiblePointerRegions.contains(where: { $0.contains(request.location) }) {
             return nil
         }
         return defaultRegion

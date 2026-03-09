@@ -3,25 +3,25 @@ import SwiftUI
 struct ShadowClientSessionInputInteractionView: View {
     let onInputEvent: @MainActor (ShadowClientRemoteInputEvent) -> Void
     let onSessionTerminateCommand: @MainActor () -> Void
-    let referenceVideoSizeProvider: @MainActor () -> CGSize?
-    let visiblePointerRegionsProvider: @MainActor () -> [CGRect]
+    let referenceVideoSize: CGSize?
+    let visiblePointerRegions: [CGRect]
 
     init(
-        referenceVideoSizeProvider: @escaping @MainActor () -> CGSize? = { nil },
-        visiblePointerRegionsProvider: @escaping @MainActor () -> [CGRect] = { [] },
+        referenceVideoSize: CGSize? = nil,
+        visiblePointerRegions: [CGRect] = [],
         onInputEvent: @escaping @MainActor (ShadowClientRemoteInputEvent) -> Void,
         onSessionTerminateCommand: @escaping @MainActor () -> Void = {}
     ) {
-        self.referenceVideoSizeProvider = referenceVideoSizeProvider
-        self.visiblePointerRegionsProvider = visiblePointerRegionsProvider
+        self.referenceVideoSize = referenceVideoSize
+        self.visiblePointerRegions = visiblePointerRegions
         self.onInputEvent = onInputEvent
         self.onSessionTerminateCommand = onSessionTerminateCommand
     }
 
     var body: some View {
         ShadowClientSessionInputInteractionPlatformView(
-            referenceVideoSizeProvider: referenceVideoSizeProvider,
-            visiblePointerRegionsProvider: visiblePointerRegionsProvider,
+            referenceVideoSize: referenceVideoSize,
+            visiblePointerRegions: visiblePointerRegions,
             onInputEvent: onInputEvent,
             onSessionTerminateCommand: onSessionTerminateCommand
         )

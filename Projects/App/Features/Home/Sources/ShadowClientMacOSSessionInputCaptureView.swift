@@ -5,20 +5,20 @@ import os
 import SwiftUI
 
 struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
-    let referenceVideoSizeProvider: @MainActor () -> CGSize?
+    let referenceVideoSize: CGSize?
     let onInputEvent: @MainActor (ShadowClientRemoteInputEvent) -> Void
     let onSessionTerminateCommand: @MainActor () -> Void
 
     func makeNSView(context: Context) -> ShadowClientMacOSInputCaptureNSView {
         let view = ShadowClientMacOSInputCaptureNSView()
-        view.referenceVideoSizeProvider = referenceVideoSizeProvider
+        view.referenceVideoSize = referenceVideoSize
         view.onInputEvent = onInputEvent
         view.onSessionTerminateCommand = onSessionTerminateCommand
         return view
     }
 
     func updateNSView(_ nsView: ShadowClientMacOSInputCaptureNSView, context: Context) {
-        nsView.referenceVideoSizeProvider = referenceVideoSizeProvider
+        nsView.referenceVideoSize = referenceVideoSize
         nsView.onInputEvent = onInputEvent
         nsView.onSessionTerminateCommand = onSessionTerminateCommand
         nsView.requestInputFocusIfNeeded()
@@ -27,7 +27,7 @@ struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
 
 @MainActor
 final class ShadowClientMacOSInputCaptureNSView: NSView {
-    var referenceVideoSizeProvider: (@MainActor () -> CGSize?)?
+    var referenceVideoSize: CGSize?
     var onInputEvent: (@MainActor (ShadowClientRemoteInputEvent) -> Void)?
     var onSessionTerminateCommand: (@MainActor () -> Void)?
 
@@ -255,7 +255,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         guard let pointerState = ShadowClientSessionPointerGeometry.absolutePointerState(
             for: topLeftLocation,
             containerBounds: bounds,
-            videoSize: referenceVideoSizeProvider?()
+            videoSize: referenceVideoSize
         ) else {
             return
         }
