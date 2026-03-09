@@ -212,6 +212,14 @@ var settingsTab: some View {
                                     .foregroundStyle(.white)
                             }
                             .tint(.mint)
+                            .disabled(!isLocalHDRDisplayAvailable)
+                        }
+
+                        if !isLocalHDRDisplayAvailable {
+                            Text("HDR requires a real HDR/EDR display on this device.")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(Color.white.opacity(0.7))
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
 
                         settingsRow {

@@ -34,7 +34,11 @@ var remoteSessionFlowView: some View {
                         .allowsHitTesting(false)
                     }
 
-                    ShadowClientSessionInputInteractionView { event in
+                    ShadowClientSessionInputInteractionView(
+                        referenceVideoSizeProvider: {
+                            sessionSurfaceContext.frameStore.snapshotSize()
+                        }
+                    ) { event in
                         remoteDesktopRuntime.sendInput(event)
                     } onSessionTerminateCommand: {
                         remoteDesktopRuntime.clearActiveSession()
@@ -142,6 +146,11 @@ var backgroundGradient: some View {
 
 var accentColor: Color {
         Color(red: 0.34, green: 0.88, blue: 0.82)
+    }
+
+    @MainActor
+var isLocalHDRDisplayAvailable: Bool {
+        ShadowClientDisplayDynamicRangeSupport.currentDisplaySupportsHDR()
     }
 
 var contentMaxWidth: CGFloat {

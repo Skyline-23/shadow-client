@@ -22,7 +22,7 @@ struct ShadowClientRealtimeSessionSurfaceRepresentable: NSViewRepresentable {
         guard let device = MTLCreateSystemDefaultDevice(),
               let renderer = ShadowClientRealtimeSessionMetalRenderer(
                 device: device,
-                frameStore: surfaceContext.frameStore
+                surfaceContext: surfaceContext
               )
         else {
             let fallback = NSView()
@@ -60,6 +60,7 @@ struct ShadowClientRealtimeSessionSurfaceRepresentable: NSViewRepresentable {
 }
 
 final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate {
+    private let surfaceContext: ShadowClientRealtimeSessionSurfaceContext
     private let frameStore: ShadowClientRealtimeSessionFrameStore
     private let commandQueue: MTLCommandQueue
     private let ciContext: CIContext
@@ -73,12 +74,13 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
 
     init?(
         device: MTLDevice,
-        frameStore: ShadowClientRealtimeSessionFrameStore
+        surfaceContext: ShadowClientRealtimeSessionSurfaceContext
     ) {
         guard let commandQueue = device.makeCommandQueue() else {
             return nil
         }
-        self.frameStore = frameStore
+        self.surfaceContext = surfaceContext
+        self.frameStore = surfaceContext.frameStore
         self.commandQueue = commandQueue
         self.ciContext = CIContext(
             mtlCommandQueue: commandQueue,
@@ -108,7 +110,10 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         }
 
         if let pixelBuffer = snapshot.pixelBuffer {
-            let colorConfiguration = ShadowClientRealtimeSessionColorPipeline.configuration(for: pixelBuffer)
+            let colorConfiguration = ShadowClientRealtimeSessionColorPipeline.configuration(
+                for: pixelBuffer,
+                allowExtendedDynamicRange: surfaceContext.activeDynamicRangeMode == .hdr
+            )
             let supportsExtendedDynamicRange = cachedExtendedDynamicRangeSupport(for: view)
             let shouldToneMapHDRToSDR =
                 colorConfiguration.prefersExtendedDynamicRange && !supportsExtendedDynamicRange
@@ -123,22 +128,12 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             if ShadowClientRealtimeSessionColorPipeline.shouldAttachExplicitSourceColorSpace(for: pixelBuffer) {
                 sourceOptions[.colorSpace] = colorConfiguration.renderColorSpace
             }
-            if shouldToneMapHDRToSDR {
-                if #available(macOS 15.0, *) {
-                    sourceOptions[.toneMapHDRtoSDR] = true
-                }
-            }
-
             var sourceImage = CIImage(
                 cvPixelBuffer: pixelBuffer,
                 options: sourceOptions
             )
             if shouldToneMapHDRToSDR {
-                if #available(macOS 15.0, *) {
-                    // Handled via CIImageOption.toneMapHDRtoSDR.
-                } else {
-                    sourceImage = toneMapHDRToSDRSoftwareFallback(sourceImage)
-                }
+                sourceImage = toneMapHDRToSDRSoftwareFallback(sourceImage)
             }
             let outputColorSpace = shouldToneMapHDRToSDR
                 ? ShadowClientRealtimeSessionColorPipeline.defaultDisplayColorSpace

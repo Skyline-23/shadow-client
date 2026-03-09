@@ -557,7 +557,8 @@ func preferredLaunchApp(from apps: [ShadowClientRemoteAppDescriptor]) -> ShadowC
 func launchRemoteApp(_ app: ShadowClientRemoteAppDescriptor) {
         let settings = currentSettings.launchSettings(
             hostApp: app,
-            networkSignal: launchBitrateNetworkSignal
+            networkSignal: launchBitrateNetworkSignal,
+            localHDRDisplayAvailable: isLocalHDRDisplayAvailable
         )
 
         remoteDesktopRuntime.launchSelectedApp(
@@ -581,7 +582,8 @@ func launchDesktopFallbackIfNeeded() async {
 
         let settings = currentSettings.launchSettings(
             hostApp: nil,
-            networkSignal: launchBitrateNetworkSignal
+            networkSignal: launchBitrateNetworkSignal,
+            localHDRDisplayAvailable: isLocalHDRDisplayAvailable
         )
         let fallbackApp = preferredLaunchApp(from: remoteDesktopRuntime.apps) ?? {
             guard selectedHost.currentGameID > 0 else {

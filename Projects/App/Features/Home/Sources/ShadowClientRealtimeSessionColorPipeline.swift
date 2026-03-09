@@ -11,14 +11,14 @@ struct ShadowClientRealtimeSessionColorConfiguration {
 }
 
 enum ShadowClientRealtimeSessionColorPipeline {
-    private static let defaultSDRColorSpace = CGColorSpace(name: CGColorSpace.itur_709)
-        ?? CGColorSpace(name: CGColorSpace.sRGB)
+    private static let defaultSDRColorSpace = CGColorSpace(name: CGColorSpace.sRGB)
+        ?? CGColorSpace(name: CGColorSpace.itur_709)
         ?? CGColorSpaceCreateDeviceRGB()
 
     private static let defaultHDRDisplayColorSpace = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)
         ?? CGColorSpace(name: CGColorSpace.extendedLinearITUR_2020)
         ?? defaultSDRColorSpace
-    static let hdrToSdrToneMapSourceHeadroom: Float = 6.0
+    static let hdrToSdrToneMapSourceHeadroom: Float = 4.0
     static let hdrToSdrToneMapTargetHeadroom: Float = 1.0
 
     static var defaultDisplayColorSpace: CGColorSpace {
@@ -41,7 +41,10 @@ enum ShadowClientRealtimeSessionColorPipeline {
         }
     }
 
-    static func configuration(for pixelBuffer: CVPixelBuffer?) -> ShadowClientRealtimeSessionColorConfiguration {
+    static func configuration(
+        for pixelBuffer: CVPixelBuffer?,
+        allowExtendedDynamicRange: Bool = true
+    ) -> ShadowClientRealtimeSessionColorConfiguration {
         guard let pixelBuffer else {
             return ShadowClientRealtimeSessionColorConfiguration(
                 renderColorSpace: defaultSDRColorSpace,
@@ -54,7 +57,8 @@ enum ShadowClientRealtimeSessionColorPipeline {
         let metadata = colorMetadata(for: pixelBuffer)
         let prefersExtendedDynamicRange = shouldPreferExtendedDynamicRange(
             for: pixelBuffer,
-            metadata: metadata
+            metadata: metadata,
+            allowExtendedDynamicRange: allowExtendedDynamicRange
         )
         applyAttachmentFallbacks(
             for: pixelBuffer,
@@ -83,11 +87,13 @@ enum ShadowClientRealtimeSessionColorPipeline {
         metadata: ShadowClientColorMetadata,
         prefersExtendedDynamicRange: Bool
     ) -> CGColorSpace {
-        if metadata.isPQ {
-            return CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? defaultHDRDisplayColorSpace
-        }
-        if metadata.isHLG {
-            return CGColorSpace(name: CGColorSpace.itur_2100_HLG) ?? defaultHDRDisplayColorSpace
+        if prefersExtendedDynamicRange {
+            if metadata.isPQ {
+                return CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? defaultHDRDisplayColorSpace
+            }
+            if metadata.isHLG {
+                return CGColorSpace(name: CGColorSpace.itur_2100_HLG) ?? defaultHDRDisplayColorSpace
+            }
         }
         if let bufferColorSpace = CVImageBufferGetColorSpace(pixelBuffer)?.takeUnretainedValue() {
             return bufferColorSpace
@@ -120,10 +126,11 @@ enum ShadowClientRealtimeSessionColorPipeline {
 
     private static func shouldPreferExtendedDynamicRange(
         for pixelBuffer: CVPixelBuffer,
-        metadata: ShadowClientColorMetadata
+        metadata: ShadowClientColorMetadata,
+        allowExtendedDynamicRange: Bool
     ) -> Bool {
         _ = pixelBuffer
-        return metadata.isPQ || metadata.isHLG
+        return allowExtendedDynamicRange && (metadata.isPQ || metadata.isHLG)
     }
 
     private static func applyAttachmentFallbacks(

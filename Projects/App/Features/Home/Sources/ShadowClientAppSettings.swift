@@ -289,7 +289,8 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
 
     public func launchSettings(
         hostApp: ShadowClientRemoteAppDescriptor?,
-        networkSignal: StreamingNetworkSignal? = nil
+        networkSignal: StreamingNetworkSignal? = nil,
+        localHDRDisplayAvailable: Bool = true
     ) -> ShadowClientGameStreamLaunchSettings {
         let requestedHostAudioPlayback = !muteHostSpeakersWhileStreaming
         let resolvedPlayAudioOnHost: Bool
@@ -305,7 +306,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             fps: frameRate.fps,
             bitrateKbps: resolvedBitrateKbps(networkSignal: networkSignal),
             preferredCodec: videoCodec,
-            enableHDR: preferHDR && (hostApp?.hdrSupported ?? true),
+            enableHDR: preferHDR && localHDRDisplayAvailable && (hostApp?.hdrSupported ?? true),
             enableSurroundAudio: audioConfiguration.prefersSurroundAudio,
             lowLatencyMode: lowLatencyMode,
             enableVSync: enableVSync,

@@ -20,7 +20,10 @@ func colorPipelineEnablesEDRForHDRPQFrames() throws {
         .shouldPropagate
     )
 
-    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(for: pixelBuffer)
+    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(
+        for: pixelBuffer,
+        allowExtendedDynamicRange: true
+    )
     #expect(configuration.prefersExtendedDynamicRange)
     #expect(configuration.pixelFormat == .rgba16Float)
     #expect(configuration.renderColorSpace.name == CGColorSpace.itur_2100_PQ)
@@ -47,10 +50,13 @@ func colorPipelineKeepsSDRForBT709Frames() throws {
         .shouldPropagate
     )
 
-    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(for: pixelBuffer)
+    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(
+        for: pixelBuffer,
+        allowExtendedDynamicRange: false
+    )
     #expect(!configuration.prefersExtendedDynamicRange)
     #expect(configuration.pixelFormat == .bgra8Unorm)
-    #expect(configuration.displayColorSpace.name == CGColorSpace.itur_709)
+    #expect(configuration.displayColorSpace.name == CGColorSpace.sRGB)
 }
 
 @Test("Color pipeline prefers PQ transfer metadata over attached base color space")
@@ -76,7 +82,10 @@ func colorPipelinePrefersPQTransferOverAttachedColorSpace() throws {
         .shouldPropagate
     )
 
-    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(for: pixelBuffer)
+    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(
+        for: pixelBuffer,
+        allowExtendedDynamicRange: true
+    )
     #expect(configuration.renderColorSpace.name == CGColorSpace.itur_2100_PQ)
     #expect(configuration.prefersExtendedDynamicRange)
 }
@@ -91,7 +100,10 @@ func colorPipelineKeepsSDRForBT202010BitWithoutTransferMetadata() throws {
         .shouldPropagate
     )
 
-    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(for: pixelBuffer)
+    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(
+        for: pixelBuffer,
+        allowExtendedDynamicRange: false
+    )
     #expect(!configuration.prefersExtendedDynamicRange)
     #expect(configuration.renderColorSpace.name == CGColorSpace.itur_2020)
     #expect(configuration.pixelFormat == .bgra8Unorm)
@@ -119,7 +131,10 @@ func colorPipelineKeepsSDRForBT20208BitWithoutTransferMetadata() throws {
         .shouldPropagate
     )
 
-    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(for: pixelBuffer)
+    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(
+        for: pixelBuffer,
+        allowExtendedDynamicRange: false
+    )
     #expect(!configuration.prefersExtendedDynamicRange)
     #expect(configuration.pixelFormat == .bgra8Unorm)
 }
@@ -142,6 +157,37 @@ func colorPipelineSkipsExplicitSourceColorSpaceForUnsupportedFormat() throws {
             for: pixelBuffer
         )
     )
+}
+
+@Test("Color pipeline keeps HDR transfer metadata out of SDR rendering mode")
+func colorPipelineKeepsHDRTransferMetadataOutOfSDRMode() throws {
+    let pixelBuffer = try makePixelBuffer(pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferColorPrimariesKey,
+        kCVImageBufferColorPrimaries_ITU_R_2020,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferTransferFunctionKey,
+        kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
+        .shouldPropagate
+    )
+
+    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(
+        for: pixelBuffer,
+        allowExtendedDynamicRange: false
+    )
+    #expect(!configuration.prefersExtendedDynamicRange)
+    #expect(configuration.pixelFormat == .bgra8Unorm)
+    #expect(configuration.displayColorSpace.name == CGColorSpace.sRGB)
+}
+
+@Test("Color pipeline uses stronger SDR tone-map headroom for HDR content")
+func colorPipelineUsesStrongerSDRToneMapHeadroomForHDRContent() {
+    #expect(ShadowClientRealtimeSessionColorPipeline.hdrToSdrToneMapSourceHeadroom == 4.0)
+    #expect(ShadowClientRealtimeSessionColorPipeline.hdrToSdrToneMapTargetHeadroom == 1.0)
 }
 
 private func makePixelBuffer(pixelFormat: OSType) throws -> CVPixelBuffer {

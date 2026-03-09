@@ -1,3 +1,4 @@
+import CoreGraphics
 import CoreVideo
 import Foundation
 
@@ -17,6 +18,19 @@ public final class ShadowClientRealtimeSessionFrameStore: @unchecked Sendable {
 
     public func snapshot() -> CVPixelBuffer? {
         snapshotWithRevision().pixelBuffer
+    }
+
+    public func snapshotSize() -> CGSize? {
+        lock.lock()
+        let buffer = latestPixelBuffer
+        lock.unlock()
+        guard let buffer else {
+            return nil
+        }
+        return CGSize(
+            width: CVPixelBufferGetWidth(buffer),
+            height: CVPixelBufferGetHeight(buffer)
+        )
     }
 
     public func snapshotWithRevision() -> (pixelBuffer: CVPixelBuffer?, revision: UInt64) {

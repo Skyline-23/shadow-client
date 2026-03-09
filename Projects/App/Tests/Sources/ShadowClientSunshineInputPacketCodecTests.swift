@@ -99,6 +99,30 @@ func sunshineInputCodecEncodesRelativeMouseMovePacket() {
     #expect(readInt16BE(payload, at: 10) == -3)
 }
 
+@Test("Sunshine input codec encodes absolute mouse move packet")
+func sunshineInputCodecEncodesAbsoluteMouseMovePacket() {
+    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+        .pointerPosition(x: 319.6, y: 179.9, referenceWidth: 640, referenceHeight: 360)
+    )
+
+    #expect(encoded != nil)
+    #expect(encoded?.channelID == 0x03)
+
+    guard let payload = encoded?.payload else {
+        Issue.record("Expected absolute mouse move payload")
+        return
+    }
+
+    #expect(payload.count == 18)
+    #expect(readUInt32BE(payload, at: 0) == 14)
+    #expect(readUInt32LE(payload, at: 4) == 0x0000_0005)
+    #expect(readInt16BE(payload, at: 8) == 320)
+    #expect(readInt16BE(payload, at: 10) == 180)
+    #expect(readInt16BE(payload, at: 12) == 0)
+    #expect(readInt16BE(payload, at: 14) == 640)
+    #expect(readInt16BE(payload, at: 16) == 360)
+}
+
 @Test("Sunshine input codec drops zero-delta relative mouse move packet")
 func sunshineInputCodecDropsZeroDeltaRelativeMouseMovePacket() {
     let encoded = ShadowClientSunshineInputPacketCodec.encode(
@@ -136,6 +160,24 @@ func sunshineInputCodecDropsUnknownKeyEvent() {
     )
 
     #expect(encoded == nil)
+}
+
+@Test("Sunshine input codec uses pretranslated Windows virtual keys for hardware keyboard events")
+func sunshineInputCodecUsesPretranslatedVirtualKeys() {
+    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+        .keyDown(
+            keyCode: ShadowClientRemoteInputEvent.pretranslatedWindowsVirtualKey(0x41),
+            characters: nil
+        )
+    )
+
+    #expect(encoded != nil)
+    guard let payload = encoded?.payload else {
+        Issue.record("Expected keyboard payload")
+        return
+    }
+
+    #expect(readUInt16LE(payload, at: 9) == 0x8041)
 }
 
 @Test("Sunshine input codec encodes multi-controller gamepad packet on gamepad channel")

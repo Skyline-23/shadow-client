@@ -5,17 +5,20 @@ import os
 import SwiftUI
 
 struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
+    let referenceVideoSizeProvider: @MainActor () -> CGSize?
     let onInputEvent: @MainActor (ShadowClientRemoteInputEvent) -> Void
     let onSessionTerminateCommand: @MainActor () -> Void
 
     func makeNSView(context: Context) -> ShadowClientMacOSInputCaptureNSView {
         let view = ShadowClientMacOSInputCaptureNSView()
+        view.referenceVideoSizeProvider = referenceVideoSizeProvider
         view.onInputEvent = onInputEvent
         view.onSessionTerminateCommand = onSessionTerminateCommand
         return view
     }
 
     func updateNSView(_ nsView: ShadowClientMacOSInputCaptureNSView, context: Context) {
+        nsView.referenceVideoSizeProvider = referenceVideoSizeProvider
         nsView.onInputEvent = onInputEvent
         nsView.onSessionTerminateCommand = onSessionTerminateCommand
         nsView.requestInputFocusIfNeeded()
@@ -24,6 +27,7 @@ struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
 
 @MainActor
 final class ShadowClientMacOSInputCaptureNSView: NSView {
+    var referenceVideoSizeProvider: (@MainActor () -> CGSize?)?
     var onInputEvent: (@MainActor (ShadowClientRemoteInputEvent) -> Void)?
     var onSessionTerminateCommand: (@MainActor () -> Void)?
 
@@ -33,10 +37,6 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "InputCapture")
     private var loggedInputKinds = Set<String>()
     private var loggedFocusFailure = false
-    private var isPointerCaptureActive = false
-    private var isCursorHidden = false
-    private var isMouseCursorAssociationDisabled = false
-    private var dropNextPointerDelta = false
     private var locallyHandledKeyCodes = Set<UInt16>()
     private var pendingRecaptureAfterActivation = false
 
@@ -192,71 +192,80 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         requestInputFocusIfNeeded(allowWindowActivation: true)
-        emitPointerMove(from: event)
+        emitPointerPosition(from: event)
         emit(.pointerButton(button: .left, isPressed: true))
     }
 
     override func mouseUp(with event: NSEvent) {
-        emitPointerMove(from: event)
+        emitPointerPosition(from: event)
         emit(.pointerButton(button: .left, isPressed: false))
     }
 
     override func rightMouseDown(with event: NSEvent) {
         requestInputFocusIfNeeded(allowWindowActivation: true)
-        emitPointerMove(from: event)
+        emitPointerPosition(from: event)
         emit(.pointerButton(button: .right, isPressed: true))
     }
 
     override func rightMouseUp(with event: NSEvent) {
-        emitPointerMove(from: event)
+        emitPointerPosition(from: event)
         emit(.pointerButton(button: .right, isPressed: false))
     }
 
     override func otherMouseDown(with event: NSEvent) {
         requestInputFocusIfNeeded(allowWindowActivation: true)
-        emitPointerMove(from: event)
+        emitPointerPosition(from: event)
         let button = event.buttonNumber == 2 ? ShadowClientRemoteMouseButton.middle : .other(Int(event.buttonNumber))
         emit(.pointerButton(button: button, isPressed: true))
     }
 
     override func otherMouseUp(with event: NSEvent) {
-        emitPointerMove(from: event)
+        emitPointerPosition(from: event)
         let button = event.buttonNumber == 2 ? ShadowClientRemoteMouseButton.middle : .other(Int(event.buttonNumber))
         emit(.pointerButton(button: button, isPressed: false))
     }
 
     override func mouseMoved(with event: NSEvent) {
-        emitPointerMove(from: event)
+        emitPointerPosition(from: event)
     }
 
     override func mouseDragged(with event: NSEvent) {
-        emitPointerMove(from: event)
+        emitPointerPosition(from: event)
     }
 
     override func rightMouseDragged(with event: NSEvent) {
-        emitPointerMove(from: event)
+        emitPointerPosition(from: event)
     }
 
     override func otherMouseDragged(with event: NSEvent) {
-        emitPointerMove(from: event)
+        emitPointerPosition(from: event)
     }
 
     override func scrollWheel(with event: NSEvent) {
         emit(.scroll(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY))
     }
 
-    private func emitPointerMove(from event: NSEvent) {
-        if dropNextPointerDelta {
-            dropNextPointerDelta = false
+    private func emitPointerPosition(from event: NSEvent) {
+        let locationInView = convert(event.locationInWindow, from: nil)
+        let topLeftLocation = CGPoint(
+            x: locationInView.x,
+            y: bounds.height - locationInView.y
+        )
+        guard let pointerState = ShadowClientSessionPointerGeometry.absolutePointerState(
+            for: topLeftLocation,
+            containerBounds: bounds,
+            videoSize: referenceVideoSizeProvider?()
+        ) else {
             return
         }
-
-        let deltaX = event.deltaX
-        let deltaY = event.deltaY
-        guard deltaX != 0 || deltaY != 0 else {
-            return
-        }
-        emit(.pointerMoved(x: deltaX, y: deltaY))
+        emit(
+            .pointerPosition(
+                x: pointerState.x,
+                y: pointerState.y,
+                referenceWidth: pointerState.referenceWidth,
+                referenceHeight: pointerState.referenceHeight
+            )
+        )
     }
 
     private func emit(_ event: ShadowClientRemoteInputEvent) {
@@ -295,7 +304,6 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
 
         if forceRecapture {
             deactivatePointerCaptureIfNeeded()
-            recenterPointerInCaptureViewIfNeeded()
         }
 
         activatePointerCaptureIfNeeded()
@@ -423,6 +431,8 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
             kind = "keyUp"
         case .pointerMoved:
             kind = "pointerMoved"
+        case .pointerPosition:
+            kind = "pointerPosition"
         case .pointerButton:
             kind = "pointerButton"
         case .scroll:
@@ -459,66 +469,12 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     }
 
     private func activatePointerCaptureIfNeeded() {
-        guard !isPointerCaptureActive,
-              window?.isKeyWindow == true,
-              NSApp.isActive
-        else {
-            return
-        }
-
-        let associationError = CGAssociateMouseAndMouseCursorPosition(0)
-        if associationError == .success {
-            isMouseCursorAssociationDisabled = true
-        } else {
-            logger.debug(
-                "Input capture failed to disable mouse-cursor association: \(associationError.rawValue, privacy: .public)"
-            )
-        }
-
-        if !isCursorHidden {
-            NSCursor.hide()
-            isCursorHidden = true
-        }
-        isPointerCaptureActive = true
-        dropNextPointerDelta = true
+        // Absolute mouse mode keeps the local cursor visible and mapped directly
+        // into the rendered video region. No hidden-cursor recapture is used.
     }
 
     private func deactivatePointerCaptureIfNeeded() {
-        guard isPointerCaptureActive else {
-            return
-        }
-
-        if isMouseCursorAssociationDisabled {
-            _ = CGAssociateMouseAndMouseCursorPosition(1)
-            isMouseCursorAssociationDisabled = false
-        }
-        if isCursorHidden {
-            NSCursor.unhide()
-            isCursorHidden = false
-        }
-        isPointerCaptureActive = false
-    }
-
-    private func recenterPointerInCaptureViewIfNeeded() {
-        guard let window,
-              window.screen != nil,
-              bounds.width > 0,
-              bounds.height > 0
-        else {
-            return
-        }
-
-        let viewCenter = NSPoint(x: bounds.midX, y: bounds.midY)
-        let centerInWindow = convert(viewCenter, to: nil)
-        let centerOnScreen = window.convertPoint(toScreen: centerInWindow)
-        let warpResult = CGWarpMouseCursorPosition(
-            CGPoint(x: centerOnScreen.x, y: centerOnScreen.y)
-        )
-        if warpResult != .success {
-            logger.debug(
-                "Input capture failed to recenter cursor: \(warpResult.rawValue, privacy: .public)"
-            )
-        }
+        // Absolute mouse mode keeps the local cursor visible and unwarped.
     }
 }
 #endif

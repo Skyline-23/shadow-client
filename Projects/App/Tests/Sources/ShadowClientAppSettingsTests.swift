@@ -107,7 +107,7 @@ func appSettingsMapToLaunchSettings() {
         isAppCollectorGame: false
     )
 
-    let launch = settings.launchSettings(hostApp: hostApp)
+    let launch = settings.launchSettings(hostApp: hostApp, localHDRDisplayAvailable: true)
 
     #expect(launch.width == 3840)
     #expect(launch.height == 2160)
@@ -135,7 +135,25 @@ func launchSettingsDisableHDRForNonHDRApp() {
         isAppCollectorGame: false
     )
 
-    let launch = settings.launchSettings(hostApp: hostApp)
+    let launch = settings.launchSettings(hostApp: hostApp, localHDRDisplayAvailable: true)
+    #expect(launch.enableHDR == false)
+}
+
+@Test("Launch settings disable HDR when the local display does not support HDR")
+func launchSettingsDisableHDRWhenLocalDisplayIsSDR() {
+    let settings = ShadowClientAppSettings(preferHDR: true)
+    let hostApp = ShadowClientRemoteAppDescriptor(
+        id: 12,
+        title: "HDR App",
+        hdrSupported: true,
+        isAppCollectorGame: false
+    )
+
+    let launch = settings.launchSettings(
+        hostApp: hostApp,
+        localHDRDisplayAvailable: false
+    )
+
     #expect(launch.enableHDR == false)
 }
 

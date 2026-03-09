@@ -357,6 +357,7 @@ public enum ShadowClientRemoteInputEvent: Equatable, Sendable {
     case keyDown(keyCode: UInt16, characters: String?)
     case keyUp(keyCode: UInt16, characters: String?)
     case pointerMoved(x: Double, y: Double)
+    case pointerPosition(x: Double, y: Double, referenceWidth: Double, referenceHeight: Double)
     case pointerButton(button: ShadowClientRemoteMouseButton, isPressed: Bool)
     case scroll(deltaX: Double, deltaY: Double)
     case gamepadState(ShadowClientRemoteGamepadState)
@@ -366,6 +367,22 @@ public enum ShadowClientRemoteInputEvent: Equatable, Sendable {
 public extension ShadowClientRemoteInputEvent {
     /// Sentinel key code used by software keyboards when no hardware scan code exists.
     static let softwareKeyboardSyntheticKeyCode: UInt16 = .max
+
+    private static let pretranslatedWindowsVirtualKeyMask: UInt16 = 0x8000
+
+    static func pretranslatedWindowsVirtualKey(_ virtualKey: UInt16) -> UInt16 {
+        pretranslatedWindowsVirtualKeyMask | (virtualKey & ~pretranslatedWindowsVirtualKeyMask)
+    }
+
+    static func pretranslatedWindowsVirtualKeyCode(from keyCode: UInt16) -> UInt16? {
+        guard keyCode != softwareKeyboardSyntheticKeyCode,
+              keyCode & pretranslatedWindowsVirtualKeyMask != 0
+        else {
+            return nil
+        }
+
+        return keyCode & ~pretranslatedWindowsVirtualKeyMask
+    }
 }
 
 public protocol ShadowClientRemoteSessionInputClient: Sendable {
@@ -691,7 +708,7 @@ private actor ShadowClientRemoteInputSendQueue {
 
         var isMotionLike: Bool {
             switch event {
-            case .pointerMoved, .scroll:
+            case .pointerMoved, .pointerPosition, .scroll:
                 return true
             default:
                 return false
@@ -861,6 +878,9 @@ private actor ShadowClientRemoteInputSendQueue {
 
         switch (last.event, pending.event) {
         case (.pointerMoved, .pointerMoved):
+            pendingInputs[lastIndex] = pending
+            return true
+        case (.pointerPosition, .pointerPosition):
             pendingInputs[lastIndex] = pending
             return true
         case let (.scroll(previousX, previousY), .scroll(nextX, nextY)):
