@@ -1,10 +1,10 @@
 # shadow-client
 
-Apple-platform game streaming client for Sunshine, built with a native Swift stack and validated against Moonlight/Sunshine protocol behavior.
+Native Apple-platform game streaming client for Sunshine, intended as a Moonlight alternative on Apple devices.
 
 ## Focus
 
-- protocol correctness against Sunshine and Moonlight behavior
+- Sunshine protocol correctness with Moonlight-compatible behavior where interoperability matters
 - low-latency native decode and rendering on Apple platforms
 - stable recovery under packet loss, decoder faults, and display-mode transitions
 
