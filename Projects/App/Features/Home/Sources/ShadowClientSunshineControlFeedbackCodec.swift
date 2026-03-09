@@ -30,6 +30,48 @@ struct ShadowClientSunshineTerminationEvent: Equatable, Sendable {
     }
 }
 
+struct ShadowClientSunshineFrameFECStatus: Equatable, Sendable {
+    let frameIndex: UInt32
+    let highestReceivedSequenceNumber: UInt16
+    let nextContiguousSequenceNumber: UInt16
+    let missingPacketsBeforeHighestReceived: UInt16
+    let totalDataPackets: UInt16
+    let totalParityPackets: UInt16
+    let receivedDataPackets: UInt16
+    let receivedParityPackets: UInt16
+    let fecPercentage: UInt8
+    let multiFecBlockIndex: UInt8
+    let multiFecBlockCount: UInt8
+
+    var payload: Data {
+        var data = Data()
+        Self.appendUInt32BE(frameIndex, to: &data)
+        Self.appendUInt16BE(highestReceivedSequenceNumber, to: &data)
+        Self.appendUInt16BE(nextContiguousSequenceNumber, to: &data)
+        Self.appendUInt16BE(missingPacketsBeforeHighestReceived, to: &data)
+        Self.appendUInt16BE(totalDataPackets, to: &data)
+        Self.appendUInt16BE(totalParityPackets, to: &data)
+        Self.appendUInt16BE(receivedDataPackets, to: &data)
+        Self.appendUInt16BE(receivedParityPackets, to: &data)
+        data.append(fecPercentage)
+        data.append(multiFecBlockIndex)
+        data.append(multiFecBlockCount)
+        return data
+    }
+
+    private static func appendUInt16BE(_ value: UInt16, to data: inout Data) {
+        data.append(UInt8(value >> 8))
+        data.append(UInt8(truncatingIfNeeded: value))
+    }
+
+    private static func appendUInt32BE(_ value: UInt32, to data: inout Data) {
+        data.append(UInt8(truncatingIfNeeded: value >> 24))
+        data.append(UInt8(truncatingIfNeeded: value >> 16))
+        data.append(UInt8(truncatingIfNeeded: value >> 8))
+        data.append(UInt8(truncatingIfNeeded: value))
+    }
+}
+
 enum ShadowClientSunshineControlFeedbackCodec {
     static func parse(
         type: UInt16,
