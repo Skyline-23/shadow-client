@@ -333,6 +333,7 @@ func realtimeSessionDiagnosticsHUD(_ model: SettingsDiagnosticsHUDModel) -> some
 
                 HStack(spacing: 10) {
                     diagnosticsStatChip(label: "Codec", value: activeSessionVideoCodecLabel)
+                    diagnosticsStatChip(label: "Res", value: diagnosticsResolutionValue())
                     diagnosticsStatChip(label: "HDR", value: diagnosticsHDRValue(model: model))
                     diagnosticsStatChip(label: "FPS", value: diagnosticsFPSValue())
                     diagnosticsStatChip(label: "Bitrate", value: diagnosticsBitrateValue())
@@ -398,6 +399,10 @@ func realtimeSessionBootstrapDiagnosticsHUD(controlRoundTripMs: Int?) -> some Vi
                     .foregroundStyle(Color.mint.opacity(0.86))
 
                 HStack(spacing: 10) {
+                    diagnosticsStatChip(
+                        label: "Res",
+                        value: diagnosticsResolutionValue()
+                    )
                     diagnosticsStatChip(
                         label: "HDR",
                         value: diagnosticsHDRValue(model: nil)
@@ -472,6 +477,25 @@ func diagnosticsBitrateValue() -> String {
             return "\(max(0, bitrate)) / \(effectiveBitrateKbps) kbps"
         }
         return "\(effectiveBitrateKbps) kbps"
+    }
+
+func diagnosticsResolutionValue() -> String {
+        if let size = sessionSurfaceContext.videoPresentationSize,
+           size.width > 0,
+           size.height > 0
+        {
+            return "\(Int(size.width.rounded()))x\(Int(size.height.rounded()))"
+        }
+
+        if selectedResolution == .retinaAuto {
+            let pixelSize = ShadowClientAutoResolutionPolicy.resolvePixelSize(
+                logicalSize: launchViewportMetrics.logicalSize,
+                safeAreaInsets: launchViewportMetrics.safeAreaInsets
+            )
+            return "\(Int(pixelSize.width.rounded()))x\(Int(pixelSize.height.rounded()))"
+        }
+
+        return "\(currentSettings.resolution.width)x\(currentSettings.resolution.height)"
     }
 
 func diagnosticsHDRValue(model: SettingsDiagnosticsHUDModel?) -> String {

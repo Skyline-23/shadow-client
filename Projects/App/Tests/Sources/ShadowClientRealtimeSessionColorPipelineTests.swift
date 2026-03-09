@@ -56,7 +56,7 @@ func colorPipelineKeepsSDRForBT709Frames() throws {
     )
     #expect(!configuration.prefersExtendedDynamicRange)
     #expect(configuration.pixelFormat == .bgra8Unorm)
-    #expect(configuration.displayColorSpace.name == CGColorSpace.itur_709)
+    #expect(configuration.displayColorSpace.name == CGColorSpace.sRGB)
 }
 
 @Test("Color pipeline prefers PQ transfer metadata over attached base color space")
@@ -181,7 +181,7 @@ func colorPipelineKeepsHDRTransferMetadataOutOfSDRMode() throws {
     )
     #expect(!configuration.prefersExtendedDynamicRange)
     #expect(configuration.pixelFormat == .bgra8Unorm)
-    #expect(configuration.displayColorSpace.name == CGColorSpace.itur_709)
+    #expect(configuration.displayColorSpace.name == CGColorSpace.sRGB)
 }
 
 @Test("Color pipeline uses stronger SDR tone-map headroom for HDR content")

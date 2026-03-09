@@ -11,18 +11,21 @@ struct ShadowClientRealtimeSessionColorConfiguration {
 }
 
 enum ShadowClientRealtimeSessionColorPipeline {
-    private static let defaultSDRColorSpace = CGColorSpace(name: CGColorSpace.itur_709)
+    private static let defaultSDRSourceColorSpace = CGColorSpace(name: CGColorSpace.itur_709)
         ?? CGColorSpace(name: CGColorSpace.sRGB)
+        ?? CGColorSpaceCreateDeviceRGB()
+    private static let defaultSDRDisplayColorSpace = CGColorSpace(name: CGColorSpace.sRGB)
+        ?? CGColorSpace(name: CGColorSpace.displayP3)
         ?? CGColorSpaceCreateDeviceRGB()
 
     private static let defaultHDRDisplayColorSpace = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)
         ?? CGColorSpace(name: CGColorSpace.extendedLinearITUR_2020)
-        ?? defaultSDRColorSpace
+        ?? defaultSDRDisplayColorSpace
     static let hdrToSdrToneMapSourceHeadroom: Float = 4.0
     static let hdrToSdrToneMapTargetHeadroom: Float = 1.0
 
     static var defaultDisplayColorSpace: CGColorSpace {
-        defaultSDRColorSpace
+        defaultSDRDisplayColorSpace
     }
 
     static func shouldAttachExplicitSourceColorSpace(for pixelBuffer: CVPixelBuffer) -> Bool {
@@ -43,8 +46,8 @@ enum ShadowClientRealtimeSessionColorPipeline {
     ) -> ShadowClientRealtimeSessionColorConfiguration {
         guard let pixelBuffer else {
             return ShadowClientRealtimeSessionColorConfiguration(
-                renderColorSpace: defaultSDRColorSpace,
-                displayColorSpace: defaultSDRColorSpace,
+                renderColorSpace: defaultSDRSourceColorSpace,
+                displayColorSpace: defaultSDRDisplayColorSpace,
                 pixelFormat: .bgra8Unorm,
                 prefersExtendedDynamicRange: false
             )
@@ -67,7 +70,7 @@ enum ShadowClientRealtimeSessionColorPipeline {
             metadata: metadata,
             prefersExtendedDynamicRange: prefersExtendedDynamicRange
         )
-        let displayColorSpace = prefersExtendedDynamicRange ? defaultHDRDisplayColorSpace : defaultSDRColorSpace
+        let displayColorSpace = prefersExtendedDynamicRange ? defaultHDRDisplayColorSpace : defaultSDRDisplayColorSpace
         let pixelFormat: MTLPixelFormat = prefersExtendedDynamicRange ? .rgba16Float : .bgra8Unorm
 
         return ShadowClientRealtimeSessionColorConfiguration(
@@ -95,9 +98,9 @@ enum ShadowClientRealtimeSessionColorPipeline {
             return bufferColorSpace
         }
         if metadata.isBT2020 {
-            return CGColorSpace(name: CGColorSpace.itur_2020) ?? defaultSDRColorSpace
+            return CGColorSpace(name: CGColorSpace.itur_2020) ?? defaultSDRSourceColorSpace
         }
-        return defaultSDRColorSpace
+        return defaultSDRSourceColorSpace
     }
 
     private static func colorMetadata(for pixelBuffer: CVPixelBuffer) -> ShadowClientColorMetadata {
