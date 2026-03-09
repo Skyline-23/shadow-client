@@ -12,8 +12,10 @@ Native Apple-platform game streaming client for Sunshine, intended as a Moonligh
 
 Tuist is the source of truth for targets and dependency wiring.
 
+![Tuist graph](docs/graph.svg)
+
 ```bash
-tuist graph --skip-test-targets --format svg --no-open
+tuist graph ShadowClientmacOSApp ShadowClientiOSApp ShadowClienttvOSApp ShadowClientFeatureHome --skip-test-targets --skip-external-dependencies --format svg --no-open --output-path docs
 ```
 
 Relevant source roots:
