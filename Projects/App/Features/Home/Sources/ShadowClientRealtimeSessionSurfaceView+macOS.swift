@@ -35,7 +35,7 @@ struct ShadowClientRealtimeSessionSurfaceRepresentable: NSViewRepresentable {
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor.black.cgColor
         view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
-        view.colorPixelFormat = .bgra8Unorm_srgb
+        view.colorPixelFormat = .bgra8Unorm
         view.colorspace = ShadowClientRealtimeSessionColorPipeline.defaultDisplayColorSpace
         view.framebufferOnly = false
         view.isPaused = false
@@ -223,7 +223,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
 
         let targetPixelFormat: MTLPixelFormat = shouldRenderExtendedDynamicRange
             ? configuration.pixelFormat
-            : .bgra8Unorm_srgb
+            : .bgra8Unorm
         if view.colorPixelFormat != targetPixelFormat {
             view.colorPixelFormat = targetPixelFormat
         }

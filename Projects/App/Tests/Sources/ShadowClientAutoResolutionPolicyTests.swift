@@ -24,3 +24,14 @@ func autoResolutionSubtractsSafeAreaBeforeScaling() {
 
     #expect(resolved == CGSize(width: 2388, height: 1580))
 }
+
+@Test("Auto resolution can use a fullscreen viewport without safe area reduction")
+func autoResolutionSupportsFullscreenViewportSizing() {
+    let resolved = ShadowClientAutoResolutionPolicy.resolvePixelSize(
+        displayLogicalSize: CGSize(width: 1366, height: 1024),
+        safeAreaInsets: .init(),
+        scale: 2.0
+    )
+
+    #expect(resolved == CGSize(width: 2732, height: 2048))
+}

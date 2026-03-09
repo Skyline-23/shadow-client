@@ -14,8 +14,8 @@ enum ShadowClientRealtimeSessionColorPipeline {
     private static let defaultSDRSourceColorSpace = CGColorSpace(name: CGColorSpace.itur_709)
         ?? CGColorSpace(name: CGColorSpace.sRGB)
         ?? CGColorSpaceCreateDeviceRGB()
-    private static let defaultSDRDisplayColorSpace = CGColorSpace(name: CGColorSpace.sRGB)
-        ?? CGColorSpace(name: CGColorSpace.displayP3)
+    private static let defaultSDRDisplayColorSpace = CGColorSpace(name: CGColorSpace.itur_709)
+        ?? CGColorSpace(name: CGColorSpace.sRGB)
         ?? CGColorSpaceCreateDeviceRGB()
 
     private static let defaultHDRDisplayColorSpace = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)

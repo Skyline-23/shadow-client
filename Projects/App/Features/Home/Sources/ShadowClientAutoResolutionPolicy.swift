@@ -62,12 +62,7 @@ enum ShadowClientAutoResolutionPolicy {
         if let window = activeWindow() {
             return (
                 logicalSize: window.bounds.size,
-                safeAreaInsets: EdgeInsets(
-                    top: window.safeAreaInsets.top,
-                    leading: window.safeAreaInsets.left,
-                    bottom: window.safeAreaInsets.bottom,
-                    trailing: window.safeAreaInsets.right
-                ),
+                safeAreaInsets: .init(),
                 scale: window.screen.scale
             )
         }
