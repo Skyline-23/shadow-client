@@ -11,8 +11,8 @@ struct ShadowClientRealtimeSessionColorConfiguration {
 }
 
 enum ShadowClientRealtimeSessionColorPipeline {
-    private static let defaultSDRColorSpace = CGColorSpace(name: CGColorSpace.sRGB)
-        ?? CGColorSpace(name: CGColorSpace.itur_709)
+    private static let defaultSDRColorSpace = CGColorSpace(name: CGColorSpace.itur_709)
+        ?? CGColorSpace(name: CGColorSpace.sRGB)
         ?? CGColorSpaceCreateDeviceRGB()
 
     private static let defaultHDRDisplayColorSpace = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)
