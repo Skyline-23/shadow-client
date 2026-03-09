@@ -207,7 +207,6 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
         .onPreferenceChange(ShadowClientLaunchViewportPreferenceKey.self) { metrics in
             launchViewportMetrics = metrics
         }
-        .animation(.easeInOut(duration: 0.2), value: remoteDesktopRuntime.activeSession != nil)
         .shadowClientRemoteSessionAutoFullscreen(
             isSessionActive: remoteDesktopRuntime.activeSession != nil
         )
@@ -221,7 +220,6 @@ var rootContentView: AnyView {
 
         return AnyView(
             remoteSessionFlowView
-                .transition(.opacity)
                 .accessibilityIdentifier("shadow.root.remote-session")
         )
     }
