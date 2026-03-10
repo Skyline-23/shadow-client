@@ -18,6 +18,14 @@ func appSettingsMapToStreamingPreferences() {
     ))
 }
 
+@Test("App settings defaults keep HUD hidden and hardware decoding automatic")
+func appSettingsDefaultsPreferAutomaticDecoderAndHiddenHUD() {
+    let settings = ShadowClientAppSettings()
+
+    #expect(settings.showDiagnosticsHUD == false)
+    #expect(settings.videoDecoder == .automatic)
+}
+
 @Test("Dependencies applying settings override session preferences while preserving host capabilities")
 func dependenciesApplyingSettingsOverridesSessionPreferences() {
     let bridge = MoonlightSessionTelemetryBridge()

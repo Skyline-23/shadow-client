@@ -27,7 +27,25 @@ var homeTab: some View {
                 .padding(.bottom, 40)
             }
             .scrollContentBackground(.hidden)
+
+            if let spotlightedHost = spotlightedRemoteDesktopHost {
+                GeometryReader { proxy in
+                    ZStack {
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                dismissHostSpotlight()
+                            }
+
+                        remoteDesktopHostSpotlightCard(spotlightedHost, containerSize: proxy.size)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    }
+                }
+                .allowsHitTesting(true)
+                .zIndex(10)
+            }
         }
+        .coordinateSpace(name: "shadow.home.spotlightSpace")
         .accessibilityIdentifier("shadow.tab.home")
         .tabItem { Label("Home", systemImage: "house.fill") }
         .tag(AppTab.home)
@@ -38,89 +56,6 @@ var settingsTab: some View {
             backgroundGradient
             ScrollView {
                 VStack(spacing: 18) {
-                    settingsSection(title: "Client Connection") {
-                        TextField("Host (IP or hostname)", text: $connectionHost)
-                            .font(.body.weight(.semibold))
-                            .textFieldStyle(.plain)
-                            .foregroundStyle(.white)
-                            .autocorrectionDisabled()
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .background(rowSurface(cornerRadius: 10))
-                            .onSubmit {
-                                if canConnect {
-                                    connectToHost(autoLaunchAfterConnect: true)
-                                }
-                            }
-
-                        settingsRow {
-                            Label("Backend: \(baseDependencies.connectionBackendLabel)", systemImage: "bolt.horizontal.circle")
-                                .font(.callout.weight(.semibold))
-                                .foregroundStyle(Color.white.opacity(0.9))
-                            Spacer(minLength: 0)
-                        }
-
-                        settingsRow {
-                            Label(
-                                "Auto Discovery: \(autoFindHosts ? hostDiscoveryRuntime.state.label : "Disabled")",
-                                systemImage: "dot.radiowaves.left.and.right"
-                            )
-                                .font(.callout.weight(.semibold))
-                                .foregroundStyle(Color.white.opacity(0.9))
-                            Spacer(minLength: 0)
-                            Button {
-                                hostDiscoveryRuntime.refresh()
-                                refreshRemoteDesktopCatalog()
-                            } label: {
-                                Image(systemName: "arrow.clockwise")
-                            }
-                            .accessibilityIdentifier("shadow.settings.connection.refresh-discovery")
-                            .accessibilityLabel("Refresh Discovered Hosts")
-                            .buttonStyle(.bordered)
-                            .disabled(!autoFindHosts)
-                        }
-
-                        if hostDiscoveryRuntime.hosts.isEmpty {
-                            settingsRow {
-                                Text("No hosts discovered yet. Keep this view open or enter host manually.")
-                                    .font(.callout.weight(.medium))
-                                    .foregroundStyle(Color.white.opacity(0.82))
-                                Spacer(minLength: 0)
-                            }
-                        } else {
-                            ForEach(hostDiscoveryRuntime.hosts.prefix(8)) { discoveredHost in
-                                discoveredHostRow(discoveredHost)
-                            }
-                        }
-
-                        HStack(spacing: 10) {
-                            Button("Connect") {
-                                connectToHost(autoLaunchAfterConnect: true)
-                            }
-                            .accessibilityIdentifier("shadow.settings.connection.connect")
-                            .accessibilityLabel("Connect to Host")
-                            .disabled(!canConnect)
-                            .buttonStyle(.borderedProminent)
-
-                            Button("Disconnect") {
-                                disconnectFromHost()
-                            }
-                            .accessibilityIdentifier("shadow.settings.connection.disconnect")
-                            .accessibilityLabel("Disconnect from Host")
-                            .disabled(!canDisconnect)
-                            .buttonStyle(.bordered)
-
-                            Spacer(minLength: 0)
-                        }
-
-                        settingsRow {
-                            Label(connectionStatusText, systemImage: connectionStatusSymbol)
-                                .font(.callout.weight(.semibold))
-                                .foregroundStyle(connectionStatusColor)
-                            Spacer(minLength: 0)
-                        }
-                    }
-
                     settingsSection(title: "Basic Settings") {
                         settingsPickerRow(
                             title: "Resolution",

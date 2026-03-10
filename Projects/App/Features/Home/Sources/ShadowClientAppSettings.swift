@@ -172,6 +172,8 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         public static let muteHostSpeakersWhileStreaming = "settings.muteHostSpeakersWhileStreaming"
         public static let muteAudioWhenInactiveWindow = "settings.muteAudioWhenInactiveWindow"
         public static let autoFindHosts = "settings.autoFindHosts"
+        public static let hostAliases = "settings.hostAliases"
+        public static let hostNotes = "settings.hostNotes"
         public static let language = "settings.language"
         public static let guiDisplayMode = "settings.guiDisplayMode"
     }
@@ -212,7 +214,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
     public init(
         lowLatencyMode: Bool = true,
         preferHDR: Bool = true,
-        showDiagnosticsHUD: Bool = true,
+        showDiagnosticsHUD: Bool = false,
         resolution: ShadowClientStreamingResolutionPreset = ShadowClientAppSettingsDefaults.defaultResolution,
         frameRate: ShadowClientStreamingFrameRatePreset = ShadowClientAppSettingsDefaults.defaultFrameRate,
         bitrateKbps: Int = ShadowClientAppSettingsDefaults.defaultBitrateKbps,
@@ -220,7 +222,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         displayMode: ShadowClientDisplayMode = .borderlessFullscreen,
         audioConfiguration: ShadowClientAudioConfiguration = .surround71,
         videoCodec: ShadowClientVideoCodecPreference = .auto,
-        videoDecoder: ShadowClientVideoDecoderPreference = .forceHardware,
+        videoDecoder: ShadowClientVideoDecoderPreference = .automatic,
         enableVSync: Bool = false,
         enableFramePacing: Bool = false,
         enableYUV444: Bool = false,

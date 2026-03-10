@@ -16,7 +16,7 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @State var selectedTab: AppTab = .home
     @AppStorage(ShadowClientAppSettings.StorageKeys.lowLatencyMode) var lowLatencyMode = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferHDR) var preferHDR = true
-    @AppStorage(ShadowClientAppSettings.StorageKeys.showDiagnosticsHUD) var showDiagnosticsHUD = true
+    @AppStorage(ShadowClientAppSettings.StorageKeys.showDiagnosticsHUD) var showDiagnosticsHUD = false
     @AppStorage(ShadowClientAppSettings.StorageKeys.connectionHost) var connectionHost = ""
     @AppStorage(ShadowClientAppSettings.StorageKeys.resolution) var resolutionRawValue =
         ShadowClientAppSettingsDefaults.defaultResolution.rawValue
@@ -27,7 +27,7 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @AppStorage(ShadowClientAppSettings.StorageKeys.displayMode) var displayModeRawValue = ShadowClientDisplayMode.borderlessFullscreen.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.audioConfiguration) var audioConfigurationRawValue = ShadowClientAudioConfiguration.surround71.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.videoCodec) var videoCodecRawValue = ShadowClientVideoCodecPreference.auto.rawValue
-    @AppStorage(ShadowClientAppSettings.StorageKeys.videoDecoder) var videoDecoderRawValue = ShadowClientVideoDecoderPreference.forceHardware.rawValue
+    @AppStorage(ShadowClientAppSettings.StorageKeys.videoDecoder) var videoDecoderRawValue = ShadowClientVideoDecoderPreference.automatic.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.enableVSync) var enableVSync = false
     @AppStorage(ShadowClientAppSettings.StorageKeys.enableFramePacing) var enableFramePacing = false
     @AppStorage(ShadowClientAppSettings.StorageKeys.enableYUV444) var enableYUV444 = false
@@ -52,7 +52,16 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @ObservedObject var hostDiscoveryRuntime: ShadowClientHostDiscoveryRuntime
     @ObservedObject var remoteDesktopRuntime: ShadowClientRemoteDesktopRuntime
     @ObservedObject var sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext
+    @StateObject var hostCustomizationStore: ShadowClientHostCustomizationStore
     @State var connectionState: ShadowClientConnectionState = .disconnected
+    @State var remoteDesktopHostFrames: [String: CGRect] = [:]
+    @State var spotlightedHostID: String?
+    @State var spotlightedHostSourceFrame: CGRect = .zero
+    @State var spotlightAnimationProgress = 0.0
+    @State var spotlightCardSettled = false
+    @State var hostSpotlightTask: Task<Void, Never>?
+    @State var isShowingManualHostEntry = false
+    @State var manualHostDraft = ""
     @State var settingsTelemetryTask: Task<Void, Never>?
     @State var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
     @State var sessionDiagnosticsHistory = ShadowClientSessionDiagnosticsHistory(
@@ -79,6 +88,7 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
         _hostDiscoveryRuntime = ObservedObject(wrappedValue: dependencies.hostDiscoveryRuntime)
         _remoteDesktopRuntime = ObservedObject(wrappedValue: dependencies.remoteDesktopRuntime)
         _sessionSurfaceContext = ObservedObject(wrappedValue: dependencies.remoteDesktopRuntime.sessionSurfaceContext)
+        _hostCustomizationStore = StateObject(wrappedValue: ShadowClientHostCustomizationStore())
         self.settingsTelemetryRuntime = SettingsDiagnosticsTelemetryRuntime(
             settingsMapper: dependencies.settingsMapper,
             hostCapabilities: dependencies.hostCapabilities
@@ -474,6 +484,107 @@ func refreshRemoteDesktopCatalog() {
     @MainActor
 func stopHostDiscovery() {
         hostDiscoveryRuntime.stop()
+    }
+
+    @MainActor
+func presentManualHostEntry() {
+        manualHostDraft = normalizedConnectionHost
+        isShowingManualHostEntry = true
+    }
+
+    @MainActor
+func cancelManualHostEntry() {
+        manualHostDraft = ""
+        isShowingManualHostEntry = false
+    }
+
+    @MainActor
+    func addManualHostToCatalog() {
+        let host = manualHostDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else {
+            return
+        }
+
+        connectionHost = host
+        refreshRemoteDesktopCatalog()
+        remoteDesktopRuntime.selectHost(host.lowercased())
+        manualHostDraft = ""
+        isShowingManualHostEntry = false
+    }
+
+    @MainActor
+func presentHostSpotlight(for host: ShadowClientRemoteHostDescriptor) {
+        connectionHost = host.host
+        remoteDesktopRuntime.selectHost(host.id)
+        spotlightedHostSourceFrame = remoteDesktopHostFrames[host.id] ?? .zero
+        hostSpotlightTask?.cancel()
+        hostSpotlightTask = Task {
+            await runHostSpotlightPresentation(forHostID: host.id)
+        }
+    }
+
+    @MainActor
+func dismissHostSpotlight() {
+        hostSpotlightTask?.cancel()
+        let dismissingHostID = spotlightedHostID
+        hostSpotlightTask = Task {
+            await runHostSpotlightDismissal(forHostID: dismissingHostID)
+        }
+    }
+
+    @MainActor
+func runHostSpotlightPresentation(forHostID hostID: String) async {
+        spotlightAnimationProgress = 0
+        spotlightCardSettled = false
+        spotlightedHostID = hostID
+        await Task.yield()
+
+        guard spotlightedHostID == hostID else {
+            return
+        }
+
+        await animateAsync(.spring(response: 0.52, dampingFraction: 0.84)) {
+            spotlightAnimationProgress = 1
+        }
+
+        guard spotlightedHostID == hostID else {
+            return
+        }
+        spotlightCardSettled = true
+    }
+
+    @MainActor
+func runHostSpotlightDismissal(forHostID hostID: String?) async {
+        guard spotlightedHostID == hostID else {
+            return
+        }
+
+        spotlightCardSettled = false
+
+        await animateAsync(.spring(response: 0.38, dampingFraction: 0.92)) {
+            spotlightAnimationProgress = 0
+        }
+
+        guard spotlightedHostID == hostID else {
+            return
+        }
+
+        spotlightedHostID = nil
+    }
+
+    @MainActor
+func animateAsync(
+        _ animation: Animation?,
+        completionCriteria: AnimationCompletionCriteria = .logicallyComplete,
+        _ changes: @escaping @MainActor () -> Void
+    ) async {
+        await withCheckedContinuation { continuation in
+            withAnimation(animation, completionCriteria: completionCriteria, {
+                changes()
+            }, completion: {
+                continuation.resume()
+            })
+        }
     }
 
     @MainActor
