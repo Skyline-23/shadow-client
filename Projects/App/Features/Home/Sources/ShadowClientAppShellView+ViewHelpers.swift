@@ -7,30 +7,30 @@ func settingsSection<Content: View>(
         title: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: ShadowClientAppShellChrome.Metrics.sectionHeaderSpacing) {
             Text(title)
                 .font(.system(.title3, design: .rounded).weight(.bold))
                 .foregroundStyle(.white)
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: ShadowClientAppShellChrome.Metrics.sectionContentSpacing) {
                 content()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(panelSurface(cornerRadius: 14))
+        .padding(ShadowClientAppShellChrome.Metrics.sectionPadding)
+        .background(panelSurface(cornerRadius: ShadowClientAppShellChrome.Metrics.panelCornerRadius))
     }
 
 func settingsRow<Content: View>(
         @ViewBuilder content: () -> Content
     ) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: ShadowClientAppShellChrome.Metrics.rowSpacing) {
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-            .background(rowSurface(cornerRadius: 10))
+        .padding(.horizontal, ShadowClientAppShellChrome.Metrics.rowHorizontalPadding)
+        .padding(.vertical, ShadowClientAppShellChrome.Metrics.rowVerticalPadding)
+        .background(rowSurface(cornerRadius: ShadowClientAppShellChrome.Metrics.rowCornerRadius))
     }
 
 func settingsPickerRow<Value: Hashable, Content: View>(
@@ -63,7 +63,7 @@ func diagnosticsRow(
         settingsRow {
             Text(label)
                 .font(.callout.monospacedDigit().weight(.semibold))
-                .foregroundStyle(Color.white.opacity(0.75))
+                .foregroundStyle(ShadowClientAppShellChrome.Palette.secondaryText)
             Spacer(minLength: 8)
             Text(value)
                 .font(.callout.monospacedDigit().weight(.semibold))
@@ -82,7 +82,7 @@ func discoveredHostRow(_ discoveredHost: ShadowClientDiscoveredHost) -> some Vie
                     .truncationMode(.tail)
                 Text("\(discoveredHost.host):\(discoveredHost.port) · \(discoveredHost.serviceType)")
                     .font(.footnote.monospacedDigit())
-                    .foregroundStyle(Color.white.opacity(0.74))
+                    .foregroundStyle(ShadowClientAppShellChrome.Palette.tertiaryText)
                     .lineLimit(2)
                     .truncationMode(.middle)
             }

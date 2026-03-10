@@ -15,9 +15,91 @@ private enum SpotlightFace {
     case back
 }
 
+private enum RemoteHostCardMetrics {
+    static let panelPadding: CGFloat = 16
+    static let cardPadding: CGFloat = 18
+    static let tileMinHeight: CGFloat = 252
+    static let tileCornerRadius: CGFloat = 22
+    static let spotlightCornerRadius: CGFloat = 24
+    static let badgeCornerRadius: CGFloat = 12
+    static let insetCornerRadius: CGFloat = 10
+    static let glyphCornerRadius: CGFloat = 16
+    static let glyphSize: CGFloat = 48
+    static let headerSpacing: CGFloat = 10
+    static let contentSpacing: CGFloat = 14
+    static let titleStackSpacing: CGFloat = 6
+    static let sectionSpacing: CGFloat = 8
+    static let faceSpacing: CGFloat = 18
+    static let faceHeaderSpacing: CGFloat = 12
+    static let spotlightShadowRadius: CGFloat = 32
+    static let spotlightShadowY: CGFloat = 18
+    static let spotlightStrokeWidth: CGFloat = 2
+    static let compactTargetSide: CGFloat = 420
+    static let regularTargetSide: CGFloat = 560
+    static let compactHorizontalInset: CGFloat = 32
+    static let regularHorizontalInset: CGFloat = 104
+    static let spotlightBottomInset: CGFloat = 28
+    static let transitionStart = 0.34
+    static let transitionEnd = 0.66
+}
+
+private struct RemoteHostFrontLayoutStyle {
+    let titleFontSize: CGFloat
+    let titleStackSpacing: CGFloat
+    let glyphSize: CGFloat
+    let glyphCornerRadius: CGFloat
+    let contentSpacing: CGFloat
+    let headerSpacing: CGFloat
+    let footerSpacing: CGFloat
+    let badgeHorizontalPadding: CGFloat
+    let badgeVerticalPadding: CGFloat
+
+    static let tile = RemoteHostFrontLayoutStyle(
+        titleFontSize: 18,
+        titleStackSpacing: 6,
+        glyphSize: 48,
+        glyphCornerRadius: 16,
+        contentSpacing: 14,
+        headerSpacing: 12,
+        footerSpacing: 8,
+        badgeHorizontalPadding: 8,
+        badgeVerticalPadding: 4
+    )
+
+    static let spotlight = RemoteHostFrontLayoutStyle(
+        titleFontSize: 20,
+        titleStackSpacing: 8,
+        glyphSize: 56,
+        glyphCornerRadius: 18,
+        contentSpacing: 18,
+        headerSpacing: 14,
+        footerSpacing: 10,
+        badgeHorizontalPadding: 10,
+        badgeVerticalPadding: 6
+    )
+
+    static func interpolated(progress: CGFloat) -> RemoteHostFrontLayoutStyle {
+        .init(
+            titleFontSize: interpolate(tile.titleFontSize, spotlight.titleFontSize, progress),
+            titleStackSpacing: interpolate(tile.titleStackSpacing, spotlight.titleStackSpacing, progress),
+            glyphSize: interpolate(tile.glyphSize, spotlight.glyphSize, progress),
+            glyphCornerRadius: interpolate(tile.glyphCornerRadius, spotlight.glyphCornerRadius, progress),
+            contentSpacing: interpolate(tile.contentSpacing, spotlight.contentSpacing, progress),
+            headerSpacing: interpolate(tile.headerSpacing, spotlight.headerSpacing, progress),
+            footerSpacing: interpolate(tile.footerSpacing, spotlight.footerSpacing, progress),
+            badgeHorizontalPadding: interpolate(tile.badgeHorizontalPadding, spotlight.badgeHorizontalPadding, progress),
+            badgeVerticalPadding: interpolate(tile.badgeVerticalPadding, spotlight.badgeVerticalPadding, progress)
+        )
+    }
+
+    private static func interpolate(_ from: CGFloat, _ to: CGFloat, _ progress: CGFloat) -> CGFloat {
+        from + ((to - from) * progress)
+    }
+}
+
 extension ShadowClientAppShellView {
 var remoteDesktopHostCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: RemoteHostCardMetrics.panelPadding) {
             remoteDesktopHostHeader
 
             if isShowingManualHostEntry {
@@ -27,7 +109,7 @@ var remoteDesktopHostCard: some View {
             if remoteDesktopRuntime.hosts.isEmpty {
                 remoteDesktopEmptyStateCard
             } else {
-                LazyVGrid(columns: remoteDesktopHostGridColumns, alignment: .leading, spacing: 16) {
+                LazyVGrid(columns: remoteDesktopHostGridColumns, alignment: .leading, spacing: RemoteHostCardMetrics.panelPadding) {
                     ForEach(remoteDesktopRuntime.hosts.prefix(8)) { host in
                         remoteDesktopHostTile(host)
                     }
@@ -43,12 +125,12 @@ var remoteDesktopHostCard: some View {
         .accessibilityLabel("Remote Desktop Hosts")
         .accessibilityValue(remoteDesktopHostsAccessibilityValue)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(panelSurface(cornerRadius: 18))
+        .padding(RemoteHostCardMetrics.panelPadding)
+        .background(panelSurface(cornerRadius: RemoteHostCardMetrics.panelPadding + 2))
     }
 
     var remoteDesktopHostHeader: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: RemoteHostCardMetrics.headerSpacing) {
             Label("Remote Desktop Hosts", systemImage: "desktopcomputer")
                 .font(.system(.title3, design: .rounded).weight(.bold))
                 .foregroundStyle(.white)
@@ -157,71 +239,14 @@ var remoteDesktopHostCard: some View {
         return Button {
             presentHostSpotlight(for: host)
         } label: {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(hostGlyphColor(host).opacity(0.16))
-                            .frame(width: 48, height: 48)
-
-                        Image(systemName: hostGlyphSymbol(host))
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(hostGlyphColor(host))
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(hostDisplayTitle(host))
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(.white)
-                            .lineLimit(2)
-                            .truncationMode(.tail)
-
-                        Text(host.host)
-                            .font(.footnote.monospaced())
-                            .foregroundStyle(Color.white.opacity(0.70))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-
-                    Spacer(minLength: 12)
-
-                    if isSelected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.headline.weight(.bold))
-                            .foregroundStyle(accentColor)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(host.statusLabel)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(remoteHostStatusColor(host))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(remoteHostStatusColor(host).opacity(0.14), in: Capsule())
-                }
-
-                Text(hostSummaryText(host))
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(host.lastError == nil ? Color.white.opacity(0.76) : .red.opacity(0.92))
-                    .lineLimit(2)
-
-                Spacer(minLength: 0)
-
-                HStack(spacing: 8) {
-                    Label(hostTileActionLabel(host), systemImage: hostFrontHintSymbol(host))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(hostFrontHintColor(host))
-
-                    Spacer(minLength: 8)
-
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(Color.white.opacity(0.46))
-                }
-            }
-            .frame(maxWidth: .infinity, minHeight: 252, alignment: .topLeading)
-            .padding(18)
+            remoteDesktopHostFrontContent(
+                host,
+                isSelected: isSelected,
+                summaryLineLimit: 2,
+                style: .tile
+            )
+            .frame(maxWidth: .infinity, minHeight: RemoteHostCardMetrics.tileMinHeight, alignment: .topLeading)
+            .padding(RemoteHostCardMetrics.cardPadding)
             .background(hostCardSurface(isSelected: isSelected))
         }
         .buttonStyle(.plain)
@@ -231,7 +256,7 @@ var remoteDesktopHostCard: some View {
         .accessibilityLabel(hostAccessibilityLabel(for: host, isSelected: isSelected))
         .accessibilityHint("Opens \(hostDisplayTitle(host)) in a focused rotating card")
         .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: RemoteHostCardMetrics.tileCornerRadius, style: .continuous)
                 .stroke(isSelected ? accentColor.opacity(0.92) : Color.white.opacity(0.08), lineWidth: isSelected ? 2 : 1)
         )
         .opacity(spotlighted ? 0 : 1)
@@ -270,28 +295,28 @@ var remoteDesktopHostCard: some View {
         return ZStack {
             hostSpotlightSurface
 
-            remoteDesktopHostFrontFace(host, interactive: false)
-                .padding(18)
+            remoteDesktopHostFrontFace(host, style: .tile)
+                .padding(RemoteHostCardMetrics.cardPadding)
                 .opacity(frontOpacity)
 
             remoteDesktopHostBackFace(host, interactive: interactiveBackFace)
-                .padding(18)
+                .padding(RemoteHostCardMetrics.cardPadding)
                 .opacity(backOpacity)
                 .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0), perspective: 0.9)
         }
         .frame(width: transform.currentFrame.width, height: transform.currentFrame.height)
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(accentColor.opacity(0.90), lineWidth: 2)
+            RoundedRectangle(cornerRadius: RemoteHostCardMetrics.spotlightCornerRadius, style: .continuous)
+                .stroke(accentColor.opacity(0.90), lineWidth: RemoteHostCardMetrics.spotlightStrokeWidth)
         )
-        .shadow(color: Color.black.opacity(0.34), radius: 32, x: 0, y: 18)
+        .shadow(color: Color.black.opacity(0.34), radius: RemoteHostCardMetrics.spotlightShadowRadius, x: 0, y: RemoteHostCardMetrics.spotlightShadowY)
         .rotation3DEffect(.degrees(flipAngle), axis: (x: 0, y: 1, z: 0), perspective: 1.25)
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: RemoteHostCardMetrics.spotlightCornerRadius, style: .continuous))
     }
 
     fileprivate func spotlightFaceOpacity(progress: Double, face: SpotlightFace) -> Double {
-        let transitionStart = 0.34
-        let transitionEnd = 0.66
+        let transitionStart = 0.48
+        let transitionEnd = 0.52
         let normalized = min(max((progress - transitionStart) / (transitionEnd - transitionStart), 0), 1)
 
         switch face {
@@ -302,68 +327,88 @@ var remoteDesktopHostCard: some View {
         }
     }
 
-    func remoteDesktopHostFrontFace(_ host: ShadowClientRemoteHostDescriptor, interactive: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .top, spacing: 12) {
+    fileprivate func remoteDesktopHostFrontFace(
+        _ host: ShadowClientRemoteHostDescriptor,
+        style: RemoteHostFrontLayoutStyle
+    ) -> some View {
+        remoteDesktopHostFrontContent(
+            host,
+            isSelected: true,
+            summaryLineLimit: 2,
+            style: style
+        )
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    fileprivate func remoteDesktopHostFrontContent(
+        _ host: ShadowClientRemoteHostDescriptor,
+        isSelected: Bool,
+        summaryLineLimit: Int,
+        style: RemoteHostFrontLayoutStyle
+    ) -> some View {
+        VStack(alignment: .leading, spacing: style.contentSpacing) {
+            HStack(alignment: .top, spacing: style.headerSpacing) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(hostGlyphColor(host).opacity(0.18))
-                        .frame(width: 48, height: 48)
+                    RoundedRectangle(cornerRadius: style.glyphCornerRadius, style: .continuous)
+                        .fill(hostGlyphColor(host).opacity(0.16))
+                        .frame(width: style.glyphSize, height: style.glyphSize)
 
                     Image(systemName: hostGlyphSymbol(host))
                         .font(.title3.weight(.bold))
                         .foregroundStyle(hostGlyphColor(host))
                 }
 
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: style.titleStackSpacing) {
                     Text(hostDisplayTitle(host))
-                        .font(.title3.weight(.bold))
+                        .font(.system(size: style.titleFontSize, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                         .lineLimit(2)
+                        .truncationMode(.tail)
+
                     Text(host.host)
                         .font(.footnote.monospaced())
-                        .foregroundStyle(Color.white.opacity(0.72))
+                        .foregroundStyle(Color.white.opacity(0.70))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
 
-                Spacer(minLength: 12)
+                Spacer(minLength: style.headerSpacing)
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(accentColor)
+                }
             }
 
-            HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: RemoteHostCardMetrics.sectionSpacing) {
                 Text(host.statusLabel)
                     .font(.caption.weight(.bold))
                     .foregroundStyle(remoteHostStatusColor(host))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, style.badgeHorizontalPadding)
+                    .padding(.vertical, style.badgeVerticalPadding)
                     .background(remoteHostStatusColor(host).opacity(0.14), in: Capsule())
-
-                Text(hostTileActionLabel(host))
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(hostRowActionColor(host, isSelected: true))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(hostRowActionColor(host, isSelected: true).opacity(0.12), in: Capsule())
             }
 
             Text(hostSummaryText(host))
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(host.lastError == nil ? Color.white.opacity(0.82) : .red.opacity(0.92))
-                .lineLimit(3)
+                .foregroundStyle(host.lastError == nil ? Color.white.opacity(0.76) : .red.opacity(0.92))
+                .lineLimit(summaryLineLimit)
 
             Spacer(minLength: 0)
 
-            HStack(spacing: 8) {
+            HStack(spacing: style.footerSpacing) {
                 Label(hostTileActionLabel(host), systemImage: hostFrontHintSymbol(host))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(hostFrontHintColor(host))
 
-                Spacer(minLength: 8)
+                Spacer(minLength: style.footerSpacing)
 
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.white.opacity(0.46))
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     func remoteDesktopHostBackFace(_ host: ShadowClientRemoteHostDescriptor, interactive: Bool) -> some View {
@@ -413,125 +458,6 @@ var remoteDesktopHostCard: some View {
                 .allowsHitTesting(interactive)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    func remoteDesktopHostMetadataPreview(_ host: ShadowClientRemoteHostDescriptor) -> some View {
-        let friendlyName = hostFriendlyName(for: host).trimmingCharacters(in: .whitespacesAndNewlines)
-        let note = hostNotes(for: host).trimmingCharacters(in: .whitespacesAndNewlines)
-
-        return VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Friendly Name")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.white.opacity(0.68))
-                Text(friendlyName.isEmpty ? "Use the discovered name" : friendlyName)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(friendlyName.isEmpty ? Color.white.opacity(0.42) : .white)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Notes")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.white.opacity(0.68))
-                Text(note.isEmpty ? "Add a note for this device" : note)
-                    .font(.body)
-                    .foregroundStyle(note.isEmpty ? Color.white.opacity(0.42) : .white.opacity(0.88))
-                    .frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-        }
-    }
-
-    func remoteDesktopHostActionBarPreview(_ host: ShadowClientRemoteHostDescriptor) -> some View {
-        Group {
-            if isCompactLayout {
-                VStack(alignment: .leading, spacing: 8) {
-                    previewActionPill(title: "Go", accent: hostCanConnect(host) ? accentColor : .white.opacity(0.25))
-                    if shouldShowPairAction(for: host) {
-                        previewActionPill(title: "Pair", accent: .yellow.opacity(0.8))
-                    }
-                }
-            } else {
-                HStack(spacing: 8) {
-                    previewActionPill(title: "Go", accent: hostCanConnect(host) ? accentColor : .white.opacity(0.25))
-                    if shouldShowPairAction(for: host) {
-                        previewActionPill(title: "Pair", accent: .yellow.opacity(0.8))
-                    }
-                }
-            }
-        }
-    }
-
-    func remoteDesktopAppLibraryPreview(_ host: ShadowClientRemoteHostDescriptor) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Text("App Library")
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                Spacer(minLength: 8)
-                Label(remoteDesktopRuntime.appState.label, systemImage: "gamecontroller.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.white.opacity(0.82))
-                Image(systemName: "arrow.clockwise")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(Color.white.opacity(0.45))
-                    .padding(8)
-                    .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-
-            if host.pairStatus != .paired {
-                remoteDesktopCalloutRow(
-                    title: "Locked",
-                    message: "Pair this device first to load desktop or game apps.",
-                    accent: .yellow
-                )
-            } else if remoteDesktopRuntime.apps.isEmpty {
-                remoteDesktopCalloutRow(
-                    title: "No Apps Yet",
-                    message: "Refresh after the host session becomes ready.",
-                    accent: Color.white.opacity(0.65)
-                )
-            } else {
-                ForEach(remoteDesktopRuntime.apps.prefix(3)) { app in
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(app.title)
-                                .font(.callout.weight(.bold))
-                                .foregroundStyle(.white)
-                            Text("App ID: \(app.id) · HDR: \(app.hdrSupported ? "Y" : "N")")
-                                .font(.footnote.monospacedDigit())
-                                .foregroundStyle(Color.white.opacity(0.68))
-                        }
-
-                        Spacer(minLength: 8)
-                        previewActionPill(title: "Launch", accent: accentColor)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
-            }
-        }
-        .padding(.top, 4)
-    }
-
-    func previewActionPill(title: String, accent: Color) -> some View {
-        Text(title)
-            .font(.callout.weight(.bold))
-            .foregroundStyle(.white.opacity(0.9))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(accent.opacity(0.22), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(accent.opacity(0.28), lineWidth: 1)
-            )
     }
 
     func remoteDesktopHostMetadataEditor(_ host: ShadowClientRemoteHostDescriptor) -> some View {
@@ -854,17 +780,18 @@ var remoteDesktopHostCard: some View {
         let sourceFrame = spotlightedHostSourceFrame == .zero
             ? CGRect(x: (containerSize.width - 260) / 2, y: 72, width: 260, height: 252)
             : spotlightedHostSourceFrame
-        let targetSide = min(
+        let horizontalTargetSide = min(
             containerSize.width - CGFloat(isCompactLayout ? 32 : 104),
             CGFloat(isCompactLayout ? 420 : 560)
         )
-        let targetMinY = max(
-            sourceFrame.minY + 20,
-            isCompactLayout ? 132 : 148
+        let verticalTargetSide = max(
+            sourceFrame.height,
+            containerSize.height - sourceFrame.minY - RemoteHostCardMetrics.spotlightBottomInset
         )
+        let targetSide = min(horizontalTargetSide, verticalTargetSide)
         let targetFrame = CGRect(
             x: (containerSize.width - targetSide) / 2,
-            y: targetMinY,
+            y: sourceFrame.minY,
             width: targetSide,
             height: targetSide
         )

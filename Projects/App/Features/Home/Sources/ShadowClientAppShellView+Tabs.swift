@@ -7,7 +7,7 @@ var homeTab: some View {
         ZStack {
             backgroundGradient
             ScrollView {
-                VStack(spacing: 28) {
+                VStack(spacing: ShadowClientAppShellChrome.Metrics.homeSectionSpacing) {
                     remoteDesktopHostCard
                     connectionStatusCard
 
@@ -24,7 +24,7 @@ var homeTab: some View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, topContentPadding)
                 .padding(.horizontal, horizontalContentPadding)
-                .padding(.bottom, 40)
+                .padding(.bottom, ShadowClientAppShellChrome.Metrics.screenBottomPadding)
             }
             .scrollContentBackground(.hidden)
 
@@ -55,7 +55,7 @@ var settingsTab: some View {
         ZStack(alignment: .top) {
             backgroundGradient
             ScrollView {
-                VStack(spacing: 18) {
+                VStack(spacing: ShadowClientAppShellChrome.Metrics.settingsSectionSpacing) {
                     settingsSection(title: "Basic Settings") {
                         settingsPickerRow(
                             title: "Resolution",
@@ -530,7 +530,7 @@ var settingsTab: some View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, topContentPadding)
                 .padding(.horizontal, horizontalContentPadding)
-                .padding(.bottom, 40)
+                .padding(.bottom, ShadowClientAppShellChrome.Metrics.screenBottomPadding)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

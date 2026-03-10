@@ -222,8 +222,8 @@ func panelSurface(cornerRadius: CGFloat) -> some View {
             .fill(
                 LinearGradient(
                     colors: [
-                        Color.white.opacity(0.12),
-                        Color.white.opacity(0.06),
+                        ShadowClientAppShellChrome.Palette.panelGradientTop,
+                        ShadowClientAppShellChrome.Palette.panelGradientBottom,
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
@@ -231,9 +231,17 @@ func panelSurface(cornerRadius: CGFloat) -> some View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                    .stroke(
+                        ShadowClientAppShellChrome.Palette.panelStroke,
+                        lineWidth: ShadowClientAppShellChrome.Metrics.panelStrokeWidth
+                    )
             )
-            .shadow(color: Color.black.opacity(0.28), radius: 18, x: 0, y: 10)
+            .shadow(
+                color: ShadowClientAppShellChrome.Palette.panelShadow,
+                radius: ShadowClientAppShellChrome.Metrics.panelShadowRadius,
+                x: 0,
+                y: ShadowClientAppShellChrome.Metrics.panelShadowY
+            )
     }
 
 func rowSurface(cornerRadius: CGFloat) -> some View {
@@ -241,8 +249,8 @@ func rowSurface(cornerRadius: CGFloat) -> some View {
             .fill(
                 LinearGradient(
                     colors: [
-                        Color.black.opacity(0.30),
-                        Color.black.opacity(0.22),
+                        ShadowClientAppShellChrome.Palette.rowGradientTop,
+                        ShadowClientAppShellChrome.Palette.rowGradientBottom,
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
@@ -250,7 +258,10 @@ func rowSurface(cornerRadius: CGFloat) -> some View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(Color.white.opacity(0.14), lineWidth: 0.8)
+                    .stroke(
+                        ShadowClientAppShellChrome.Palette.rowStroke,
+                        lineWidth: ShadowClientAppShellChrome.Metrics.rowStrokeWidth
+                    )
             )
     }
 
