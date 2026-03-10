@@ -1448,6 +1448,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let currentLaunchGeneration = launchGeneration
         let controlClient = controlClient
         let sessionConnectionClient = sessionConnectionClient
+        let latestResolvedHostDescriptors = latestResolvedHostDescriptors
+        let pairingRouteStore = pairingRouteStore
         let launchedAppTitle = appTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let launchSettingsToUse = launchSettingsApplyingPersistentFallback(settings)
         lastLaunchRequestContext = .init(
@@ -1478,12 +1480,17 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
             do {
                 await sessionConnectionClient.disconnect()
+                let resolvedHostDescriptor = await Self.preferredRuntimeHostDescriptor(
+                    for: selectedHost,
+                    latestResolvedHostDescriptors: latestResolvedHostDescriptors,
+                    pairingRouteStore: pairingRouteStore
+                )
 
                 let initialLaunchResult = try await controlClient.launch(
-                    host: selectedHost.host,
-                    httpsPort: selectedHost.httpsPort,
+                    host: resolvedHostDescriptor.host,
+                    httpsPort: resolvedHostDescriptor.httpsPort,
                     appID: appID,
-                    currentGameID: selectedHost.currentGameID,
+                    currentGameID: resolvedHostDescriptor.currentGameID,
                     forceLaunch: forceLaunch,
                     settings: launchSettingsToUse
                 )
@@ -1502,12 +1509,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     try await Self.connectWithCodecFallback(
                         sessionConnectionClient: sessionConnectionClient,
                         sessionURL: connectedSessionURL,
-                        host: selectedHost.host,
+                        host: resolvedHostDescriptor.host,
                         appTitle: resolvedTitle,
                         settings: launchSettingsToUse,
                         remoteInputKey: initialLaunchResult.remoteInputKey,
                         remoteInputKeyID: initialLaunchResult.remoteInputKeyID,
-                        serverAppVersion: selectedHost.appVersion
+                        serverAppVersion: resolvedHostDescriptor.appVersion
                     )
                 } catch {
                     guard Self.shouldRetryForcedLaunch(
@@ -1524,10 +1531,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         connectError: error
                     )
                     let forcedLaunchResult = try await controlClient.launch(
-                        host: selectedHost.host,
-                        httpsPort: selectedHost.httpsPort,
+                        host: resolvedHostDescriptor.host,
+                        httpsPort: resolvedHostDescriptor.httpsPort,
                         appID: appID,
-                        currentGameID: selectedHost.currentGameID,
+                        currentGameID: resolvedHostDescriptor.currentGameID,
                         forceLaunch: true,
                         settings: forcedLaunchSettings
                     )
@@ -1543,12 +1550,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     try await Self.connectWithCodecFallback(
                         sessionConnectionClient: sessionConnectionClient,
                         sessionURL: forcedSessionURL,
-                        host: selectedHost.host,
+                        host: resolvedHostDescriptor.host,
                         appTitle: resolvedTitle,
                         settings: forcedLaunchSettings,
                         remoteInputKey: forcedLaunchResult.remoteInputKey,
                         remoteInputKeyID: forcedLaunchResult.remoteInputKeyID,
-                        serverAppVersion: selectedHost.appVersion
+                        serverAppVersion: resolvedHostDescriptor.appVersion
                     )
 
                     connectedLaunchResult = forcedLaunchResult
@@ -1581,7 +1588,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     self.runtimeCodecRecoveryInProgress = false
 
                     self.activeSession = ShadowClientActiveRemoteSession(
-                        host: selectedHost.host,
+                        host: resolvedHostDescriptor.host,
                         appID: appID,
                         appTitle: resolvedTitle,
                         sessionURL: connectedSessionURL
@@ -1589,7 +1596,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     self.lastKnownSessionURL = Self.normalizedSessionURL(connectedSessionURL)
                     if self.sessionPresentationMode == .externalRuntime {
                         self.launchState = .launched(
-                            "Remote desktop launched (\(connectedLaunchResult.verb)): \(resolvedTitle) on \(selectedHost.host)"
+                            "Remote desktop launched (\(connectedLaunchResult.verb)): \(resolvedTitle) on \(resolvedHostDescriptor.host)"
                         )
                     } else {
                         self.launchState = .launched("Remote session transport connected (\(connectedLaunchResult.verb)): \(connectedSessionURL)")
@@ -2430,14 +2437,19 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         refreshAppsTask?.cancel()
         let metadataClient = metadataClient
         let hostDescriptor = selectedHost
-        let host = hostDescriptor.host
-        let httpsPort = hostDescriptor.httpsPort
+        let latestResolvedHostDescriptors = latestResolvedHostDescriptors
+        let pairingRouteStore = pairingRouteStore
         let cachedAppsForHost = cachedAppsByHostID[hostDescriptor.id] ?? []
         refreshAppsTask = Task { [weak self] in
             do {
+                let resolvedHostDescriptor = await Self.preferredRuntimeHostDescriptor(
+                    for: hostDescriptor,
+                    latestResolvedHostDescriptors: latestResolvedHostDescriptors,
+                    pairingRouteStore: pairingRouteStore
+                )
                 let resolved = try await metadataClient.fetchAppList(
-                    host: host,
-                    httpsPort: httpsPort
+                    host: resolvedHostDescriptor.host,
+                    httpsPort: resolvedHostDescriptor.httpsPort
                 )
                 let sorted = resolved.sorted {
                     $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
@@ -2445,7 +2457,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 let resolvedApps: [ShadowClientRemoteAppDescriptor]
                 if sorted.isEmpty {
                     resolvedApps = Self.synthesizedFallbackApps(
-                        for: hostDescriptor,
+                        for: resolvedHostDescriptor,
                         cachedApps: cachedAppsForHost
                     )
                 } else {
@@ -2916,6 +2928,32 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         return "host:\(host.id)"
+    }
+
+    private static func preferredRuntimeHostDescriptor(
+        for selectedHost: ShadowClientRemoteHostDescriptor,
+        latestResolvedHostDescriptors: [ShadowClientRemoteHostDescriptor],
+        pairingRouteStore: ShadowClientPairingRouteStore
+    ) async -> ShadowClientRemoteHostDescriptor {
+        let mergeKey = mergeKey(for: selectedHost)
+        let preferredHost = await pairingRouteStore.preferredHost(for: pairRouteStoreKey(for: selectedHost))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        if let preferredHost,
+           let preferredDescriptor = latestResolvedHostDescriptors.first(where: {
+               mergeKey(for: $0) == mergeKey && $0.host.lowercased() == preferredHost
+           }) {
+            return preferredDescriptor
+        }
+
+        if let exactDescriptor = latestResolvedHostDescriptors.first(where: {
+            mergeKey(for: $0) == mergeKey && $0.host.lowercased() == selectedHost.host.lowercased()
+        }) {
+            return exactDescriptor
+        }
+
+        return selectedHost
     }
 
     private static func preferredRouteOverrides(
