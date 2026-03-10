@@ -3742,7 +3742,7 @@ struct ShadowClientRTPVideoReorderBuffer: Sendable {
             expectedSequence = packet.sequenceNumber
         }
 
-        var readyPackets = drainContiguousPackets()
+        let readyPackets = drainContiguousPackets()
         if readyPackets.isEmpty, packetsBySequence.count >= targetDepth {
             // Moonlight FEC path rejects unrecoverable sequence gaps instead of
             // force-jumping into the middle of a frame.
@@ -6123,7 +6123,7 @@ private actor ShadowClientRTSPInterleavedClient {
                     } catch {
                         return
                     }
-                    if await self.finish(.failure(timeoutError())) {
+                    if self.finish(.failure(timeoutError())) {
                         onTimeout()
                     }
                 }

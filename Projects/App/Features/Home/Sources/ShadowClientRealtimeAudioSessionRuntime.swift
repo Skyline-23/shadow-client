@@ -1021,7 +1021,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     } catch {
                         return
                     }
-                    if await self.finish(.failure(timeoutError())) {
+                    if self.finish(.failure(timeoutError())) {
                         onTimeout()
                     }
                 }

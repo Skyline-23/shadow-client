@@ -35,7 +35,7 @@ func audioPCMGuardNormalizesLikelyInt16ScaledFloatBuffer() {
         #expect(abs(channelData[0][0]) <= 1.0)
         #expect(abs(channelData[0][1]) <= 1.0)
     } else {
-        #expect(false)
+        #expect(Bool(false))
     }
 }
 
@@ -62,7 +62,7 @@ func audioPCMGuardNormalizesLowAmplitudeInt16ScaledFloatBuffer() {
         #expect(abs(channelData[0][0]) <= 1.0)
         #expect(abs(channelData[0][1]) <= 1.0)
     } else {
-        #expect(false)
+        #expect(Bool(false))
     }
 }
 
@@ -130,7 +130,7 @@ func audioPCMGuardSilencesInt16Buffer() {
             }
         }
     } else {
-        #expect(false)
+        #expect(Bool(false))
     }
 }
 
