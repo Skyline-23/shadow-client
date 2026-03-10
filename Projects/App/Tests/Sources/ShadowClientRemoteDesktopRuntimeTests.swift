@@ -773,7 +773,9 @@ private actor ScriptedRequestTransport: ShadowClientGameStreamRequestTransportin
         parameters: [String: String],
         uniqueID: String,
         pinnedServerCertificateDER: Data?,
-        clientCertificateCredential: URLCredential?
+        clientCertificateCredential: URLCredential?,
+        clientCertificates: [SecCertificate]?,
+        clientCertificateIdentity: SecIdentity?
     ) async throws -> String {
         recordedCalls.append(.init(scheme: scheme, command: command))
         recordedCallsWithPort.append(.init(scheme: scheme, command: command, port: port))

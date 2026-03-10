@@ -487,7 +487,9 @@ public protocol ShadowClientGameStreamRequestTransporting: Sendable {
         parameters: [String: String],
         uniqueID: String,
         pinnedServerCertificateDER: Data?,
-        clientCertificateCredential: URLCredential?
+        clientCertificateCredential: URLCredential?,
+        clientCertificates: [SecCertificate]?,
+        clientCertificateIdentity: SecIdentity?
     ) async throws -> String
 }
 
@@ -502,7 +504,9 @@ public struct NativeShadowClientGameStreamRequestTransport: ShadowClientGameStre
         parameters: [String: String],
         uniqueID: String,
         pinnedServerCertificateDER: Data?,
-        clientCertificateCredential: URLCredential?
+        clientCertificateCredential: URLCredential?,
+        clientCertificates: [SecCertificate]?,
+        clientCertificateIdentity: SecIdentity?
     ) async throws -> String {
         try await ShadowClientGameStreamHTTPTransport.requestXML(
             host: host,
@@ -512,7 +516,9 @@ public struct NativeShadowClientGameStreamRequestTransport: ShadowClientGameStre
             parameters: parameters,
             uniqueID: uniqueID,
             pinnedServerCertificateDER: pinnedServerCertificateDER,
-            clientCertificateCredential: clientCertificateCredential
+            clientCertificateCredential: clientCertificateCredential,
+            clientCertificates: clientCertificates,
+            clientCertificateIdentity: clientCertificateIdentity
         )
     }
 }
@@ -721,10 +727,16 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         let uniqueID = await identityStore.uniqueID()
         let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: host)
         let clientCertificateCredential: URLCredential?
+        let clientCertificates: [SecCertificate]?
+        let clientCertificateIdentity: SecIdentity?
         if scheme == ShadowClientGameStreamNetworkDefaults.httpsScheme {
             clientCertificateCredential = try? await identityStore.tlsClientCertificateCredential()
+            clientCertificates = try? await identityStore.tlsClientCertificates()
+            clientCertificateIdentity = try? await identityStore.tlsClientIdentity()
         } else {
             clientCertificateCredential = nil
+            clientCertificates = nil
+            clientCertificateIdentity = nil
         }
         return try await transport.requestXML(
             host: host,
@@ -734,7 +746,9 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             parameters: [:],
             uniqueID: uniqueID,
             pinnedServerCertificateDER: pinnedCertificateDER,
-            clientCertificateCredential: clientCertificateCredential
+            clientCertificateCredential: clientCertificateCredential,
+            clientCertificates: clientCertificates,
+            clientCertificateIdentity: clientCertificateIdentity
         )
     }
 
