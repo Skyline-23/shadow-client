@@ -170,29 +170,12 @@ var remoteDesktopHostCard: some View {
                 Text("Add device")
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(.white)
-                HStack(spacing: 10) {
-                    Image(systemName: "network")
-                        .foregroundStyle(Color.white.opacity(0.60))
-                    TextField("Host, IP, or URL", text: $manualHostDraft)
-                        .font(.body.monospaced().weight(.semibold))
-                        .textFieldStyle(.plain)
-                        .foregroundStyle(.white)
-                        .autocorrectionDisabled(true)
-                        .focused($isManualHostFieldFocused)
-                        .accessibilityIdentifier("shadow.home.hosts.manual-entry")
-                        .accessibilityLabel("Remote host address")
-#if os(iOS) || os(tvOS)
-                        .textInputAutocapitalization(.never)
-                        .submitLabel(.done)
-                        .keyboardType(.URL)
-                        .textContentType(.URL)
-#endif
-                        .onSubmit {
-                            addManualHostToCatalog()
-                        }
+                ShadowClientManualHostAddressField(
+                    text: $manualHostDraft,
+                    isFocused: $isManualHostFieldFocused
+                ) {
+                    addManualHostToCatalog()
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
                 .background(hostPanelInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
 
