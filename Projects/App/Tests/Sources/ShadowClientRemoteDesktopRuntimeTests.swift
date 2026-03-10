@@ -720,6 +720,58 @@ func remoteDesktopRuntimeMergesDescriptorsSharingUniqueID() async {
     #expect(runtime.hosts.first?.pairStatus == .paired)
 }
 
+@Test("Remote desktop runtime prefers stored pair route when merging host routes")
+@MainActor
+func remoteDesktopRuntimePrefersStoredPairRouteWhenMerging() async {
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "external-host.example.invalid": .init(
+                host: "external-host.example.invalid",
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let pairingRouteStore = ShadowClientPairingRouteStore(
+        defaultsSuiteName: "shadow-client.pairing.merge-preferred.\(UUID().uuidString)"
+    )
+    await pairingRouteStore.setPreferredHost(
+        "external-host.example.invalid",
+        for: "uniqueid:host-123"
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient(),
+        pairingRouteStore: pairingRouteStore
+    )
+
+    runtime.refreshHosts(
+        candidates: ["external-host.example.invalid", "192.168.0.20"]
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(runtime.hosts.count == 1)
+    #expect(runtime.hosts.first?.host == "external-host.example.invalid")
+}
+
 private struct FailingIdentityProvider: ShadowClientPairingIdentityProviding {
     func loadIdentityMaterial() throws -> ShadowClientPairingIdentityMaterial {
         throw ShadowClientGameStreamControlError.invalidKeyMaterial

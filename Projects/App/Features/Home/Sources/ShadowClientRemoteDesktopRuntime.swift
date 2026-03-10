@@ -1198,6 +1198,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         hostState = .loading
         refreshHostsTask?.cancel()
         let metadataClient = metadataClient
+        let pairingRouteStore = pairingRouteStore
         refreshHostsTask = Task { [weak self] in
             let descriptors = await withTaskGroup(
                 of: ShadowClientRemoteHostDescriptor.self,
@@ -1217,6 +1218,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             }
 
             let sorted = descriptors.sorted(by: Self.compareHosts)
+            let preferredRoutes = await Self.preferredRouteOverrides(
+                for: sorted,
+                pairingRouteStore: pairingRouteStore
+            )
             guard !Task.isCancelled else {
                 return
             }
@@ -1230,7 +1235,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 let mergedHosts = Self.mergeResolvedHosts(
                     sorted,
                     selectedHostID: self.selectedHostID,
-                    preferredHost: preferredNormalized
+                    preferredHost: preferredNormalized,
+                    preferredRoutesByKey: preferredRoutes
                 )
                 self.hosts = mergedHosts
 
@@ -2790,14 +2796,16 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private static func mergeResolvedHosts(
         _ hosts: [ShadowClientRemoteHostDescriptor],
         selectedHostID: String?,
-        preferredHost: String?
+        preferredHost: String?,
+        preferredRoutesByKey: [String: String]
     ) -> [ShadowClientRemoteHostDescriptor] {
         let groupedHosts = Dictionary(grouping: hosts, by: mergeKey(for:))
         return groupedHosts.values.compactMap {
             mergeResolvedHostGroup(
                 $0,
                 selectedHostID: selectedHostID,
-                preferredHost: preferredHost
+                preferredHost: preferredHost,
+                preferredRoutesByKey: preferredRoutesByKey
             )
         }
         .sorted(by: compareHosts)
@@ -2806,14 +2814,16 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private static func mergeResolvedHostGroup(
         _ group: [ShadowClientRemoteHostDescriptor],
         selectedHostID: String?,
-        preferredHost: String?
+        preferredHost: String?,
+        preferredRoutesByKey: [String: String]
     ) -> ShadowClientRemoteHostDescriptor? {
         guard let primary = group.sorted(by: {
             compareMergePriority(
                 lhs: $0,
                 rhs: $1,
                 selectedHostID: selectedHostID,
-                preferredHost: preferredHost
+                preferredHost: preferredHost,
+                preferredRoute: preferredRoutesByKey[mergeKey(for: $0)]
             )
         }).first else {
             return nil
@@ -2856,12 +2866,19 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         lhs: ShadowClientRemoteHostDescriptor,
         rhs: ShadowClientRemoteHostDescriptor,
         selectedHostID: String?,
-        preferredHost: String?
+        preferredHost: String?,
+        preferredRoute: String?
     ) -> Bool {
         let lhsPreferred = lhs.host.lowercased() == preferredHost
         let rhsPreferred = rhs.host.lowercased() == preferredHost
         if lhsPreferred != rhsPreferred {
             return lhsPreferred
+        }
+
+        let lhsStoredPreferred = lhs.host.lowercased() == preferredRoute
+        let rhsStoredPreferred = rhs.host.lowercased() == preferredRoute
+        if lhsStoredPreferred != rhsStoredPreferred {
+            return lhsStoredPreferred
         }
 
         let lhsSelected = lhs.id == selectedHostID
@@ -2899,6 +2916,20 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         return "host:\(host.id)"
+    }
+
+    private static func preferredRouteOverrides(
+        for hosts: [ShadowClientRemoteHostDescriptor],
+        pairingRouteStore: ShadowClientPairingRouteStore
+    ) async -> [String: String] {
+        let keys = Set(hosts.map(mergeKey(for:)))
+        var routes: [String: String] = [:]
+        for key in keys {
+            if let preferredHost = await pairingRouteStore.preferredHost(for: key) {
+                routes[key] = preferredHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            }
+        }
+        return routes
     }
 
     private static func synthesizedFallbackApps(
