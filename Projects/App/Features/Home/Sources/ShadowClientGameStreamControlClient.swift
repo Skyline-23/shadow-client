@@ -991,9 +991,19 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                 timeout: pairingStageTimeout
             )
             let stage5Doc = try parsePairStageXML(stage5XML, stage: "pairchallenge")
-            guard stage5Doc.values["paired"]?.first == "1" else {
+            if stage5Doc.values["paired"]?.first != "1" {
+                Self.pairingLogger.error(
+                    "Pair stage pairchallenge rejected after successful clientpairingsecret; keeping pair result because Sunshine already marked the client paired"
+                )
+            }
+        } catch let error as ShadowClientGameStreamError {
+            if Self.isNonFatalPairChallengeTransportFailure(error) {
+                Self.pairingLogger.notice(
+                    "Pair stage pairchallenge hit non-fatal HTTPS client-auth verification failure after clientpairingsecret; treating host as paired"
+                )
+            } else {
                 try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
-                throw ShadowClientGameStreamControlError.challengeRejected
+                throw error
             }
         } catch {
             try? await sendUnpair(host: endpoint.host, port: endpoint.port, uniqueID: uniqueID)
@@ -1505,6 +1515,15 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         case .invalidHost, .invalidURL:
             return error
         }
+    }
+
+    static func isNonFatalPairChallengeTransportFailure(_ error: ShadowClientGameStreamError) -> Bool {
+        guard case let .requestFailed(message) = error else {
+            return false
+        }
+
+        let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.contains("certificate required")
     }
 }
 
