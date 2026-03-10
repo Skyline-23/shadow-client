@@ -580,8 +580,8 @@ func remoteDesktopRuntimeSynthesizesFallbackAppsForEmptyCatalog() async {
 func remoteDesktopRuntimeAllowsExternalPairWithoutLocalCandidate() async {
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "wifi.skyline23.com": .init(
-                host: "wifi.skyline23.com",
+            "external-host.example.invalid": .init(
+                host: "external-host.example.invalid",
                 displayName: "Example-PC",
                 pairStatus: .notPaired,
                 currentGameID: 0,
@@ -594,7 +594,7 @@ func remoteDesktopRuntimeAllowsExternalPairWithoutLocalCandidate() async {
         ],
         appListByHost: [:]
     )
-    let controlClient = RecordingGameStreamControlClient(successfulHosts: ["wifi.skyline23.com"])
+    let controlClient = RecordingGameStreamControlClient(successfulHosts: ["external-host.example.invalid"])
     let pairingRouteStore = ShadowClientPairingRouteStore(
         defaultsSuiteName: "shadow-client.pairing.external-only.\(UUID().uuidString)"
     )
@@ -605,8 +605,8 @@ func remoteDesktopRuntimeAllowsExternalPairWithoutLocalCandidate() async {
     )
 
     runtime.refreshHosts(
-        candidates: ["wifi.skyline23.com"],
-        preferredHost: "wifi.skyline23.com"
+        candidates: ["external-host.example.invalid"],
+        preferredHost: "external-host.example.invalid"
     )
     await waitForHostCatalogReady(runtime)
 
@@ -619,7 +619,7 @@ func remoteDesktopRuntimeAllowsExternalPairWithoutLocalCandidate() async {
         Issue.record("Expected pairing success for external-only host, got \(runtime.pairingState)")
     }
 
-    #expect(await controlClient.pairRequests() == ["wifi.skyline23.com"])
+    #expect(await controlClient.pairRequests() == ["external-host.example.invalid"])
 }
 
 @Test("Remote desktop runtime tries selected external host before local fallback when unique ID matches")
@@ -627,8 +627,8 @@ func remoteDesktopRuntimeAllowsExternalPairWithoutLocalCandidate() async {
 func remoteDesktopRuntimeTriesSelectedExternalHostBeforeLocalFallback() async {
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "wifi.skyline23.com": .init(
-                host: "wifi.skyline23.com",
+            "external-host.example.invalid": .init(
+                host: "external-host.example.invalid",
                 displayName: "Example-PC",
                 pairStatus: .notPaired,
                 currentGameID: 0,
@@ -663,8 +663,8 @@ func remoteDesktopRuntimeTriesSelectedExternalHostBeforeLocalFallback() async {
     )
 
     runtime.refreshHosts(
-        candidates: ["wifi.skyline23.com", "192.168.0.20"],
-        preferredHost: "wifi.skyline23.com"
+        candidates: ["external-host.example.invalid", "192.168.0.20"],
+        preferredHost: "external-host.example.invalid"
     )
     await waitForHostCatalogReady(runtime)
 
@@ -672,7 +672,7 @@ func remoteDesktopRuntimeTriesSelectedExternalHostBeforeLocalFallback() async {
     await waitForPairingState(runtime)
 
     #expect(runtime.pairingState == .paired("Paired"))
-    #expect(await controlClient.pairRequests() == ["wifi.skyline23.com", "192.168.0.20"])
+    #expect(await controlClient.pairRequests() == ["external-host.example.invalid", "192.168.0.20"])
 }
 
 @Test("Remote desktop runtime merges local and external descriptors for the same unique ID")
@@ -680,8 +680,8 @@ func remoteDesktopRuntimeTriesSelectedExternalHostBeforeLocalFallback() async {
 func remoteDesktopRuntimeMergesDescriptorsSharingUniqueID() async {
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "wifi.skyline23.com": .init(
-                host: "wifi.skyline23.com",
+            "external-host.example.invalid": .init(
+                host: "external-host.example.invalid",
                 displayName: "Example-PC",
                 pairStatus: .notPaired,
                 currentGameID: 0,
@@ -711,8 +711,8 @@ func remoteDesktopRuntimeMergesDescriptorsSharingUniqueID() async {
     )
 
     runtime.refreshHosts(
-        candidates: ["wifi.skyline23.com", "192.168.0.20"],
-        preferredHost: "wifi.skyline23.com"
+        candidates: ["external-host.example.invalid", "192.168.0.20"],
+        preferredHost: "external-host.example.invalid"
     )
     await waitForHostCatalogReady(runtime)
 
