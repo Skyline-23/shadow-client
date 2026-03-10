@@ -184,8 +184,8 @@ func gameStreamParserMapsSunshineAppListWithoutStatusMessage() throws {
     #expect(apps[1] == .init(id: 1093255277, title: "Steam Big Picture", hdrSupported: true, isAppCollectorGame: false))
 }
 
-@Test("Metadata client falls back to HTTP when HTTPS serverinfo returns non-200 XML")
-func metadataClientFallsBackToHTTPAfterRejectedHTTPSServerInfo() async throws {
+@Test("Metadata client uses HTTP first for unpinned hosts")
+func metadataClientUsesHTTPFirstForUnpinnedHosts() async throws {
     let defaultsSuite = "shadow-client.metadata.serverinfo.\(UUID().uuidString)"
     guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
         Issue.record("Expected isolated defaults suite")
@@ -232,7 +232,6 @@ func metadataClientFallsBackToHTTPAfterRejectedHTTPSServerInfo() async throws {
 
     #expect(
         await transport.calls() == [
-            .init(scheme: "https", command: "serverinfo"),
             .init(scheme: "http", command: "serverinfo"),
         ]
     )
@@ -277,8 +276,8 @@ func metadataClientReturnsUnpairedHostWhenHTTPFallbackIsBlockedByATS() async thr
     #expect(info.httpsPort == 47984)
     #expect(
         await transport.calls() == [
-            .init(scheme: "https", command: "serverinfo"),
             .init(scheme: "http", command: "serverinfo"),
+            .init(scheme: "https", command: "serverinfo"),
         ]
     )
 }
@@ -322,8 +321,8 @@ func metadataClientReturnsUnpairedHostWhenHTTPSCertificateMismatches() async thr
     #expect(info.httpsPort == 47984)
     #expect(
         await transport.calls() == [
-            .init(scheme: "https", command: "serverinfo"),
             .init(scheme: "http", command: "serverinfo"),
+            .init(scheme: "https", command: "serverinfo"),
         ]
     )
 }
@@ -367,8 +366,8 @@ func metadataClientReturnsUnpairedHostWhenHTTPSSelfSignedTrustFails() async thro
     #expect(info.httpsPort == 47984)
     #expect(
         await transport.calls() == [
-            .init(scheme: "https", command: "serverinfo"),
             .init(scheme: "http", command: "serverinfo"),
+            .init(scheme: "https", command: "serverinfo"),
         ]
     )
 }
