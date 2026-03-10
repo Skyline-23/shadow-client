@@ -1,5 +1,13 @@
 import ProjectDescription
 
+let defaultDevelopmentTeam = "Q23JLSJCCV"
+
+let signableTargetSettings: Settings = .settings(
+    base: [:]
+        .automaticCodeSigning(devTeam: defaultDevelopmentTeam)
+        .codeSignIdentityAppleDevelopment()
+)
+
 let project = Project(
     name: "shadow-client",
     targets: [
@@ -7,7 +15,7 @@ let project = Project(
             name: "ShadowClientFeatureHome",
             destinations: [.iPhone, .iPad, .mac, .appleTv],
             product: .framework,
-            bundleId: "com.skyline23.shadow-client.feature.home",
+            bundleId: "com.skyline23.shadowClient.feature.home",
             deploymentTargets: .multiplatform(iOS: "17.0", macOS: "14.0", tvOS: "17.0"),
             infoPlist: .extendingDefault(
                 with: [
@@ -38,7 +46,7 @@ let project = Project(
             name: "ShadowClientNativeAudioDecoding",
             destinations: [.iPhone, .iPad, .mac, .appleTv],
             product: .framework,
-            bundleId: "com.skyline23.shadow-client.native-audio-decoding",
+            bundleId: "com.skyline23.shadowClient.native-audio-decoding",
             deploymentTargets: .multiplatform(iOS: "17.0", macOS: "14.0", tvOS: "17.0"),
             infoPlist: .default,
             buildableFolders: [
@@ -53,7 +61,7 @@ let project = Project(
             name: "ShadowClientiOSApp",
             destinations: .iOS,
             product: .app,
-            bundleId: "com.skyline23.shadow-client",
+            bundleId: "com.skyline23.shadowClient",
             deploymentTargets: .iOS("17.0"),
             infoPlist: .extendingDefault(
                 with: [
@@ -88,13 +96,14 @@ let project = Project(
                 .target(name: "ShadowClientNativeAudioDecoding"),
                 .external(name: "ShadowClientStreaming"),
                 .external(name: "ShadowClientUI"),
-            ]
+            ],
+            settings: signableTargetSettings
         ),
         .target(
             name: "ShadowClientmacOSApp",
             destinations: .macOS,
             product: .app,
-            bundleId: "com.skyline23.shadow-client.macos",
+            bundleId: "com.skyline23.shadowClient.macos",
             deploymentTargets: .macOS("14.0"),
             infoPlist: .extendingDefault(
                 with: [
@@ -125,13 +134,14 @@ let project = Project(
                 .target(name: "ShadowClientNativeAudioDecoding"),
                 .external(name: "ShadowClientStreaming"),
                 .external(name: "ShadowClientUI"),
-            ]
+            ],
+            settings: signableTargetSettings
         ),
         .target(
             name: "ShadowClienttvOSApp",
             destinations: .tvOS,
             product: .app,
-            bundleId: "com.skyline23.shadow-client.tvos",
+            bundleId: "com.skyline23.shadowClient.tvos",
             deploymentTargets: .tvOS("17.0"),
             infoPlist: .extendingDefault(
                 with: [
@@ -166,13 +176,14 @@ let project = Project(
                 .target(name: "ShadowClientNativeAudioDecoding"),
                 .external(name: "ShadowClientStreaming"),
                 .external(name: "ShadowClientUI"),
-            ]
+            ],
+            settings: signableTargetSettings
         ),
         .target(
             name: "ShadowClientTests",
             destinations: .iOS,
             product: .unitTests,
-            bundleId: "com.skyline23.shadow-client.tests",
+            bundleId: "com.skyline23.shadowClient.tests",
             deploymentTargets: .iOS("17.0"),
             infoPlist: .default,
             buildableFolders: [
@@ -183,13 +194,14 @@ let project = Project(
                 .target(name: "ShadowClientNativeAudioDecoding"),
                 .sdk(name: "AppIntents", type: .framework),
                 .external(name: "Testing"),
-            ]
+            ],
+            settings: signableTargetSettings
         ),
         .target(
             name: "ShadowClientmacOSTests",
             destinations: .macOS,
             product: .unitTests,
-            bundleId: "com.skyline23.shadow-client.macos.tests",
+            bundleId: "com.skyline23.shadowClient.macos.tests",
             deploymentTargets: .macOS("14.0"),
             infoPlist: .default,
             buildableFolders: [
@@ -200,13 +212,14 @@ let project = Project(
                 .target(name: "ShadowClientNativeAudioDecoding"),
                 .sdk(name: "AppIntents", type: .framework),
                 .external(name: "Testing"),
-            ]
+            ],
+            settings: signableTargetSettings
         ),
         .target(
             name: "ShadowClientmacOSUITests",
             destinations: .macOS,
             product: .uiTests,
-            bundleId: "com.skyline23.shadow-client.macos.uitests",
+            bundleId: "com.skyline23.shadowClient.macos.uitests",
             deploymentTargets: .macOS("14.0"),
             infoPlist: .default,
             buildableFolders: [
@@ -214,7 +227,8 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ShadowClientmacOSApp"),
-            ]
+            ],
+            settings: signableTargetSettings
         ),
     ]
 )
