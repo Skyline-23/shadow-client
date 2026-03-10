@@ -772,6 +772,16 @@ func remoteDesktopRuntimePrefersStoredPairRouteWhenMerging() async {
     #expect(runtime.hosts.first?.host == "external-host.example.invalid")
 }
 
+@Test("Remote desktop runtime rewrites launch session URLs to the active runtime host")
+func remoteDesktopRuntimeRewritesLaunchSessionURLToRuntimeHost() {
+    let rewritten = ShadowClientRemoteDesktopRuntime.rewrittenSessionURL(
+        "rtsp://192.168.0.52:48010",
+        runtimeHost: "wifi.skyline23.com"
+    )
+
+    #expect(rewritten == "rtsp://wifi.skyline23.com:48010")
+}
+
 private struct FailingIdentityProvider: ShadowClientPairingIdentityProviding {
     func loadIdentityMaterial() throws -> ShadowClientPairingIdentityMaterial {
         throw ShadowClientGameStreamControlError.invalidKeyMaterial

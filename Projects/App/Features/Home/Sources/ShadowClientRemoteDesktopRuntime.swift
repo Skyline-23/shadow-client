@@ -1613,7 +1613,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
 
                 var connectedLaunchResult = initialLaunchResult
-                var connectedSessionURL = try Self.validatedSessionURL(from: initialLaunchResult)
+                var connectedSessionURL = try Self.validatedSessionURL(
+                    from: initialLaunchResult,
+                    runtimeHost: resolvedHostDescriptor.host
+                )
 
                 do {
                     try await Self.connectWithCodecFallback(
@@ -1648,7 +1651,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         forceLaunch: true,
                         settings: forcedLaunchSettings
                     )
-                    let forcedSessionURL = try Self.validatedSessionURL(from: forcedLaunchResult)
+                    let forcedSessionURL = try Self.validatedSessionURL(
+                        from: forcedLaunchResult,
+                        runtimeHost: resolvedHostDescriptor.host
+                    )
 
                     await MainActor.run { [weak self] in
                         self?.persistCodecFallbackIfNeeded(
@@ -2092,7 +2098,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     private static func validatedSessionURL(
-        from launchResult: ShadowClientGameStreamLaunchResult
+        from launchResult: ShadowClientGameStreamLaunchResult,
+        runtimeHost: String
     ) throws -> String {
         guard let sessionURL = launchResult.sessionURL?.trimmingCharacters(in: .whitespacesAndNewlines),
               !sessionURL.isEmpty
@@ -2101,7 +2108,22 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 "Host did not return a remote session URL."
             )
         }
-        return sessionURL
+        return rewrittenSessionURL(sessionURL, runtimeHost: runtimeHost)
+    }
+
+    static func rewrittenSessionURL(_ sessionURL: String, runtimeHost: String) -> String {
+        let trimmedSessionURL = sessionURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedRuntimeHost = runtimeHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            !trimmedSessionURL.isEmpty,
+            !trimmedRuntimeHost.isEmpty,
+            var components = URLComponents(string: trimmedSessionURL)
+        else {
+            return trimmedSessionURL
+        }
+
+        components.host = trimmedRuntimeHost
+        return components.string ?? trimmedSessionURL
     }
 
     private static func shouldRetryForcedLaunch(
