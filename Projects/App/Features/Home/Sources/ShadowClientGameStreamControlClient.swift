@@ -1684,85 +1684,19 @@ enum ShadowClientGameStreamHTTPTransport {
         clientCertificateIdentity: SecIdentity?,
         timeout: TimeInterval
     ) async throws -> String {
-        guard let host = url.host,
-              let port = NWEndpoint.Port(rawValue: UInt16(url.port ?? 443))
-        else {
+        guard let host = url.host else {
             throw ShadowClientGameStreamError.invalidURL
         }
-
-        let tlsOptions = NWProtocolTLS.Options()
-        let securityOptions = tlsOptions.securityProtocolOptions
-
-        if let clientCertificateIdentity {
-            let secIdentity: sec_identity_t?
-            if let clientCertificates, !clientCertificates.isEmpty {
-                secIdentity = sec_identity_create_with_certificates(
-                    clientCertificateIdentity,
-                    clientCertificates as CFArray
-                )
-            } else {
-                secIdentity = sec_identity_create(clientCertificateIdentity)
-            }
-
-            if let localIdentity = secIdentity {
-                sec_protocol_options_set_local_identity(
-                    securityOptions,
-                    localIdentity
-                )
-            }
-        }
-
-        sec_protocol_options_set_verify_block(
-            securityOptions,
-            { _, secTrust, complete in
-                let trust = sec_trust_copy_ref(secTrust).takeRetainedValue()
-
-                guard
-                    let certificateChain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
-                    let leafCertificate = certificateChain.first
-                else {
-                    complete(false)
-                    return
-                }
-
-                let presentedDER = SecCertificateCopyData(leafCertificate) as Data
-                if let pinnedServerCertificateDER {
-                    complete(presentedDER == pinnedServerCertificateDER)
-                    return
-                }
-
-                let trustPolicy = SecPolicyCreateBasicX509()
-                SecTrustSetPolicies(trust, trustPolicy)
-                SecTrustSetAnchorCertificates(trust, [leafCertificate] as CFArray)
-                SecTrustSetAnchorCertificatesOnly(trust, true)
-                var trustError: CFError?
-                complete(SecTrustEvaluateWithError(trust, &trustError))
-            },
-            DispatchQueue.global(qos: .userInitiated)
+        return try await ShadowClientSecureHTTPStreamTransport.requestXML(
+            url: url,
+            host: host,
+            pinnedServerCertificateDER: pinnedServerCertificateDER,
+            clientCertificateIdentity: clientCertificateIdentity,
+            timeout: timeout
         )
-
-        let parameters = NWParameters(tls: tlsOptions, tcp: NWProtocolTCP.Options())
-        let connection = NWConnection(
-            host: .init(host),
-            port: port,
-            using: parameters
-        )
-        try await waitForReady(connection, timeout: timeout)
-        defer {
-            connection.cancel()
-        }
-
-        let requestData = makePlainHTTPRequestData(url: url, host: host)
-        try await send(requestData, over: connection)
-        let responseData = try await receiveHTTPResponse(over: connection, timeout: timeout)
-        let body = try extractHTTPBody(from: responseData)
-        guard let xml = String(data: body, encoding: .utf8), !xml.isEmpty else {
-            throw ShadowClientGameStreamError.malformedXML
-        }
-        return xml
     }
 
-    private static func makePlainHTTPRequestData(url: URL, host: String) -> Data {
+    fileprivate static func makePlainHTTPRequestData(url: URL, host: String) -> Data {
         let path = (url.path.isEmpty ? "/" : url.path) + (url.query.map { "?\($0)" } ?? "")
         let request = [
             "GET \(path) HTTP/1.1",
@@ -1774,7 +1708,7 @@ enum ShadowClientGameStreamHTTPTransport {
         return Data(request.utf8)
     }
 
-    private static func extractHTTPBody(from responseData: Data) throws -> Data {
+    fileprivate static func extractHTTPBody(from responseData: Data) throws -> Data {
         guard let separatorRange = responseData.range(
             of: Data("\r\n\r\n".utf8)
         ) else {
@@ -1895,6 +1829,329 @@ enum ShadowClientGameStreamHTTPTransport {
                 resume(.failure(URLError(.timedOut)))
             }
         }
+    }
+}
+
+private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
+    private let host: String
+    private let url: URL
+    private let pinnedServerCertificateDER: Data?
+    private let clientCertificateIdentity: SecIdentity?
+    private let timeout: TimeInterval
+    private let requestData: Data
+    private let queue = DispatchQueue(label: "com.skyline23.shadow-client.pairing.secure-http")
+
+    private var readStream: CFReadStream?
+    private var writeStream: CFWriteStream?
+    private var continuation: CheckedContinuation<String, Error>?
+    private var timeoutWorkItem: DispatchWorkItem?
+    private var responseData = Data()
+    private var requestOffset = 0
+    private var readOpen = false
+    private var writeOpen = false
+    private var peerValidated = false
+    private var completed = false
+
+    private init(
+        url: URL,
+        host: String,
+        pinnedServerCertificateDER: Data?,
+        clientCertificateIdentity: SecIdentity?,
+        timeout: TimeInterval
+    ) {
+        self.url = url
+        self.host = host
+        self.pinnedServerCertificateDER = pinnedServerCertificateDER
+        self.clientCertificateIdentity = clientCertificateIdentity
+        self.timeout = timeout
+        self.requestData = ShadowClientGameStreamHTTPTransport.makePlainHTTPRequestData(url: url, host: host)
+    }
+
+    static func requestXML(
+        url: URL,
+        host: String,
+        pinnedServerCertificateDER: Data?,
+        clientCertificateIdentity: SecIdentity?,
+        timeout: TimeInterval
+    ) async throws -> String {
+        let transport = ShadowClientSecureHTTPStreamTransport(
+            url: url,
+            host: host,
+            pinnedServerCertificateDER: pinnedServerCertificateDER,
+            clientCertificateIdentity: clientCertificateIdentity,
+            timeout: timeout
+        )
+        return try await transport.start()
+    }
+
+    private func start() async throws -> String {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
+            queue.async {
+                self.continuation = continuation
+                do {
+                    try self.openStreams()
+                } catch {
+                    self.finish(.failure(error))
+                }
+            }
+        }
+    }
+
+    private func openStreams() throws {
+        var readRef: Unmanaged<CFReadStream>?
+        var writeRef: Unmanaged<CFWriteStream>?
+        CFStreamCreatePairWithSocketToHost(
+            nil,
+            host as CFString,
+            UInt32(url.port ?? 443),
+            &readRef,
+            &writeRef
+        )
+
+        guard let readStream = readRef?.takeRetainedValue(),
+              let writeStream = writeRef?.takeRetainedValue()
+        else {
+            throw ShadowClientGameStreamError.invalidURL
+        }
+
+        self.readStream = readStream
+        self.writeStream = writeStream
+
+        let sslSettings = makeSSLSettings()
+        let sslSettingsKey = unsafeBitCast(kCFStreamPropertySSLSettings, to: CFStreamPropertyKey.self)
+        guard CFReadStreamSetProperty(readStream, sslSettingsKey, sslSettings),
+              CFWriteStreamSetProperty(writeStream, sslSettingsKey, sslSettings)
+        else {
+            throw ShadowClientGameStreamError.requestFailed("Unable to configure HTTPS client identity")
+        }
+
+        var readContext = CFStreamClientContext(
+            version: 0,
+            info: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque()),
+            retain: nil,
+            release: nil,
+            copyDescription: nil
+        )
+        var writeContext = CFStreamClientContext(
+            version: 0,
+            info: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque()),
+            retain: nil,
+            release: nil,
+            copyDescription: nil
+        )
+
+        let readEvents = CFOptionFlags(
+            CFStreamEventType.openCompleted.rawValue |
+            CFStreamEventType.hasBytesAvailable.rawValue |
+            CFStreamEventType.errorOccurred.rawValue |
+            CFStreamEventType.endEncountered.rawValue
+        )
+        let writeEvents = CFOptionFlags(
+            CFStreamEventType.openCompleted.rawValue |
+            CFStreamEventType.canAcceptBytes.rawValue |
+            CFStreamEventType.errorOccurred.rawValue |
+            CFStreamEventType.endEncountered.rawValue
+        )
+
+        guard CFReadStreamSetClient(readStream, readEvents, Self.readCallback, &readContext),
+              CFWriteStreamSetClient(writeStream, writeEvents, Self.writeCallback, &writeContext)
+        else {
+            throw ShadowClientGameStreamError.requestFailed("Unable to install HTTPS stream callbacks")
+        }
+
+        CFReadStreamSetDispatchQueue(readStream, queue)
+        CFWriteStreamSetDispatchQueue(writeStream, queue)
+
+        guard CFReadStreamOpen(readStream), CFWriteStreamOpen(writeStream) else {
+            throw streamError(from: readStream, fallback: writeStream)
+        }
+
+        let timeoutWorkItem = DispatchWorkItem { [weak self] in
+            self?.finish(.failure(URLError(.timedOut)))
+        }
+        self.timeoutWorkItem = timeoutWorkItem
+        queue.asyncAfter(deadline: .now() + timeout, execute: timeoutWorkItem)
+    }
+
+    private func makeSSLSettings() -> CFDictionary {
+        var settings: [CFString: Any] = [
+            kCFStreamSSLValidatesCertificateChain: kCFBooleanFalse as Any,
+            kCFStreamSSLPeerName: kCFNull!,
+            kCFStreamSSLIsServer: kCFBooleanFalse as Any,
+        ]
+
+        if let clientCertificateIdentity {
+            settings[kCFStreamSSLCertificates] = [clientCertificateIdentity] as CFArray
+        }
+
+        return settings as CFDictionary
+    }
+
+    private func handleRead(event: CFStreamEventType) {
+        guard !completed, let readStream else { return }
+
+        switch event {
+        case .openCompleted:
+            readOpen = true
+            validatePeerIfPossible()
+        case .hasBytesAvailable:
+            validatePeerIfPossible()
+            readAvailableBytes()
+        case .endEncountered:
+            completeIfPossible()
+        case .errorOccurred:
+            finish(.failure(streamError(from: readStream, fallback: writeStream)))
+        default:
+            break
+        }
+    }
+
+    private func handleWrite(event: CFStreamEventType) {
+        guard !completed, let writeStream else { return }
+
+        switch event {
+        case .openCompleted:
+            writeOpen = true
+            validatePeerIfPossible()
+        case .canAcceptBytes:
+            guard validatePeerIfPossible() else { return }
+            writePendingBytes()
+        case .endEncountered:
+            completeIfPossible()
+        case .errorOccurred:
+            finish(.failure(streamError(from: readStream, fallback: writeStream)))
+        default:
+            break
+        }
+    }
+
+    @discardableResult
+    private func validatePeerIfPossible() -> Bool {
+        guard !peerValidated else { return true }
+        guard readOpen, writeOpen, let readStream else { return false }
+        let peerTrustKey = unsafeBitCast(kCFStreamPropertySSLPeerTrust, to: CFStreamPropertyKey.self)
+        guard let trustRef = CFReadStreamCopyProperty(readStream, peerTrustKey) else {
+            return false
+        }
+        let trust = trustRef as! SecTrust
+        guard let certificates = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
+              let leaf = certificates.first
+        else {
+            finish(.failure(ShadowClientGameStreamError.invalidResponse))
+            return false
+        }
+
+        let presentedDER = SecCertificateCopyData(leaf) as Data
+        if let pinnedServerCertificateDER, presentedDER != pinnedServerCertificateDER {
+            finish(.failure(ShadowClientGameStreamError.responseRejected(code: 401, message: "Server certificate mismatch")))
+            return false
+        }
+
+        peerValidated = true
+        return true
+    }
+
+    private func writePendingBytes() {
+        guard let writeStream, requestOffset < requestData.count else { return }
+
+        let bytesWritten = requestData.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                return -1
+            }
+            return CFWriteStreamWrite(
+                writeStream,
+                baseAddress.advanced(by: requestOffset),
+                requestData.count - requestOffset
+            )
+        }
+
+        if bytesWritten < 0 {
+            finish(.failure(streamError(from: readStream, fallback: writeStream)))
+            return
+        }
+
+        requestOffset += bytesWritten
+    }
+
+    private func readAvailableBytes() {
+        guard let readStream else { return }
+
+        var buffer = [UInt8](repeating: 0, count: 16 * 1024)
+        while CFReadStreamHasBytesAvailable(readStream) {
+            let count = CFReadStreamRead(readStream, &buffer, buffer.count)
+            if count > 0 {
+                responseData.append(buffer, count: count)
+            } else if count < 0 {
+                finish(.failure(streamError(from: readStream, fallback: writeStream)))
+                return
+            } else {
+                break
+            }
+        }
+    }
+
+    private func completeIfPossible() {
+        guard requestOffset >= requestData.count else { return }
+        guard !responseData.isEmpty else { return }
+
+        do {
+            let body = try ShadowClientGameStreamHTTPTransport.extractHTTPBody(from: responseData)
+            guard let xml = String(data: body, encoding: .utf8), !xml.isEmpty else {
+                throw ShadowClientGameStreamError.malformedXML
+            }
+            finish(.success(xml))
+        } catch {
+            finish(.failure(error))
+        }
+    }
+
+    private func finish(_ result: Result<String, Error>) {
+        guard !completed else { return }
+        completed = true
+
+        timeoutWorkItem?.cancel()
+        timeoutWorkItem = nil
+
+        if let readStream {
+            CFReadStreamSetDispatchQueue(readStream, nil)
+            CFReadStreamClose(readStream)
+        }
+        if let writeStream {
+            CFWriteStreamSetDispatchQueue(writeStream, nil)
+            CFWriteStreamClose(writeStream)
+        }
+        readStream = nil
+        writeStream = nil
+
+        let continuation = self.continuation
+        self.continuation = nil
+        continuation?.resume(with: result)
+    }
+
+    private func streamError(from readStream: CFReadStream?, fallback writeStream: CFWriteStream?) -> Error {
+        if let readStream, let error = CFReadStreamCopyError(readStream) {
+            return error as Error
+        }
+        if let writeStream, let error = CFWriteStreamCopyError(writeStream) {
+            return error as Error
+        }
+        return ShadowClientGameStreamError.requestFailed("HTTPS transport failed")
+    }
+
+    private static let readCallback: CFReadStreamClientCallBack = { _, type, info in
+        guard let info else { return }
+        let transport = Unmanaged<ShadowClientSecureHTTPStreamTransport>
+            .fromOpaque(info)
+            .takeUnretainedValue()
+        transport.handleRead(event: type)
+    }
+
+    private static let writeCallback: CFWriteStreamClientCallBack = { _, type, info in
+        guard let info else { return }
+        let transport = Unmanaged<ShadowClientSecureHTTPStreamTransport>
+            .fromOpaque(info)
+            .takeUnretainedValue()
+        transport.handleWrite(event: type)
     }
 }
 
