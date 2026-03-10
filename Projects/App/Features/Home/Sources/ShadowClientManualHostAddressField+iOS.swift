@@ -7,7 +7,6 @@ private struct ShadowClientManualHostAddressFieldPlatformModifier: ViewModifier 
             .textInputAutocapitalization(.never)
             .submitLabel(.done)
             .keyboardType(.URL)
-            .textContentType(.URL)
     }
 }
 

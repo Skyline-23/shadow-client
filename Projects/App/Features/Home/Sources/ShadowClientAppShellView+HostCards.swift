@@ -724,9 +724,9 @@ var remoteDesktopHostCard: some View {
             return "wifi.exclamationmark"
         }
         if host.pairStatus == .paired {
-            return "checkmark.desktopcomputer"
+            return "checkmark.circle.fill"
         }
-        return "lock.desktopcomputer"
+        return "lock.fill"
     }
 
     func hostGlyphColor(_ host: ShadowClientRemoteHostDescriptor) -> Color {
