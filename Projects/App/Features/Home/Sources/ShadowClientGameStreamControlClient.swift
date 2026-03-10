@@ -1649,17 +1649,14 @@ enum ShadowClientGameStreamHTTPTransport {
 
                 let presentedDER = SecCertificateCopyData(leafCertificate) as Data
                 if let pinnedServerCertificateDER {
-                    guard presentedDER == pinnedServerCertificateDER else {
-                        complete(false)
-                        return
-                    }
-
-                    let trustPolicy = SecPolicyCreateBasicX509()
-                    SecTrustSetPolicies(trust, trustPolicy)
-                    SecTrustSetAnchorCertificates(trust, [leafCertificate] as CFArray)
-                    SecTrustSetAnchorCertificatesOnly(trust, true)
+                    complete(presentedDER == pinnedServerCertificateDER)
+                    return
                 }
 
+                let trustPolicy = SecPolicyCreateBasicX509()
+                SecTrustSetPolicies(trust, trustPolicy)
+                SecTrustSetAnchorCertificates(trust, [leafCertificate] as CFArray)
+                SecTrustSetAnchorCertificatesOnly(trust, true)
                 var trustError: CFError?
                 complete(SecTrustEvaluateWithError(trust, &trustError))
             },
