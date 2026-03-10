@@ -619,14 +619,26 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
     }
 
     private static func isUnauthorizedCertificateError(_ error: ShadowClientGameStreamError) -> Bool {
-        guard case let .responseRejected(code, message) = error, code == 401 else {
+        switch error {
+        case let .responseRejected(code, message):
+            guard code == 401 else {
+                return false
+            }
+            let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return normalized.contains("not authorized") ||
+                normalized.contains("certificate verification failed") ||
+                normalized.contains("server certificate mismatch") ||
+                normalized.contains("trust failed")
+        case let .requestFailed(message):
+            let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return normalized.contains("tls error caused the secure connection to fail") ||
+                normalized.contains("certificate verification failed") ||
+                normalized.contains("server certificate mismatch") ||
+                normalized.contains("trust failed") ||
+                normalized.contains("self-signed")
+        default:
             return false
         }
-
-        let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return normalized.contains("not authorized") ||
-            normalized.contains("certificate verification failed") ||
-            normalized.contains("server certificate mismatch")
     }
 
     private static func isAppTransportSecurityBlockedError(_ error: ShadowClientGameStreamError) -> Bool {
@@ -923,6 +935,11 @@ private struct ShadowClientLaunchRequestContext: Sendable {
     let settings: ShadowClientGameStreamLaunchSettings
 }
 
+private struct ShadowClientPairHostCandidate: Equatable, Sendable {
+    let host: String
+    let httpsPort: Int
+}
+
 public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private static let runtimeStreamReconnectCooldownSeconds: TimeInterval = 4.0
 
@@ -943,6 +960,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private let sessionInputClient: any ShadowClientRemoteSessionInputClient
     private let inputSendQueue: ShadowClientRemoteInputSendQueue
     private let pinProvider: any ShadowClientPairingPINProviding
+    private let pairingRouteStore: ShadowClientPairingRouteStore
     private let inputKeepAliveInterval: Duration
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RemoteDesktopRuntime")
     private let commandContinuation: AsyncStream<ShadowClientRemoteDesktopCommand>.Continuation
@@ -972,6 +990,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient = NoopShadowClientRemoteSessionConnectionClient(),
         sessionInputClient: any ShadowClientRemoteSessionInputClient = NoopShadowClientRemoteSessionInputClient(),
         pinProvider: any ShadowClientPairingPINProviding = ShadowClientRandomPairingPINProvider(),
+        pairingRouteStore: ShadowClientPairingRouteStore = .shared,
         inputKeepAliveInterval: Duration = .seconds(3)
     ) {
         let (commandStream, commandContinuation) = AsyncStream.makeStream(of: ShadowClientRemoteDesktopCommand.self)
@@ -1000,6 +1019,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             }
         )
         self.pinProvider = pinProvider
+        self.pairingRouteStore = pairingRouteStore
         self.inputKeepAliveInterval = inputKeepAliveInterval
         self.sessionPresentationMode = sessionConnectionClient.presentationMode
         self.sessionSurfaceContext = sessionConnectionClient.sessionSurfaceContext
@@ -1193,44 +1213,92 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             pairingState = .failed("Select host first.")
             return
         }
-
-        let generatedPIN = pinProvider.nextPIN()
-
-        pairingState = .pairing(
-            host: selectedHost.displayName.isEmpty ? selectedHost.host : selectedHost.displayName,
-            pin: generatedPIN
-        )
         pairTask?.cancel()
         pairGeneration &+= 1
         let currentPairGeneration = pairGeneration
         let controlClient = controlClient
+        let pairingRouteStore = pairingRouteStore
+        let currentHosts = hosts
+        let currentLatestHostCandidates = latestHostCandidates
         pairTask = Task { [weak self] in
             do {
+                let pairRouteKey = Self.pairRouteStoreKey(for: selectedHost)
+                let storedPreferredPairHost = await pairingRouteStore.preferredHost(for: pairRouteKey)
+                let pairCandidates = Self.pairHostCandidates(
+                    for: selectedHost,
+                    hosts: currentHosts,
+                    latestHostCandidates: currentLatestHostCandidates,
+                    preferredPairHost: storedPreferredPairHost
+                )
+
+                guard !Self.requiresLocalNetworkPairing(
+                    for: selectedHost.host,
+                    pairCandidates: pairCandidates
+                ) else {
+                    await MainActor.run { [weak self] in
+                        guard let self,
+                              self.pairGeneration == currentPairGeneration
+                        else {
+                            return
+                        }
+                        self.pairingState = .failed(
+                            "Pair this host on the same local network first. Use its LAN IP or Bonjour name."
+                        )
+                    }
+                    return
+                }
+
+                let generatedPIN = await MainActor.run { [weak self] in
+                    let pin = self?.pinProvider.nextPIN() ?? "0000"
+                    self?.pairingState = .pairing(
+                        host: selectedHost.displayName.isEmpty ? selectedHost.host : selectedHost.displayName,
+                        pin: pin
+                    )
+                    return pin
+                }
+
                 let pairingDeadline = Date().addingTimeInterval(
                     ShadowClientPairingDefaults.retryDeadlineSeconds
                 )
                 let maximumPairAttempts = ShadowClientPairingDefaults.maximumAttempts
-                var pairAttemptCount = 0
-                while true {
-                    pairAttemptCount += 1
-                    do {
-                        _ = try await controlClient.pair(
-                            host: selectedHost.host,
-                            pin: generatedPIN,
-                            appVersion: selectedHost.appVersion,
-                            httpsPort: selectedHost.httpsPort
-                        )
-                        break
-                    } catch {
-                        let shouldRetry = Self.shouldRetryPairing(
-                            error: error,
-                            deadline: pairingDeadline
-                        ) && pairAttemptCount < maximumPairAttempts
-                        guard shouldRetry else {
-                            throw error
+                var lastError: Error?
+                var pairedHost: String?
+
+                candidateLoop: for candidate in pairCandidates {
+                    var pairAttemptCount = 0
+                    while true {
+                        pairAttemptCount += 1
+                        do {
+                            _ = try await controlClient.pair(
+                                host: candidate.host,
+                                pin: generatedPIN,
+                                appVersion: selectedHost.appVersion,
+                                httpsPort: candidate.httpsPort
+                            )
+                            pairedHost = candidate.host
+                            await pairingRouteStore.setPreferredHost(candidate.host, for: pairRouteKey)
+                            break candidateLoop
+                        } catch {
+                            lastError = error
+
+                            if Self.shouldAdvanceToNextPairHost(error: error) {
+                                break
+                            }
+
+                            let shouldRetry = Self.shouldRetryPairing(
+                                error: error,
+                                deadline: pairingDeadline
+                            ) && pairAttemptCount < maximumPairAttempts
+                            guard shouldRetry else {
+                                throw error
+                            }
+                            try await Task.sleep(for: ShadowClientPairingDefaults.retryBackoff)
                         }
-                        try await Task.sleep(for: ShadowClientPairingDefaults.retryBackoff)
                     }
+                }
+
+                if let lastError, pairedHost == nil {
+                    throw lastError
                 }
 
                 if Task.isCancelled {
@@ -1254,7 +1322,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     }
                     self.pairingState = .paired("Paired")
                     let candidates = self.latestHostCandidates.isEmpty ? self.hosts.map(\.host) : self.latestHostCandidates
-                    self.refreshHosts(candidates: candidates, preferredHost: selectedHost.host)
+                    self.refreshHosts(
+                        candidates: candidates,
+                        preferredHost: pairedHost ?? selectedHost.host
+                    )
                 }
             } catch {
                 if Task.isCancelled {
@@ -2483,6 +2554,133 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             normalized.contains("network connection was lost") ||
             normalized.contains("could not connect") ||
             normalized.contains("cannot connect")
+    }
+
+    private static func shouldAdvanceToNextPairHost(error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost, .appTransportSecurityRequiresSecureConnection:
+                return true
+            default:
+                break
+            }
+        }
+
+        if let streamError = error as? ShadowClientGameStreamError {
+            switch streamError {
+            case let .requestFailed(message):
+                let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                return normalized.contains("app transport security") ||
+                    normalized.contains("insecure http is blocked") ||
+                    normalized.contains("server with the specified hostname could not be found") ||
+                    normalized.contains("could not find host") ||
+                    normalized.contains("dns")
+            default:
+                return false
+            }
+        }
+
+        return false
+    }
+
+    private static func pairHostCandidates(
+        for selectedHost: ShadowClientRemoteHostDescriptor,
+        hosts: [ShadowClientRemoteHostDescriptor],
+        latestHostCandidates: [String],
+        preferredPairHost: String?
+    ) -> [ShadowClientPairHostCandidate] {
+        var candidates: [ShadowClientPairHostCandidate] = []
+
+        if let preferredPairHost {
+            candidates.append(.init(host: preferredPairHost, httpsPort: selectedHost.httpsPort))
+        }
+
+        if let uniqueID = selectedHost.uniqueID, !uniqueID.isEmpty {
+            let matchingHosts = hosts.filter { $0.uniqueID == uniqueID }
+            candidates.append(contentsOf: matchingHosts.map {
+                .init(host: $0.host, httpsPort: $0.httpsPort)
+            })
+        }
+
+        candidates.append(
+            contentsOf: latestHostCandidates.map {
+                .init(host: $0, httpsPort: selectedHost.httpsPort)
+            }
+        )
+        candidates.append(.init(host: selectedHost.host, httpsPort: selectedHost.httpsPort))
+
+        var seen: Set<String> = []
+        let deduplicated = candidates.filter { candidate in
+            let key = candidate.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !key.isEmpty, !seen.contains(key) else {
+                return false
+            }
+            seen.insert(key)
+            return true
+        }
+
+        return deduplicated.sorted {
+            let lhsRank = pairHostCandidateRank(
+                host: $0.host,
+                selectedHost: selectedHost.host,
+                preferredPairHost: preferredPairHost
+            )
+            let rhsRank = pairHostCandidateRank(
+                host: $1.host,
+                selectedHost: selectedHost.host,
+                preferredPairHost: preferredPairHost
+            )
+            if lhsRank == rhsRank {
+                return $0.host.localizedCaseInsensitiveCompare($1.host) == .orderedAscending
+            }
+            return lhsRank < rhsRank
+        }
+    }
+
+    private static func pairHostCandidateRank(
+        host: String,
+        selectedHost: String,
+        preferredPairHost: String?
+    ) -> Int {
+        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized == preferredPairHost?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            return 0
+        }
+        if isLocalPairHost(normalized) {
+            return normalized == selectedHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ? 0 : 1
+        }
+        if normalized == selectedHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            return 2
+        }
+        return 3
+    }
+
+    private static func requiresLocalNetworkPairing(
+        for selectedHost: String,
+        pairCandidates: [ShadowClientPairHostCandidate]
+    ) -> Bool {
+        guard !isLocalPairHost(selectedHost) else {
+            return false
+        }
+        return !pairCandidates.contains { isLocalPairHost($0.host) }
+    }
+
+    private static func pairRouteStoreKey(for selectedHost: ShadowClientRemoteHostDescriptor) -> String {
+        if let uniqueID = selectedHost.uniqueID?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !uniqueID.isEmpty {
+            return "uniqueid:\(uniqueID.lowercased())"
+        }
+
+        return "host:\(selectedHost.id)"
+    }
+
+    private static func isLocalPairHost(_ host: String) -> Bool {
+        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return isIPAddressCandidate(normalized) || normalized.hasSuffix(".local") || !normalized.contains(".")
+    }
+
+    private static func isIPAddressCandidate(_ host: String) -> Bool {
+        host.allSatisfy { $0.isNumber || $0 == "." || $0 == ":" }
     }
 
     private static func normalizedHostCandidates(_ candidates: [String]) -> [String] {

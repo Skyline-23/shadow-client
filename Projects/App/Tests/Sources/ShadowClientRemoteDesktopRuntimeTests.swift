@@ -328,6 +328,51 @@ func metadataClientReturnsUnpairedHostWhenHTTPSCertificateMismatches() async thr
     )
 }
 
+@Test("Metadata client synthesizes unpaired host when HTTPS fails with self-signed TLS trust error and HTTP fallback is ATS blocked")
+func metadataClientReturnsUnpairedHostWhenHTTPSSelfSignedTrustFails() async throws {
+    let defaultsSuite = "shadow-client.metadata.serverinfo.self-signed.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let transport = ScriptedRequestTransport(
+        script: [
+            .init(
+                scheme: "https",
+                command: "serverinfo",
+                result: .failure(.requestFailed("A TLS error caused the secure connection to fail."))
+            ),
+            .init(
+                scheme: "http",
+                command: "serverinfo",
+                result: .failure(.requestFailed("Insecure HTTP is blocked by App Transport Security for this request."))
+            ),
+        ]
+    )
+
+    let client = NativeGameStreamMetadataClient(
+        identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: .init(defaultsSuiteName: defaultsSuite),
+        transport: transport
+    )
+
+    let info = try await client.fetchServerInfo(host: "stream-host.example.invalid")
+    #expect(info.host == "stream-host.example.invalid")
+    #expect(info.displayName == "stream-host.example.invalid")
+    #expect(info.pairStatus == .notPaired)
+    #expect(info.httpsPort == 47984)
+    #expect(
+        await transport.calls() == [
+            .init(scheme: "https", command: "serverinfo"),
+            .init(scheme: "http", command: "serverinfo"),
+        ]
+    )
+}
+
 @Test("Metadata client does not downgrade app list query to HTTP for unauthorized HTTPS 401 responses")
 func metadataClientKeepsAppListOnHTTPSOnly() async {
     let defaultsSuite = "shadow-client.metadata.applist.https-only.\(UUID().uuidString)"
@@ -530,6 +575,106 @@ func remoteDesktopRuntimeSynthesizesFallbackAppsForEmptyCatalog() async {
     #expect(runtime.apps.first?.title == "Current Session (881448767)")
 }
 
+@Test("Remote desktop runtime blocks pairing for external host without local candidate")
+@MainActor
+func remoteDesktopRuntimeBlocksExternalPairWithoutLocalCandidate() async {
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "wifi.skyline23.com": .init(
+                host: "wifi.skyline23.com",
+                displayName: "Example-PC",
+                pairStatus: .notPaired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let controlClient = RecordingGameStreamControlClient()
+    let pairingRouteStore = ShadowClientPairingRouteStore(
+        defaultsSuiteName: "shadow-client.pairing.external-only.\(UUID().uuidString)"
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: controlClient,
+        pairingRouteStore: pairingRouteStore
+    )
+
+    runtime.refreshHosts(
+        candidates: ["wifi.skyline23.com"],
+        preferredHost: "wifi.skyline23.com"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    runtime.pairSelectedHost()
+    await waitForPairingState(runtime)
+
+    if case let .failed(message) = runtime.pairingState {
+        #expect(message.contains("same local network"))
+    } else {
+        Issue.record("Expected pairing failure for external-only host, got \(runtime.pairingState)")
+    }
+
+    #expect(await controlClient.pairRequests() == [])
+}
+
+@Test("Remote desktop runtime prefers local candidate for pairing when host unique ID matches")
+@MainActor
+func remoteDesktopRuntimePrefersLocalCandidateForPairing() async {
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "wifi.skyline23.com": .init(
+                host: "wifi.skyline23.com",
+                displayName: "Example-PC",
+                pairStatus: .notPaired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
+                displayName: "Example-PC",
+                pairStatus: .notPaired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let controlClient = RecordingGameStreamControlClient(successfulHosts: ["192.168.0.20"])
+    let pairingRouteStore = ShadowClientPairingRouteStore(
+        defaultsSuiteName: "shadow-client.pairing.local-preferred.\(UUID().uuidString)"
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: controlClient,
+        pairingRouteStore: pairingRouteStore
+    )
+
+    runtime.refreshHosts(
+        candidates: ["wifi.skyline23.com", "192.168.0.20"],
+        preferredHost: "wifi.skyline23.com"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    runtime.pairSelectedHost()
+    await waitForPairingState(runtime)
+
+    #expect(runtime.pairingState == .paired("Paired"))
+    #expect(await controlClient.pairRequests() == ["192.168.0.20"])
+}
+
 private struct FailingIdentityProvider: ShadowClientPairingIdentityProviding {
     func loadIdentityMaterial() throws -> ShadowClientPairingIdentityMaterial {
         throw ShadowClientGameStreamControlError.invalidKeyMaterial
@@ -640,6 +785,45 @@ private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient
     }
 }
 
+private actor RecordingGameStreamControlClient: ShadowClientGameStreamControlClient {
+    private let successfulHosts: Set<String>
+    private var recordedPairHosts: [String] = []
+
+    init(successfulHosts: Set<String> = []) {
+        self.successfulHosts = successfulHosts
+    }
+
+    func pair(
+        host: String,
+        pin: String,
+        appVersion: String?,
+        httpsPort: Int?
+    ) async throws -> ShadowClientGameStreamPairingResult {
+        recordedPairHosts.append(host)
+
+        if successfulHosts.isEmpty || successfulHosts.contains(host) {
+            return .init(host: host)
+        }
+
+        throw ShadowClientGameStreamError.requestFailed("A server with the specified hostname could not be found.")
+    }
+
+    func launch(
+        host: String,
+        httpsPort: Int,
+        appID: Int,
+        currentGameID: Int,
+        forceLaunch: Bool,
+        settings: ShadowClientGameStreamLaunchSettings
+    ) async throws -> ShadowClientGameStreamLaunchResult {
+        .init(sessionURL: nil, verb: "launch")
+    }
+
+    func pairRequests() -> [String] {
+        recordedPairHosts
+    }
+}
+
 @MainActor
 private func waitForHostCatalogReady(
     _ runtime: ShadowClientRemoteDesktopRuntime,
@@ -661,6 +845,23 @@ private func waitForAppCatalogReady(
 ) async {
     for _ in 0..<maxAttempts {
         if runtime.appState == .loaded || runtime.appState.label.starts(with: "Failed") {
+            return
+        }
+
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+@MainActor
+private func waitForPairingState(
+    _ runtime: ShadowClientRemoteDesktopRuntime,
+    maxAttempts: Int = 50
+) async {
+    for _ in 0..<maxAttempts {
+        switch runtime.pairingState {
+        case .idle, .pairing:
+            break
+        case .paired, .failed:
             return
         }
 

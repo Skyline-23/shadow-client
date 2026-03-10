@@ -21,7 +21,6 @@ let project = Project(
                 with: [
                     "NSAppTransportSecurity": [
                         "NSAllowsArbitraryLoads": true,
-                        "NSAllowsLocalNetworking": true,
                         "NSExceptionDomains": [
                             "stream-host.example.invalid": [
                                 "NSIncludesSubdomains": true,
@@ -77,7 +76,6 @@ let project = Project(
                     ],
                     "NSAppTransportSecurity": [
                         "NSAllowsArbitraryLoads": true,
-                        "NSAllowsLocalNetworking": true,
                         "NSExceptionDomains": [
                             "stream-host.example.invalid": [
                                 "NSIncludesSubdomains": true,
@@ -115,7 +113,6 @@ let project = Project(
                     ],
                     "NSAppTransportSecurity": [
                         "NSAllowsArbitraryLoads": true,
-                        "NSAllowsLocalNetworking": true,
                         "NSExceptionDomains": [
                             "stream-host.example.invalid": [
                                 "NSIncludesSubdomains": true,
@@ -157,7 +154,6 @@ let project = Project(
                     ],
                     "NSAppTransportSecurity": [
                         "NSAllowsArbitraryLoads": true,
-                        "NSAllowsLocalNetworking": true,
                         "NSExceptionDomains": [
                             "stream-host.example.invalid": [
                                 "NSIncludesSubdomains": true,

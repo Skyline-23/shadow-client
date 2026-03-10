@@ -1623,22 +1623,38 @@ private final class ShadowClientServerTrustURLSessionDelegate: NSObject, URLSess
             return
         }
 
-        if let pinnedServerCertificateDER {
-            guard
-                let certificateChain = SecTrustCopyCertificateChain(serverTrust) as? [SecCertificate],
-                let leafCertificate = certificateChain.first
-            else {
-                recordTLSFailure(.serverCertificateMismatch)
-                completionHandler(.cancelAuthenticationChallenge, nil)
-                return
-            }
+        guard
+            let certificateChain = SecTrustCopyCertificateChain(serverTrust) as? [SecCertificate],
+            let leafCertificate = certificateChain.first
+        else {
+            recordTLSFailure(.serverCertificateMismatch)
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
 
-            let presentedDER = SecCertificateCopyData(leafCertificate) as Data
+        let presentedDER = SecCertificateCopyData(leafCertificate) as Data
+
+        if let pinnedServerCertificateDER {
             guard presentedDER == pinnedServerCertificateDER else {
                 recordTLSFailure(.serverCertificateMismatch)
                 completionHandler(.cancelAuthenticationChallenge, nil)
                 return
             }
+        }
+
+        // Sunshine commonly presents a self-signed leaf certificate and doesn't match the
+        // public host name. Treat the leaf as the trust anchor and evaluate under basic X509
+        // so we can apply our own TOFU/pinning policy instead of system CA/hostname rules.
+        let trustPolicy = SecPolicyCreateBasicX509()
+        SecTrustSetPolicies(serverTrust, trustPolicy)
+        SecTrustSetAnchorCertificates(serverTrust, [leafCertificate] as CFArray)
+        SecTrustSetAnchorCertificatesOnly(serverTrust, true)
+
+        var trustError: CFError?
+        guard SecTrustEvaluateWithError(serverTrust, &trustError) else {
+            recordTLSFailure(.serverCertificateMismatch)
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
         }
 
         completionHandler(.useCredential, URLCredential(trust: serverTrust))
