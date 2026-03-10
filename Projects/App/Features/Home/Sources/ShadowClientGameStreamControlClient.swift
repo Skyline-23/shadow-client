@@ -166,10 +166,12 @@ public struct ShadowClientGameStreamPairingResult: Equatable, Sendable {
 public struct ShadowClientPairingIdentityMaterial: Equatable, Sendable {
     public let certificatePEM: String
     public let privateKeyPEM: String
+    public let keyTag: String?
 
-    public init(certificatePEM: String, privateKeyPEM: String) {
+    public init(certificatePEM: String, privateKeyPEM: String, keyTag: String? = nil) {
         self.certificatePEM = certificatePEM
         self.privateKeyPEM = privateKeyPEM
+        self.keyTag = keyTag
     }
 }
 
@@ -180,6 +182,7 @@ public protocol ShadowClientPairingIdentityProviding {
 enum ShadowClientPairingIdentityDefaultsKeys {
     static let certificatePEM = "pairing.identity.certificatePEM"
     static let privateKeyPEM = "pairing.identity.privateKeyPEM"
+    static let keyTag = "pairing.identity.keyTag"
     static let uniqueID = "pairing.identity.uniqueId"
 }
 
@@ -202,7 +205,8 @@ public struct ShadowClientUserDefaultsIdentityProvider: ShadowClientPairingIdent
 
         return ShadowClientPairingIdentityMaterial(
             certificatePEM: certificatePEM,
-            privateKeyPEM: privateKeyPEM
+            privateKeyPEM: privateKeyPEM,
+            keyTag: defaults.string(forKey: ShadowClientPairingIdentityDefaultsKeys.keyTag)
         )
     }
 }
@@ -346,6 +350,11 @@ public actor ShadowClientPairingIdentityStore {
         cachedMaterial = material
         defaults.set(material.certificatePEM, forKey: ShadowClientPairingIdentityDefaultsKeys.certificatePEM)
         defaults.set(material.privateKeyPEM, forKey: ShadowClientPairingIdentityDefaultsKeys.privateKeyPEM)
+        if let keyTag = material.keyTag {
+            defaults.set(keyTag, forKey: ShadowClientPairingIdentityDefaultsKeys.keyTag)
+        } else {
+            defaults.removeObject(forKey: ShadowClientPairingIdentityDefaultsKeys.keyTag)
+        }
     }
 
     public func clientCertificateSignature() throws -> Data {
@@ -364,6 +373,12 @@ public actor ShadowClientPairingIdentityStore {
     public func tlsClientCertificateCredential() throws -> URLCredential {
         try withRecoveredMaterial { material in
             try makeTLSClientCertificateCredential(material: material)
+        }
+    }
+
+    public func tlsClientCertificates() throws -> [SecCertificate] {
+        try withRecoveredMaterial { material in
+            [try makeTLSClientCertificate(material: material)]
         }
     }
 
@@ -435,6 +450,12 @@ public actor ShadowClientPairingIdentityStore {
     private func validateIdentityMaterial(
         _ material: ShadowClientPairingIdentityMaterial
     ) throws -> ShadowClientPairingIdentityMaterial {
+        guard let keyTag = material.keyTag,
+              loadPermanentPrivateKey(keyTag: keyTag) != nil
+        else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+
         let certDER = try pemBodyData(pem: material.certificatePEM)
         guard let cert = SecCertificateCreateWithData(nil, certDER as CFData) else {
             throw ShadowClientGameStreamControlError.invalidKeyMaterial
@@ -541,13 +562,11 @@ public actor ShadowClientPairingIdentityStore {
         let certDER = try pemBodyData(pem: material.certificatePEM)
         let privateKey = try makeTLSClientPrivateKey(material: material)
 
-        let identity = makeKeychainBackedIdentity(
+        guard let identity = makeKeychainBackedIdentity(
             certificate: certificate,
             privateKey: privateKey,
             certificateDER: certDER
-        ) ?? SecIdentityCreate(nil, certificate, privateKey)
-
-        guard let identity else {
+        ) else {
             throw ShadowClientGameStreamControlError.invalidKeyMaterial
         }
         return identity
@@ -566,6 +585,12 @@ public actor ShadowClientPairingIdentityStore {
     private func makeTLSClientPrivateKey(
         material: ShadowClientPairingIdentityMaterial
     ) throws -> SecKey {
+        if let keyTag = material.keyTag,
+           let permanentPrivateKey = loadPermanentPrivateKey(keyTag: keyTag)
+        {
+            return permanentPrivateKey
+        }
+
         let keyData = try pemBodyData(pem: material.privateKeyPEM)
         let attributes: [CFString: Any] = [
             kSecAttrKeyType: kSecAttrKeyTypeRSA,
@@ -594,10 +619,26 @@ public actor ShadowClientPairingIdentityStore {
             kSecAttrApplicationTag: keyTag,
             kSecAttrKeyClass: kSecAttrKeyClassPrivate,
             kSecAttrIsPermanent: true,
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
             kSecValueRef: privateKey,
         ]
         let keyStatus = SecItemAdd(addKeyQuery as CFDictionary, nil)
         guard keyStatus == errSecSuccess || keyStatus == errSecDuplicateItem else {
+            return nil
+        }
+
+        let keyLookupQuery: [CFString: Any] = [
+            kSecClass: kSecClassKey,
+            kSecAttrApplicationTag: keyTag,
+            kSecAttrKeyClass: kSecAttrKeyClassPrivate,
+            kSecReturnRef: true,
+            kSecMatchLimit: kSecMatchLimitOne,
+        ]
+        var keyRef: CFTypeRef?
+        let keyLookupStatus = SecItemCopyMatching(keyLookupQuery as CFDictionary, &keyRef)
+        guard keyLookupStatus == errSecSuccess,
+              let storedPrivateKey = keyRef as! SecKey?
+        else {
             return nil
         }
 
@@ -611,24 +652,41 @@ public actor ShadowClientPairingIdentityStore {
             return nil
         }
 
-        let identityQuery: [CFString: Any] = [
-            kSecClass: kSecClassIdentity,
-            kSecAttrLabel: certLabel,
+        guard let identity = SecIdentityCreate(nil, certificate, storedPrivateKey) else {
+            return nil
+        }
+
+        return identityMatchesCertificateDER(identity, certificateDER: certificateDER) ? identity : nil
+    }
+
+    private func identityMatchesCertificateDER(
+        _ identity: SecIdentity,
+        certificateDER: Data
+    ) -> Bool {
+        var certificateRef: SecCertificate?
+        let status = SecIdentityCopyCertificate(identity, &certificateRef)
+        guard status == errSecSuccess, let certificateRef else {
+            return false
+        }
+        let identityDER = SecCertificateCopyData(certificateRef) as Data
+        return identityDER == certificateDER
+    }
+
+    private func loadPermanentPrivateKey(keyTag: String) -> SecKey? {
+        let keyTagData = Data(keyTag.utf8)
+        let keyLookupQuery: [CFString: Any] = [
+            kSecClass: kSecClassKey,
+            kSecAttrApplicationTag: keyTagData,
+            kSecAttrKeyClass: kSecAttrKeyClassPrivate,
             kSecReturnRef: true,
             kSecMatchLimit: kSecMatchLimitOne,
         ]
-        var identityRef: CFTypeRef?
-        let identityStatus = SecItemCopyMatching(identityQuery as CFDictionary, &identityRef)
-        guard
-            identityStatus == errSecSuccess,
-            let identityRef
-        else {
+        var keyRef: CFTypeRef?
+        let status = SecItemCopyMatching(keyLookupQuery as CFDictionary, &keyRef)
+        guard status == errSecSuccess, let key = keyRef as! SecKey? else {
             return nil
         }
-        guard CFGetTypeID(identityRef) == SecIdentityGetTypeID() else {
-            return nil
-        }
-        return unsafeDowncast(identityRef, to: SecIdentity.self)
+        return key
     }
 }
 
@@ -724,6 +782,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let uniqueID = await identityStore.uniqueID()
         // Build TLS credential first so any material recovery happens before stage1 uploads client cert.
         let tlsClientCredential = try await identityStore.tlsClientCertificateCredential()
+        let tlsClientCertificates = try await identityStore.tlsClientCertificates()
         let tlsClientIdentity = try await identityStore.tlsClientIdentity()
         let certPEMData = try await identityStore.clientCertificatePEMData()
         let clientCertSignature = try await identityStore.clientCertificateSignature()
@@ -926,6 +985,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                 uniqueID: uniqueID,
                 pinnedServerCertificateDER: serverCertDER,
                 clientCertificateCredential: tlsClientCredential,
+                clientCertificates: tlsClientCertificates,
                 clientCertificateIdentity: tlsClientIdentity,
                 timeout: pairingStageTimeout
             )
@@ -955,6 +1015,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let uniqueID = await identityStore.uniqueID()
         let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
         let tlsClientCredential = try? await identityStore.tlsClientCertificateCredential()
+        let tlsClientCertificates = try? await identityStore.tlsClientCertificates()
         let tlsClientIdentity = try? await identityStore.tlsClientIdentity()
 
         let remoteInputKey = Self.randomBytes(length: 16)
@@ -1047,6 +1108,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                 uniqueID: uniqueID,
                 pinnedServerCertificateDER: pinnedServerCertificate,
                 clientCertificateCredential: tlsClientCredential,
+                clientCertificates: tlsClientCertificates,
                 clientCertificateIdentity: tlsClientIdentity,
                 timeout: defaultRequestTimeout
             )
@@ -1248,6 +1310,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         uniqueID: String,
         pinnedServerCertificateDER: Data?,
         clientCertificateCredential: URLCredential? = nil,
+        clientCertificates: [SecCertificate]? = nil,
         clientCertificateIdentity: SecIdentity? = nil,
         timeout: TimeInterval
     ) async throws -> String {
@@ -1264,6 +1327,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                 uniqueID: uniqueID,
                 pinnedServerCertificateDER: pinnedServerCertificateDER,
                 clientCertificateCredential: clientCertificateCredential,
+                clientCertificates: clientCertificates,
                 clientCertificateIdentity: clientCertificateIdentity,
                 timeout: timeout
             )
@@ -1518,6 +1582,7 @@ enum ShadowClientGameStreamHTTPTransport {
         uniqueID: String,
         pinnedServerCertificateDER: Data?,
         clientCertificateCredential: URLCredential? = nil,
+        clientCertificates: [SecCertificate]? = nil,
         clientCertificateIdentity: SecIdentity? = nil,
         timeout: TimeInterval = ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
     ) async throws -> String {
@@ -1545,7 +1610,7 @@ enum ShadowClientGameStreamHTTPTransport {
             return try await requestPinnedHTTPSXML(
                 url: url,
                 pinnedServerCertificateDER: pinnedServerCertificateDER,
-                clientCertificates: clientCertificateCredential?.certificates,
+                clientCertificates: clientCertificates,
                 clientCertificateIdentity: clientCertificateIdentity,
                 timeout: timeout
             )
@@ -1614,7 +1679,7 @@ enum ShadowClientGameStreamHTTPTransport {
     private static func requestPinnedHTTPSXML(
         url: URL,
         pinnedServerCertificateDER: Data?,
-        clientCertificates: [Any]?,
+        clientCertificates: [SecCertificate]?,
         clientCertificateIdentity: SecIdentity?,
         timeout: TimeInterval
     ) async throws -> String {
@@ -1629,10 +1694,10 @@ enum ShadowClientGameStreamHTTPTransport {
 
         if let clientCertificateIdentity {
             let secIdentity: sec_identity_t?
-            if let certificates = clientCertificates as? [SecCertificate], !certificates.isEmpty {
+            if let clientCertificates, !clientCertificates.isEmpty {
                 secIdentity = sec_identity_create_with_certificates(
                     clientCertificateIdentity,
-                    certificates as CFArray
+                    clientCertificates as CFArray
                 )
             } else {
                 secIdentity = sec_identity_create(clientCertificateIdentity)
@@ -1942,9 +2007,14 @@ private enum ShadowClientPairingIdentityMaterialFactory {
     private static let commonNameOID = Data([0x55, 0x04, 0x03])
 
     static func generate(commonName: String = "shadow-client") throws -> ShadowClientPairingIdentityMaterial {
+        let keyTag = "shadow-client.identity.\(UUID().uuidString.lowercased())"
+        let keyTagData = Data(keyTag.utf8)
         let privateKeyAttributes: [CFString: Any] = [
             kSecAttrKeyType: kSecAttrKeyTypeRSA,
             kSecAttrKeySizeInBits: 2048,
+            kSecAttrIsPermanent: true,
+            kSecAttrApplicationTag: keyTagData,
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
 
         var error: Unmanaged<CFError>?
@@ -1974,7 +2044,8 @@ private enum ShadowClientPairingIdentityMaterialFactory {
 
         return ShadowClientPairingIdentityMaterial(
             certificatePEM: makePEM(blockType: "CERTIFICATE", der: certificateDER),
-            privateKeyPEM: makePEM(blockType: "RSA PRIVATE KEY", der: privateKeyDER)
+            privateKeyPEM: makePEM(blockType: "RSA PRIVATE KEY", der: privateKeyDER),
+            keyTag: keyTag
         )
     }
 
