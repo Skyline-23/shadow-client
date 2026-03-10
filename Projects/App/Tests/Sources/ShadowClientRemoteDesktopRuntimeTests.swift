@@ -622,9 +622,9 @@ func remoteDesktopRuntimeAllowsExternalPairWithoutLocalCandidate() async {
     #expect(await controlClient.pairRequests() == ["wifi.skyline23.com"])
 }
 
-@Test("Remote desktop runtime prefers local candidate for pairing when host unique ID matches")
+@Test("Remote desktop runtime tries selected external host before local fallback when unique ID matches")
 @MainActor
-func remoteDesktopRuntimePrefersLocalCandidateForPairing() async {
+func remoteDesktopRuntimeTriesSelectedExternalHostBeforeLocalFallback() async {
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
             "wifi.skyline23.com": .init(
@@ -672,7 +672,53 @@ func remoteDesktopRuntimePrefersLocalCandidateForPairing() async {
     await waitForPairingState(runtime)
 
     #expect(runtime.pairingState == .paired("Paired"))
-    #expect(await controlClient.pairRequests() == ["192.168.0.20"])
+    #expect(await controlClient.pairRequests() == ["wifi.skyline23.com", "192.168.0.20"])
+}
+
+@Test("Remote desktop runtime merges local and external descriptors for the same unique ID")
+@MainActor
+func remoteDesktopRuntimeMergesDescriptorsSharingUniqueID() async {
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "wifi.skyline23.com": .init(
+                host: "wifi.skyline23.com",
+                displayName: "Example-PC",
+                pairStatus: .notPaired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient()
+    )
+
+    runtime.refreshHosts(
+        candidates: ["wifi.skyline23.com", "192.168.0.20"],
+        preferredHost: "wifi.skyline23.com"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(runtime.hosts.count == 1)
+    #expect(runtime.hosts.first?.uniqueID == "HOST-123")
+    #expect(runtime.hosts.first?.pairStatus == .paired)
 }
 
 private struct FailingIdentityProvider: ShadowClientPairingIdentityProviding {

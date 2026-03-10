@@ -971,6 +971,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var launchTask: Task<Void, Never>?
     private var inputKeepAliveTask: Task<Void, Never>?
     private var latestHostCandidates: [String] = []
+    private var latestResolvedHostDescriptors: [ShadowClientRemoteHostDescriptor] = []
     private var cachedAppsByHostID: [String: [ShadowClientRemoteAppDescriptor]] = [:]
     private var appRefreshGeneration: UInt64 = 0
     private var pairGeneration: UInt64 = 0
@@ -1123,6 +1124,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             refreshHostsTask?.cancel()
             refreshAppsTask?.cancel()
             hosts = []
+            latestResolvedHostDescriptors = []
             apps = []
             cachedAppsByHostID = [:]
             selectedHostID = nil
@@ -1164,9 +1166,16 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 guard let self else {
                     return
                 }
-                self.hosts = sorted
+                self.latestResolvedHostDescriptors = sorted
+                let preferredNormalized = Self.normalizeCandidate(preferredHost)
+                let mergedHosts = Self.mergeResolvedHosts(
+                    sorted,
+                    selectedHostID: self.selectedHostID,
+                    preferredHost: preferredNormalized
+                )
+                self.hosts = mergedHosts
 
-                if sorted.isEmpty {
+                if mergedHosts.isEmpty {
                     self.hostState = .failed("No hosts resolved.")
                     self.selectedHostID = nil
                     self.apps = []
@@ -1175,25 +1184,24 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
 
                 self.hostState = .loaded
-                let preferredNormalized = Self.normalizeCandidate(preferredHost)
 
                 if let pendingSelectedHostID = self.pendingSelectedHostID,
-                   sorted.contains(where: { $0.id == pendingSelectedHostID })
+                   mergedHosts.contains(where: { $0.id == pendingSelectedHostID })
                 {
                     self.selectedHostID = pendingSelectedHostID
                     self.pendingSelectedHostID = nil
                 } else {
                     self.pendingSelectedHostID = nil
                     if let selectedHostID = self.selectedHostID,
-                       sorted.contains(where: { $0.id == selectedHostID })
+                       mergedHosts.contains(where: { $0.id == selectedHostID })
                     {
                         self.selectedHostID = selectedHostID
                     } else if let preferredNormalized,
-                              let preferred = sorted.first(where: { $0.host.lowercased() == preferredNormalized })
+                              let preferred = mergedHosts.first(where: { $0.host.lowercased() == preferredNormalized })
                     {
                         self.selectedHostID = preferred.id
                     } else {
-                        self.selectedHostID = sorted.first?.id
+                        self.selectedHostID = mergedHosts.first?.id
                     }
                 }
 
@@ -1218,7 +1226,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let currentPairGeneration = pairGeneration
         let controlClient = controlClient
         let pairingRouteStore = pairingRouteStore
-        let currentHosts = hosts
+        let currentHosts = latestResolvedHostDescriptors.isEmpty ? hosts : latestResolvedHostDescriptors
         let currentLatestHostCandidates = latestHostCandidates
         pairTask = Task { [weak self] in
             do {
@@ -2629,10 +2637,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         if normalized == preferredPairHost?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
             return 0
         }
-        if isLocalPairHost(normalized) {
-            return normalized == selectedHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ? 0 : 1
-        }
         if normalized == selectedHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            return 1
+        }
+        if isLocalPairHost(normalized) {
             return 2
         }
         return 3
@@ -2718,6 +2726,120 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         return displayOrder == .orderedAscending
+    }
+
+    private static func mergeResolvedHosts(
+        _ hosts: [ShadowClientRemoteHostDescriptor],
+        selectedHostID: String?,
+        preferredHost: String?
+    ) -> [ShadowClientRemoteHostDescriptor] {
+        let groupedHosts = Dictionary(grouping: hosts, by: mergeKey(for:))
+        return groupedHosts.values.compactMap {
+            mergeResolvedHostGroup(
+                $0,
+                selectedHostID: selectedHostID,
+                preferredHost: preferredHost
+            )
+        }
+        .sorted(by: compareHosts)
+    }
+
+    private static func mergeResolvedHostGroup(
+        _ group: [ShadowClientRemoteHostDescriptor],
+        selectedHostID: String?,
+        preferredHost: String?
+    ) -> ShadowClientRemoteHostDescriptor? {
+        guard let primary = group.sorted(by: {
+            compareMergePriority(
+                lhs: $0,
+                rhs: $1,
+                selectedHostID: selectedHostID,
+                preferredHost: preferredHost
+            )
+        }).first else {
+            return nil
+        }
+
+        let displayName = group.first(where: {
+            let trimmed = $0.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !trimmed.isEmpty && trimmed.lowercased() != $0.host.lowercased()
+        })?.displayName ?? primary.displayName
+
+        let pairStatus: ShadowClientRemoteHostPairStatus
+        if group.contains(where: { $0.pairStatus == .paired }) {
+            pairStatus = .paired
+        } else if group.contains(where: { $0.pairStatus == .notPaired }) {
+            pairStatus = .notPaired
+        } else {
+            pairStatus = .unknown
+        }
+
+        let currentGameID = group.map(\.currentGameID).max() ?? primary.currentGameID
+        let lastError = group.contains(where: \.isReachable)
+            ? nil
+            : group.compactMap(\.lastError).first
+
+        return ShadowClientRemoteHostDescriptor(
+            host: primary.host,
+            displayName: displayName,
+            pairStatus: pairStatus,
+            currentGameID: currentGameID,
+            serverState: primary.serverState,
+            httpsPort: primary.httpsPort,
+            appVersion: primary.appVersion,
+            gfeVersion: primary.gfeVersion,
+            uniqueID: primary.uniqueID,
+            lastError: lastError
+        )
+    }
+
+    private static func compareMergePriority(
+        lhs: ShadowClientRemoteHostDescriptor,
+        rhs: ShadowClientRemoteHostDescriptor,
+        selectedHostID: String?,
+        preferredHost: String?
+    ) -> Bool {
+        let lhsPreferred = lhs.host.lowercased() == preferredHost
+        let rhsPreferred = rhs.host.lowercased() == preferredHost
+        if lhsPreferred != rhsPreferred {
+            return lhsPreferred
+        }
+
+        let lhsSelected = lhs.id == selectedHostID
+        let rhsSelected = rhs.id == selectedHostID
+        if lhsSelected != rhsSelected {
+            return lhsSelected
+        }
+
+        if lhs.isReachable != rhs.isReachable {
+            return lhs.isReachable
+        }
+
+        if lhs.pairStatus != rhs.pairStatus {
+            return lhs.pairStatus == .paired
+        }
+
+        if lhs.currentGameID != rhs.currentGameID {
+            return lhs.currentGameID > rhs.currentGameID
+        }
+
+        let lhsLocal = isLocalPairHost(lhs.host)
+        let rhsLocal = isLocalPairHost(rhs.host)
+        if lhsLocal != rhsLocal {
+            return lhsLocal
+        }
+
+        return lhs.host.localizedCaseInsensitiveCompare(rhs.host) == .orderedAscending
+    }
+
+    private static func mergeKey(for host: ShadowClientRemoteHostDescriptor) -> String {
+        if let uniqueID = host.uniqueID?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !uniqueID.isEmpty
+        {
+            return "uniqueid:\(uniqueID.lowercased())"
+        }
+
+        return "host:\(host.id)"
     }
 
     private static func synthesizedFallbackApps(
