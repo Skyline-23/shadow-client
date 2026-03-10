@@ -6293,9 +6293,31 @@ private enum ShadowClientUDPDatagramSocketError: Error {
 }
 
 private actor ShadowClientUDPDatagramSocket {
+    private enum SocketAddress {
+        case ipv4(sockaddr_in)
+        case ipv6(sockaddr_in6)
+
+        var family: Int32 {
+            switch self {
+            case .ipv4:
+                return AF_INET
+            case .ipv6:
+                return AF_INET6
+            }
+        }
+
+        var length: socklen_t {
+            switch self {
+            case .ipv4:
+                return socklen_t(MemoryLayout<sockaddr_in>.size)
+            case .ipv6:
+                return socklen_t(MemoryLayout<sockaddr_in6>.size)
+            }
+        }
+    }
+
     private let descriptor: Int32
-    private var remoteAddress: sockaddr_in
-    private let addressLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+    private let addressFamily: Int32
     private var isClosed = false
     private var receiveBuffer: [UInt8] = Array(
         repeating: 0,
@@ -6308,14 +6330,14 @@ private actor ShadowClientUDPDatagramSocket {
         remoteHost: NWEndpoint.Host,
         remotePort: UInt16
     ) throws {
-        guard let remoteAddress = Self.makeIPv4Address(from: remoteHost, port: remotePort) else {
+        guard let remoteAddress = Self.makeAddress(from: remoteHost, port: remotePort) else {
             throw ShadowClientUDPDatagramSocketError.unsupportedAddress(
                 "Unsupported remote UDP endpoint: \(String(describing: remoteHost)):\(remotePort)"
             )
         }
-        self.remoteAddress = remoteAddress
+        addressFamily = remoteAddress.family
 
-        descriptor = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        descriptor = socket(addressFamily, SOCK_DGRAM, IPPROTO_UDP)
         guard descriptor >= 0 else {
             throw ShadowClientUDPDatagramSocketError.socketFailure(
                 "socket() failed: \(String(cString: strerror(errno)))"
@@ -6355,11 +6377,13 @@ private actor ShadowClientUDPDatagramSocket {
             socklen_t(MemoryLayout<Int32>.size)
         )
 
-        var localAddress = Self.makeLocalIPv4Address(from: localHost, port: localPort)
-        let bindStatus = withUnsafePointer(to: &localAddress) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
-                bind(descriptor, sockaddrPointer, addressLength)
-            }
+        var localAddress = Self.makeLocalAddress(
+            from: localHost,
+            port: localPort,
+            family: addressFamily
+        )
+        let bindStatus = Self.withSockaddrPointer(to: &localAddress) { sockaddrPointer, addressLength in
+            bind(descriptor, sockaddrPointer, addressLength)
         }
         if bindStatus != 0 {
             let message = "bind() failed: \(String(cString: strerror(errno)))"
@@ -6368,10 +6392,8 @@ private actor ShadowClientUDPDatagramSocket {
         }
 
         var connectedRemoteAddress = remoteAddress
-        let connectStatus = withUnsafePointer(to: &connectedRemoteAddress) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
-                connect(descriptor, sockaddrPointer, addressLength)
-            }
+        let connectStatus = Self.withSockaddrPointer(to: &connectedRemoteAddress) { sockaddrPointer, addressLength in
+            connect(descriptor, sockaddrPointer, addressLength)
         }
         if connectStatus != 0 {
             let message = "connect() failed: \(String(cString: strerror(errno)))"
@@ -6446,26 +6468,45 @@ private actor ShadowClientUDPDatagramSocket {
             return "ephemeral:unknown"
         }
 
-        guard address.ss_family == sa_family_t(AF_INET) else {
-            return "ephemeral:unknown"
-        }
-
-        return withUnsafePointer(to: &address) { pointer -> String in
-            pointer.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sockaddrInPointer in
-                var ipv4 = sockaddrInPointer.pointee.sin_addr
-                let port = CFSwapInt16BigToHost(sockaddrInPointer.pointee.sin_port)
-                var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-                let converted = inet_ntop(
-                    AF_INET,
-                    &ipv4,
-                    &buffer,
-                    socklen_t(INET_ADDRSTRLEN)
-                )
-                guard converted != nil else {
-                    return "0.0.0.0:\(port)"
+        switch Int32(address.ss_family) {
+        case AF_INET:
+            return withUnsafePointer(to: &address) { pointer -> String in
+                pointer.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sockaddrInPointer in
+                    var ipv4 = sockaddrInPointer.pointee.sin_addr
+                    let port = CFSwapInt16BigToHost(sockaddrInPointer.pointee.sin_port)
+                    var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                    let converted = inet_ntop(
+                        AF_INET,
+                        &ipv4,
+                        &buffer,
+                        socklen_t(INET_ADDRSTRLEN)
+                    )
+                    guard converted != nil else {
+                        return "0.0.0.0:\(port)"
+                    }
+                    return "\(String(cString: buffer)):\(port)"
                 }
-                return "\(String(cString: buffer)):\(port)"
             }
+        case AF_INET6:
+            return withUnsafePointer(to: &address) { pointer -> String in
+                pointer.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { sockaddrIn6Pointer in
+                    var ipv6 = sockaddrIn6Pointer.pointee.sin6_addr
+                    let port = CFSwapInt16BigToHost(sockaddrIn6Pointer.pointee.sin6_port)
+                    var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+                    let converted = inet_ntop(
+                        AF_INET6,
+                        &ipv6,
+                        &buffer,
+                        socklen_t(INET6_ADDRSTRLEN)
+                    )
+                    guard converted != nil else {
+                        return ":::\(port)"
+                    }
+                    return "\(String(cString: buffer)):\(port)"
+                }
+            }
+        default:
+            return "ephemeral:unknown"
         }
     }
 
@@ -6480,35 +6521,60 @@ private actor ShadowClientUDPDatagramSocket {
         isClosed
     }
 
-    private static func makeLocalIPv4Address(
+    private static func makeLocalAddress(
         from host: NWEndpoint.Host?,
-        port: UInt16?
-    ) -> sockaddr_in {
-        var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = CFSwapInt16HostToBig(port ?? 0)
-        if let host, let parsed = parseIPv4Host(host) {
-            address.sin_addr = parsed
-        } else {
-            address.sin_addr = in_addr(s_addr: CFSwapInt32HostToBig(INADDR_ANY))
+        port: UInt16?,
+        family: Int32
+    ) -> SocketAddress {
+        switch family {
+        case AF_INET:
+            var address = sockaddr_in()
+            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = CFSwapInt16HostToBig(port ?? 0)
+            if let host, let parsed = parseIPv4Host(host) {
+                address.sin_addr = parsed
+            } else {
+                address.sin_addr = in_addr(s_addr: CFSwapInt32HostToBig(INADDR_ANY))
+            }
+            return .ipv4(address)
+        default:
+            var address = sockaddr_in6()
+            address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+            address.sin6_family = sa_family_t(AF_INET6)
+            address.sin6_port = CFSwapInt16HostToBig(port ?? 0)
+            if let host, let parsed = parseIPv6Host(host) {
+                address.sin6_addr = parsed
+            } else {
+                address.sin6_addr = in6addr_any
+            }
+            return .ipv6(address)
         }
-        return address
     }
 
-    private static func makeIPv4Address(
+    private static func makeAddress(
         from host: NWEndpoint.Host,
         port: UInt16
-    ) -> sockaddr_in? {
-        guard let parsed = parseIPv4Host(host) else {
-            return nil
+    ) -> SocketAddress? {
+        if let parsedIPv4 = parseIPv4Host(host) {
+            var address = sockaddr_in()
+            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = CFSwapInt16HostToBig(port)
+            address.sin_addr = parsedIPv4
+            return .ipv4(address)
         }
-        var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = CFSwapInt16HostToBig(port)
-        address.sin_addr = parsed
-        return address
+
+        if let parsedIPv6 = parseIPv6Host(host) {
+            var address = sockaddr_in6()
+            address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+            address.sin6_family = sa_family_t(AF_INET6)
+            address.sin6_port = CFSwapInt16HostToBig(port)
+            address.sin6_addr = parsedIPv6
+            return .ipv6(address)
+        }
+
+        return nil
     }
 
     private static func parseIPv4Host(_ host: NWEndpoint.Host) -> in_addr? {
@@ -6525,6 +6591,44 @@ private actor ShadowClientUDPDatagramSocket {
             return nil
         }
         return parsed
+    }
+
+    private static func parseIPv6Host(_ host: NWEndpoint.Host) -> in6_addr? {
+        let hostString = String(describing: host).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !hostString.isEmpty else {
+            return nil
+        }
+
+        var parsed = in6_addr()
+        let result = hostString.withCString { cString in
+            inet_pton(AF_INET6, cString, &parsed)
+        }
+        guard result == 1 else {
+            return nil
+        }
+        return parsed
+    }
+
+    private static func withSockaddrPointer<T>(
+        to address: inout SocketAddress,
+        _ body: (UnsafePointer<sockaddr>, socklen_t) throws -> T
+    ) rethrows -> T {
+        switch address {
+        case var .ipv4(value):
+            defer { address = .ipv4(value) }
+            return try withUnsafePointer(to: &value) { pointer in
+                try pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                    try body(sockaddrPointer, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+        case var .ipv6(value):
+            defer { address = .ipv6(value) }
+            return try withUnsafePointer(to: &value) { pointer in
+                try pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                    try body(sockaddrPointer, socklen_t(MemoryLayout<sockaddr_in6>.size))
+                }
+            }
+        }
     }
 }
 
