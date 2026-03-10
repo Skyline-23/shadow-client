@@ -9,18 +9,60 @@ public enum ShadowClientRemoteHostPairStatus: String, Equatable, Sendable {
     case unknown
 }
 
+public struct ShadowClientRemoteHostEndpoint: Equatable, Sendable {
+    public let host: String
+    public let httpsPort: Int
+
+    public init(host: String, httpsPort: Int) {
+        self.host = host
+        self.httpsPort = httpsPort
+    }
+}
+
+public struct ShadowClientRemoteHostRoutes: Equatable, Sendable {
+    public let active: ShadowClientRemoteHostEndpoint
+    public let local: ShadowClientRemoteHostEndpoint?
+    public let remote: ShadowClientRemoteHostEndpoint?
+    public let manual: ShadowClientRemoteHostEndpoint?
+
+    public init(
+        active: ShadowClientRemoteHostEndpoint,
+        local: ShadowClientRemoteHostEndpoint? = nil,
+        remote: ShadowClientRemoteHostEndpoint? = nil,
+        manual: ShadowClientRemoteHostEndpoint? = nil
+    ) {
+        self.active = active
+        self.local = local
+        self.remote = remote
+        self.manual = manual
+    }
+
+    public var allEndpoints: [ShadowClientRemoteHostEndpoint] {
+        var seen: Set<String> = []
+        return [active, local, remote, manual]
+            .compactMap { $0 }
+            .filter { endpoint in
+                let key = "\(endpoint.host.lowercased()):\(endpoint.httpsPort)"
+                if seen.contains(key) {
+                    return false
+                }
+                seen.insert(key)
+                return true
+            }
+    }
+}
+
 public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendable {
     public let id: String
-    public let host: String
     public let displayName: String
     public let pairStatus: ShadowClientRemoteHostPairStatus
     public let currentGameID: Int
     public let serverState: String
-    public let httpsPort: Int
     public let appVersion: String?
     public let gfeVersion: String?
     public let uniqueID: String?
     public let lastError: String?
+    public let routes: ShadowClientRemoteHostRoutes
 
     public init(
         host: String,
@@ -32,20 +74,54 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         appVersion: String?,
         gfeVersion: String?,
         uniqueID: String?,
-        lastError: String?
+        lastError: String?,
+        localHost: String? = nil,
+        remoteHost: String? = nil,
+        manualHost: String? = nil
     ) {
         self.id = host.lowercased()
-        self.host = host
         self.displayName = displayName
         self.pairStatus = pairStatus
         self.currentGameID = currentGameID
         self.serverState = serverState
-        self.httpsPort = httpsPort
         self.appVersion = appVersion
         self.gfeVersion = gfeVersion
         self.uniqueID = uniqueID
         self.lastError = lastError
+        self.routes = ShadowClientRemoteHostRoutes(
+            active: .init(host: host, httpsPort: httpsPort),
+            local: localHost.map { .init(host: $0, httpsPort: httpsPort) },
+            remote: remoteHost.map { .init(host: $0, httpsPort: httpsPort) },
+            manual: manualHost.map { .init(host: $0, httpsPort: httpsPort) }
+        )
     }
+
+    public init(
+        activeRoute: ShadowClientRemoteHostEndpoint,
+        displayName: String,
+        pairStatus: ShadowClientRemoteHostPairStatus,
+        currentGameID: Int,
+        serverState: String,
+        appVersion: String?,
+        gfeVersion: String?,
+        uniqueID: String?,
+        lastError: String?,
+        routes: ShadowClientRemoteHostRoutes
+    ) {
+        self.id = activeRoute.host.lowercased()
+        self.displayName = displayName
+        self.pairStatus = pairStatus
+        self.currentGameID = currentGameID
+        self.serverState = serverState
+        self.appVersion = appVersion
+        self.gfeVersion = gfeVersion
+        self.uniqueID = uniqueID
+        self.lastError = lastError
+        self.routes = routes
+    }
+
+    public var host: String { routes.active.host }
+    public var httpsPort: Int { routes.active.httpsPort }
 
     public var isReachable: Bool {
         lastError == nil
@@ -215,6 +291,9 @@ extension ShadowClientGameStreamError: LocalizedError {
 
 public struct ShadowClientGameStreamServerInfo: Equatable, Sendable {
     let host: String
+    let localHost: String?
+    let remoteHost: String?
+    let manualHost: String?
     let displayName: String
     let pairStatus: ShadowClientRemoteHostPairStatus
     let currentGameID: Int
@@ -223,6 +302,34 @@ public struct ShadowClientGameStreamServerInfo: Equatable, Sendable {
     let appVersion: String?
     let gfeVersion: String?
     let uniqueID: String?
+
+    init(
+        host: String,
+        localHost: String? = nil,
+        remoteHost: String? = nil,
+        manualHost: String? = nil,
+        displayName: String,
+        pairStatus: ShadowClientRemoteHostPairStatus,
+        currentGameID: Int,
+        serverState: String,
+        httpsPort: Int,
+        appVersion: String?,
+        gfeVersion: String?,
+        uniqueID: String?
+    ) {
+        self.host = host
+        self.localHost = localHost
+        self.remoteHost = remoteHost
+        self.manualHost = manualHost
+        self.displayName = displayName
+        self.pairStatus = pairStatus
+        self.currentGameID = currentGameID
+        self.serverState = serverState
+        self.httpsPort = httpsPort
+        self.appVersion = appVersion
+        self.gfeVersion = gfeVersion
+        self.uniqueID = uniqueID
+    }
 }
 
 public protocol ShadowClientGameStreamMetadataClient: Sendable {
@@ -707,6 +814,9 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
     ) -> ShadowClientGameStreamServerInfo {
         ShadowClientGameStreamServerInfo(
             host: host,
+            localHost: nil,
+            remoteHost: nil,
+            manualHost: nil,
             displayName: host,
             pairStatus: .notPaired,
             currentGameID: 0,
@@ -2540,7 +2650,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 appVersion: info.appVersion,
                 gfeVersion: info.gfeVersion,
                 uniqueID: info.uniqueID,
-                lastError: nil
+                lastError: nil,
+                localHost: info.localHost,
+                remoteHost: info.remoteHost,
+                manualHost: info.manualHost
             )
         } catch {
             let message = error.localizedDescription.isEmpty
@@ -2859,18 +2972,26 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let lastError = group.contains(where: \.isReachable)
             ? nil
             : group.compactMap(\.lastError).first
+        let preferredRoute = preferredRoutesByKey[mergeKey(for: primary)]
+        let mergedRoutes = mergedHostRoutes(
+            from: group,
+            fallbackPrimary: primary,
+            selectedHostID: selectedHostID,
+            preferredHost: preferredHost,
+            preferredRoute: preferredRoute
+        )
 
         return ShadowClientRemoteHostDescriptor(
-            host: primary.host,
+            activeRoute: mergedRoutes.active,
             displayName: displayName,
             pairStatus: pairStatus,
             currentGameID: currentGameID,
             serverState: primary.serverState,
-            httpsPort: primary.httpsPort,
             appVersion: primary.appVersion,
             gfeVersion: primary.gfeVersion,
             uniqueID: primary.uniqueID,
-            lastError: lastError
+            lastError: lastError,
+            routes: mergedRoutes
         )
     }
 
@@ -2928,6 +3049,41 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         return "host:\(host.id)"
+    }
+
+    private static func mergedHostRoutes(
+        from group: [ShadowClientRemoteHostDescriptor],
+        fallbackPrimary: ShadowClientRemoteHostDescriptor,
+        selectedHostID: String?,
+        preferredHost: String?,
+        preferredRoute: String?
+    ) -> ShadowClientRemoteHostRoutes {
+        let local = group.compactMap(\.routes.local).first
+        let remote = group.compactMap(\.routes.remote).first
+        let manual = group.compactMap(\.routes.manual).first
+        let candidateRoutes = group
+            .flatMap { $0.routes.allEndpoints }
+            .reduce(into: [ShadowClientRemoteHostEndpoint]()) { partialResult, endpoint in
+                guard !partialResult.contains(where: { $0 == endpoint }) else {
+                    return
+                }
+                partialResult.append(endpoint)
+            }
+
+        let active = candidateRoutes.first(where: {
+            $0.host.lowercased() == preferredHost
+        }) ?? candidateRoutes.first(where: {
+            $0.host.lowercased() == preferredRoute
+        }) ?? group.first(where: {
+            $0.id == selectedHostID
+        })?.routes.active ?? fallbackPrimary.routes.active
+
+        return ShadowClientRemoteHostRoutes(
+            active: active,
+            local: local,
+            remote: remote,
+            manual: manual
+        )
     }
 
     private static func preferredRuntimeHostDescriptor(
@@ -3045,9 +3201,19 @@ enum ShadowClientGameStreamXMLParsers {
             serverState: serverState
         )
         let httpsPort = Int(document.values["HttpsPort"]?.first ?? "") ?? fallbackHTTPSPort
+        let localHost = normalizedRouteHost(document.values["LocalIP"]?.first)
+        let externalHost = normalizedRouteHost(document.values["ExternalIP"]?.first)
+        let manualHost = normalizedManualRouteHost(
+            activeHost: host,
+            localHost: localHost,
+            remoteHost: externalHost
+        )
 
         return ShadowClientGameStreamServerInfo(
             host: host,
+            localHost: localHost,
+            remoteHost: externalHost,
+            manualHost: manualHost,
             displayName: displayName,
             pairStatus: pairStatus,
             currentGameID: currentGameID,
@@ -3057,6 +3223,32 @@ enum ShadowClientGameStreamXMLParsers {
             gfeVersion: document.values["GfeVersion"]?.first,
             uniqueID: document.values["uniqueid"]?.first
         )
+    }
+
+    private static func normalizedRouteHost(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+
+    private static func normalizedManualRouteHost(
+        activeHost: String,
+        localHost: String?,
+        remoteHost: String?
+    ) -> String? {
+        let normalizedActiveHost = activeHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedActiveHost.isEmpty else {
+            return nil
+        }
+        if normalizedActiveHost == localHost || normalizedActiveHost == remoteHost {
+            return nil
+        }
+        return normalizedActiveHost
     }
 
     static func parseAppList(xml: String) throws -> [ShadowClientRemoteAppDescriptor] {
