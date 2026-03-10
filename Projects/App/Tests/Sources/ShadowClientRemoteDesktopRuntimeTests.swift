@@ -575,9 +575,9 @@ func remoteDesktopRuntimeSynthesizesFallbackAppsForEmptyCatalog() async {
     #expect(runtime.apps.first?.title == "Current Session (881448767)")
 }
 
-@Test("Remote desktop runtime blocks pairing for external host without local candidate")
+@Test("Remote desktop runtime allows pairing for external host without local candidate")
 @MainActor
-func remoteDesktopRuntimeBlocksExternalPairWithoutLocalCandidate() async {
+func remoteDesktopRuntimeAllowsExternalPairWithoutLocalCandidate() async {
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
             "wifi.skyline23.com": .init(
@@ -594,7 +594,7 @@ func remoteDesktopRuntimeBlocksExternalPairWithoutLocalCandidate() async {
         ],
         appListByHost: [:]
     )
-    let controlClient = RecordingGameStreamControlClient()
+    let controlClient = RecordingGameStreamControlClient(successfulHosts: ["wifi.skyline23.com"])
     let pairingRouteStore = ShadowClientPairingRouteStore(
         defaultsSuiteName: "shadow-client.pairing.external-only.\(UUID().uuidString)"
     )
@@ -613,13 +613,13 @@ func remoteDesktopRuntimeBlocksExternalPairWithoutLocalCandidate() async {
     runtime.pairSelectedHost()
     await waitForPairingState(runtime)
 
-    if case let .failed(message) = runtime.pairingState {
-        #expect(message.contains("same local network"))
+    if case .paired = runtime.pairingState {
+        #expect(true)
     } else {
-        Issue.record("Expected pairing failure for external-only host, got \(runtime.pairingState)")
+        Issue.record("Expected pairing success for external-only host, got \(runtime.pairingState)")
     }
 
-    #expect(await controlClient.pairRequests() == [])
+    #expect(await controlClient.pairRequests() == ["wifi.skyline23.com"])
 }
 
 @Test("Remote desktop runtime prefers local candidate for pairing when host unique ID matches")

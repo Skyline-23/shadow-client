@@ -1231,23 +1231,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     preferredPairHost: storedPreferredPairHost
                 )
 
-                guard !Self.requiresLocalNetworkPairing(
-                    for: selectedHost.host,
-                    pairCandidates: pairCandidates
-                ) else {
-                    await MainActor.run { [weak self] in
-                        guard let self,
-                              self.pairGeneration == currentPairGeneration
-                        else {
-                            return
-                        }
-                        self.pairingState = .failed(
-                            "Pair this host on the same local network first. Use its LAN IP or Bonjour name."
-                        )
-                    }
-                    return
-                }
-
                 let generatedPIN = await MainActor.run { [weak self] in
                     let pin = self?.pinProvider.nextPIN() ?? "0000"
                     self?.pairingState = .pairing(
@@ -2653,16 +2636,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return 2
         }
         return 3
-    }
-
-    private static func requiresLocalNetworkPairing(
-        for selectedHost: String,
-        pairCandidates: [ShadowClientPairHostCandidate]
-    ) -> Bool {
-        guard !isLocalPairHost(selectedHost) else {
-            return false
-        }
-        return !pairCandidates.contains { isLocalPairHost($0.host) }
     }
 
     private static func pairRouteStoreKey(for selectedHost: ShadowClientRemoteHostDescriptor) -> String {
