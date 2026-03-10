@@ -64,7 +64,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         case .paired:
             return "Ready"
         case .notPaired:
-            return "Needs Pairing"
+            return "Pairing Required"
         case .unknown:
             return "Reachable"
         }
@@ -83,7 +83,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         case .paired:
             return "Pair status verified"
         case .notPaired:
-            return "Host reachable but not paired"
+            return "Host reachable. Pair this client in Sunshine to continue."
         case .unknown:
             return "Host reachable"
         }
@@ -625,7 +625,8 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
 
         let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return normalized.contains("not authorized") ||
-            normalized.contains("certificate verification failed")
+            normalized.contains("certificate verification failed") ||
+            normalized.contains("server certificate mismatch")
     }
 
     private static func isAppTransportSecurityBlockedError(_ error: ShadowClientGameStreamError) -> Bool {
@@ -2596,7 +2597,10 @@ enum ShadowClientGameStreamXMLParsers {
         let document = try ShadowClientXMLFlatDocumentParser.parse(xml: xml)
         try validateRoot(document.rootStatus)
 
-        let displayName = document.values["hostname"]?.first?.nonEmpty ?? host
+        let displayName = normalizedHostDisplayName(
+            document.values["hostname"]?.first,
+            fallbackHost: host
+        )
         let pairStatus = parsePairStatus(document.values["PairStatus"]?.first)
         let serverState = document.values["state"]?.first ?? ""
         let rawCurrentGameID = Int(document.values["currentgame"]?.first ?? "") ?? 0
@@ -2637,6 +2641,19 @@ enum ShadowClientGameStreamXMLParsers {
         default:
             return .unknown
         }
+    }
+
+    private static func normalizedHostDisplayName(_ rawValue: String?, fallbackHost: String) -> String {
+        guard let candidate = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines), !candidate.isEmpty else {
+            return fallbackHost
+        }
+
+        let normalized = candidate.lowercased()
+        if normalized == "unknown" || normalized == "unknown name" {
+            return fallbackHost
+        }
+
+        return candidate
     }
 
     private static func normalizeCurrentGameID(

@@ -1465,6 +1465,11 @@ enum ShadowClientCertificateDERDecoder {
     }
 }
 
+enum ShadowClientGameStreamTLSFailure: Equatable, Sendable {
+    case serverCertificateMismatch
+    case clientCertificateRequired
+}
+
 enum ShadowClientGameStreamHTTPTransport {
     // Preserve the legacy protocol token expected by Sunshine/GameStream endpoints.
     private static let shadowClientCompatibleUniqueID = "0123456789ABCDEF"
@@ -1503,12 +1508,14 @@ enum ShadowClientGameStreamHTTPTransport {
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
 
+        var trustDelegate: ShadowClientServerTrustURLSessionDelegate?
         let session: URLSession
         if scheme == ShadowClientGameStreamNetworkDefaults.httpsScheme {
             let delegate = ShadowClientServerTrustURLSessionDelegate(
                 pinnedServerCertificateDER: pinnedServerCertificateDER,
                 clientCertificateCredential: clientCertificateCredential
             )
+            trustDelegate = delegate
             session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         } else {
             session = .shared
@@ -1519,7 +1526,7 @@ enum ShadowClientGameStreamHTTPTransport {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
-            throw ShadowClientGameStreamError.requestFailed(Self.requestFailureMessage(error))
+            throw Self.requestFailureError(error, tlsFailure: trustDelegate?.tlsFailure)
         }
 
         guard response is HTTPURLResponse else {
@@ -1531,6 +1538,22 @@ enum ShadowClientGameStreamHTTPTransport {
         }
 
         return xml
+    }
+
+    static func requestFailureError(
+        _ error: Error,
+        tlsFailure: ShadowClientGameStreamTLSFailure? = nil
+    ) -> ShadowClientGameStreamError {
+        if let tlsFailure {
+            switch tlsFailure {
+            case .serverCertificateMismatch:
+                return .responseRejected(code: 401, message: "Server certificate mismatch")
+            case .clientCertificateRequired:
+                return .requestFailed("TLSV1_ALERT_CERTIFICATE_REQUIRED: certificate required")
+            }
+        }
+
+        return .requestFailed(requestFailureMessage(error))
     }
 
     private static func requestFailureMessage(_ error: Error) -> String {
@@ -1545,6 +1568,8 @@ enum ShadowClientGameStreamHTTPTransport {
 private final class ShadowClientServerTrustURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
     private let pinnedServerCertificateDER: Data?
     private let clientCertificateCredential: URLCredential?
+    private let lock = NSLock()
+    private var recordedTLSFailure: ShadowClientGameStreamTLSFailure?
 
     init(
         pinnedServerCertificateDER: Data?,
@@ -1553,6 +1578,12 @@ private final class ShadowClientServerTrustURLSessionDelegate: NSObject, URLSess
         self.pinnedServerCertificateDER = pinnedServerCertificateDER
         self.clientCertificateCredential = clientCertificateCredential
         super.init()
+    }
+
+    var tlsFailure: ShadowClientGameStreamTLSFailure? {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedTLSFailure
     }
 
     func urlSession(
@@ -1578,6 +1609,7 @@ private final class ShadowClientServerTrustURLSessionDelegate: NSObject, URLSess
     ) {
         if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodClientCertificate {
             guard let clientCertificateCredential else {
+                recordTLSFailure(.clientCertificateRequired)
                 completionHandler(.rejectProtectionSpace, nil)
                 return
             }
@@ -1596,18 +1628,28 @@ private final class ShadowClientServerTrustURLSessionDelegate: NSObject, URLSess
                 let certificateChain = SecTrustCopyCertificateChain(serverTrust) as? [SecCertificate],
                 let leafCertificate = certificateChain.first
             else {
+                recordTLSFailure(.serverCertificateMismatch)
                 completionHandler(.cancelAuthenticationChallenge, nil)
                 return
             }
 
             let presentedDER = SecCertificateCopyData(leafCertificate) as Data
             guard presentedDER == pinnedServerCertificateDER else {
+                recordTLSFailure(.serverCertificateMismatch)
                 completionHandler(.cancelAuthenticationChallenge, nil)
                 return
             }
         }
 
         completionHandler(.useCredential, URLCredential(trust: serverTrust))
+    }
+
+    private func recordTLSFailure(_ failure: ShadowClientGameStreamTLSFailure) {
+        lock.lock()
+        if recordedTLSFailure == nil {
+            recordedTLSFailure = failure
+        }
+        lock.unlock()
     }
 }
 

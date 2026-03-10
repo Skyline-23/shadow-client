@@ -15,10 +15,21 @@ public struct ShadowClientDiscoveredHost: Identifiable, Equatable, Sendable {
         serviceType: String
     ) {
         self.id = host.lowercased()
-        self.name = name
+        self.name = Self.sanitizedDisplayName(name, fallbackHost: host)
         self.host = host
         self.port = port
         self.serviceType = serviceType
+    }
+
+    private static func sanitizedDisplayName(_ rawName: String, fallbackHost: String) -> String {
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed.lowercased()
+
+        if trimmed.isEmpty || normalized == "unknown" || normalized == "unknown name" {
+            return fallbackHost
+        }
+
+        return trimmed
     }
 }
 

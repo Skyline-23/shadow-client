@@ -55,6 +55,27 @@ func gameStreamParserNormalizesStaleCurrentGameInFreeState() throws {
     #expect(info.currentGameID == 0)
 }
 
+@Test("GameStream parser falls back to host when hostname is unknown placeholder")
+func gameStreamParserFallsBackToHostForUnknownPlaceholderName() throws {
+    let xml = """
+    <root status_code="200" status_message="OK">
+      <hostname>Unknown name</hostname>
+      <PairStatus>1</PairStatus>
+      <currentgame>0</currentgame>
+      <state>SUNSHINE_SERVER_FREE</state>
+      <HttpsPort>47984</HttpsPort>
+    </root>
+    """
+
+    let info = try ShadowClientGameStreamXMLParsers.parseServerInfo(
+        xml: xml,
+        host: "192.168.0.22",
+        fallbackHTTPSPort: 47984
+    )
+
+    #expect(info.displayName == "192.168.0.22")
+}
+
 @Test("GameStream parser preserves currentgame when server state is busy")
 func gameStreamParserPreservesCurrentGameInBusyState() throws {
     let xml = """
@@ -234,6 +255,51 @@ func metadataClientReturnsUnpairedHostWhenHTTPFallbackIsBlockedByATS() async thr
                 scheme: "https",
                 command: "serverinfo",
                 result: .success(#"<root status_code="401" status_message="The client is not authorized. Certificate verification failed."/>"#)
+            ),
+            .init(
+                scheme: "http",
+                command: "serverinfo",
+                result: .failure(.requestFailed("Insecure HTTP is blocked by App Transport Security for this request."))
+            ),
+        ]
+    )
+
+    let client = NativeGameStreamMetadataClient(
+        identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: .init(defaultsSuiteName: defaultsSuite),
+        transport: transport
+    )
+
+    let info = try await client.fetchServerInfo(host: "stream-host.example.invalid")
+    #expect(info.host == "stream-host.example.invalid")
+    #expect(info.displayName == "stream-host.example.invalid")
+    #expect(info.pairStatus == .notPaired)
+    #expect(info.httpsPort == 47984)
+    #expect(
+        await transport.calls() == [
+            .init(scheme: "https", command: "serverinfo"),
+            .init(scheme: "http", command: "serverinfo"),
+        ]
+    )
+}
+
+@Test("Metadata client synthesizes unpaired host when pinned HTTPS certificate mismatches")
+func metadataClientReturnsUnpairedHostWhenHTTPSCertificateMismatches() async throws {
+    let defaultsSuite = "shadow-client.metadata.serverinfo.mismatch.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let transport = ScriptedRequestTransport(
+        script: [
+            .init(
+                scheme: "https",
+                command: "serverinfo",
+                result: .failure(.responseRejected(code: 401, message: "Server certificate mismatch"))
             ),
             .init(
                 scheme: "http",
