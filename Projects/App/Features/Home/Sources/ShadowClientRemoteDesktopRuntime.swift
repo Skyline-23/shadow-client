@@ -2935,20 +2935,20 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         latestResolvedHostDescriptors: [ShadowClientRemoteHostDescriptor],
         pairingRouteStore: ShadowClientPairingRouteStore
     ) async -> ShadowClientRemoteHostDescriptor {
-        let mergeKey = mergeKey(for: selectedHost)
+        let routeGroupKey = mergeKey(for: selectedHost)
         let preferredHost = await pairingRouteStore.preferredHost(for: pairRouteStoreKey(for: selectedHost))?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
 
         if let preferredHost,
            let preferredDescriptor = latestResolvedHostDescriptors.first(where: {
-               mergeKey(for: $0) == mergeKey && $0.host.lowercased() == preferredHost
+               mergeKey(for: $0) == routeGroupKey && $0.host.lowercased() == preferredHost
            }) {
             return preferredDescriptor
         }
 
         if let exactDescriptor = latestResolvedHostDescriptors.first(where: {
-            mergeKey(for: $0) == mergeKey && $0.host.lowercased() == selectedHost.host.lowercased()
+            mergeKey(for: $0) == routeGroupKey && $0.host.lowercased() == selectedHost.host.lowercased()
         }) {
             return exactDescriptor
         }
