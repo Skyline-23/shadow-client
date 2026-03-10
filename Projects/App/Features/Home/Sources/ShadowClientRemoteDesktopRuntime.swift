@@ -2947,6 +2947,21 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return preferredDescriptor
         }
 
+        if let preferredHost {
+            return ShadowClientRemoteHostDescriptor(
+                host: preferredHost,
+                displayName: selectedHost.displayName,
+                pairStatus: selectedHost.pairStatus,
+                currentGameID: selectedHost.currentGameID,
+                serverState: selectedHost.serverState,
+                httpsPort: selectedHost.httpsPort,
+                appVersion: selectedHost.appVersion,
+                gfeVersion: selectedHost.gfeVersion,
+                uniqueID: selectedHost.uniqueID,
+                lastError: selectedHost.lastError
+            )
+        }
+
         if let exactDescriptor = latestResolvedHostDescriptors.first(where: {
             mergeKey(for: $0) == routeGroupKey && $0.host.lowercased() == selectedHost.host.lowercased()
         }) {
