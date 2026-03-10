@@ -355,6 +355,24 @@ var normalizedConnectionHost: String {
         connectionHost.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+var normalizedManualHostDraft: String {
+        let trimmed = manualHostDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return ""
+        }
+
+        let candidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(trimmed)
+        guard let url = URL(string: candidate), let host = url.host else {
+            return trimmed
+        }
+
+        if let port = url.port {
+            return "\(host.lowercased()):\(port)"
+        }
+
+        return host.lowercased()
+    }
+
 var canConnect: Bool {
         guard !normalizedConnectionHost.isEmpty else {
             return false
@@ -501,7 +519,7 @@ func cancelManualHostEntry() {
 
     @MainActor
     func addManualHostToCatalog() {
-        let host = manualHostDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let host = normalizedManualHostDraft
         guard !host.isEmpty else {
             return
         }

@@ -17,6 +17,7 @@ struct ShadowClientManualHostAddressField: View {
                 .focused(isFocused)
                 .accessibilityIdentifier("shadow.home.hosts.manual-entry")
                 .accessibilityLabel("Remote host address")
+                .shadowClientManualHostAddressFieldPlatformBehavior()
                 .onSubmit(onSubmit)
         }
         .padding(.horizontal, 12)
