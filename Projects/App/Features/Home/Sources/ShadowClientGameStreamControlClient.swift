@@ -1545,6 +1545,7 @@ enum ShadowClientGameStreamHTTPTransport {
             return try await requestPinnedHTTPSXML(
                 url: url,
                 pinnedServerCertificateDER: pinnedServerCertificateDER,
+                clientCertificates: clientCertificateCredential?.certificates,
                 clientCertificateIdentity: clientCertificateIdentity,
                 timeout: timeout
             )
@@ -1613,6 +1614,7 @@ enum ShadowClientGameStreamHTTPTransport {
     private static func requestPinnedHTTPSXML(
         url: URL,
         pinnedServerCertificateDER: Data?,
+        clientCertificates: [Any]?,
         clientCertificateIdentity: SecIdentity?,
         timeout: TimeInterval
     ) async throws -> String {
@@ -1626,7 +1628,17 @@ enum ShadowClientGameStreamHTTPTransport {
         let securityOptions = tlsOptions.securityProtocolOptions
 
         if let clientCertificateIdentity {
-            if let localIdentity = sec_identity_create(clientCertificateIdentity) {
+            let secIdentity: sec_identity_t?
+            if let certificates = clientCertificates as? [SecCertificate], !certificates.isEmpty {
+                secIdentity = sec_identity_create_with_certificates(
+                    clientCertificateIdentity,
+                    certificates as CFArray
+                )
+            } else {
+                secIdentity = sec_identity_create(clientCertificateIdentity)
+            }
+
+            if let localIdentity = secIdentity {
                 sec_protocol_options_set_local_identity(
                     securityOptions,
                     localIdentity
