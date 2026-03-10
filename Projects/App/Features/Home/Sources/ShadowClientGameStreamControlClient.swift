@@ -1,6 +1,7 @@
 import CommonCrypto
 import CryptoKit
 import Foundation
+import Network
 import os
 import Security
 
@@ -1518,7 +1519,10 @@ enum ShadowClientGameStreamHTTPTransport {
             trustDelegate = delegate
             session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         } else {
-            session = .shared
+            return try await requestPlainHTTPXML(
+                url: url,
+                timeout: timeout
+            )
         }
 
         let data: Data
@@ -1562,6 +1566,149 @@ enum ShadowClientGameStreamHTTPTransport {
         }
 
         return error.localizedDescription
+    }
+
+    private static func requestPlainHTTPXML(
+        url: URL,
+        timeout: TimeInterval
+    ) async throws -> String {
+        guard let host = url.host,
+              let port = NWEndpoint.Port(rawValue: UInt16(url.port ?? 80))
+        else {
+            throw ShadowClientGameStreamError.invalidURL
+        }
+
+        let connection = NWConnection(
+            host: .init(host),
+            port: port,
+            using: .tcp
+        )
+        try await waitForReady(connection, timeout: timeout)
+        defer {
+            connection.cancel()
+        }
+
+        let requestData = makePlainHTTPRequestData(url: url, host: host)
+        try await send(requestData, over: connection)
+        let responseData = try await receiveHTTPResponse(over: connection, timeout: timeout)
+        let body = try extractHTTPBody(from: responseData)
+        guard let xml = String(data: body, encoding: .utf8), !xml.isEmpty else {
+            throw ShadowClientGameStreamError.malformedXML
+        }
+        return xml
+    }
+
+    private static func makePlainHTTPRequestData(url: URL, host: String) -> Data {
+        let path = (url.path.isEmpty ? "/" : url.path) + (url.query.map { "?\($0)" } ?? "")
+        let request = [
+            "GET \(path) HTTP/1.1",
+            "Host: \(host)\(url.port.map { ":\($0)" } ?? "")",
+            "Connection: close",
+            "",
+            "",
+        ].joined(separator: "\r\n")
+        return Data(request.utf8)
+    }
+
+    private static func extractHTTPBody(from responseData: Data) throws -> Data {
+        guard let separatorRange = responseData.range(
+            of: Data("\r\n\r\n".utf8)
+        ) else {
+            throw ShadowClientGameStreamError.invalidResponse
+        }
+        return responseData[separatorRange.upperBound...]
+    }
+
+    private static func waitForReady(
+        _ connection: NWConnection,
+        timeout: TimeInterval
+    ) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let deadline = DispatchTime.now() + timeout
+            var resumed = false
+
+            func resume(_ result: Result<Void, Error>) {
+                guard !resumed else { return }
+                resumed = true
+                connection.stateUpdateHandler = nil
+                continuation.resume(with: result)
+            }
+
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    resume(.success(()))
+                case let .failed(error):
+                    resume(.failure(error))
+                case .cancelled:
+                    resume(.failure(ShadowClientGameStreamError.requestFailed("HTTP transport cancelled")))
+                default:
+                    break
+                }
+            }
+
+            connection.start(queue: .global(qos: .userInitiated))
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: deadline) {
+                resume(.failure(URLError(.timedOut)))
+            }
+        }
+    }
+
+    private static func send(
+        _ data: Data,
+        over connection: NWConnection
+    ) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: data, completion: .contentProcessed { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            })
+        }
+    }
+
+    private static func receiveHTTPResponse(
+        over connection: NWConnection,
+        timeout: TimeInterval
+    ) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            let deadline = DispatchTime.now() + timeout
+            var resumed = false
+            var responseData = Data()
+
+            func resume(_ result: Result<Data, Error>) {
+                guard !resumed else { return }
+                resumed = true
+                continuation.resume(with: result)
+            }
+
+            func receiveNext() {
+                connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { content, _, isComplete, error in
+                    if let error {
+                        resume(.failure(error))
+                        return
+                    }
+
+                    if let content, !content.isEmpty {
+                        responseData.append(content)
+                    }
+
+                    if isComplete {
+                        resume(.success(responseData))
+                        return
+                    }
+
+                    receiveNext()
+                }
+            }
+
+            receiveNext()
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: deadline) {
+                resume(.failure(URLError(.timedOut)))
+            }
+        }
     }
 }
 
