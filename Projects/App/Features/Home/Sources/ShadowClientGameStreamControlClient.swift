@@ -1691,6 +1691,7 @@ enum ShadowClientGameStreamHTTPTransport {
             url: url,
             host: host,
             pinnedServerCertificateDER: pinnedServerCertificateDER,
+            clientCertificates: clientCertificates,
             clientCertificateIdentity: clientCertificateIdentity,
             timeout: timeout
         )
@@ -1836,6 +1837,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
     private let host: String
     private let url: URL
     private let pinnedServerCertificateDER: Data?
+    private let clientCertificates: [SecCertificate]?
     private let clientCertificateIdentity: SecIdentity?
     private let timeout: TimeInterval
     private let requestData: Data
@@ -1856,12 +1858,14 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         url: URL,
         host: String,
         pinnedServerCertificateDER: Data?,
+        clientCertificates: [SecCertificate]?,
         clientCertificateIdentity: SecIdentity?,
         timeout: TimeInterval
     ) {
         self.url = url
         self.host = host
         self.pinnedServerCertificateDER = pinnedServerCertificateDER
+        self.clientCertificates = clientCertificates
         self.clientCertificateIdentity = clientCertificateIdentity
         self.timeout = timeout
         self.requestData = ShadowClientGameStreamHTTPTransport.makePlainHTTPRequestData(url: url, host: host)
@@ -1871,6 +1875,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         url: URL,
         host: String,
         pinnedServerCertificateDER: Data?,
+        clientCertificates: [SecCertificate]?,
         clientCertificateIdentity: SecIdentity?,
         timeout: TimeInterval
     ) async throws -> String {
@@ -1878,6 +1883,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
             url: url,
             host: host,
             pinnedServerCertificateDER: pinnedServerCertificateDER,
+            clientCertificates: clientCertificates,
             clientCertificateIdentity: clientCertificateIdentity,
             timeout: timeout
         )
@@ -1978,10 +1984,15 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
             kCFStreamSSLValidatesCertificateChain: kCFBooleanFalse as Any,
             kCFStreamSSLPeerName: kCFNull!,
             kCFStreamSSLIsServer: kCFBooleanFalse as Any,
+            kCFStreamSSLLevel: kCFStreamSocketSecurityLevelNegotiatedSSL,
         ]
 
         if let clientCertificateIdentity {
-            settings[kCFStreamSSLCertificates] = [clientCertificateIdentity] as CFArray
+            var sslCertificates: [Any] = [clientCertificateIdentity]
+            if let clientCertificates {
+                sslCertificates.append(contentsOf: clientCertificates)
+            }
+            settings[kCFStreamSSLCertificates] = sslCertificates as CFArray
         }
 
         return settings as CFDictionary
