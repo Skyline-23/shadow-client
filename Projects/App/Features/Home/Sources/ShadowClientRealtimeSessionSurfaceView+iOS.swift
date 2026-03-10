@@ -63,6 +63,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private let frameStore: ShadowClientRealtimeSessionFrameStore
     private let commandQueue: MTLCommandQueue
     private let ciContext: CIContext
+    private let yuvPipeline: ShadowClientRealtimeSessionYUVMetalPipeline?
     private var frameStreamTask: Task<Void, Never>?
     private var latestSnapshot = ShadowClientRealtimeSessionFrameStore.Snapshot(
         pixelBuffer: nil,
@@ -86,6 +87,10 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         self.surfaceContext = surfaceContext
         self.frameStore = surfaceContext.frameStore
         self.commandQueue = commandQueue
+        self.yuvPipeline = ShadowClientRealtimeSessionYUVMetalPipeline(
+            device: device,
+            colorPixelFormat: .bgra8Unorm
+        )
         self.ciContext = CIContext(
             mtlCommandQueue: commandQueue,
             options: [
@@ -123,6 +128,24 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         guard let drawable = view.currentDrawable,
               let commandBuffer = commandQueue.makeCommandBuffer()
         else {
+            return
+        }
+
+        if let pixelBuffer = snapshot.pixelBuffer?.value,
+           let renderPass = view.currentRenderPassDescriptor,
+           let yuvPipeline,
+           yuvPipeline.canRender(pixelBuffer)
+        {
+            _ = yuvPipeline.render(
+                pixelBuffer: pixelBuffer,
+                into: renderPass,
+                commandBuffer: commandBuffer,
+                drawableSize: drawableSize
+            )
+            commandBuffer.present(drawable)
+            commandBuffer.commit()
+            lastRenderedFrameRevision = snapshot.revision
+            lastRenderedDrawableSize = drawableSize
             return
         }
 
