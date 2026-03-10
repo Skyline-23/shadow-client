@@ -367,6 +367,12 @@ public actor ShadowClientPairingIdentityStore {
         }
     }
 
+    public func tlsClientIdentity() throws -> SecIdentity {
+        try withRecoveredMaterial { material in
+            try makeTLSClientIdentity(material: material)
+        }
+    }
+
     private func resolveMaterial() throws -> ShadowClientPairingIdentityMaterial {
         if let cachedMaterial {
             return cachedMaterial
@@ -518,11 +524,48 @@ public actor ShadowClientPairingIdentityStore {
     private func makeTLSClientCertificateCredential(
         material: ShadowClientPairingIdentityMaterial
     ) throws -> URLCredential {
+        let certificate = try makeTLSClientCertificate(material: material)
+        let identity = try makeTLSClientIdentity(material: material)
+
+        return URLCredential(
+            identity: identity,
+            certificates: [certificate],
+            persistence: .forSession
+        )
+    }
+
+    private func makeTLSClientIdentity(
+        material: ShadowClientPairingIdentityMaterial
+    ) throws -> SecIdentity {
+        let certificate = try makeTLSClientCertificate(material: material)
+        let certDER = try pemBodyData(pem: material.certificatePEM)
+        let privateKey = try makeTLSClientPrivateKey(material: material)
+
+        let identity = makeKeychainBackedIdentity(
+            certificate: certificate,
+            privateKey: privateKey,
+            certificateDER: certDER
+        ) ?? SecIdentityCreate(nil, certificate, privateKey)
+
+        guard let identity else {
+            throw ShadowClientGameStreamControlError.invalidKeyMaterial
+        }
+        return identity
+    }
+
+    private func makeTLSClientCertificate(
+        material: ShadowClientPairingIdentityMaterial
+    ) throws -> SecCertificate {
         let certDER = try pemBodyData(pem: material.certificatePEM)
         guard let certificate = SecCertificateCreateWithData(nil, certDER as CFData) else {
             throw ShadowClientGameStreamControlError.invalidKeyMaterial
         }
+        return certificate
+    }
 
+    private func makeTLSClientPrivateKey(
+        material: ShadowClientPairingIdentityMaterial
+    ) throws -> SecKey {
         let keyData = try pemBodyData(pem: material.privateKeyPEM)
         let attributes: [CFString: Any] = [
             kSecAttrKeyType: kSecAttrKeyTypeRSA,
@@ -534,22 +577,7 @@ public actor ShadowClientPairingIdentityStore {
         guard let privateKey = SecKeyCreateWithData(keyData as CFData, attributes as CFDictionary, &error) else {
             throw ShadowClientGameStreamControlError.invalidKeyMaterial
         }
-
-        let identity = makeKeychainBackedIdentity(
-            certificate: certificate,
-            privateKey: privateKey,
-            certificateDER: certDER
-        ) ?? SecIdentityCreate(nil, certificate, privateKey)
-
-        guard let identity else {
-            throw ShadowClientGameStreamControlError.invalidKeyMaterial
-        }
-
-        return URLCredential(
-            identity: identity,
-            certificates: [certificate],
-            persistence: .forSession
-        )
+        return privateKey
     }
 
     private func makeKeychainBackedIdentity(
@@ -696,6 +724,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let uniqueID = await identityStore.uniqueID()
         // Build TLS credential first so any material recovery happens before stage1 uploads client cert.
         let tlsClientCredential = try await identityStore.tlsClientCertificateCredential()
+        let tlsClientIdentity = try await identityStore.tlsClientIdentity()
         let certPEMData = try await identityStore.clientCertificatePEMData()
         let clientCertSignature = try await identityStore.clientCertificateSignature()
 
@@ -897,6 +926,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                 uniqueID: uniqueID,
                 pinnedServerCertificateDER: serverCertDER,
                 clientCertificateCredential: tlsClientCredential,
+                clientCertificateIdentity: tlsClientIdentity,
                 timeout: pairingStageTimeout
             )
             let stage5Doc = try parsePairStageXML(stage5XML, stage: "pairchallenge")
@@ -925,6 +955,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let uniqueID = await identityStore.uniqueID()
         let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
         let tlsClientCredential = try? await identityStore.tlsClientCertificateCredential()
+        let tlsClientIdentity = try? await identityStore.tlsClientIdentity()
 
         let remoteInputKey = Self.randomBytes(length: 16)
         let remoteInputIV = Self.randomBytes(length: 16)
@@ -1016,6 +1047,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                 uniqueID: uniqueID,
                 pinnedServerCertificateDER: pinnedServerCertificate,
                 clientCertificateCredential: tlsClientCredential,
+                clientCertificateIdentity: tlsClientIdentity,
                 timeout: defaultRequestTimeout
             )
         }
@@ -1216,6 +1248,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         uniqueID: String,
         pinnedServerCertificateDER: Data?,
         clientCertificateCredential: URLCredential? = nil,
+        clientCertificateIdentity: SecIdentity? = nil,
         timeout: TimeInterval
     ) async throws -> String {
         Self.pairingLogger.debug(
@@ -1231,6 +1264,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                 uniqueID: uniqueID,
                 pinnedServerCertificateDER: pinnedServerCertificateDER,
                 clientCertificateCredential: clientCertificateCredential,
+                clientCertificateIdentity: clientCertificateIdentity,
                 timeout: timeout
             )
             Self.pairingLogger.debug(
@@ -1484,6 +1518,7 @@ enum ShadowClientGameStreamHTTPTransport {
         uniqueID: String,
         pinnedServerCertificateDER: Data?,
         clientCertificateCredential: URLCredential? = nil,
+        clientCertificateIdentity: SecIdentity? = nil,
         timeout: TimeInterval = ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
     ) async throws -> String {
         var components = URLComponents()
@@ -1506,42 +1541,19 @@ enum ShadowClientGameStreamHTTPTransport {
             throw ShadowClientGameStreamError.invalidURL
         }
 
-        var request = URLRequest(url: url)
-        request.timeoutInterval = timeout
-
-        var trustDelegate: ShadowClientServerTrustURLSessionDelegate?
-        let session: URLSession
         if scheme == ShadowClientGameStreamNetworkDefaults.httpsScheme {
-            let delegate = ShadowClientServerTrustURLSessionDelegate(
+            return try await requestPinnedHTTPSXML(
+                url: url,
                 pinnedServerCertificateDER: pinnedServerCertificateDER,
-                clientCertificateCredential: clientCertificateCredential
+                clientCertificateIdentity: clientCertificateIdentity,
+                timeout: timeout
             )
-            trustDelegate = delegate
-            session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         } else {
             return try await requestPlainHTTPXML(
                 url: url,
                 timeout: timeout
             )
         }
-
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw Self.requestFailureError(error, tlsFailure: trustDelegate?.tlsFailure)
-        }
-
-        guard response is HTTPURLResponse else {
-            throw ShadowClientGameStreamError.invalidResponse
-        }
-
-        guard let xml = String(data: data, encoding: .utf8), !xml.isEmpty else {
-            throw ShadowClientGameStreamError.malformedXML
-        }
-
-        return xml
     }
 
     static func requestFailureError(
@@ -1598,6 +1610,83 @@ enum ShadowClientGameStreamHTTPTransport {
         return xml
     }
 
+    private static func requestPinnedHTTPSXML(
+        url: URL,
+        pinnedServerCertificateDER: Data?,
+        clientCertificateIdentity: SecIdentity?,
+        timeout: TimeInterval
+    ) async throws -> String {
+        guard let host = url.host,
+              let port = NWEndpoint.Port(rawValue: UInt16(url.port ?? 443))
+        else {
+            throw ShadowClientGameStreamError.invalidURL
+        }
+
+        let tlsOptions = NWProtocolTLS.Options()
+        let securityOptions = tlsOptions.securityProtocolOptions
+
+        if let clientCertificateIdentity {
+            if let localIdentity = sec_identity_create(clientCertificateIdentity) {
+                sec_protocol_options_set_local_identity(
+                    securityOptions,
+                    localIdentity
+                )
+            }
+        }
+
+        sec_protocol_options_set_verify_block(
+            securityOptions,
+            { _, secTrust, complete in
+                let trust = sec_trust_copy_ref(secTrust).takeRetainedValue()
+
+                guard
+                    let certificateChain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
+                    let leafCertificate = certificateChain.first
+                else {
+                    complete(false)
+                    return
+                }
+
+                let presentedDER = SecCertificateCopyData(leafCertificate) as Data
+                if let pinnedServerCertificateDER {
+                    guard presentedDER == pinnedServerCertificateDER else {
+                        complete(false)
+                        return
+                    }
+
+                    let trustPolicy = SecPolicyCreateBasicX509()
+                    SecTrustSetPolicies(trust, trustPolicy)
+                    SecTrustSetAnchorCertificates(trust, [leafCertificate] as CFArray)
+                    SecTrustSetAnchorCertificatesOnly(trust, true)
+                }
+
+                var trustError: CFError?
+                complete(SecTrustEvaluateWithError(trust, &trustError))
+            },
+            DispatchQueue.global(qos: .userInitiated)
+        )
+
+        let parameters = NWParameters(tls: tlsOptions, tcp: NWProtocolTCP.Options())
+        let connection = NWConnection(
+            host: .init(host),
+            port: port,
+            using: parameters
+        )
+        try await waitForReady(connection, timeout: timeout)
+        defer {
+            connection.cancel()
+        }
+
+        let requestData = makePlainHTTPRequestData(url: url, host: host)
+        try await send(requestData, over: connection)
+        let responseData = try await receiveHTTPResponse(over: connection, timeout: timeout)
+        let body = try extractHTTPBody(from: responseData)
+        guard let xml = String(data: body, encoding: .utf8), !xml.isEmpty else {
+            throw ShadowClientGameStreamError.malformedXML
+        }
+        return xml
+    }
+
     private static func makePlainHTTPRequestData(url: URL, host: String) -> Data {
         let path = (url.path.isEmpty ? "/" : url.path) + (url.query.map { "?\($0)" } ?? "")
         let request = [
@@ -1623,15 +1712,26 @@ enum ShadowClientGameStreamHTTPTransport {
         _ connection: NWConnection,
         timeout: TimeInterval
     ) async throws {
+        actor ResumeGate {
+            private var resumed = false
+
+            func markIfNeeded() -> Bool {
+                guard !resumed else { return false }
+                resumed = true
+                return true
+            }
+        }
+
+        let gate = ResumeGate()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let deadline = DispatchTime.now() + timeout
-            var resumed = false
 
-            func resume(_ result: Result<Void, Error>) {
-                guard !resumed else { return }
-                resumed = true
-                connection.stateUpdateHandler = nil
-                continuation.resume(with: result)
+            @Sendable func resume(_ result: Result<Void, Error>) {
+                Task {
+                    guard await gate.markIfNeeded() else { return }
+                    connection.stateUpdateHandler = nil
+                    continuation.resume(with: result)
+                }
             }
 
             connection.stateUpdateHandler = { state in
@@ -1673,15 +1773,26 @@ enum ShadowClientGameStreamHTTPTransport {
         over connection: NWConnection,
         timeout: TimeInterval
     ) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
+        actor ResumeGate {
+            private var resumed = false
+
+            func markIfNeeded() -> Bool {
+                guard !resumed else { return false }
+                resumed = true
+                return true
+            }
+        }
+
+        let gate = ResumeGate()
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
             let deadline = DispatchTime.now() + timeout
-            var resumed = false
             var responseData = Data()
 
-            func resume(_ result: Result<Data, Error>) {
-                guard !resumed else { return }
-                resumed = true
-                continuation.resume(with: result)
+            @Sendable func resume(_ result: Result<Data, Error>) {
+                Task {
+                    guard await gate.markIfNeeded() else { return }
+                    continuation.resume(with: result)
+                }
             }
 
             func receiveNext() {
