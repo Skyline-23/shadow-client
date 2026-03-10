@@ -62,6 +62,7 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @State var hostSpotlightTask: Task<Void, Never>?
     @State var isShowingManualHostEntry = false
     @State var manualHostDraft = ""
+    @FocusState var isManualHostFieldFocused: Bool
     @State var settingsTelemetryTask: Task<Void, Never>?
     @State var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
     @State var sessionDiagnosticsHistory = ShadowClientSessionDiagnosticsHistory(
@@ -490,12 +491,14 @@ func stopHostDiscovery() {
 func presentManualHostEntry() {
         manualHostDraft = normalizedConnectionHost
         isShowingManualHostEntry = true
+        isManualHostFieldFocused = true
     }
 
     @MainActor
 func cancelManualHostEntry() {
         manualHostDraft = ""
         isShowingManualHostEntry = false
+        isManualHostFieldFocused = false
     }
 
     @MainActor
@@ -510,6 +513,7 @@ func cancelManualHostEntry() {
         remoteDesktopRuntime.selectHost(host.lowercased())
         manualHostDraft = ""
         isShowingManualHostEntry = false
+        isManualHostFieldFocused = false
     }
 
     @MainActor
