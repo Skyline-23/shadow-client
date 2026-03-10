@@ -21,5 +21,12 @@ struct ShadowClientManualHostAddressField: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        .task {
+            await Task.yield()
+            isFocused.wrappedValue = true
+        }
+        .onDisappear {
+            isFocused.wrappedValue = false
+        }
     }
 }

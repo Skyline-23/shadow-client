@@ -491,14 +491,12 @@ func stopHostDiscovery() {
 func presentManualHostEntry() {
         manualHostDraft = normalizedConnectionHost
         isShowingManualHostEntry = true
-        isManualHostFieldFocused = true
     }
 
     @MainActor
 func cancelManualHostEntry() {
         manualHostDraft = ""
         isShowingManualHostEntry = false
-        isManualHostFieldFocused = false
     }
 
     @MainActor
@@ -513,7 +511,6 @@ func cancelManualHostEntry() {
         remoteDesktopRuntime.selectHost(host.lowercased())
         manualHostDraft = ""
         isShowingManualHostEntry = false
-        isManualHostFieldFocused = false
     }
 
     @MainActor
