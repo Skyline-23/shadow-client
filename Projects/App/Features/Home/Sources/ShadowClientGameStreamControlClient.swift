@@ -451,6 +451,7 @@ public actor ShadowClientPairingIdentityStore {
         _ material: ShadowClientPairingIdentityMaterial
     ) throws -> ShadowClientPairingIdentityMaterial {
         guard let keyTag = material.keyTag,
+              keyTag.hasPrefix(ShadowClientPairingIdentityMaterialFactory.keyTagVersionPrefix),
               loadPermanentPrivateKey(keyTag: keyTag) != nil
         else {
             throw ShadowClientGameStreamControlError.invalidKeyMaterial
@@ -2005,9 +2006,14 @@ private enum ShadowClientPairingIdentityMaterialFactory {
     private static let rsaEncryptionOID = Data([0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01])
     private static let sha256WithRSAEncryptionOID = Data([0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B])
     private static let commonNameOID = Data([0x55, 0x04, 0x03])
+    private static let basicConstraintsOID = Data([0x55, 0x1D, 0x13])
+    private static let keyUsageOID = Data([0x55, 0x1D, 0x0F])
+    private static let extendedKeyUsageOID = Data([0x55, 0x1D, 0x25])
+    private static let clientAuthOID = Data([0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02])
+    fileprivate static let keyTagVersionPrefix = "shadow-client.identity.v2."
 
     static func generate(commonName: String = "shadow-client") throws -> ShadowClientPairingIdentityMaterial {
-        let keyTag = "shadow-client.identity.\(UUID().uuidString.lowercased())"
+        let keyTag = "\(keyTagVersionPrefix)\(UUID().uuidString.lowercased())"
         let keyTagData = Data(keyTag.utf8)
         let privateKeyAttributes: [CFString: Any] = [
             kSecAttrKeyType: kSecAttrKeyTypeRSA,
@@ -2076,6 +2082,29 @@ private enum ShadowClientPairingIdentityMaterialFactory {
             ]),
             derBitString(publicKeyRSADER),
         ])
+        let extensions = derContextSpecificExplicit(
+            tag: 3,
+            inner: derSequence([
+                derSequence([
+                    derObjectIdentifier(basicConstraintsOID),
+                    derBoolean(false),
+                    derOctetString(derSequence([])),
+                ]),
+                derSequence([
+                    derObjectIdentifier(keyUsageOID),
+                    derBoolean(true),
+                    derOctetString(derBitString(Data([0x80]), unusedBitCount: 7)),
+                ]),
+                derSequence([
+                    derObjectIdentifier(extendedKeyUsageOID),
+                    derOctetString(
+                        derSequence([
+                            derObjectIdentifier(clientAuthOID),
+                        ])
+                    ),
+                ]),
+            ])
+        )
         let tbsCertificate = derSequence([
             version,
             serial,
@@ -2084,6 +2113,7 @@ private enum ShadowClientPairingIdentityMaterialFactory {
             validity,
             subject,
             subjectPublicKeyInfo,
+            extensions,
         ])
 
         var error: Unmanaged<CFError>?
@@ -2186,6 +2216,14 @@ private enum ShadowClientPairingIdentityMaterialFactory {
         der(0x05, Data())
     }
 
+    private static func derBoolean(_ value: Bool) -> Data {
+        der(0x01, Data([value ? 0xFF : 0x00]))
+    }
+
+    private static func derOctetString(_ value: Data) -> Data {
+        der(0x04, value)
+    }
+
     private static func derUTF8String(_ value: String) -> Data {
         der(0x0C, Data(value.utf8))
     }
@@ -2198,8 +2236,8 @@ private enum ShadowClientPairingIdentityMaterialFactory {
         return der(0x17, Data(formatter.string(from: date).utf8))
     }
 
-    private static func derBitString(_ value: Data) -> Data {
-        var content = Data([0x00])
+    private static func derBitString(_ value: Data, unusedBitCount: UInt8 = 0) -> Data {
+        var content = Data([unusedBitCount])
         content.append(value)
         return der(0x03, content)
     }
