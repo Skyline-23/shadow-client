@@ -10,13 +10,15 @@ struct ShadowClientiOSApp: App {
     init() {
         let bridge = MoonlightSessionTelemetryBridge()
         MoonlightSessionTelemetryIngress.configure(bridge: bridge)
-        ShadowClientIOSAudioSessionCoordinator.configurePlaybackSession()
         ShadowClientNativeAudioDecodingPlugin.registerDefaultDecoders()
         self.container = .live(
             bridge: bridge,
             remoteDesktopDependencies: .live(
                 audioSessionActivation: {
                     await ShadowClientIOSAudioSessionCoordinator.ensurePlaybackSessionActive()
+                },
+                audioSessionDeactivation: {
+                    await ShadowClientIOSAudioSessionCoordinator.deactivatePlaybackSessionIfNeeded()
                 }
             )
         )

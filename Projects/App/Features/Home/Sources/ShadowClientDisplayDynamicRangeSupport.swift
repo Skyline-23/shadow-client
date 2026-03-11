@@ -13,21 +13,34 @@ enum ShadowClientDisplayDynamicRangeSupport {
         guard #available(macOS 10.15, *) else {
             return false
         }
-        return NSScreen.screens.contains { screen in
-            screen.maximumExtendedDynamicRangeColorComponentValue > 1.01
+        guard let screen = currentMacScreen() else {
+            return false
         }
+        return screen.maximumPotentialExtendedDynamicRangeColorComponentValue > 1.0
         #elseif os(iOS) || os(tvOS)
         guard #available(iOS 16.0, tvOS 16.0, *) else {
             return false
         }
-        let screens = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .map(\.screen)
-        return screens.contains { screen in
-            screen.currentEDRHeadroom > 1.01
-        }
+        let screen = currentUIKitScreen() ?? UIScreen.main
+        return screen.potentialEDRHeadroom > 1.0
         #else
         return false
         #endif
     }
+
+    #if os(macOS)
+    @MainActor
+    private static func currentMacScreen() -> NSScreen? {
+        NSApp.keyWindow?.screen ?? NSApp.mainWindow?.screen ?? NSScreen.main
+    }
+    #elseif os(iOS) || os(tvOS)
+    @MainActor
+    private static func currentUIKitScreen() -> UIScreen? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)?
+            .screen
+    }
+    #endif
 }

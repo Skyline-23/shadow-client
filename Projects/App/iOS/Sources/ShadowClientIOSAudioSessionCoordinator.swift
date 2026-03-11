@@ -2,28 +2,32 @@ import AVFAudio
 import Foundation
 import os
 
-enum ShadowClientIOSAudioSessionCoordinator {
-    private static let logger = Logger(
+private actor ShadowClientIOSAudioSessionController {
+    nonisolated private static let logger = Logger(
         subsystem: "com.skyline23.shadow-client",
         category: "iOSAudioSession"
     )
 
-    static func configurePlaybackSession() {
-        if Thread.isMainThread {
-            applyPlaybackSessionConfiguration()
-        } else {
-            DispatchQueue.main.sync {
-                applyPlaybackSessionConfiguration()
+    func ensurePlaybackSessionActive() async {
+        await MainActor.run {
+            Self.applyPlaybackSessionConfiguration()
+        }
+    }
+
+    func deactivatePlaybackSessionIfNeeded() async {
+        await MainActor.run {
+            let session = AVAudioSession.sharedInstance()
+            do {
+                try session.setActive(false, options: [.notifyOthersOnDeactivation])
+            } catch {
+                Self.logger.error(
+                    "AVAudioSession deactivation failed: \(error.localizedDescription, privacy: .public)"
+                )
             }
         }
     }
 
-    static func ensurePlaybackSessionActive() async {
-        await MainActor.run {
-            applyPlaybackSessionConfiguration()
-        }
-    }
-
+    @MainActor
     private static func applyPlaybackSessionConfiguration() {
         let session = AVAudioSession.sharedInstance()
 
@@ -38,7 +42,7 @@ enum ShadowClientIOSAudioSessionCoordinator {
             try activate(options: [])
             return
         } catch {
-            logger.error(
+            Self.logger.error(
                 "AVAudioSession primary activation failed: \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -47,7 +51,7 @@ enum ShadowClientIOSAudioSessionCoordinator {
             try activate(options: [.allowAirPlay])
             return
         } catch {
-            logger.error(
+            Self.logger.error(
                 "AVAudioSession AirPlay fallback failed: \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -56,9 +60,21 @@ enum ShadowClientIOSAudioSessionCoordinator {
             try activate(options: [.allowBluetoothA2DP])
             return
         } catch {
-            logger.error(
+            Self.logger.error(
                 "AVAudioSession Bluetooth fallback failed: \(error.localizedDescription, privacy: .public)"
             )
         }
+    }
+}
+
+enum ShadowClientIOSAudioSessionCoordinator {
+    private static let controller = ShadowClientIOSAudioSessionController()
+
+    static func ensurePlaybackSessionActive() async {
+        await controller.ensurePlaybackSessionActive()
+    }
+
+    static func deactivatePlaybackSessionIfNeeded() async {
+        await controller.deactivatePlaybackSessionIfNeeded()
     }
 }

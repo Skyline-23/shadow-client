@@ -1690,10 +1690,13 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             return 2
         }
 
-        let resolvedMaximumOutputChannels = max(
-            1,
-            maximumOutputChannels ?? ShadowClientRealtimeAudioOutputCapability.maximumOutputChannels()
-        )
+        let negotiatedMaximumOutputChannels: Int
+        if let maximumOutputChannels {
+            negotiatedMaximumOutputChannels = maximumOutputChannels
+        } else {
+            negotiatedMaximumOutputChannels = await ShadowClientRealtimeAudioOutputCapability.maximumOutputChannels()
+        }
+        let resolvedMaximumOutputChannels = max(1, negotiatedMaximumOutputChannels)
         guard resolvedMaximumOutputChannels > 2 else {
             return 2
         }
@@ -1726,7 +1729,15 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
 }
 
 private enum ShadowClientRealtimeAudioOutputCapability {
-    static func maximumOutputChannels() -> Int {
+    static func maximumOutputChannels() async -> Int {
+        #if os(iOS) || os(tvOS)
+        return await MainActor.run {
+            let session = AVAudioSession.sharedInstance()
+            let routeMaximumChannels = Int(session.maximumOutputNumberOfChannels)
+            let currentRouteChannels = Int(session.outputNumberOfChannels)
+            return max(2, routeMaximumChannels, currentRouteChannels)
+        }
+        #else
         let engine = AVAudioEngine()
         let outputChannels = Int(engine.outputNode.inputFormat(forBus: 0).channelCount)
         if outputChannels > 0 {
@@ -1738,6 +1749,7 @@ private enum ShadowClientRealtimeAudioOutputCapability {
             return mixerChannels
         }
         return 2
+        #endif
     }
 }
 

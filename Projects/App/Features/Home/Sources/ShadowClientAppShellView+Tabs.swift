@@ -190,6 +190,13 @@ var settingsTab: some View {
                             }
                         }
 
+                        #if os(iOS) || os(tvOS)
+                        Text("On iPhone and iPad, the actual channel count follows the current audio route. Built-in speakers and most headphones stay stereo.")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(Color.white.opacity(0.7))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        #endif
+
                         settingsRow {
                             Toggle(
                                 isOn: Binding(

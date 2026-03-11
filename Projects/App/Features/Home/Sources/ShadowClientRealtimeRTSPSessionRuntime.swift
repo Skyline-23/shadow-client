@@ -453,6 +453,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private let decoder: ShadowClientVideoToolboxDecoder
     private let connectTimeout: Duration
     private let audioSessionActivation: (@Sendable () async -> Void)?
+    private let audioSessionDeactivation: (@Sendable () async -> Void)?
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RealtimeSession")
     private let videoCodecSupport = ShadowClientVideoCodecSupport()
     private var rtspClient: ShadowClientRTSPInterleavedClient?
@@ -530,12 +531,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         surfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init(),
         decoder: ShadowClientVideoToolboxDecoder = .init(),
         connectTimeout: Duration = ShadowClientRealtimeSessionDefaults.defaultConnectTimeout,
-        audioSessionActivation: (@Sendable () async -> Void)? = nil
+        audioSessionActivation: (@Sendable () async -> Void)? = nil,
+        audioSessionDeactivation: (@Sendable () async -> Void)? = nil
     ) {
         self.surfaceContext = surfaceContext
         self.decoder = decoder
         self.connectTimeout = connectTimeout
         self.audioSessionActivation = audioSessionActivation
+        self.audioSessionDeactivation = audioSessionDeactivation
     }
 
     deinit {
@@ -667,7 +670,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             onTermination: { [runtime = self] terminationEvent in
                 await runtime.handleSunshineTerminationEvent(terminationEvent)
             },
-            audioSessionActivation: audioSessionActivation
+            audioSessionActivation: audioSessionActivation,
+            audioSessionDeactivation: audioSessionDeactivation
         )
         let track = try await client.start(
             url: url,
@@ -3803,6 +3807,7 @@ private actor ShadowClientRTSPInterleavedClient {
     private let onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)?
     private let onTermination: (@Sendable (ShadowClientSunshineTerminationEvent) async -> Void)?
     private let audioSessionActivation: (@Sendable () async -> Void)?
+    private let audioSessionDeactivation: (@Sendable () async -> Void)?
     private let defaultClientPortBase: UInt16 = ShadowClientRTSPProtocolProfile.clientPortBase
     private let queue = DispatchQueue(label: "com.skyline23.shadowclient.rtsp.connection")
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RTSP")
@@ -3852,7 +3857,8 @@ private actor ShadowClientRTSPInterleavedClient {
         onAudioOutputStateChanged: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)? = nil,
         onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)? = nil,
         onTermination: (@Sendable (ShadowClientSunshineTerminationEvent) async -> Void)? = nil,
-        audioSessionActivation: (@Sendable () async -> Void)? = nil
+        audioSessionActivation: (@Sendable () async -> Void)? = nil,
+        audioSessionDeactivation: (@Sendable () async -> Void)? = nil
     ) {
         self.timeout = timeout
         self.onControlRoundTripSample = onControlRoundTripSample
@@ -3860,6 +3866,7 @@ private actor ShadowClientRTSPInterleavedClient {
         self.onControllerFeedback = onControllerFeedback
         self.onTermination = onTermination
         self.audioSessionActivation = audioSessionActivation
+        self.audioSessionDeactivation = audioSessionDeactivation
     }
 
     func start(
@@ -5366,10 +5373,13 @@ private actor ShadowClientRTSPInterleavedClient {
             rtspLogger.error("RTSP UDP video initial ping failed: \(error.localizedDescription, privacy: .public)")
         }
 
+        let audioSessionDeactivation = self.audioSessionDeactivation
+        var didActivateAudioSession = false
         if let audioServerPort {
             do {
                 if let audioSessionActivation {
                     await audioSessionActivation()
+                    didActivateAudioSession = true
                 }
                 try await audioRuntime.start(
                     remoteHost: host,
@@ -5382,6 +5392,10 @@ private actor ShadowClientRTSPInterleavedClient {
                 )
                 rtspLogger.notice("RTSP UDP audio receive switched to \(String(describing: host), privacy: .public):\(audioServerPort.rawValue, privacy: .public)")
             } catch {
+                if didActivateAudioSession, let audioSessionDeactivation {
+                    await audioSessionDeactivation()
+                    didActivateAudioSession = false
+                }
                 rtspLogger.error("RTSP UDP audio runtime setup failed: \(error.localizedDescription, privacy: .public)")
             }
         }
@@ -5420,6 +5434,9 @@ private actor ShadowClientRTSPInterleavedClient {
             pingTask.cancel()
             audioRuntime.stop()
             Task {
+                if didActivateAudioSession, let audioSessionDeactivation {
+                    await audioSessionDeactivation()
+                }
                 await udpSocket.close()
             }
         }

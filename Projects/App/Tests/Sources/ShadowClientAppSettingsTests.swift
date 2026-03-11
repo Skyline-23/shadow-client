@@ -24,6 +24,7 @@ func appSettingsDefaultsPreferAutomaticDecoderAndHiddenHUD() {
 
     #expect(settings.showDiagnosticsHUD == false)
     #expect(settings.videoDecoder == .automatic)
+    #expect(settings.resolution == .retinaAuto)
 }
 
 @Test("Dependencies applying settings override session preferences while preserving host capabilities")

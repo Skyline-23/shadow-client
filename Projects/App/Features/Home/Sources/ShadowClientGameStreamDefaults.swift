@@ -297,7 +297,7 @@ public enum ShadowClientHostClassificationDefaults {
 }
 
 public enum ShadowClientAppSettingsDefaults {
-    public static let defaultResolution = ShadowClientStreamingResolutionPreset.p1080
+    public static let defaultResolution = ShadowClientStreamingResolutionPreset.retinaAuto
     public static let defaultFrameRate = ShadowClientStreamingFrameRatePreset.fps60
     public static let defaultBitrateKbps = 24_000
     public static let defaultAutoBitrate = true
