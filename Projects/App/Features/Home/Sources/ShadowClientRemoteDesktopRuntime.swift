@@ -1083,6 +1083,7 @@ private enum ShadowClientRemoteDesktopCommand: Sendable {
 }
 
 private struct ShadowClientLaunchRequestContext: Sendable {
+    let hostKey: String
     let appID: Int
     let appTitle: String?
     let settings: ShadowClientGameStreamLaunchSettings
@@ -1091,6 +1092,114 @@ private struct ShadowClientLaunchRequestContext: Sendable {
 private struct ShadowClientPairHostCandidate: Equatable, Sendable {
     let host: String
     let httpsPort: Int
+}
+
+private struct ShadowClientPersistedRemoteHostCatalog: Codable {
+    let hosts: [ShadowClientPersistedRemoteHostRecord]
+}
+
+private struct ShadowClientPersistedRemoteHostRecord: Codable {
+    let activeHost: String
+    let httpsPort: Int
+    let displayName: String
+    let pairStatusRawValue: String
+    let currentGameID: Int
+    let serverState: String
+    let appVersion: String?
+    let gfeVersion: String?
+    let uniqueID: String?
+    let lastError: String?
+    let localHost: String?
+    let remoteHost: String?
+    let manualHost: String?
+
+    init(descriptor: ShadowClientRemoteHostDescriptor) {
+        activeHost = descriptor.host
+        httpsPort = descriptor.httpsPort
+        displayName = descriptor.displayName
+        pairStatusRawValue = descriptor.pairStatus.rawValue
+        currentGameID = descriptor.currentGameID
+        serverState = descriptor.serverState
+        appVersion = descriptor.appVersion
+        gfeVersion = descriptor.gfeVersion
+        uniqueID = descriptor.uniqueID
+        lastError = descriptor.lastError
+        localHost = descriptor.routes.local?.host
+        remoteHost = descriptor.routes.remote?.host
+        manualHost = descriptor.routes.manual?.host
+    }
+
+    var descriptor: ShadowClientRemoteHostDescriptor {
+        ShadowClientRemoteHostDescriptor(
+            host: activeHost,
+            displayName: displayName,
+            pairStatus: ShadowClientRemoteHostPairStatus(rawValue: pairStatusRawValue) ?? .unknown,
+            currentGameID: currentGameID,
+            serverState: serverState,
+            httpsPort: httpsPort,
+            appVersion: appVersion,
+            gfeVersion: gfeVersion,
+            uniqueID: uniqueID,
+            lastError: lastError,
+            localHost: localHost,
+            remoteHost: remoteHost,
+            manualHost: manualHost
+        )
+    }
+}
+
+private struct ShadowClientPersistedRemoteSessionFingerprint: Codable, Equatable {
+    let hostKey: String
+    let appID: Int
+    let settingsKey: String
+}
+
+private struct ShadowClientRemoteDesktopPersistence {
+    let defaults: UserDefaults
+    let decoder = JSONDecoder()
+    let encoder = JSONEncoder()
+
+    func loadCachedHosts() -> [ShadowClientRemoteHostDescriptor] {
+        guard let data = defaults.data(forKey: ShadowClientAppSettings.StorageKeys.cachedRemoteHosts),
+              let catalog = try? decoder.decode(ShadowClientPersistedRemoteHostCatalog.self, from: data)
+        else {
+            return []
+        }
+
+        return catalog.hosts.map(\.descriptor)
+    }
+
+    func saveCachedHosts(_ hosts: [ShadowClientRemoteHostDescriptor]) {
+        let catalog = ShadowClientPersistedRemoteHostCatalog(
+            hosts: hosts.map(ShadowClientPersistedRemoteHostRecord.init(descriptor:))
+        )
+        guard let data = try? encoder.encode(catalog) else {
+            return
+        }
+
+        defaults.set(data, forKey: ShadowClientAppSettings.StorageKeys.cachedRemoteHosts)
+    }
+
+    func loadSessionFingerprint() -> ShadowClientPersistedRemoteSessionFingerprint? {
+        guard let data = defaults.data(forKey: ShadowClientAppSettings.StorageKeys.lastRemoteSessionFingerprint) else {
+            return nil
+        }
+
+        return try? decoder.decode(ShadowClientPersistedRemoteSessionFingerprint.self, from: data)
+    }
+
+    func saveSessionFingerprint(_ fingerprint: ShadowClientPersistedRemoteSessionFingerprint?) {
+        let key = ShadowClientAppSettings.StorageKeys.lastRemoteSessionFingerprint
+        guard let fingerprint else {
+            defaults.removeObject(forKey: key)
+            return
+        }
+
+        guard let data = try? encoder.encode(fingerprint) else {
+            return
+        }
+        defaults.set(data, forKey: key)
+    }
 }
 
 public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
@@ -1114,6 +1223,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private let inputSendQueue: ShadowClientRemoteInputSendQueue
     private let pinProvider: any ShadowClientPairingPINProviding
     private let pairingRouteStore: ShadowClientPairingRouteStore
+    private let persistence: ShadowClientRemoteDesktopPersistence
     private let inputKeepAliveInterval: Duration
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RemoteDesktopRuntime")
     private let commandContinuation: AsyncStream<ShadowClientRemoteDesktopCommand>.Continuation
@@ -1133,6 +1243,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var lastKnownSessionURL: String?
     private var persistentCodecFallback: ShadowClientVideoCodecPreference?
     private var lastLaunchRequestContext: ShadowClientLaunchRequestContext?
+    private var lastConnectedLaunchSettings: ShadowClientGameStreamLaunchSettings?
+    private var lastLocalSessionFingerprint: ShadowClientPersistedRemoteSessionFingerprint?
     private var runtimeCodecRecoveryInProgress = false
     private var runtimeStreamReconnectInProgress = false
     private var lastRuntimeStreamReconnectUptime: TimeInterval = 0
@@ -1145,15 +1257,20 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         sessionInputClient: any ShadowClientRemoteSessionInputClient = NoopShadowClientRemoteSessionInputClient(),
         pinProvider: any ShadowClientPairingPINProviding = ShadowClientRandomPairingPINProvider(),
         pairingRouteStore: ShadowClientPairingRouteStore = .shared,
-        inputKeepAliveInterval: Duration = .seconds(3)
+        inputKeepAliveInterval: Duration = .seconds(3),
+        defaults: UserDefaults = .standard
     ) {
         let (commandStream, commandContinuation) = AsyncStream.makeStream(of: ShadowClientRemoteDesktopCommand.self)
+        let persistence = ShadowClientRemoteDesktopPersistence(defaults: defaults)
+        let persistedHosts = persistence.loadCachedHosts()
+        let persistedFingerprint = persistence.loadSessionFingerprint()
 
         self.metadataClient = metadataClient
         self.controlClient = controlClient
         self.sessionConnectionClient = sessionConnectionClient
         self.sessionInputClient = sessionInputClient
         self.commandContinuation = commandContinuation
+        self.persistence = persistence
         self.inputSendQueue = ShadowClientRemoteInputSendQueue(
             send: { [sessionInputClient] event, host, sessionURL in
                 try await sessionInputClient.send(
@@ -1177,6 +1294,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         self.inputKeepAliveInterval = inputKeepAliveInterval
         self.sessionPresentationMode = sessionConnectionClient.presentationMode
         self.sessionSurfaceContext = sessionConnectionClient.sessionSurfaceContext
+        self.hosts = persistedHosts
+        self.latestResolvedHostDescriptors = persistedHosts
+        self.hostState = persistedHosts.isEmpty ? .idle : .loaded
+        self.selectedHostID = persistedHosts.first?.id
+        self.lastLocalSessionFingerprint = persistedFingerprint
         self.renderStateFailureObservation = self.sessionSurfaceContext.$renderState
             .removeDuplicates()
             .sink { [weak self] state in
@@ -1333,6 +1455,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     preferredRoutesByKey: preferredRoutes
                 )
                 self.hosts = mergedHosts
+                self.persistence.saveCachedHosts(mergedHosts)
 
                 if mergedHosts.isEmpty {
                     self.hostState = .failed("No hosts resolved.")
@@ -1559,9 +1682,39 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let sessionConnectionClient = sessionConnectionClient
         let latestResolvedHostDescriptors = latestResolvedHostDescriptors
         let pairingRouteStore = pairingRouteStore
+        let selectedHostKey = Self.mergeKey(for: selectedHost)
         let launchedAppTitle = appTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let launchSettingsToUse = launchSettingsApplyingPersistentFallback(settings)
+        let currentFingerprint = Self.sessionFingerprint(
+            hostKey: selectedHostKey,
+            appID: appID,
+            settings: launchSettingsToUse
+        )
+        let previouslyAppliedSettings = lastConnectedLaunchSettings ?? lastLaunchRequestContext?.settings
+        let launchContextMatchesCurrentGame = lastLaunchRequestContext?.hostKey == selectedHostKey &&
+            lastLaunchRequestContext?.appID == appID
+        let settingsChangedForCurrentGame = selectedHost.currentGameID == appID &&
+            launchContextMatchesCurrentGame &&
+            previouslyAppliedSettings != nil &&
+            previouslyAppliedSettings != launchSettingsToUse
+        let localFingerprintMatchesActiveGame = selectedHost.currentGameID == appID &&
+            lastLocalSessionFingerprint == currentFingerprint
+        let activeGameSettingsUnknown = selectedHost.currentGameID == appID &&
+            !localFingerprintMatchesActiveGame &&
+            !settingsChangedForCurrentGame
+        let effectiveForceLaunch = forceLaunch || settingsChangedForCurrentGame || activeGameSettingsUnknown
+        if settingsChangedForCurrentGame {
+            logger.notice(
+                "Launch settings changed for active game appID=\(appID, privacy: .public); forcing relaunch instead of resume"
+            )
+        }
+        if activeGameSettingsUnknown {
+            logger.notice(
+                "Active game appID=\(appID, privacy: .public) on host key \(selectedHostKey, privacy: .public) has no matching local session fingerprint; forcing relaunch instead of resume"
+            )
+        }
         lastLaunchRequestContext = .init(
+            hostKey: selectedHostKey,
             appID: appID,
             appTitle: launchedAppTitle,
             settings: launchSettingsToUse
@@ -1600,7 +1753,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     httpsPort: resolvedHostDescriptor.httpsPort,
                     appID: appID,
                     currentGameID: resolvedHostDescriptor.currentGameID,
-                    forceLaunch: forceLaunch,
+                    forceLaunch: effectiveForceLaunch,
                     settings: launchSettingsToUse
                 )
 
@@ -1616,6 +1769,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     from: initialLaunchResult,
                     runtimeHost: resolvedHostDescriptor.host
                 )
+                var connectedSettings = launchSettingsToUse
 
                 do {
                     try await Self.connectWithCodecFallback(
@@ -1675,6 +1829,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
                     connectedLaunchResult = forcedLaunchResult
                     connectedSessionURL = forcedSessionURL
+                    connectedSettings = forcedLaunchSettings
                 }
 
                 if Task.isCancelled {
@@ -1708,6 +1863,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         appTitle: resolvedTitle,
                         sessionURL: connectedSessionURL
                     )
+                    self.lastConnectedLaunchSettings = connectedSettings
+                    let connectedFingerprint = Self.sessionFingerprint(
+                        hostKey: selectedHostKey,
+                        appID: appID,
+                        settings: connectedSettings
+                    )
+                    self.lastLocalSessionFingerprint = connectedFingerprint
+                    self.persistence.saveSessionFingerprint(connectedFingerprint)
                     self.lastKnownSessionURL = Self.normalizedSessionURL(connectedSessionURL)
                     if self.sessionPresentationMode == .externalRuntime {
                         self.launchState = .launched(
@@ -1763,7 +1926,21 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
+    public func suspendActiveSessionForAppLifecycle() async {
+        let previousLaunchTask = prepareActiveSessionClear()
+        await completeActiveSessionClear(previousLaunchTask: previousLaunchTask)
+    }
+
+    @MainActor
     private func performClearActiveSession() {
+        let previousLaunchTask = prepareActiveSessionClear()
+        Task {
+            await completeActiveSessionClear(previousLaunchTask: previousLaunchTask)
+        }
+    }
+
+    @MainActor
+    private func prepareActiveSessionClear() -> Task<Void, Never>? {
         let previousLaunchTask = launchTask
         previousLaunchTask?.cancel()
         launchTask = nil
@@ -1776,16 +1953,17 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         runtimeCodecRecoveryInProgress = false
         stopInputKeepAliveLoop()
         launchState = .idle
+        return previousLaunchTask
+    }
 
+    private func completeActiveSessionClear(previousLaunchTask: Task<Void, Never>?) async {
         let sessionConnectionClient = sessionConnectionClient
         let inputSendQueue = inputSendQueue
-        Task {
-            if let previousLaunchTask {
-                await previousLaunchTask.value
-            }
-            await inputSendQueue.clear()
-            await sessionConnectionClient.disconnect()
+        if let previousLaunchTask {
+            await previousLaunchTask.value
         }
+        await inputSendQueue.clear()
+        await sessionConnectionClient.disconnect()
     }
 
     @MainActor
@@ -2077,6 +2255,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         runtimeCodecRecoveryInProgress = true
         lastLaunchRequestContext = .init(
+            hostKey: launchRequest.hostKey,
             appID: launchRequest.appID,
             appTitle: launchRequest.appTitle,
             settings: fallbackSettings
@@ -2251,8 +2430,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         settings: ShadowClientGameStreamLaunchSettings,
         connectError: any Error
     ) -> Bool {
+        let isHEVCRequested = settings.preferredCodec == .h265
         let isAV1Requested = settings.preferredCodec == .av1 || settings.preferredCodec == .auto
-        guard isAV1Requested else {
+        guard isAV1Requested || isHEVCRequested else {
             return false
         }
 
@@ -2266,10 +2446,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let directH264FallbackSignatures = [
             "runtime recovery exhausted",
             "decoder recovery exhausted",
+            "decoder-output-stall-exhausted",
+            "decoder-recovery-exhausted-monitor",
+            "waiting for codec parameter sets",
             "vtvideo decoderselection",
             "vt-ds",
             "osstatus -12903",
             "osstatus -12909",
+            "osstatus -17694",
         ]
         return directH264FallbackSignatures.contains(where: normalized.contains)
     }
@@ -2322,8 +2506,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             "av1c",
             "av1 decode failed",
             "runtime recovery exhausted",
+            "decoder recovery exhausted",
+            "decoder-output-stall-exhausted",
+            "decoder-recovery-exhausted-monitor",
+            "waiting for codec parameter sets",
             "hevc fallback",
             "osstatus -8971",
+            "osstatus -17694",
             "vtvideo decoderselection",
             "vt-ds",
         ]
@@ -2476,6 +2665,35 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             }
             return settings
         }
+    }
+
+    private static func sessionFingerprint(
+        hostKey: String,
+        appID: Int,
+        settings: ShadowClientGameStreamLaunchSettings
+    ) -> ShadowClientPersistedRemoteSessionFingerprint {
+        ShadowClientPersistedRemoteSessionFingerprint(
+            hostKey: hostKey,
+            appID: appID,
+            settingsKey: [
+                "\(settings.width)x\(settings.height)",
+                "fps=\(settings.fps)",
+                "bitrate=\(settings.bitrateKbps)",
+                "codec=\(settings.preferredCodec.rawValue)",
+                "hdr=\(settings.enableHDR ? 1 : 0)",
+                "surround=\(settings.enableSurroundAudio ? 1 : 0)",
+                "channels=\(settings.preferredSurroundChannelCount)",
+                "lowlat=\(settings.lowLatencyMode ? 1 : 0)",
+                "vsync=\(settings.enableVSync ? 1 : 0)",
+                "framepacing=\(settings.enableFramePacing ? 1 : 0)",
+                "yuv444=\(settings.enableYUV444 ? 1 : 0)",
+                "unlock=\(settings.unlockBitrateLimit ? 1 : 0)",
+                "hwdecode=\(settings.forceHardwareDecoding ? 1 : 0)",
+                "optgame=\(settings.optimizeGameSettingsForStreaming ? 1 : 0)",
+                "quit=\(settings.quitAppOnHostAfterStreamEnds ? 1 : 0)",
+                "hostaudio=\(settings.playAudioOnHost ? 1 : 0)",
+            ].joined(separator: "|")
+        )
     }
 
     private func persistCodecFallbackIfNeeded(

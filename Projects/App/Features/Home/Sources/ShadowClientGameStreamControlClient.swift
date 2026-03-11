@@ -1527,18 +1527,27 @@ enum ShadowClientGameStreamHTTPTransport {
             throw ShadowClientGameStreamError.invalidURL
         }
 
-        if scheme == ShadowClientGameStreamNetworkDefaults.httpsScheme {
-            return try await requestPinnedHTTPSXML(
-                url: url,
-                pinnedServerCertificateDER: pinnedServerCertificateDER,
-                clientCertificates: clientCertificates,
-                clientCertificateIdentity: clientCertificateIdentity,
-                timeout: timeout
-            )
-        } else {
-            return try await requestPlainHTTPXML(
-                url: url,
-                timeout: timeout
+        let requestStageLabel = "\(scheme.uppercased()) \(command)"
+
+        do {
+            if scheme == ShadowClientGameStreamNetworkDefaults.httpsScheme {
+                return try await requestPinnedHTTPSXML(
+                    url: url,
+                    pinnedServerCertificateDER: pinnedServerCertificateDER,
+                    clientCertificates: clientCertificates,
+                    clientCertificateIdentity: clientCertificateIdentity,
+                    timeout: timeout
+                )
+            } else {
+                return try await requestPlainHTTPXML(
+                    url: url,
+                    timeout: timeout
+                )
+            }
+        } catch {
+            throw requestStageFailureError(
+                error,
+                stageLabel: requestStageLabel
             )
         }
     }
@@ -1557,6 +1566,30 @@ enum ShadowClientGameStreamHTTPTransport {
         }
 
         return .requestFailed(requestFailureMessage(error))
+    }
+
+    private static func requestStageFailureError(
+        _ error: Error,
+        stageLabel: String
+    ) -> ShadowClientGameStreamError {
+        if let urlError = error as? URLError, urlError.code == .timedOut {
+            return .requestFailed("\(stageLabel) timed out")
+        }
+
+        if let gameStreamError = error as? ShadowClientGameStreamError {
+            switch gameStreamError {
+            case let .requestFailed(message):
+                let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if normalized.contains("timed out") || normalized.contains("timeout") {
+                    return .requestFailed("\(stageLabel) timed out: \(message)")
+                }
+                return gameStreamError
+            default:
+                return gameStreamError
+            }
+        }
+
+        return requestFailureError(error)
     }
 
     private static func requestFailureMessage(_ error: Error) -> String {
@@ -1856,15 +1889,15 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         var readContext = CFStreamClientContext(
             version: 0,
             info: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque()),
-            retain: nil,
-            release: nil,
+            retain: Self.streamContextRetain,
+            release: Self.streamContextRelease,
             copyDescription: nil
         )
         var writeContext = CFStreamClientContext(
             version: 0,
             info: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque()),
-            retain: nil,
-            release: nil,
+            retain: Self.streamContextRetain,
+            release: Self.streamContextRelease,
             copyDescription: nil
         )
 
@@ -2091,10 +2124,12 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         timeoutWorkItem = nil
 
         if let readStream {
+            CFReadStreamSetClient(readStream, 0, nil, nil)
             CFReadStreamSetDispatchQueue(readStream, nil)
             CFReadStreamClose(readStream)
         }
         if let writeStream {
+            CFWriteStreamSetClient(writeStream, 0, nil, nil)
             CFWriteStreamSetDispatchQueue(writeStream, nil)
             CFWriteStreamClose(writeStream)
         }
@@ -2130,6 +2165,25 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
             .fromOpaque(info)
             .takeUnretainedValue()
         transport.handleWrite(event: type)
+    }
+
+    private static let streamContextRetain: @convention(c) (UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? = { info in
+        guard let info else {
+            return nil
+        }
+        _ = Unmanaged<ShadowClientSecureHTTPStreamTransport>
+            .fromOpaque(info)
+            .retain()
+        return info
+    }
+
+    private static let streamContextRelease: @convention(c) (UnsafeMutableRawPointer?) -> Void = { info in
+        guard let info else {
+            return
+        }
+        Unmanaged<ShadowClientSecureHTTPStreamTransport>
+            .fromOpaque(info)
+            .release()
     }
 }
 

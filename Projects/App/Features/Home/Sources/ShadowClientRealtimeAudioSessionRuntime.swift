@@ -1,12 +1,8 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import CommonCrypto
 import Foundation
 import Network
 import os
-
-#if os(iOS) || os(macOS)
-import CoreMotion
-#endif
 
 public enum ShadowClientRealtimeAudioOutputState: Equatable, Sendable {
     case idle
@@ -67,7 +63,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     private var packetQueue: ShadowClientRealtimeAudioPacketQueue?
     private var decoder: (any ShadowClientRealtimeAudioPacketDecoding)?
     private var payloadDecryptor: ShadowClientRealtimeAudioPayloadDecryptor?
-    private var output: ShadowClientRealtimeAudioEngineOutput?
+    private var output: (any ShadowClientRealtimeAudioOutput)?
     private var jitterBuffer = ShadowClientRealtimeAudioRTPJitterBuffer(
         targetDepth: ShadowClientRealtimeSessionDefaults.audioJitterBufferTargetDepth,
         maximumDepth: ShadowClientRealtimeSessionDefaults.audioJitterBufferMaximumDepth,
@@ -116,6 +112,16 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             minimumPacketSamples: minimumPacketSamples,
             maximumPacketSamples: maximumPacketSamples
         )
+        let prefersSpatialHeadphoneRendering =
+            await ShadowClientRealtimeAudioOutputCapability.prefersSpatialHeadphoneRendering(
+                channels: resolvedTrack.channelCount
+            )
+        let queuePressureProfile = Self.audioQueuePressureProfile(
+            sampleRate: resolvedTrack.sampleRate,
+            channels: resolvedTrack.channelCount,
+            packetDurationMs: packetDurationMs,
+            prefersSpatialHeadphoneRendering: prefersSpatialHeadphoneRendering
+        )
         var decoderImplementationName = "unknown"
         var realtimePendingDurationCapMs = ShadowClientMoonlightProtocolPolicy.Audio
             .outputRealtimePendingDurationCapMs
@@ -124,30 +130,27 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             let resolvedDecoder = try await ShadowClientRealtimeAudioDecoderFactory.make(
                 for: resolvedTrack
             )
-            let queuePressureProfile = Self.audioQueuePressureProfile(
-                sampleRate: resolvedTrack.sampleRate,
-                channels: resolvedTrack.channelCount,
-                packetDurationMs: packetDurationMs
-            )
             // Match Moonlight's LBQ pressure policy: skip enqueue above 30ms pending duration.
             realtimePendingDurationCapMs = Self.audioRealtimePendingDurationCapMs(
                 packetDurationMs: packetDurationMs,
-                maximumQueuedBuffers: queuePressureProfile.maximumQueuedBuffers
+                maximumQueuedBuffers: queuePressureProfile.maximumQueuedBuffers,
+                prefersSpatialHeadphoneRendering: prefersSpatialHeadphoneRendering
             )
             // Keep renderer backpressure aligned with Moonlight SDL behavior (~10 queued frames).
             let rendererPendingDurationCapMs = max(
                 realtimePendingDurationCapMs,
-                Double(packetDurationMs * 10)
+                Double(packetDurationMs * (prefersSpatialHeadphoneRendering ? 16 : 10))
             )
             decoderImplementationName = ShadowClientRealtimeAudioDecoderFactory.debugName(
                 for: resolvedDecoder
             )
             decoder = resolvedDecoder
-            output = try ShadowClientRealtimeAudioEngineOutput(
+            output = try ShadowClientRealtimeAudioOutputFactory.make(
                 format: resolvedDecoder.outputFormat,
                 maximumQueuedBufferCount: queuePressureProfile.maximumQueuedBuffers,
                 nominalFramesPerBuffer: AVAudioFrameCount(max(1, nominalPacketFrameCount)),
-                maximumPendingDurationMs: rendererPendingDurationCapMs
+                maximumPendingDurationMs: rendererPendingDurationCapMs,
+                prefersSpatialHeadphoneRendering: prefersSpatialHeadphoneRendering
             )
             logger.notice(
                 "Audio output pressure mode=shadow-lbq-pending-duration(moonlight-compatible) cap-ms=\(realtimePendingDurationCapMs, privacy: .public) renderer-cap-ms=\(rendererPendingDurationCapMs, privacy: .public) queued-buffers=\(queuePressureProfile.maximumQueuedBuffers, privacy: .public) nominal-frames=\(nominalPacketFrameCount, privacy: .public)"
@@ -176,7 +179,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             connection = udpConnection
             jitterBuffer.reset(preferredPayloadType: resolvedTrack.rtpPayloadType)
             let packetQueue = ShadowClientRealtimeAudioPacketQueue(
-                capacity: ShadowClientMoonlightProtocolPolicy.Audio.packetQueueBound
+                capacity: max(
+                    ShadowClientMoonlightProtocolPolicy.Audio.packetQueueBound,
+                    queuePressureProfile.maximumQueuedBuffers
+                )
             )
             self.packetQueue = packetQueue
             let moonlightRSFECQueue = ShadowClientRealtimeAudioMoonlightRSFECQueue()
@@ -287,7 +293,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         realtimePendingDurationCapMs: Double,
         decoder: any ShadowClientRealtimeAudioPacketDecoding,
         payloadDecryptor: ShadowClientRealtimeAudioPayloadDecryptor?,
-        output audioOutput: ShadowClientRealtimeAudioEngineOutput
+        output audioOutput: any ShadowClientRealtimeAudioOutput
     ) {
         decodeTask = Task.detached(priority: .high) { [weak self] in
             guard let self else {
@@ -476,7 +482,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     let pendingQueueDurationMs = Double(
                         pendingPacketCountAfterCurrentDequeue * max(1, packetDurationMs)
                     )
-                    let shouldDropDueToPendingPressure = Self
+                    let shouldDropDueToPendingPressure = !audioOutput.usesSystemManagedBuffering && Self
                         .shouldRequeueReadyPacketsForPendingOutputPressure(
                             pendingOutputDurationMs: pendingQueueDurationMs,
                             realtimePendingDurationCapMs: realtimePendingDurationCapMs
@@ -694,7 +700,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         sampleRate _: Int,
         channels _: Int,
         packetDurationMs: Int,
-        output audioOutput: ShadowClientRealtimeAudioEngineOutput,
+        output audioOutput: any ShadowClientRealtimeAudioOutput,
         packetQueue: ShadowClientRealtimeAudioPacketQueue,
         moonlightRSFECQueue: ShadowClientRealtimeAudioMoonlightRSFECQueue
     ) {
@@ -873,10 +879,12 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
 
     private func handleReceiveLoopTermination(
         over connection: NWConnection,
-        output audioOutput: ShadowClientRealtimeAudioEngineOutput,
+        output audioOutput: any ShadowClientRealtimeAudioOutput,
         state finalState: ShadowClientRealtimeAudioOutputState
     ) {
-        if output === audioOutput {
+        if let currentOutput = output,
+           ObjectIdentifier(currentOutput) == ObjectIdentifier(audioOutput)
+        {
             output = nil
         }
         audioOutput.stop()
@@ -1596,12 +1604,17 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         channels: Int,
         packetDurationMs: Int = ShadowClientMoonlightProtocolPolicy.Audio.packetDurationMs(
             from: ShadowClientRTSPAnnounceProfile.aqosPacketDuration
-        )
+        ),
+        prefersSpatialHeadphoneRendering: Bool = false
     ) -> AudioQueuePressureProfile {
         _ = sampleRate
-        _ = channels
         let normalizedPacketDurationMs = max(1, packetDurationMs)
-        let maximumQueuedBuffers = ShadowClientMoonlightProtocolPolicy.Audio.packetQueueBound
+        let maximumQueuedBuffers: Int
+        if prefersSpatialHeadphoneRendering || channels > 2 {
+            maximumQueuedBuffers = ShadowClientMoonlightProtocolPolicy.Audio.packetQueueBound * 2
+        } else {
+            maximumQueuedBuffers = ShadowClientMoonlightProtocolPolicy.Audio.packetQueueBound
+        }
         let pressureSignalInterval = max(
             ShadowClientRealtimeSessionDefaults.audioOutputQueuePressureSignalInterval,
             ShadowClientMoonlightProtocolPolicy.Audio.packetQueueBound
@@ -1633,9 +1646,15 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
 
     internal static func audioRealtimePendingDurationCapMs(
         packetDurationMs _: Int,
-        maximumQueuedBuffers _: Int
+        maximumQueuedBuffers _: Int,
+        prefersSpatialHeadphoneRendering: Bool = false
     ) -> Double {
-        ShadowClientMoonlightProtocolPolicy.Audio.outputRealtimePendingDurationCapMs
+        prefersSpatialHeadphoneRendering
+            ? max(
+                ShadowClientMoonlightProtocolPolicy.Audio.outputRealtimePendingDurationCapMs * 8,
+                240
+            )
+            : ShadowClientMoonlightProtocolPolicy.Audio.outputRealtimePendingDurationCapMs
     }
 
     internal static func recommendedMaximumQueuedAudioBuffers(
@@ -1733,10 +1752,52 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
 }
 
 private enum ShadowClientRealtimeAudioOutputCapability {
+    static func supportsHeadTrackedRoute() -> Bool {
+        #if os(iOS)
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains { output in
+            guard output.isSpatialAudioEnabled else {
+                return false
+            }
+            switch output.portType {
+            case .headphones, .bluetoothA2DP, .bluetoothLE, .bluetoothHFP:
+                return true
+            default:
+                return false
+            }
+        }
+        #else
+        false
+        #endif
+    }
+
+    static func prefersSpatialHeadphoneRendering(channels: Int) async -> Bool {
+        guard channels > 2 else {
+            return false
+        }
+        #if os(iOS) || os(tvOS)
+        return await MainActor.run {
+            let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+            return outputs.contains { output in
+                output.isSpatialAudioEnabled
+            }
+        }
+        #elseif os(macOS)
+        return true
+        #else
+        return false
+        #endif
+    }
+
     static func maximumOutputChannels() async -> Int {
         #if os(iOS) || os(tvOS)
         return await MainActor.run {
             let session = AVAudioSession.sharedInstance()
+            let headphoneSpatialRoute = session.currentRoute.outputs.contains { output in
+                output.isSpatialAudioEnabled
+            }
+            if headphoneSpatialRoute {
+                return 8
+            }
             let routeMaximumChannels = Int(session.maximumOutputNumberOfChannels)
             let currentRouteChannels = Int(session.outputNumberOfChannels)
             return max(2, routeMaximumChannels, currentRouteChannels)
@@ -2166,7 +2227,7 @@ private actor ShadowClientRealtimeAudioPacketQueue {
         return packet
     }
 
-    private func compactStorageIfNeeded() {
+private func compactStorageIfNeeded() {
         let consumedCount = packetReadIndex
         guard consumedCount > 0 else {
             return
@@ -2182,6 +2243,17 @@ private actor ShadowClientRealtimeAudioPacketQueue {
         packets.removeFirst(consumedCount)
         packetReadIndex = 0
     }
+}
+
+protocol ShadowClientRealtimeAudioOutput: AnyObject, Sendable {
+    func enqueue(pcmBuffer: AVAudioPCMBuffer) async -> Bool
+    func hasEnqueueCapacity() async -> Bool
+    func pendingDurationMs() async -> Double
+    func availableEnqueueSlots() async -> Int
+    func stop()
+    func recoverPlaybackUnderPressure() -> Bool
+    var usesSystemManagedBuffering: Bool { get }
+    var debugFormatDescription: String { get }
 }
 
 private protocol ShadowClientRealtimeAudioPacketDecoding {
@@ -2563,8 +2635,669 @@ private final class ShadowClientRealtimeG711AudioDecoder: ShadowClientRealtimeAu
     }
 }
 
-private final class ShadowClientRealtimeAudioEngineOutput {
+private enum ShadowClientRealtimeAudioOutputFactory {
+    static func make(
+        format: AVAudioFormat,
+        maximumQueuedBufferCount: Int,
+        nominalFramesPerBuffer: AVAudioFrameCount,
+        maximumPendingDurationMs: Double,
+        prefersSpatialHeadphoneRendering: Bool
+    ) throws -> any ShadowClientRealtimeAudioOutput {
+        #if os(iOS) || os(tvOS) || os(macOS)
+        return try ShadowClientRealtimeSampleBufferAudioOutput(
+            format: format,
+            maximumQueuedBufferCount: maximumQueuedBufferCount,
+            nominalFramesPerBuffer: nominalFramesPerBuffer,
+            maximumPendingDurationMs: maximumPendingDurationMs,
+            prefersSpatialHeadphoneRendering: prefersSpatialHeadphoneRendering
+        )
+        #endif
+    }
+}
+
+#if os(iOS) || os(tvOS) || os(macOS)
+// Safety invariant: sample-buffer rendering state is confined to `rendererQueue`,
+// while backpressure accounting is actor-isolated in `BudgetState`.
+private final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, ShadowClientRealtimeAudioOutput {
+    private static let logger = Logger(
+        subsystem: "com.skyline23.shadow-client",
+        category: "RealtimeSampleBufferAudio"
+    )
+    private static let startupLeadTime = CMTime(value: 1, timescale: 20)
+    private static let minimumStartupPreroll = CMTime(value: 30, timescale: 1000)
+
+    private actor BudgetState {
+        private let sampleRate: Double
+        private let nominalFramesPerBuffer: Double
+        private let maximumQueuedFrameEstimate: Double
+        private var queuedFrameEstimate: Double = 0
+        private var lastObservedTime: CMTime?
+
+        init(
+            sampleRate: Double,
+            nominalFramesPerBuffer: Double,
+            maximumQueuedFrameEstimate: Double
+        ) {
+            self.sampleRate = sampleRate
+            self.nominalFramesPerBuffer = nominalFramesPerBuffer
+            self.maximumQueuedFrameEstimate = maximumQueuedFrameEstimate
+        }
+
+        func reserve(
+            incomingFrameCount: Double,
+            currentTime: CMTime
+        ) -> Bool {
+            advance(to: currentTime)
+            guard queuedFrameEstimate + incomingFrameCount <= maximumQueuedFrameEstimate else {
+                return false
+            }
+            queuedFrameEstimate += incomingFrameCount
+            return true
+        }
+
+        func rollback(incomingFrameCount: Double) {
+            queuedFrameEstimate = max(0, queuedFrameEstimate - incomingFrameCount)
+        }
+
+        func pendingDurationMs(currentTime: CMTime) -> Double {
+            advance(to: currentTime)
+            guard sampleRate > 0 else {
+                return 0
+            }
+            return (queuedFrameEstimate / sampleRate) * 1_000.0
+        }
+
+        func availableEnqueueSlots(currentTime: CMTime) -> Int {
+            advance(to: currentTime)
+            let remainingFrames = max(0, maximumQueuedFrameEstimate - queuedFrameEstimate)
+            return max(0, Int((remainingFrames / nominalFramesPerBuffer).rounded(.down)))
+        }
+
+        func hasCapacity(currentTime: CMTime) -> Bool {
+            advance(to: currentTime)
+            return queuedFrameEstimate < maximumQueuedFrameEstimate
+        }
+
+        func reset(currentTime: CMTime?) {
+            queuedFrameEstimate = 0
+            lastObservedTime = currentTime
+        }
+
+        private func advance(to currentTime: CMTime) {
+            guard currentTime.isValid, currentTime.isNumeric else {
+                lastObservedTime = nil
+                return
+            }
+            guard let lastObservedTime,
+                  lastObservedTime.isValid,
+                  lastObservedTime.isNumeric
+            else {
+                self.lastObservedTime = currentTime
+                return
+            }
+            let delta = CMTimeGetSeconds(currentTime) - CMTimeGetSeconds(lastObservedTime)
+            guard delta > 0 else {
+                self.lastObservedTime = currentTime
+                return
+            }
+            queuedFrameEstimate = max(0, queuedFrameEstimate - (delta * sampleRate))
+            self.lastObservedTime = currentTime
+        }
+    }
+
+    private struct PendingSampleBuffer {
+        let sampleBuffer: CMSampleBuffer
+    }
+
+    private let inputFormat: AVAudioFormat
+    private let renderFormat: AVAudioFormat
+    private let rendererQueue = DispatchQueue(
+        label: "com.skyline23.shadow-client.audio-sample-buffer-renderer",
+        qos: .userInitiated
+    )
+    private let renderer = AVSampleBufferAudioRenderer()
+    private let synchronizer = AVSampleBufferRenderSynchronizer()
+    private let formatDescription: CMAudioFormatDescription
+    private let budgetState: BudgetState
+    private var pendingSampleBuffers: [PendingSampleBuffer] = []
+    private var nextPresentationTime: CMTime = .zero
+    private var hasStartedTimeline = false
+    private var isTerminated = false
+    private var hasLoggedFirstQueuedSample = false
+    private var hasLoggedFirstRendererEnqueue = false
+    private var flushTask: Task<Void, Never>?
+    private var outputConfigurationTask: Task<Void, Never>?
+
+    init(
+        format: AVAudioFormat,
+        maximumQueuedBufferCount: Int,
+        nominalFramesPerBuffer: AVAudioFrameCount,
+        maximumPendingDurationMs: Double,
+        prefersSpatialHeadphoneRendering _: Bool
+    ) throws {
+        inputFormat = format
+        renderFormat = try Self.makeRendererFormat(from: format)
+        let nominalFrames = max(1, Double(nominalFramesPerBuffer))
+        let boundedMaximumPendingDurationMs = max(1, maximumPendingDurationMs)
+        let maximumPendingFramesFromDuration = max(
+            nominalFrames,
+            (renderFormat.sampleRate * boundedMaximumPendingDurationMs / 1_000.0).rounded(.up)
+        )
+        let maximumPendingFramesFromCount = nominalFrames * Double(max(1, maximumQueuedBufferCount))
+        let maximumQueuedFrameEstimate = min(
+            maximumPendingFramesFromCount,
+            max(nominalFrames, maximumPendingFramesFromDuration)
+        )
+        budgetState = BudgetState(
+            sampleRate: renderFormat.sampleRate,
+            nominalFramesPerBuffer: nominalFrames,
+            maximumQueuedFrameEstimate: maximumQueuedFrameEstimate
+        )
+        formatDescription = try Self.makeFormatDescription(for: renderFormat)
+
+        renderer.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
+        synchronizer.addRenderer(renderer)
+        synchronizer.delaysRateChangeUntilHasSufficientMediaData = false
+        synchronizer.rate = 0
+
+        rendererQueue.sync {
+            startFeedingLocked()
+        }
+        startRendererNotificationMonitoring()
+        Self.logger.notice(
+            "Sample buffer audio backend configured routes=[\(Self.currentRouteSummary(), privacy: .public)] spatial-formats=\(String(describing: self.renderer.allowedAudioSpatializationFormats), privacy: .public)"
+        )
+    }
+
+    deinit {
+        stop()
+    }
+
+    func enqueue(pcmBuffer: AVAudioPCMBuffer) async -> Bool {
+        let frameCount = max(1, Double(pcmBuffer.frameLength))
+        let currentTime = rendererQueue.sync { currentSynchronizerTimeLocked() }
+        guard await budgetState.reserve(
+            incomingFrameCount: frameCount,
+            currentTime: currentTime
+        ) else {
+            return false
+        }
+
+        let queued = rendererQueue.sync {
+            guard !isTerminated else {
+                return false
+            }
+            guard let sampleBuffer = makeSampleBuffer(
+                from: pcmBuffer,
+                formatDescription: formatDescription,
+                presentationTimeStamp: nextPresentationTime
+            ) else {
+                Self.logger.error(
+                    "Sample buffer audio enqueue failed to create CMSampleBuffer frames=\(pcmBuffer.frameLength, privacy: .public)"
+                )
+                return false
+            }
+
+            if !hasLoggedFirstQueuedSample {
+                hasLoggedFirstQueuedSample = true
+                Self.logger.notice(
+                    "Sample buffer audio queued first sample pts=\(CMTimeGetSeconds(self.nextPresentationTime), privacy: .public)s frames=\(pcmBuffer.frameLength, privacy: .public) renderer-ready=\(self.renderer.isReadyForMoreMediaData, privacy: .public)"
+                )
+            }
+            pendingSampleBuffers.append(PendingSampleBuffer(sampleBuffer: sampleBuffer))
+            nextPresentationTime = CMTimeAdd(
+                nextPresentationTime,
+                CMTime(
+                    value: CMTimeValue(pcmBuffer.frameLength),
+                    timescale: CMTimeScale(max(1, Int32(renderFormat.sampleRate.rounded())))
+                )
+            )
+            startFeedingLocked()
+            drainPendingSampleBuffersLocked()
+            startTimelineIfNeededLocked()
+            return true
+        }
+
+        if !queued {
+            await budgetState.rollback(incomingFrameCount: frameCount)
+        }
+        return queued
+    }
+
+    func hasEnqueueCapacity() async -> Bool {
+        let currentTime = rendererQueue.sync { currentSynchronizerTimeLocked() }
+        return await budgetState.hasCapacity(currentTime: currentTime)
+    }
+
+    func pendingDurationMs() async -> Double {
+        let currentTime = rendererQueue.sync { currentSynchronizerTimeLocked() }
+        return await budgetState.pendingDurationMs(currentTime: currentTime)
+    }
+
+    func availableEnqueueSlots() async -> Int {
+        let currentTime = rendererQueue.sync { currentSynchronizerTimeLocked() }
+        return await budgetState.availableEnqueueSlots(currentTime: currentTime)
+    }
+
+    func stop() {
+        flushTask?.cancel()
+        outputConfigurationTask?.cancel()
+        flushTask = nil
+        outputConfigurationTask = nil
+
+        rendererQueue.sync {
+            guard !isTerminated else {
+                return
+            }
+            isTerminated = true
+            renderer.stopRequestingMediaData()
+            renderer.flush()
+            pendingSampleBuffers.removeAll(keepingCapacity: true)
+            synchronizer.rate = 0
+        }
+
+        let budgetState = self.budgetState
+        Task {
+            await budgetState.reset(currentTime: nil)
+        }
+    }
+
+    func recoverPlaybackUnderPressure() -> Bool {
+        rendererQueue.sync {
+            guard !isTerminated else {
+                return false
+            }
+            renderer.stopRequestingMediaData()
+            renderer.flush()
+            pendingSampleBuffers.removeAll(keepingCapacity: true)
+            nextPresentationTime = currentSynchronizerTimeLocked()
+            hasStartedTimeline = synchronizer.rate != 0
+            startFeedingLocked()
+            let budgetState = self.budgetState
+            let currentTime = nextPresentationTime
+            Task {
+                await budgetState.reset(currentTime: currentTime)
+            }
+            return true
+        }
+    }
+
+    var debugFormatDescription: String {
+        let interleaving = renderFormat.isInterleaved ? "interleaved" : "planar"
+        return "AVSampleBufferAudioRenderer/\(String(describing: renderFormat.commonFormat))/\(renderFormat.channelCount)ch/\(Int(renderFormat.sampleRate))Hz/\(interleaving)"
+    }
+
+    var usesSystemManagedBuffering: Bool {
+        true
+    }
+
+    private func startRendererNotificationMonitoring() {
+        flushTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            for await notification in NotificationCenter.default.notifications(
+                named: .AVSampleBufferAudioRendererWasFlushedAutomatically,
+                object: renderer
+            ) {
+                guard !Task.isCancelled else {
+                    return
+                }
+                let flushTimeValue = notification.userInfo?[AVSampleBufferAudioRendererFlushTimeKey] as? NSValue
+                let flushTime = flushTimeValue?.timeValue ?? .invalid
+                rendererQueue.async { [weak self] in
+                    self?.handleAutomaticFlushLocked(flushTime: flushTime)
+                }
+            }
+        }
+
+        outputConfigurationTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            for await _ in NotificationCenter.default.notifications(
+                named: .AVSampleBufferAudioRendererOutputConfigurationDidChange,
+                object: renderer
+            ) {
+                guard !Task.isCancelled else {
+                    return
+                }
+                rendererQueue.async { [weak self] in
+                    self?.handleOutputConfigurationChangeLocked()
+                }
+            }
+        }
+    }
+
+    private func handleAutomaticFlushLocked(flushTime: CMTime) {
+        guard !isTerminated else {
+            return
+        }
+        renderer.stopRequestingMediaData()
+        renderer.flush()
+        pendingSampleBuffers.removeAll(keepingCapacity: true)
+        let resetTime = flushTime.isValid && flushTime.isNumeric ? flushTime : currentSynchronizerTimeLocked()
+        nextPresentationTime = resetTime
+        hasStartedTimeline = synchronizer.rate != 0
+        startFeedingLocked()
+        let budgetState = self.budgetState
+        Task {
+            await budgetState.reset(currentTime: resetTime)
+        }
+        Self.logger.notice(
+            "Sample buffer audio renderer auto-flushed; resetting at \(CMTimeGetSeconds(resetTime), privacy: .public)s routes=[\(Self.currentRouteSummary(), privacy: .public)]"
+        )
+    }
+
+    private func handleOutputConfigurationChangeLocked() {
+        guard !isTerminated else {
+            return
+        }
+        renderer.stopRequestingMediaData()
+        renderer.flush()
+        pendingSampleBuffers.removeAll(keepingCapacity: true)
+        let currentTime = currentSynchronizerTimeLocked()
+        nextPresentationTime = currentTime
+        hasStartedTimeline = synchronizer.rate != 0
+        startFeedingLocked()
+        let budgetState = self.budgetState
+        Task {
+            await budgetState.reset(currentTime: currentTime)
+        }
+        Self.logger.notice(
+            "Sample buffer audio output configuration changed; resetting renderer routes=[\(Self.currentRouteSummary(), privacy: .public)]"
+        )
+    }
+
+    private func startFeedingLocked() {
+        renderer.requestMediaDataWhenReady(on: rendererQueue) { [weak self] in
+            self?.drainPendingSampleBuffersLocked()
+        }
+    }
+
+    private func drainPendingSampleBuffersLocked() {
+        guard !isTerminated else {
+            renderer.stopRequestingMediaData()
+            return
+        }
+        while renderer.isReadyForMoreMediaData,
+              !pendingSampleBuffers.isEmpty
+        {
+            let pendingSampleBuffer = pendingSampleBuffers.removeFirst()
+            renderer.enqueue(pendingSampleBuffer.sampleBuffer)
+            if !hasLoggedFirstRendererEnqueue {
+                hasLoggedFirstRendererEnqueue = true
+                Self.logger.notice(
+                    "Sample buffer audio renderer accepted first sample status=\(String(describing: self.renderer.status), privacy: .public) rate=\(self.synchronizer.rate, privacy: .public) pending=\(self.pendingSampleBuffers.count, privacy: .public)"
+                )
+            }
+            startTimelineIfNeededLocked()
+        }
+    }
+
+    private func startTimelineIfNeededLocked() {
+        let currentTime = currentSynchronizerTimeLocked()
+        let queuedDuration = CMTimeSubtract(nextPresentationTime, currentTime)
+        let hasMinimumPreroll = queuedDuration.isValid &&
+            queuedDuration.isNumeric &&
+            CMTimeCompare(queuedDuration, Self.minimumStartupPreroll) >= 0
+        guard renderer.hasSufficientMediaDataForReliablePlaybackStart || hasMinimumPreroll else {
+            return
+        }
+        guard !hasStartedTimeline else {
+            if synchronizer.rate == 0 {
+                synchronizer.setRate(1, time: currentTime)
+            }
+            return
+        }
+        let hostTime = CMClockGetTime(CMClockGetHostTimeClock())
+        synchronizer.setRate(
+            1,
+            time: currentTime,
+            atHostTime: CMTimeAdd(hostTime, Self.startupLeadTime)
+        )
+        Self.logger.notice(
+            "Sample buffer audio timeline started rate=\(self.synchronizer.rate, privacy: .public) time=\(CMTimeGetSeconds(currentTime), privacy: .public)s pending=\(self.pendingSampleBuffers.count, privacy: .public) renderer-preroll=\(self.renderer.hasSufficientMediaDataForReliablePlaybackStart, privacy: .public) queued-preroll-ms=\(CMTimeGetSeconds(queuedDuration) * 1000, privacy: .public)"
+        )
+        hasStartedTimeline = true
+    }
+
+    private func currentSynchronizerTimeLocked() -> CMTime {
+        let currentTime = synchronizer.currentTime()
+        if currentTime.isValid, currentTime.isNumeric {
+            return currentTime
+        }
+        return nextPresentationTime
+    }
+
+    private static func makeFormatDescription(
+        for format: AVAudioFormat
+    ) throws -> CMAudioFormatDescription {
+        let streamDescription = format.streamDescription
+        var asbd = streamDescription.pointee
+        var formatDescription: CMAudioFormatDescription?
+        let channelLayout = format.channelLayout
+        let layoutSize = channelLayout.map { audioChannelLayoutSize(for: $0) } ?? 0
+        let status = CMAudioFormatDescriptionCreate(
+            allocator: kCFAllocatorDefault,
+            asbd: &asbd,
+            layoutSize: layoutSize,
+            layout: channelLayout?.layout,
+            magicCookieSize: 0,
+            magicCookie: nil,
+            extensions: nil,
+            formatDescriptionOut: &formatDescription
+        )
+        guard status == noErr, let formatDescription else {
+            throw NSError(
+                domain: "ShadowClientRealtimeSampleBufferAudioOutput",
+                code: Int(status),
+                userInfo: [NSLocalizedDescriptionKey: "Failed to create audio format description (\(status))."]
+            )
+        }
+        return formatDescription
+    }
+
+    private static func makeRendererFormat(
+        from format: AVAudioFormat
+    ) throws -> AVAudioFormat {
+        guard let channelLayoutData = format.channelLayout.map({
+            Data(
+                bytes: $0.layout,
+                count: audioChannelLayoutSize(for: $0)
+            )
+        }) else {
+            throw NSError(
+                domain: "ShadowClientRealtimeSampleBufferAudioOutput",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Missing channel layout for renderer format."]
+            )
+        }
+
+        guard let rendererFormat = AVAudioFormat(settings: [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: format.sampleRate,
+            AVNumberOfChannelsKey: Int(format.channelCount),
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false,
+            AVChannelLayoutKey: channelLayoutData,
+        ]) else {
+            throw NSError(
+                domain: "ShadowClientRealtimeSampleBufferAudioOutput",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to create renderer LPCM format."]
+            )
+        }
+
+        return rendererFormat
+    }
+
+    private func makeSampleBuffer(
+        from pcmBuffer: AVAudioPCMBuffer,
+        formatDescription: CMAudioFormatDescription,
+        presentationTimeStamp: CMTime
+    ) -> CMSampleBuffer? {
+        guard let renderBuffer = makeRenderPCMBuffer(pcmBuffer) else {
+            return nil
+        }
+        guard let dataBuffer = Self.makeAudioDataBlockBuffer(from: renderBuffer) else {
+            return nil
+        }
+        var sampleBuffer: CMSampleBuffer?
+        let createStatus = CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+            allocator: kCFAllocatorDefault,
+            dataBuffer: dataBuffer,
+            formatDescription: formatDescription,
+            sampleCount: CMItemCount(renderBuffer.frameLength),
+            presentationTimeStamp: presentationTimeStamp,
+            packetDescriptions: nil,
+            sampleBufferOut: &sampleBuffer
+        )
+        guard createStatus == noErr, let sampleBuffer else {
+            return nil
+        }
+        return sampleBuffer
+    }
+
+    private func makeRenderPCMBuffer(_ pcmBuffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        if pcmBuffer.format == renderFormat {
+            return pcmBuffer
+        }
+
+        guard let convertedBuffer = AVAudioPCMBuffer(
+            pcmFormat: renderFormat,
+            frameCapacity: pcmBuffer.frameLength
+        ) else {
+            return nil
+        }
+        convertedBuffer.frameLength = pcmBuffer.frameLength
+
+        let frameCount = Int(pcmBuffer.frameLength)
+        let channelCount = Int(min(pcmBuffer.format.channelCount, renderFormat.channelCount))
+        guard frameCount > 0, channelCount > 0 else {
+            return nil
+        }
+
+        let outputList = UnsafeMutableAudioBufferListPointer(convertedBuffer.mutableAudioBufferList)
+        guard let outputBaseAddress = outputList.first?.mData?.assumingMemoryBound(to: Int16.self)
+        else {
+            return nil
+        }
+
+        switch pcmBuffer.format.commonFormat {
+        case .pcmFormatFloat32:
+            guard let inputChannels = pcmBuffer.floatChannelData else {
+                return nil
+            }
+            for frame in 0 ..< frameCount {
+                for channel in 0 ..< channelCount {
+                    let sample = inputChannels[channel][frame]
+                    let clamped = max(-1.0, min(1.0, sample))
+                    outputBaseAddress[(frame * channelCount) + channel] = Int16(clamped * Float(Int16.max))
+                }
+            }
+        case .pcmFormatInt16:
+            if pcmBuffer.format.isInterleaved {
+                guard let inputBaseAddress = pcmBuffer.audioBufferList.pointee.mBuffers.mData?.assumingMemoryBound(to: Int16.self) else {
+                    return nil
+                }
+                memcpy(outputBaseAddress, inputBaseAddress, frameCount * channelCount * MemoryLayout<Int16>.size)
+            } else {
+                guard let inputChannels = pcmBuffer.int16ChannelData else {
+                    return nil
+                }
+                for frame in 0 ..< frameCount {
+                    for channel in 0 ..< channelCount {
+                        outputBaseAddress[(frame * channelCount) + channel] = inputChannels[channel][frame]
+                    }
+                }
+            }
+        default:
+            return nil
+        }
+
+        return convertedBuffer
+    }
+
+    private static func makeAudioDataBlockBuffer(
+        from pcmBuffer: AVAudioPCMBuffer
+    ) -> CMBlockBuffer? {
+        let audioBuffer = pcmBuffer.audioBufferList.pointee.mBuffers
+        guard let sourceBytes = audioBuffer.mData,
+              audioBuffer.mDataByteSize > 0
+        else {
+            return nil
+        }
+
+        var blockBuffer: CMBlockBuffer?
+        let createStatus = CMBlockBufferCreateEmpty(
+            allocator: kCFAllocatorDefault,
+            capacity: 0,
+            flags: 0,
+            blockBufferOut: &blockBuffer
+        )
+        guard createStatus == kCMBlockBufferNoErr, let blockBuffer else {
+            return nil
+        }
+
+        let byteCount = Int(audioBuffer.mDataByteSize)
+        let appendStatus = CMBlockBufferAppendMemoryBlock(
+            blockBuffer,
+            memoryBlock: nil,
+            length: byteCount,
+            blockAllocator: kCFAllocatorDefault,
+            customBlockSource: nil,
+            offsetToData: 0,
+            dataLength: byteCount,
+            flags: 0
+        )
+        guard appendStatus == kCMBlockBufferNoErr else {
+            return nil
+        }
+
+        let replaceStatus = CMBlockBufferReplaceDataBytes(
+            with: sourceBytes,
+            blockBuffer: blockBuffer,
+            offsetIntoDestination: 0,
+            dataLength: byteCount
+        )
+        guard replaceStatus == kCMBlockBufferNoErr else {
+            return nil
+        }
+
+        return blockBuffer
+    }
+
+    private static func audioChannelLayoutSize(for channelLayout: AVAudioChannelLayout) -> Int {
+        let descriptionCount = max(0, Int(channelLayout.layout.pointee.mNumberChannelDescriptions) - 1)
+        return MemoryLayout<AudioChannelLayout>.size +
+            (descriptionCount * MemoryLayout<AudioChannelDescription>.size)
+    }
+
+    private static func currentRouteSummary() -> String {
+        #if os(iOS) || os(tvOS)
+        AVAudioSession.sharedInstance().currentRoute.outputs
+            .map { output in
+                "\(output.portType.rawValue){name=\(output.portName),channels=\(output.channels?.count ?? 0),spatial=\(output.isSpatialAudioEnabled)}"
+            }
+            .joined(separator: ",")
+        #else
+        "n/a"
+        #endif
+    }
+}
+#endif
+
+// Safety invariant: mutable audio engine graph state is confined to `engineQueue`,
+// while queued-buffer accounting is actor-isolated in `QueuedBufferState`.
+private final class ShadowClientRealtimeAudioEngineOutput: @unchecked Sendable, ShadowClientRealtimeAudioOutput {
     private static let minimumQueuedBufferCount = 4
+    private static let logger = Logger(
+        subsystem: "com.skyline23.shadow-client",
+        category: "RealtimeAudioEngine"
+    )
 
     private actor QueuedBufferState {
         private let maximumQueuedBufferCount: Int
@@ -2638,6 +3371,7 @@ private final class ShadowClientRealtimeAudioEngineOutput {
         qos: .userInitiated
     )
     private let format: AVAudioFormat
+    private let prefersSpatialHeadphoneRendering: Bool
     private let maximumQueuedBufferCount: Int
     private let nominalFramesPerBuffer: Double
     private let maximumQueuedFrameEstimate: Double
@@ -2645,15 +3379,17 @@ private final class ShadowClientRealtimeAudioEngineOutput {
     private var isStarted = false
     private var isTerminated = false
     private var isGraphConfigured = false
-    private var headTrackingController: ShadowClientHeadTrackedSpatialAudioController?
+    private var routeChangeTask: Task<Void, Never>?
 
     init(
         format: AVAudioFormat,
         maximumQueuedBufferCount: Int = minimumQueuedBufferCount,
         nominalFramesPerBuffer: AVAudioFrameCount,
-        maximumPendingDurationMs: Double
+        maximumPendingDurationMs: Double,
+        prefersSpatialHeadphoneRendering: Bool = false
     ) throws {
         self.format = format
+        self.prefersSpatialHeadphoneRendering = prefersSpatialHeadphoneRendering
         self.environmentNode = Self.makeEnvironmentNodeIfNeeded(format: format)
         self.maximumQueuedBufferCount = max(
             Self.minimumQueuedBufferCount,
@@ -2700,6 +3436,7 @@ private final class ShadowClientRealtimeAudioEngineOutput {
                 return
             }
             startHeadTrackingLocked()
+            startRouteChangeMonitoringLocked()
         }
         if initializationState == 1 {
             throw NSError(
@@ -2793,6 +3530,8 @@ private final class ShadowClientRealtimeAudioEngineOutput {
             isGraphConfigured = false
             isStarted = false
         }
+        routeChangeTask?.cancel()
+        routeChangeTask = nil
 
         let queuedBufferState = self.queuedBufferState
         Task {
@@ -2819,6 +3558,10 @@ private final class ShadowClientRealtimeAudioEngineOutput {
     var debugFormatDescription: String {
         let interleaving = format.isInterleaved ? "interleaved" : "planar"
         return "\(String(describing: format.commonFormat))/\(format.channelCount)ch/\(Int(format.sampleRate))Hz/\(interleaving)"
+    }
+
+    var usesSystemManagedBuffering: Bool {
+        false
     }
 
     private func configureGraphLocked() -> Bool {
@@ -2958,30 +3701,89 @@ private final class ShadowClientRealtimeAudioEngineOutput {
             return false
         }
         startHeadTrackingLocked()
+        startRouteChangeMonitoringLocked()
         return startPlayerLocked()
     }
 
     private func startHeadTrackingLocked() {
-        guard headTrackingController == nil,
-              let environmentNode,
-              Self.supportsManualHeadMotionTracking
-        else {
+        guard let environmentNode else {
+            Self.logger.notice("Spatial audio disabled: environment node not created for current route/format")
             return
         }
-
-        headTrackingController = ShadowClientHeadTrackedSpatialAudioController(
-            updateOrientation: { [engineQueue, weak environmentNode] orientation in
-                engineQueue.async {
-                    environmentNode?.listenerAngularOrientation = orientation
-                }
-            }
-        )
-        headTrackingController?.start()
+        #if os(iOS)
+        if #available(iOS 18.0, *) {
+            let headTrackingSupported = ShadowClientRealtimeAudioOutputCapability
+                .supportsHeadTrackedRoute()
+            environmentNode.isListenerHeadTrackingEnabled = headTrackingSupported
+            Self.logger.notice(
+                "Spatial audio head tracking route-output-type=\(environmentNode.outputType.rawValue, privacy: .public) route-supports-head-tracking=\(headTrackingSupported, privacy: .public) active=\(environmentNode.isListenerHeadTrackingEnabled, privacy: .public) rendering-algorithms=\(String(describing: environmentNode.applicableRenderingAlgorithms), privacy: .public)"
+            )
+        }
+        #elseif os(macOS)
+        if #available(macOS 15.0, *) {
+            environmentNode.isListenerHeadTrackingEnabled = true
+            Self.logger.notice(
+                "Spatial audio head tracking requested route-output-type=\(environmentNode.outputType.rawValue, privacy: .public) active=\(environmentNode.isListenerHeadTrackingEnabled, privacy: .public) rendering-algorithms=\(String(describing: environmentNode.applicableRenderingAlgorithms), privacy: .public)"
+            )
+        }
+        #elseif os(tvOS)
+        if #available(tvOS 18.0, *) {
+            environmentNode.isListenerHeadTrackingEnabled = true
+            Self.logger.notice(
+                "Spatial audio head tracking requested route-output-type=\(environmentNode.outputType.rawValue, privacy: .public) active=\(environmentNode.isListenerHeadTrackingEnabled, privacy: .public) rendering-algorithms=\(String(describing: environmentNode.applicableRenderingAlgorithms), privacy: .public)"
+            )
+        }
+        #endif
     }
 
     private func stopHeadTrackingLocked() {
-        headTrackingController?.stop()
-        headTrackingController = nil
+        guard let environmentNode else {
+            return
+        }
+        #if os(iOS)
+        if #available(iOS 18.0, *) {
+            environmentNode.isListenerHeadTrackingEnabled = false
+        }
+        #elseif os(macOS)
+        if #available(macOS 15.0, *) {
+            environmentNode.isListenerHeadTrackingEnabled = false
+        }
+        #elseif os(tvOS)
+        if #available(tvOS 18.0, *) {
+            environmentNode.isListenerHeadTrackingEnabled = false
+        }
+        #endif
+    }
+
+    private func startRouteChangeMonitoringLocked() {
+        guard routeChangeTask == nil else {
+            return
+        }
+        #if os(iOS) || os(tvOS)
+        routeChangeTask = Task { [weak self] in
+            for await _ in NotificationCenter.default.notifications(
+                named: AVAudioSession.routeChangeNotification
+            ) {
+                guard let self else {
+                    return
+                }
+                self.engineQueue.async { [weak self] in
+                    self?.refreshSpatialAudioRouteLocked()
+                }
+            }
+        }
+        #endif
+    }
+
+    private func refreshSpatialAudioRouteLocked() {
+        guard let environmentNode else {
+            return
+        }
+        environmentNode.outputType = Self.preferredEnvironmentOutputType()
+        startHeadTrackingLocked()
+        Self.logger.notice(
+            "Spatial audio route refreshed output-type=\(environmentNode.outputType.rawValue, privacy: .public) routes=[\(Self.currentRouteSummary(), privacy: .public)]"
+        )
     }
 
     private static func makeEnvironmentNodeIfNeeded(format: AVAudioFormat) -> AVAudioEnvironmentNode? {
@@ -3003,29 +3805,13 @@ private final class ShadowClientRealtimeAudioEngineOutput {
         }
 
         #if os(iOS)
-        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
-        return outputs.contains { output in
-            switch output.portType {
-            case .headphones, .bluetoothA2DP, .bluetoothLE, .bluetoothHFP:
-                return true
-            default:
-                return false
-            }
-        }
+        return AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.isSpatialAudioEnabled }
         #elseif os(tvOS)
         guard format.channelCount > 2 else {
             return false
         }
         return true
         #elseif os(macOS)
-        return true
-        #else
-        return false
-        #endif
-    }
-
-    private static var supportsManualHeadMotionTracking: Bool {
-        #if os(iOS) || os(macOS)
         return true
         #else
         return false
@@ -3043,59 +3829,53 @@ private final class ShadowClientRealtimeAudioEngineOutput {
                 return false
             }
         }
-        return headphonesActive ? .headphones : .auto
+        if headphonesActive {
+            return .headphones
+        }
+        let builtInSpeakerActive = outputs.contains { output in
+            switch output.portType {
+            case .builtInSpeaker, .builtInReceiver:
+                return true
+            default:
+                return false
+            }
+        }
+        return builtInSpeakerActive ? .builtInSpeakers : .auto
+        #elseif os(tvOS)
+        return .builtInSpeakers
         #else
         return .auto
         #endif
     }
-}
 
-#if os(iOS) || os(macOS)
-private final class ShadowClientHeadTrackedSpatialAudioController {
-    private let motionManager = CMHeadphoneMotionManager()
-    private let queue: OperationQueue = {
-        let queue = OperationQueue()
-        queue.name = "com.skyline23.shadow-client.head-tracking"
-        queue.maxConcurrentOperationCount = 1
-        return queue
-    }()
-    private let updateOrientation: (AVAudio3DAngularOrientation) -> Void
-
-    init(updateOrientation: @escaping (AVAudio3DAngularOrientation) -> Void) {
-        self.updateOrientation = updateOrientation
-    }
-
-    func start() {
-        guard motionManager.isDeviceMotionAvailable else {
-            return
-        }
-
-        motionManager.startDeviceMotionUpdates(to: queue) { [updateOrientation] motion, _ in
-            guard let attitude = motion?.attitude else {
-                return
+    static func currentRouteSummary() -> String {
+        #if os(iOS) || os(tvOS)
+        AVAudioSession.sharedInstance().currentRoute.outputs
+            .map { output in
+                "\(output.portType.rawValue){name=\(output.portName),channels=\(output.channels?.count ?? 0),spatial=\(output.isSpatialAudioEnabled)}"
             }
+            .joined(separator: ",")
+        #else
+        "n/a"
+        #endif
+    }
 
-            let radiansToDegrees = 180.0 / Double.pi
-            let orientation = AVAudioMake3DAngularOrientation(
-                Float(attitude.yaw * radiansToDegrees),
-                Float(attitude.pitch * radiansToDegrees),
-                Float(attitude.roll * radiansToDegrees)
-            )
-            updateOrientation(orientation)
+    #if os(iOS)
+    private static func supportsHeadTrackedRoute() -> Bool {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains { output in
+            guard output.isSpatialAudioEnabled else {
+                return false
+            }
+            switch output.portType {
+            case .headphones, .bluetoothA2DP, .bluetoothLE, .bluetoothHFP:
+                return true
+            default:
+                return false
+            }
         }
     }
-
-    func stop() {
-        motionManager.stopDeviceMotionUpdates()
-    }
+    #endif
 }
-#else
-private final class ShadowClientHeadTrackedSpatialAudioController {
-    init(updateOrientation _: @escaping (AVAudio3DAngularOrientation) -> Void) {}
-    func start() {}
-    func stop() {}
-}
-#endif
 
 private enum ShadowClientRealtimeAudioPayloadDecryptorError: Error {
     case invalidKeyLength(Int)

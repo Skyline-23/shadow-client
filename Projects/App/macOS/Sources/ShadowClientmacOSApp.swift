@@ -10,8 +10,14 @@ struct ShadowClientmacOSApp: App {
     init() {
         let bridge = MoonlightSessionTelemetryBridge()
         MoonlightSessionTelemetryIngress.configure(bridge: bridge)
-        ShadowClientNativeAudioDecodingPlugin.registerDefaultDecoders()
-        self.container = .live(bridge: bridge)
+        self.container = .live(
+            bridge: bridge,
+            remoteDesktopDependencies: .live(
+                prepareAudioDecoders: {
+                    await ShadowClientNativeAudioDecodingPlugin.ensureDefaultDecodersRegistered()
+                }
+            )
+        )
     }
 
     var body: some Scene {

@@ -323,6 +323,9 @@ public actor ShadowClientVideoToolboxDecoder {
                 latestParameterSets = explicitParameterSets
             }
             samplePayload = parsedAccessUnit.samplePayload
+            if samplePayload.isEmpty {
+                return
+            }
         case .av1:
             let discoveredAV1CodecConfiguration = ShadowClientAV1CodecConfigurationBuilder.build(
                 fromAccessUnit: annexBAccessUnit
@@ -1247,20 +1250,22 @@ public actor ShadowClientVideoToolboxDecoder {
             index = next
         }
 
-        guard hasSampleNAL else {
+        let parameterSets = collectedParameterSets(
+            codec: codec,
+            h264SPS: h264SPS,
+            h264PPS: h264PPS,
+            h265VPS: h265VPS,
+            h265SPS: h265SPS,
+            h265PPS: h265PPS
+        )
+
+        guard hasSampleNAL || !parameterSets.isEmpty else {
             return nil
         }
 
         return LengthPrefixedSampleParseResult(
             samplePayload: samplePayload,
-            parameterSets: collectedParameterSets(
-                codec: codec,
-                h264SPS: h264SPS,
-                h264PPS: h264PPS,
-                h265VPS: h265VPS,
-                h265SPS: h265SPS,
-                h265PPS: h265PPS
-            )
+            parameterSets: parameterSets
         )
     }
 
@@ -1309,20 +1314,22 @@ public actor ShadowClientVideoToolboxDecoder {
             index = nalEnd
         }
 
-        guard index == accessUnit.endIndex, hasSampleNAL else {
+        let parameterSets = collectedParameterSets(
+            codec: codec,
+            h264SPS: h264SPS,
+            h264PPS: h264PPS,
+            h265VPS: h265VPS,
+            h265SPS: h265SPS,
+            h265PPS: h265PPS
+        )
+
+        guard index == accessUnit.endIndex, hasSampleNAL || !parameterSets.isEmpty else {
             return nil
         }
 
         return LengthPrefixedSampleParseResult(
             samplePayload: samplePayload,
-            parameterSets: collectedParameterSets(
-                codec: codec,
-                h264SPS: h264SPS,
-                h264PPS: h264PPS,
-                h265VPS: h265VPS,
-                h265SPS: h265SPS,
-                h265PPS: h265PPS
-            )
+            parameterSets: parameterSets
         )
     }
 

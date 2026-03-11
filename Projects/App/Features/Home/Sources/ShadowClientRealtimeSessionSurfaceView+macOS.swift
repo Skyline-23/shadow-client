@@ -177,10 +177,9 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             let shouldToneMapHDRToSDR =
                 colorConfiguration.prefersExtendedDynamicRange && !supportsExtendedDynamicRange
 
-            var sourceOptions: [CIImageOption: Any] = [:]
-            if ShadowClientRealtimeSessionColorPipeline.shouldAttachExplicitSourceColorSpace(for: pixelBuffer) {
-                sourceOptions[.colorSpace] = colorConfiguration.renderColorSpace
-            }
+            let sourceOptions: [CIImageOption: Any] = [
+                .colorSpace: colorConfiguration.renderColorSpace,
+            ]
             var sourceImage = CIImage(
                 cvPixelBuffer: pixelBuffer,
                 options: sourceOptions
@@ -278,9 +277,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         if #available(macOS 10.15, *),
            let metalLayer = view.layer as? CAMetalLayer
         {
-            metalLayer.colorspace = shouldRenderExtendedDynamicRange
-                ? configuration.displayColorSpace
-                : ShadowClientRealtimeSessionColorPipeline.defaultDisplayColorSpace
+            metalLayer.colorspace = configuration.displayColorSpace
             metalLayer.wantsExtendedDynamicRangeContent = shouldRenderExtendedDynamicRange
         }
     }

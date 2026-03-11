@@ -383,7 +383,7 @@ func realtimeSessionDiagnosticsHUD(_ model: SettingsDiagnosticsHUDModel) -> some
                     diagnosticsStatChip(label: "Drop", value: String(format: "%.1f%%", model.frameDropPercent))
                 }
 
-                Text("Codec \(activeSessionVideoCodecLabel) · Resolution \(diagnosticsResolutionValue())")
+                Text("Codec \(activeSessionVideoCodecLabel) · Resolution \(diagnosticsResolutionValue()) · Audio \(diagnosticsAudioChannelValue())")
                     .font(.caption2.monospacedDigit().weight(.semibold))
                     .foregroundStyle(Color.mint.opacity(0.86))
 
@@ -434,7 +434,7 @@ func realtimeSessionBootstrapDiagnosticsHUD(controlRoundTripMs: Int?) -> some Vi
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(Color.white.opacity(0.74))
 
-                Text("Codec \(activeSessionVideoCodecLabel) · Resolution \(diagnosticsResolutionValue())")
+                Text("Codec \(activeSessionVideoCodecLabel) · Resolution \(diagnosticsResolutionValue()) · Audio \(diagnosticsAudioChannelValue())")
                     .font(.caption2.monospacedDigit().weight(.semibold))
                     .foregroundStyle(Color.mint.opacity(0.86))
 
@@ -546,6 +546,15 @@ func diagnosticsHDRValue(model: SettingsDiagnosticsHUDModel?) -> String {
             return "OFF"
         case .unknown:
             return "AUTO"
+    }
+}
+
+func diagnosticsAudioChannelValue() -> String {
+        switch sessionSurfaceContext.audioOutputState {
+        case let .playing(_, _, channels):
+            return "\(channels)ch"
+        case .idle, .starting, .deviceUnavailable, .decoderFailed, .disconnected:
+            return currentSettings.audioConfiguration.label
         }
     }
 

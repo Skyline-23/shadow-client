@@ -103,7 +103,7 @@ enum ShadowClientMoonlightProtocolPolicy {
         }
 
         static func shouldDeferRecoveryRequestAfterDiscontinuity() -> Bool {
-            true
+            false
         }
 
         static func shouldSendDeferredRecoveryRequestAfterSuccessfulFrame(

@@ -71,6 +71,7 @@ public extension ShadowClientRemoteDesktopDependencies {
             pinnedCertificateStore: pinnedCertificateStore,
             defaultHTTPPort: defaultHTTPPort,
             defaultHTTPSPort: defaultHTTPSPort,
+            prepareAudioDecoders: nil,
             audioSessionActivation: nil,
             audioSessionDeactivation: nil
         )
@@ -81,6 +82,7 @@ public extension ShadowClientRemoteDesktopDependencies {
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore = .shared,
         defaultHTTPPort: Int = ShadowClientGameStreamNetworkDefaults.defaultHTTPPort,
         defaultHTTPSPort: Int = ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort,
+        prepareAudioDecoders: (@Sendable () async -> Void)? = nil,
         audioSessionActivation: (@Sendable () async -> Void)? = nil,
         audioSessionDeactivation: (@Sendable () async -> Void)? = nil
     ) -> Self {
@@ -90,6 +92,7 @@ public extension ShadowClientRemoteDesktopDependencies {
             defaultHTTPPort: defaultHTTPPort,
             defaultHTTPSPort: defaultHTTPSPort,
             sessionConnectTimeout: ShadowClientGameStreamNetworkDefaults.defaultSessionConnectTimeout,
+            prepareAudioDecoders: prepareAudioDecoders,
             audioSessionActivation: audioSessionActivation,
             audioSessionDeactivation: audioSessionDeactivation
         )
@@ -108,6 +111,7 @@ public extension ShadowClientRemoteDesktopDependencies {
             defaultHTTPPort: defaultHTTPPort,
             defaultHTTPSPort: defaultHTTPSPort,
             sessionConnectTimeout: sessionConnectTimeout,
+            prepareAudioDecoders: nil,
             audioSessionActivation: nil,
             audioSessionDeactivation: nil
         )
@@ -119,10 +123,12 @@ public extension ShadowClientRemoteDesktopDependencies {
         defaultHTTPPort: Int,
         defaultHTTPSPort: Int,
         sessionConnectTimeout: Duration,
+        prepareAudioDecoders: (@Sendable () async -> Void)? = nil,
         audioSessionActivation: (@Sendable () async -> Void)? = nil,
         audioSessionDeactivation: (@Sendable () async -> Void)? = nil
     ) -> Self {
         let sessionRuntime = ShadowClientRealtimeRTSPSessionRuntime(
+            prepareAudioDecoders: prepareAudioDecoders,
             audioSessionActivation: audioSessionActivation,
             audioSessionDeactivation: audioSessionDeactivation
         )

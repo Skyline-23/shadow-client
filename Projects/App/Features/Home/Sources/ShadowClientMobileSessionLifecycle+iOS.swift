@@ -1,5 +1,6 @@
 #if os(iOS)
 import SwiftUI
+import UIKit
 
 private struct ShadowClientMobileSessionLifecycleModifier: ViewModifier {
     @Environment(\.scenePhase) private var scenePhase
@@ -16,7 +17,21 @@ private struct ShadowClientMobileSessionLifecycleModifier: ViewModifier {
             ) else {
                 return
             }
-            remoteDesktopRuntime.clearActiveSession()
+            let application = UIApplication.shared
+            var backgroundTaskID = UIBackgroundTaskIdentifier.invalid
+            backgroundTaskID = application.beginBackgroundTask(withName: "shadow-client-disconnect-stream") {
+                if backgroundTaskID != .invalid {
+                    application.endBackgroundTask(backgroundTaskID)
+                    backgroundTaskID = .invalid
+                }
+            }
+            Task { @MainActor in
+                await remoteDesktopRuntime.suspendActiveSessionForAppLifecycle()
+                if backgroundTaskID != .invalid {
+                    application.endBackgroundTask(backgroundTaskID)
+                    backgroundTaskID = .invalid
+                }
+            }
         }
     }
 }

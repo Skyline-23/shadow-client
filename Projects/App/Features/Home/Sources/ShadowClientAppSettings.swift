@@ -185,6 +185,8 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         public static let autoFindHosts = "settings.autoFindHosts"
         public static let hostAliases = "settings.hostAliases"
         public static let hostNotes = "settings.hostNotes"
+        public static let cachedRemoteHosts = "settings.cachedRemoteHosts"
+        public static let lastRemoteSessionFingerprint = "settings.lastRemoteSessionFingerprint"
         public static let language = "settings.language"
         public static let guiDisplayMode = "settings.guiDisplayMode"
     }

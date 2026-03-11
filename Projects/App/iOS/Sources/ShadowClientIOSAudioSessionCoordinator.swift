@@ -35,7 +35,16 @@ private actor ShadowClientIOSAudioSessionController {
             try session.setPreferredSampleRate(48_000)
             try session.setPreferredIOBufferDuration(0.005)
             try session.setCategory(.playback, mode: .default, options: options)
+            try session.setSupportsMultichannelContent(true)
             try session.setActive(true, options: [])
+            let routeSummary = session.currentRoute.outputs
+                .map { output in
+                    "\(output.portType.rawValue){name=\(output.portName),channels=\(output.channels?.count ?? 0),spatial=\(output.isSpatialAudioEnabled)}"
+                }
+                .joined(separator: ",")
+            Self.logger.notice(
+                "AVAudioSession activated multichannel=\(session.supportsMultichannelContent, privacy: .public) max-output-channels=\(session.maximumOutputNumberOfChannels, privacy: .public) output-channels=\(session.outputNumberOfChannels, privacy: .public) routes=[\(routeSummary, privacy: .public)]"
+            )
         }
 
         do {

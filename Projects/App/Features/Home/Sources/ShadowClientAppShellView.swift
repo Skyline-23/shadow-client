@@ -490,6 +490,7 @@ func startHostDiscovery() {
     @MainActor
 func refreshRemoteDesktopCatalog() {
         var candidates: [String] = autoFindHosts ? hostDiscoveryRuntime.hosts.map(\.host) : []
+        candidates.append(contentsOf: remoteDesktopRuntime.hosts.map(\.host))
         if !normalizedConnectionHost.isEmpty {
             candidates.append(normalizedConnectionHost)
         }

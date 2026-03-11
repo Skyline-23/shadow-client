@@ -452,6 +452,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
     private let decoder: ShadowClientVideoToolboxDecoder
     private let connectTimeout: Duration
+    private let prepareAudioDecoders: (@Sendable () async -> Void)?
     private let audioSessionActivation: (@Sendable () async -> Void)?
     private let audioSessionDeactivation: (@Sendable () async -> Void)?
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RealtimeSession")
@@ -531,12 +532,14 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         surfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init(),
         decoder: ShadowClientVideoToolboxDecoder = .init(),
         connectTimeout: Duration = ShadowClientRealtimeSessionDefaults.defaultConnectTimeout,
+        prepareAudioDecoders: (@Sendable () async -> Void)? = nil,
         audioSessionActivation: (@Sendable () async -> Void)? = nil,
         audioSessionDeactivation: (@Sendable () async -> Void)? = nil
     ) {
         self.surfaceContext = surfaceContext
         self.decoder = decoder
         self.connectTimeout = connectTimeout
+        self.prepareAudioDecoders = prepareAudioDecoders
         self.audioSessionActivation = audioSessionActivation
         self.audioSessionDeactivation = audioSessionDeactivation
     }
@@ -648,6 +651,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         let trimmed = sessionURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), let _ = url.host else {
             throw ShadowClientRealtimeSessionRuntimeError.invalidSessionURL
+        }
+
+        if let prepareAudioDecoders {
+            await prepareAudioDecoders()
         }
 
         let client = ShadowClientRTSPInterleavedClient(
@@ -1474,11 +1481,24 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             depacketizerCorruptionCount = 0
             firstDepacketizerCorruptionUptime = 0
             lastDepacketizerRecoveryUptime = now
-            av1PendingRecoveryRequestAfterSuccessfulFrame = ShadowClientMoonlightProtocolPolicy.AV1
+            let shouldDeferRecoveryRequest = ShadowClientMoonlightProtocolPolicy.AV1
                 .shouldDeferRecoveryRequestAfterDiscontinuity()
-            logger.error(
-                "Video depacketizer detected stream discontinuity for codec \(String(describing: codec), privacy: .public); deferring recovery request until next complete frame without immediate sync-gate transition"
-            )
+            av1PendingRecoveryRequestAfterSuccessfulFrame = shouldDeferRecoveryRequest
+            if shouldDeferRecoveryRequest {
+                logger.error(
+                    "Video depacketizer detected stream discontinuity for codec \(String(describing: codec), privacy: .public); deferring recovery request until next complete frame without immediate sync-gate transition"
+                )
+            } else {
+                logger.error(
+                    "Video depacketizer detected stream discontinuity for codec \(String(describing: codec), privacy: .public); immediately entering sync-gate and requesting recovery"
+                )
+                await flushVideoPipelineForRecovery(codec: codec)
+                _ = await requestAV1ReferenceFrameInvalidationOrRecovery(
+                    reason: "depacketizer-discontinuity-immediate",
+                    minimumInterval: 0.0,
+                    enterSyncGate: true
+                )
+            }
             if !hasRenderedFirstFrame {
                 await transitionSurfaceState(.waitingForFirstFrame)
             }
@@ -1828,9 +1848,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         codec: ShadowClientVideoCodec,
         reason: String
     ) async {
-        if codec == .av1 {
+        if codec == .av1 || codec == .h265 {
+            let codecLabel = codec == .av1 ? "AV1" : "HEVC"
+            let fallbackLabel = codec == .av1 ? "fallback codec" : "H.264"
             let message =
-                "AV1 runtime recovery exhausted (\(reason)). Runtime recovery exhausted; retry with fallback codec."
+                "\(codecLabel) runtime recovery exhausted (\(reason)). Runtime recovery exhausted; retry with \(fallbackLabel)."
             logger.error("\(message, privacy: .public)")
             await transitionSurfaceState(.failed(message))
             return
@@ -2353,7 +2375,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             lastAV1ReferenceInvalidationRequestUptime = now
             if enterSyncGate {
                 awaitingAV1SyncFrame = true
-                av1SyncGateAllowsReferenceInvalidatedFrame = true
+                av1SyncGateAllowsReferenceInvalidatedFrame = false
                 av1SyncGateDroppedFrameCount = 0
             }
             logger.notice(
@@ -2389,7 +2411,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             minimumInterval: minimumInterval
         )
         if codec == .av1 {
-            av1SyncGateAllowsReferenceInvalidatedFrame = didRequest
+            av1SyncGateAllowsReferenceInvalidatedFrame = false
             if didRequest {
                 av1PendingRecoveryRequestAfterSuccessfulFrame = false
             }
@@ -2528,9 +2550,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastDecoderRecoveryUptime: TimeInterval,
         recoveryCooldownSeconds: TimeInterval
     ) -> Bool {
-        guard shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
-            recoverableFailureCount
-        ) else {
+        guard recoverableFailureCount >= 2 else {
             return false
         }
         return now - lastDecoderRecoveryUptime >= max(0, recoveryCooldownSeconds)
@@ -2539,7 +2559,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     static func shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
         _ recoverableFailureCount: Int
     ) -> Bool {
-        recoverableFailureCount >= 3
+        recoverableFailureCount >= 1
     }
 
     static func shouldRequestAV1SoftRecoveryFrameAfterRecoverableFailures(
@@ -3836,9 +3856,9 @@ private actor ShadowClientRTSPInterleavedClient {
     private var rtspSessionPort: NWEndpoint.Port?
     private var playRecoveryTargets: [String] = ["/"]
     private var currentServerAppVersion: String?
-    private let videoFECUnrecoverableRecoveryRequestCooldownSeconds: TimeInterval = 1.5
+    private let videoFECUnrecoverableRecoveryRequestCooldownSeconds: TimeInterval = 0.35
     private let videoFECUnrecoverableRecoveryBurstWindowSeconds: TimeInterval = 2.0
-    private let videoFECUnrecoverableRecoveryBurstThreshold = 3
+    private let videoFECUnrecoverableRecoveryBurstThreshold = 1
     private let inputChannelUnavailableLogMinimumIntervalSeconds: TimeInterval = 2.0
     private var loggedInputSendKinds = Set<String>()
     private var loggedInputDropKinds = Set<String>()
@@ -4522,11 +4542,11 @@ private actor ShadowClientRTSPInterleavedClient {
         case .auto:
             return describedCodec
         case .av1:
-            return .av1
+            return describedCodec == .av1 ? .av1 : describedCodec
         case .h265:
-            return .h265
+            return describedCodec == .h265 ? .h265 : describedCodec
         case .h264:
-            return .h264
+            return describedCodec == .h264 ? .h264 : describedCodec
         }
     }
 

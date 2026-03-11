@@ -5,27 +5,37 @@ import SwiftOpus
 
 public enum ShadowClientNativeAudioDecodingPlugin {
     private static let compatibilityProfile = ShadowClientNativeOpusCompatibilityProfile.detect()
-    private static let registrationTask: Task<Void, Never> = Task {
-        await ShadowClientRealtimeCustomAudioDecoderRegistry.register(
-            provider: { track in
-                guard track.codec == .opus, track.channelCount > 0 else {
-                    return nil
-                }
-                return try ShadowClientNativeOpusDecoder(
-                    sampleRate: track.sampleRate,
-                    channels: track.channelCount,
-                    compatibilityProfile: compatibilityProfile
-                )
+    private actor RegistrationState {
+        private var didRegister = false
+
+        func ensureRegistered() async {
+            guard !didRegister else {
+                return
             }
-        )
+            didRegister = true
+            await ShadowClientRealtimeCustomAudioDecoderRegistry.register(
+                provider: { track in
+                    guard track.codec == .opus, track.channelCount > 0 else {
+                        return nil
+                    }
+                    return try ShadowClientNativeOpusDecoder(
+                        sampleRate: track.sampleRate,
+                        channels: track.channelCount,
+                        compatibilityProfile: compatibilityProfile
+                    )
+                }
+            )
+        }
     }
+
+    private static let registrationState = RegistrationState()
 
     static var currentCompatibilityProfile: ShadowClientNativeOpusCompatibilityProfile {
         compatibilityProfile
     }
 
-    public static func registerDefaultDecoders() {
-        _ = registrationTask
+    public static func ensureDefaultDecodersRegistered() async {
+        await registrationState.ensureRegistered()
     }
 }
 
