@@ -801,9 +801,9 @@ func remoteDesktopRuntimeMergesDescriptorsSharingUniqueID() async {
     #expect(runtime.hosts.first?.pairStatus == .paired)
 }
 
-@Test("Remote desktop runtime prefers stored pair route when merging host routes")
+@Test("Remote desktop runtime prefers reachable local route when merging host routes")
 @MainActor
-func remoteDesktopRuntimePrefersStoredPairRouteWhenMerging() async {
+func remoteDesktopRuntimePrefersReachableLocalRouteWhenMerging() async {
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
             "external-host.example.invalid": .init(
@@ -850,7 +850,7 @@ func remoteDesktopRuntimePrefersStoredPairRouteWhenMerging() async {
     await waitForHostCatalogReady(runtime)
 
     #expect(runtime.hosts.count == 1)
-    #expect(runtime.hosts.first?.host == "external-host.example.invalid")
+    #expect(runtime.hosts.first?.host == "192.168.0.20")
 }
 
 @Test("Remote desktop runtime rewrites launch session URLs to the active runtime host")

@@ -3342,6 +3342,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 .filter(\.isReachable)
                 .map { $0.host.lowercased() }
         )
+        let reachableLocalHost = group.first(where: {
+            $0.isReachable && isLocalPairHost($0.host)
+        })?.host.lowercased()
         let activeRouteCandidates = candidateRoutes.filter {
             reachableHostNames.isEmpty || reachableHostNames.contains($0.host.lowercased())
         }
@@ -3350,6 +3353,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         })?.host.lowercased()
 
         let active = activeRouteCandidates.first(where: {
+            $0.host.lowercased() == reachableLocalHost
+        }) ?? activeRouteCandidates.first(where: {
             $0.host.lowercased() == preferredHost
         }) ?? activeRouteCandidates.first(where: {
             $0.host.lowercased() == preferredRoute
@@ -3452,6 +3457,29 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                isLocalPairHost($0.host) && $0.host.lowercased() != currentDescriptor.host.lowercased()
            }) {
             return localDescriptor
+        }
+
+        if !isLocalPairHost(currentDescriptor.host),
+           let localEndpoint = selectedHost.routes.local,
+           localEndpoint.host.lowercased() != currentDescriptor.host.lowercased()
+        {
+            return ShadowClientRemoteHostDescriptor(
+                activeRoute: localEndpoint,
+                displayName: selectedHost.displayName,
+                pairStatus: selectedHost.pairStatus,
+                currentGameID: selectedHost.currentGameID,
+                serverState: selectedHost.serverState,
+                appVersion: selectedHost.appVersion,
+                gfeVersion: selectedHost.gfeVersion,
+                uniqueID: selectedHost.uniqueID,
+                lastError: nil,
+                routes: ShadowClientRemoteHostRoutes(
+                    active: localEndpoint,
+                    local: selectedHost.routes.local,
+                    remote: selectedHost.routes.remote,
+                    manual: selectedHost.routes.manual
+                )
+            )
         }
 
         return nil
