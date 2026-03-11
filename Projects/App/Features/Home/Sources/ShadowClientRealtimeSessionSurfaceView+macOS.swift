@@ -74,8 +74,6 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private var cachedSourceRect: CGRect = .null
     private var cachedDrawableRect: CGRect = .null
     private var cachedTransform: CGAffineTransform = .identity
-    private var cachedSupportsExtendedDynamicRange = false
-    private var lastExtendedDynamicRangeProbeUptime: TimeInterval = 0
     private var lastRenderedFrameRevision: UInt64 = .max
     private var lastRenderedDrawableSize: CGSize = .zero
 
@@ -136,7 +134,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         }
 
         if let colorConfiguration, let pixelBuffer {
-            let supportsExtendedDynamicRange = cachedExtendedDynamicRangeSupport(for: view)
+            let supportsExtendedDynamicRange = supportsExtendedDynamicRangeDisplay(for: view)
             applyColorConfiguration(
                 colorConfiguration,
                 to: view,
@@ -173,7 +171,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         }
 
         if let pixelBuffer, let colorConfiguration {
-            let supportsExtendedDynamicRange = cachedExtendedDynamicRangeSupport(for: view)
+            let supportsExtendedDynamicRange = supportsExtendedDynamicRangeDisplay(for: view)
             let shouldToneMapHDRToSDR =
                 colorConfiguration.prefersExtendedDynamicRange && !supportsExtendedDynamicRange
 
@@ -194,9 +192,11 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             if shouldToneMapHDRToSDR {
                 sourceImage = toneMapHDRToSDRSoftwareFallback(sourceImage)
             }
-            let outputColorSpace = shouldToneMapHDRToSDR
-                ? ShadowClientRealtimeSessionColorPipeline.defaultDisplayColorSpace
-                : colorConfiguration.displayColorSpace
+            let outputColorSpace = resolvedDisplayColorSpace(
+                for: view,
+                prefersExtendedDynamicRange: colorConfiguration.prefersExtendedDynamicRange && !shouldToneMapHDRToSDR,
+                fallback: colorConfiguration.displayColorSpace
+            )
             let drawableRect = CGRect(origin: .zero, size: drawableSize)
             let sourceRect = sourceImage.extent
             let transformed = sourceImage.transformed(
@@ -270,14 +270,20 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         if view.colorPixelFormat != targetPixelFormat {
             view.colorPixelFormat = targetPixelFormat
         }
-        view.colorspace = shouldRenderExtendedDynamicRange
-            ? configuration.displayColorSpace
-            : ShadowClientRealtimeSessionColorPipeline.defaultDisplayColorSpace
+        view.colorspace = resolvedDisplayColorSpace(
+            for: view,
+            prefersExtendedDynamicRange: shouldRenderExtendedDynamicRange,
+            fallback: configuration.displayColorSpace
+        )
 
         if #available(macOS 10.15, *),
            let metalLayer = view.layer as? CAMetalLayer
         {
-            metalLayer.colorspace = configuration.displayColorSpace
+            metalLayer.colorspace = resolvedDisplayColorSpace(
+                for: view,
+                prefersExtendedDynamicRange: shouldRenderExtendedDynamicRange,
+                fallback: configuration.displayColorSpace
+            )
             metalLayer.wantsExtendedDynamicRangeContent = shouldRenderExtendedDynamicRange
         }
     }
@@ -291,13 +297,20 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         return potentialHeadroom > 1.0
     }
 
-    private func cachedExtendedDynamicRangeSupport(for view: MTKView) -> Bool {
-        let now = ProcessInfo.processInfo.systemUptime
-        if now - lastExtendedDynamicRangeProbeUptime > 1.0 {
-            cachedSupportsExtendedDynamicRange = supportsExtendedDynamicRangeDisplay(for: view)
-            lastExtendedDynamicRangeProbeUptime = now
+    private func resolvedDisplayColorSpace(
+        for view: MTKView,
+        prefersExtendedDynamicRange: Bool,
+        fallback: CGColorSpace
+    ) -> CGColorSpace {
+        guard let screen = view.window?.screen ?? NSScreen.main else {
+            return prefersExtendedDynamicRange ? fallback : ShadowClientRealtimeSessionColorPipeline.defaultDisplayColorSpace
         }
-        return cachedSupportsExtendedDynamicRange
+
+        if prefersExtendedDynamicRange {
+            return screen.colorSpace?.cgColorSpace ?? fallback
+        }
+
+        return screen.colorSpace?.cgColorSpace ?? ShadowClientRealtimeSessionColorPipeline.defaultDisplayColorSpace
     }
 
     private func toneMapHDRToSDRSoftwareFallback(_ image: CIImage) -> CIImage {

@@ -3101,12 +3101,14 @@ private final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Send
     private static func makeRendererFormat(
         from format: AVAudioFormat
     ) throws -> AVAudioFormat {
-        guard let channelLayoutData = format.channelLayout.map({
+        let channelLayoutData = format.channelLayout.map {
             Data(
                 bytes: $0.layout,
                 count: audioChannelLayoutSize(for: $0)
             )
-        }) else {
+        } ?? Self.channelLayoutData(for: Int(format.channelCount))
+
+        guard let channelLayoutData else {
             throw NSError(
                 domain: "ShadowClientRealtimeSampleBufferAudioOutput",
                 code: 2,
@@ -3274,6 +3276,30 @@ private final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Send
         let descriptionCount = max(0, Int(channelLayout.layout.pointee.mNumberChannelDescriptions) - 1)
         return MemoryLayout<AudioChannelLayout>.size +
             (descriptionCount * MemoryLayout<AudioChannelDescription>.size)
+    }
+
+    private static func channelLayoutData(for channels: Int) -> Data? {
+        let layoutTag: AudioChannelLayoutTag = switch channels {
+        case 1:
+            kAudioChannelLayoutTag_Mono
+        case 2:
+            kAudioChannelLayoutTag_Stereo
+        case 6:
+            kAudioChannelLayoutTag_MPEG_5_1_D
+        case 8:
+            kAudioChannelLayoutTag_MPEG_7_1_C
+        default:
+            kAudioChannelLayoutTag_DiscreteInOrder | AudioChannelLayoutTag(channels)
+        }
+
+        guard let channelLayout = AVAudioChannelLayout(layoutTag: layoutTag) else {
+            return nil
+        }
+
+        return Data(
+            bytes: channelLayout.layout,
+            count: MemoryLayout<AudioChannelLayout>.size
+        )
     }
 
     private static func currentRouteSummary() -> String {
