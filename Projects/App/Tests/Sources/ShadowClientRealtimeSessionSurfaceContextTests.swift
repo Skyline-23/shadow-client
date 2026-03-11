@@ -36,6 +36,19 @@ func realtimeSessionSurfaceContextTracksRuntimeVideoStats() {
     #expect(context.estimatedVideoBitrateKbps == 41_000)
 }
 
+@Test("Realtime session surface context derives FPS from presented frames")
+func realtimeSessionSurfaceContextDerivesFPSFromPresentedFrames() {
+    let context = ShadowClientRealtimeSessionSurfaceContext()
+
+    context.recordPresentedVideoFrame(nowUptime: 10.0)
+    context.recordPresentedVideoFrame(nowUptime: 10.1)
+    context.recordPresentedVideoFrame(nowUptime: 10.21)
+
+    #expect(context.estimatedVideoFPS != nil)
+    #expect((context.estimatedVideoFPS ?? 0) > 9.0)
+    #expect((context.estimatedVideoFPS ?? 0) < 11.5)
+}
+
 @Test("Realtime session surface context syncs preferred render FPS with session FPS")
 func realtimeSessionSurfaceContextSyncsPreferredRenderFPSWithSessionFPS() {
     let context = ShadowClientRealtimeSessionSurfaceContext()

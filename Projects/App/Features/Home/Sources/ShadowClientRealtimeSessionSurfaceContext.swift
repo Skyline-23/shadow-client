@@ -124,6 +124,9 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     @Published public private(set) var preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
     @Published public private(set) var videoPresentationSize: CGSize?
     private var lastControlRoundTripPublishUptime: TimeInterval = 0
+    private var presentedFrameWindowStartUptime: TimeInterval = 0
+    private var presentedFrameCount = 0
+    private var lastPresentedFramePublishUptime: TimeInterval = 0
     private let controlRoundTripStreamHub = ShadowClientControlRoundTripStreamHub()
     private let controllerFeedbackStreamHub = ShadowClientControllerFeedbackStreamHub()
 
@@ -158,6 +161,9 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
         videoPresentationSize = nil
         lastControlRoundTripPublishUptime = 0
+        presentedFrameWindowStartUptime = 0
+        presentedFrameCount = 0
+        lastPresentedFramePublishUptime = 0
     }
 
     public func transition(to state: RenderState) {
@@ -255,6 +261,31 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         } else {
             estimatedVideoBitrateKbps = nil
         }
+    }
+
+    public func updateRuntimeVideoBitrateKbps(_ bitrateKbps: Int?) {
+        if let bitrateKbps {
+            estimatedVideoBitrateKbps = max(0, bitrateKbps)
+        } else {
+            estimatedVideoBitrateKbps = nil
+        }
+    }
+
+    public func recordPresentedVideoFrame(nowUptime: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        if presentedFrameWindowStartUptime == 0 {
+            presentedFrameWindowStartUptime = nowUptime
+        }
+        presentedFrameCount += 1
+
+        if nowUptime - lastPresentedFramePublishUptime < 0.2 {
+            return
+        }
+        lastPresentedFramePublishUptime = nowUptime
+
+        let windowDuration = max(nowUptime - presentedFrameWindowStartUptime, 0.001)
+        estimatedVideoFPS = Double(presentedFrameCount) / windowDuration
+        presentedFrameWindowStartUptime = nowUptime
+        presentedFrameCount = 0
     }
 
     public func updateAudioOutputState(

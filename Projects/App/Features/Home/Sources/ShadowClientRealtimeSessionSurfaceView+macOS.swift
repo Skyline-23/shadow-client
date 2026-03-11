@@ -133,10 +133,20 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             return
         }
 
-        if let pixelBuffer = snapshot.pixelBuffer?.value,
+        let pixelBuffer = snapshot.pixelBuffer?.value
+        let colorConfiguration = pixelBuffer.map {
+            ShadowClientRealtimeSessionColorPipeline.configuration(
+                for: $0,
+                allowExtendedDynamicRange: surfaceContext.activeDynamicRangeMode == .hdr
+            )
+        }
+
+        if let pixelBuffer,
+           let colorConfiguration,
            let renderPass = view.currentRenderPassDescriptor,
            let yuvPipeline,
-           yuvPipeline.canRender(pixelBuffer)
+           yuvPipeline.canRender(pixelBuffer),
+           !colorConfiguration.prefersExtendedDynamicRange
         {
             _ = yuvPipeline.render(
                 pixelBuffer: pixelBuffer,
@@ -146,16 +156,13 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             )
             commandBuffer.present(drawable)
             commandBuffer.commit()
+            surfaceContext.recordPresentedVideoFrame()
             lastRenderedFrameRevision = snapshot.revision
             lastRenderedDrawableSize = drawableSize
             return
         }
 
-        if let pixelBuffer = snapshot.pixelBuffer?.value {
-            let colorConfiguration = ShadowClientRealtimeSessionColorPipeline.configuration(
-                for: pixelBuffer,
-                allowExtendedDynamicRange: surfaceContext.activeDynamicRangeMode == .hdr
-            )
+        if let pixelBuffer, let colorConfiguration {
             let supportsExtendedDynamicRange = cachedExtendedDynamicRangeSupport(for: view)
             let shouldToneMapHDRToSDR =
                 colorConfiguration.prefersExtendedDynamicRange && !supportsExtendedDynamicRange
@@ -211,6 +218,9 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
 
         commandBuffer.present(drawable)
         commandBuffer.commit()
+        if pixelBuffer != nil {
+            surfaceContext.recordPresentedVideoFrame()
+        }
         lastRenderedFrameRevision = snapshot.revision
         lastRenderedDrawableSize = drawableSize
     }
@@ -276,8 +286,8 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             return false
         }
         let screen = view.window?.screen ?? NSScreen.main
-        let currentHeadroom = screen?.maximumExtendedDynamicRangeColorComponentValue ?? 1
-        return currentHeadroom > 1.01
+        let potentialHeadroom = screen?.maximumPotentialExtendedDynamicRangeColorComponentValue ?? 1
+        return potentialHeadroom > 1.0
     }
 
     private func cachedExtendedDynamicRangeSupport(for view: MTKView) -> Bool {

@@ -2222,16 +2222,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
 
         let windowDuration = max(now - videoStatsWindowStartUptime, 0.001)
         let bitrateKbps = Int((Double(videoStatsByteCount) * 8.0 / 1_000.0) / windowDuration)
-        let fps = Double(videoStatsFrameCount) / windowDuration
         videoStatsWindowStartUptime = now
         videoStatsFrameCount = 0
         videoStatsByteCount = 0
         let sessionSurfaceContext = self.surfaceContext
         Task { @MainActor in
-            sessionSurfaceContext.updateRuntimeVideoStats(
-                fps: fps,
-                bitrateKbps: bitrateKbps
-            )
+            sessionSurfaceContext.updateRuntimeVideoBitrateKbps(bitrateKbps)
         }
     }
 
