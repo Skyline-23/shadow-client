@@ -4095,7 +4095,8 @@ private actor ShadowClientRTSPInterleavedClient {
         )
         let preferredOpusChannelCount =
             await ShadowClientRealtimeAudioSessionRuntime.preferredOpusChannelCountForNegotiation(
-                surroundRequested: videoConfiguration.enableSurroundAudio
+                surroundRequested: videoConfiguration.enableSurroundAudio,
+                preferredSurroundChannelCount: videoConfiguration.preferredSurroundChannelCount
             )
         if videoConfiguration.enableSurroundAudio, preferredOpusChannelCount <= 2 {
             logger.notice(

@@ -1067,3 +1067,30 @@ func audioNegotiationDowngradesSurroundWhenOutputIsStereoOnly() async {
 
     #expect(preferredChannels == 2)
 }
+
+@Test("Audio negotiation respects requested surround ceiling")
+func audioNegotiationRespectsRequestedSurroundCeiling() async {
+    await ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders()
+    defer { Task { await ShadowClientRealtimeCustomAudioDecoderRegistry.clearProviders() } }
+
+    await ShadowClientRealtimeCustomAudioDecoderRegistry.register(
+        provider: { track in
+            guard track.codec == .opus, track.channelCount > 2 else {
+                return nil
+            }
+            return MockCustomAudioDecoder(
+                codec: .opus,
+                sampleRate: track.sampleRate,
+                channels: track.channelCount
+            )
+        }
+    )
+
+    let preferredChannels = await ShadowClientRealtimeAudioSessionRuntime.preferredOpusChannelCountForNegotiation(
+        surroundRequested: true,
+        preferredSurroundChannelCount: 6,
+        maximumOutputChannels: 8
+    )
+
+    #expect(preferredChannels == 6)
+}

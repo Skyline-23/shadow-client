@@ -55,6 +55,17 @@ public enum ShadowClientAudioConfiguration: String, CaseIterable, Sendable {
     public var prefersSurroundAudio: Bool {
         self != .stereo
     }
+
+    public var preferredChannelCount: Int {
+        switch self {
+        case .stereo:
+            return 2
+        case .surround51:
+            return 6
+        case .surround71:
+            return 8
+        }
+    }
 }
 
 public enum ShadowClientDisplayMode: String, CaseIterable, Sendable {
@@ -311,6 +322,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             preferredCodec: videoCodec,
             enableHDR: preferHDR && localHDRDisplayAvailable && (hostApp?.hdrSupported ?? true),
             enableSurroundAudio: audioConfiguration.prefersSurroundAudio,
+            preferredSurroundChannelCount: audioConfiguration.preferredChannelCount,
             lowLatencyMode: lowLatencyMode,
             enableVSync: enableVSync,
             enableFramePacing: enableFramePacing,

@@ -125,6 +125,7 @@ func appSettingsMapToLaunchSettings() {
     #expect(launch.preferredCodec == .av1)
     #expect(launch.enableHDR == true)
     #expect(launch.enableSurroundAudio == true)
+    #expect(launch.preferredSurroundChannelCount == 6)
     #expect(launch.enableVSync == true)
     #expect(launch.enableFramePacing == true)
     #expect(launch.enableYUV444 == true)
@@ -180,6 +181,15 @@ func launchSettingsEnableAudioOnHostWhenConfigured() {
     let launch = settings.launchSettings(hostApp: nil)
 
     #expect(launch.playAudioOnHost == true)
+}
+
+@Test("Launch settings preserve requested surround ceiling")
+func launchSettingsPreserveRequestedSurroundCeiling() {
+    let settings = ShadowClientAppSettings(audioConfiguration: .surround71)
+    let launch = settings.launchSettings(hostApp: nil)
+
+    #expect(launch.enableSurroundAudio == true)
+    #expect(launch.preferredSurroundChannelCount == 8)
 }
 
 @Test("Auto bitrate computes launch bitrate from stream profile")
