@@ -53,6 +53,28 @@ func pairingIdentityStoreCreatesTLSClientCredential() async throws {
     #expect(!credential.certificates.isEmpty)
 }
 
+@Test("Pairing identity store creates TLS identity without persisting a key tag")
+func pairingIdentityStoreCreatesTLSIdentityWithoutKeychainTag() async throws {
+    let suiteName = "ShadowClientPairingIdentityStoreTests.identity.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: suiteName) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    let store = ShadowClientPairingIdentityStore(
+        provider: FailingIdentityProvider(),
+        defaultsSuiteName: suiteName
+    )
+
+    let identity = try await store.tlsClientIdentity()
+    withExtendedLifetime(identity) {}
+    let persistedKeyTag = defaults.string(forKey: ShadowClientPairingIdentityDefaultsKeys.keyTag)
+    #expect(persistedKeyTag == nil || persistedKeyTag?.isEmpty == true)
+}
+
 @Test("Pairing identity store replaces invalid persisted key material")
 func pairingIdentityStoreReplacesInvalidPersistedMaterial() async throws {
     let suiteName = "ShadowClientPairingIdentityStoreTests.invalid.\(UUID().uuidString)"

@@ -450,13 +450,6 @@ public actor ShadowClientPairingIdentityStore {
     private func validateIdentityMaterial(
         _ material: ShadowClientPairingIdentityMaterial
     ) throws -> ShadowClientPairingIdentityMaterial {
-        guard let keyTag = material.keyTag,
-              keyTag.hasPrefix(ShadowClientPairingIdentityMaterialFactory.keyTagVersionPrefix),
-              loadPermanentPrivateKey(keyTag: keyTag) != nil
-        else {
-            throw ShadowClientGameStreamControlError.invalidKeyMaterial
-        }
-
         let certDER = try pemBodyData(pem: material.certificatePEM)
         guard let cert = SecCertificateCreateWithData(nil, certDER as CFData) else {
             throw ShadowClientGameStreamControlError.invalidKeyMaterial
@@ -560,14 +553,9 @@ public actor ShadowClientPairingIdentityStore {
         material: ShadowClientPairingIdentityMaterial
     ) throws -> SecIdentity {
         let certificate = try makeTLSClientCertificate(material: material)
-        let certDER = try pemBodyData(pem: material.certificatePEM)
         let privateKey = try makeTLSClientPrivateKey(material: material)
 
-        guard let identity = makeKeychainBackedIdentity(
-            certificate: certificate,
-            privateKey: privateKey,
-            certificateDER: certDER
-        ) else {
+        guard let identity = SecIdentityCreate(nil, certificate, privateKey) else {
             throw ShadowClientGameStreamControlError.invalidKeyMaterial
         }
         return identity
@@ -586,12 +574,6 @@ public actor ShadowClientPairingIdentityStore {
     private func makeTLSClientPrivateKey(
         material: ShadowClientPairingIdentityMaterial
     ) throws -> SecKey {
-        if let keyTag = material.keyTag,
-           let permanentPrivateKey = loadPermanentPrivateKey(keyTag: keyTag)
-        {
-            return permanentPrivateKey
-        }
-
         let keyData = try pemBodyData(pem: material.privateKeyPEM)
         let attributes: [CFString: Any] = [
             kSecAttrKeyType: kSecAttrKeyTypeRSA,
@@ -604,90 +586,6 @@ public actor ShadowClientPairingIdentityStore {
             throw ShadowClientGameStreamControlError.invalidKeyMaterial
         }
         return privateKey
-    }
-
-    private func makeKeychainBackedIdentity(
-        certificate: SecCertificate,
-        privateKey: SecKey,
-        certificateDER: Data
-    ) -> SecIdentity? {
-        let fingerprint = Data(SHA256.hash(data: certificateDER)).hexString
-        let keyTag = Data("shadow-client.tls.key.\(fingerprint)".utf8)
-        let certLabel = "shadow-client.tls.cert.\(fingerprint)"
-
-        let addKeyQuery: [CFString: Any] = [
-            kSecClass: kSecClassKey,
-            kSecAttrApplicationTag: keyTag,
-            kSecAttrKeyClass: kSecAttrKeyClassPrivate,
-            kSecAttrIsPermanent: true,
-            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-            kSecValueRef: privateKey,
-        ]
-        let keyStatus = SecItemAdd(addKeyQuery as CFDictionary, nil)
-        guard keyStatus == errSecSuccess || keyStatus == errSecDuplicateItem else {
-            return nil
-        }
-
-        let keyLookupQuery: [CFString: Any] = [
-            kSecClass: kSecClassKey,
-            kSecAttrApplicationTag: keyTag,
-            kSecAttrKeyClass: kSecAttrKeyClassPrivate,
-            kSecReturnRef: true,
-            kSecMatchLimit: kSecMatchLimitOne,
-        ]
-        var keyRef: CFTypeRef?
-        let keyLookupStatus = SecItemCopyMatching(keyLookupQuery as CFDictionary, &keyRef)
-        guard keyLookupStatus == errSecSuccess,
-              let storedPrivateKey = keyRef as! SecKey?
-        else {
-            return nil
-        }
-
-        let addCertQuery: [CFString: Any] = [
-            kSecClass: kSecClassCertificate,
-            kSecAttrLabel: certLabel,
-            kSecValueRef: certificate,
-        ]
-        let certStatus = SecItemAdd(addCertQuery as CFDictionary, nil)
-        guard certStatus == errSecSuccess || certStatus == errSecDuplicateItem else {
-            return nil
-        }
-
-        guard let identity = SecIdentityCreate(nil, certificate, storedPrivateKey) else {
-            return nil
-        }
-
-        return identityMatchesCertificateDER(identity, certificateDER: certificateDER) ? identity : nil
-    }
-
-    private func identityMatchesCertificateDER(
-        _ identity: SecIdentity,
-        certificateDER: Data
-    ) -> Bool {
-        var certificateRef: SecCertificate?
-        let status = SecIdentityCopyCertificate(identity, &certificateRef)
-        guard status == errSecSuccess, let certificateRef else {
-            return false
-        }
-        let identityDER = SecCertificateCopyData(certificateRef) as Data
-        return identityDER == certificateDER
-    }
-
-    private func loadPermanentPrivateKey(keyTag: String) -> SecKey? {
-        let keyTagData = Data(keyTag.utf8)
-        let keyLookupQuery: [CFString: Any] = [
-            kSecClass: kSecClassKey,
-            kSecAttrApplicationTag: keyTagData,
-            kSecAttrKeyClass: kSecAttrKeyClassPrivate,
-            kSecReturnRef: true,
-            kSecMatchLimit: kSecMatchLimitOne,
-        ]
-        var keyRef: CFTypeRef?
-        let status = SecItemCopyMatching(keyLookupQuery as CFDictionary, &keyRef)
-        guard status == errSecSuccess, let key = keyRef as! SecKey? else {
-            return nil
-        }
-        return key
     }
 }
 
@@ -1867,6 +1765,8 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
     private var continuation: CheckedContinuation<String, Error>?
     private var timeoutWorkItem: DispatchWorkItem?
     private var responseData = Data()
+    private var expectedResponseBodyLength: Int?
+    private var headerTerminatorUpperBound: Int?
     private var requestOffset = 0
     private var readOpen = false
     private var writeOpen = false
@@ -2027,6 +1927,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         case .hasBytesAvailable:
             validatePeerIfPossible()
             readAvailableBytes()
+            maybeCompleteResponse()
         case .endEncountered:
             completeIfPossible()
         case .errorOccurred:
@@ -2120,6 +2021,34 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         }
     }
 
+    private func maybeCompleteResponse() {
+        guard requestOffset >= requestData.count else { return }
+        guard !responseData.isEmpty else { return }
+
+        if headerTerminatorUpperBound == nil,
+           let separatorRange = responseData.range(of: Data("\r\n\r\n".utf8))
+        {
+            headerTerminatorUpperBound = separatorRange.upperBound
+            let headerData = responseData[..<separatorRange.upperBound]
+            if let headerText = String(data: headerData, encoding: .utf8) {
+                expectedResponseBodyLength = Self.contentLength(from: headerText)
+            }
+        }
+
+        guard let headerTerminatorUpperBound else {
+            return
+        }
+
+        if let expectedResponseBodyLength {
+            let bodyLength = responseData.count - headerTerminatorUpperBound
+            guard bodyLength >= expectedResponseBodyLength else {
+                return
+            }
+        }
+
+        completeIfPossible()
+    }
+
     private func completeIfPossible() {
         guard requestOffset >= requestData.count else { return }
         guard !responseData.isEmpty else { return }
@@ -2133,6 +2062,22 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         } catch {
             finish(.failure(error))
         }
+    }
+
+    private static func contentLength(from headerText: String) -> Int? {
+        for line in headerText.components(separatedBy: "\r\n") {
+            let parts = line.split(separator: ":", maxSplits: 1)
+            guard parts.count == 2 else {
+                continue
+            }
+            let key = parts[0].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard key == "content-length" else {
+                continue
+            }
+            let value = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            return Int(value)
+        }
+        return nil
     }
 
     private func finish(_ result: Result<String, Error>) {
@@ -2297,17 +2242,10 @@ private enum ShadowClientPairingIdentityMaterialFactory {
     private static let keyUsageOID = Data([0x55, 0x1D, 0x0F])
     private static let extendedKeyUsageOID = Data([0x55, 0x1D, 0x25])
     private static let clientAuthOID = Data([0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02])
-    fileprivate static let keyTagVersionPrefix = "shadow-client.identity.v2."
-
     static func generate(commonName: String = "shadow-client") throws -> ShadowClientPairingIdentityMaterial {
-        let keyTag = "\(keyTagVersionPrefix)\(UUID().uuidString.lowercased())"
-        let keyTagData = Data(keyTag.utf8)
         let privateKeyAttributes: [CFString: Any] = [
             kSecAttrKeyType: kSecAttrKeyTypeRSA,
             kSecAttrKeySizeInBits: 2048,
-            kSecAttrIsPermanent: true,
-            kSecAttrApplicationTag: keyTagData,
-            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
 
         var error: Unmanaged<CFError>?
@@ -2337,8 +2275,7 @@ private enum ShadowClientPairingIdentityMaterialFactory {
 
         return ShadowClientPairingIdentityMaterial(
             certificatePEM: makePEM(blockType: "CERTIFICATE", der: certificateDER),
-            privateKeyPEM: makePEM(blockType: "RSA PRIVATE KEY", der: privateKeyDER),
-            keyTag: keyTag
+            privateKeyPEM: makePEM(blockType: "RSA PRIVATE KEY", der: privateKeyDER)
         )
     }
 

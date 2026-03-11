@@ -667,7 +667,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                 host: endpoint.host,
                 fallbackHTTPSPort: defaultHTTPSPort
             )
-        } catch let httpError as ShadowClientGameStreamError {
+        } catch is ShadowClientGameStreamError {
             do {
                 let httpsXML = try await requestXML(
                     host: endpoint.host,
