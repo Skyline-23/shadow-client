@@ -653,111 +653,61 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
 
     public func fetchServerInfo(host: String) async throws -> ShadowClientGameStreamServerInfo {
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
-        let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
-
-        if pinnedCertificateDER == nil {
-            do {
-                let httpXML = try await requestXML(
-                    host: endpoint.host,
-                    port: endpoint.port,
-                    scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
-                    command: "serverinfo"
-                )
-
-                return try ShadowClientGameStreamXMLParsers.parseServerInfo(
-                    xml: httpXML,
-                    host: endpoint.host,
-                    fallbackHTTPSPort: defaultHTTPSPort
-                )
-            } catch let httpError as ShadowClientGameStreamError {
-                do {
-                    let httpsXML = try await requestXML(
-                        host: endpoint.host,
-                        port: defaultHTTPSPort,
-                        scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
-                        command: "serverinfo"
-                    )
-
-                    return try ShadowClientGameStreamXMLParsers.parseServerInfo(
-                        xml: httpsXML,
-                        host: endpoint.host,
-                        fallbackHTTPSPort: defaultHTTPSPort
-                    )
-                } catch let httpsError as ShadowClientGameStreamError {
-                    if Self.isUnauthorizedCertificateError(httpsError) {
-                        return Self.makeUnauthorizedServerInfo(
-                            host: endpoint.host,
-                            fallbackHTTPSPort: defaultHTTPSPort
-                        )
-                    }
-                    if Self.isAppTransportSecurityBlockedError(httpError) {
-                        throw httpsError
-                    }
-                    throw httpError
-                }
-            }
-        }
 
         do {
-            let httpsXML = try await requestXML(
+            let httpXML = try await requestXML(
                 host: endpoint.host,
-                port: defaultHTTPSPort,
-                scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
+                port: endpoint.port,
+                scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
                 command: "serverinfo"
             )
 
             return try ShadowClientGameStreamXMLParsers.parseServerInfo(
-                xml: httpsXML,
+                xml: httpXML,
                 host: endpoint.host,
                 fallbackHTTPSPort: defaultHTTPSPort
             )
-        } catch let httpsError as ShadowClientGameStreamError {
-            if Self.isUnauthorizedCertificateError(httpsError) {
+        } catch let httpError as ShadowClientGameStreamError {
+            do {
+                let httpsXML = try await requestXML(
+                    host: endpoint.host,
+                    port: defaultHTTPSPort,
+                    scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
+                    command: "serverinfo"
+                )
+
+                return try ShadowClientGameStreamXMLParsers.parseServerInfo(
+                    xml: httpsXML,
+                    host: endpoint.host,
+                    fallbackHTTPSPort: defaultHTTPSPort
+                )
+            } catch let httpsError as ShadowClientGameStreamError {
+                if Self.isUnauthorizedCertificateError(httpsError) {
+                    // HTTP already failed, but HTTPS 401 still proves the host exists.
+                    return Self.makeUnauthorizedServerInfo(
+                        host: endpoint.host,
+                        fallbackHTTPSPort: defaultHTTPSPort
+                    )
+                }
+
                 do {
-                    let httpXML = try await requestXML(
+                    let retryHTTPXML = try await requestXML(
                         host: endpoint.host,
                         port: endpoint.port,
                         scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
                         command: "serverinfo"
                     )
-
                     return try ShadowClientGameStreamXMLParsers.parseServerInfo(
-                        xml: httpXML,
+                        xml: retryHTTPXML,
                         host: endpoint.host,
                         fallbackHTTPSPort: defaultHTTPSPort
                     )
-                } catch let httpError as ShadowClientGameStreamError {
-                    if Self.isAppTransportSecurityBlockedError(httpError) {
-                        return Self.makeUnauthorizedServerInfo(
-                            host: endpoint.host,
-                            fallbackHTTPSPort: defaultHTTPSPort
-                        )
+                } catch let retryHTTPError as ShadowClientGameStreamError {
+                    if Self.isAppTransportSecurityBlockedError(retryHTTPError) {
+                        throw httpsError
                     }
-                } catch {}
-
-                // HTTPS 401 already proves host reachability; keep host selectable for pairing.
-                return Self.makeUnauthorizedServerInfo(
-                    host: endpoint.host,
-                    fallbackHTTPSPort: defaultHTTPSPort
-                )
-            }
-            do {
-                let httpXML = try await requestXML(
-                    host: endpoint.host,
-                    port: endpoint.port,
-                    scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
-                    command: "serverinfo"
-                )
-                return try ShadowClientGameStreamXMLParsers.parseServerInfo(
-                    xml: httpXML,
-                    host: endpoint.host,
-                    fallbackHTTPSPort: defaultHTTPSPort
-                )
-            } catch let httpError as ShadowClientGameStreamError {
-                if Self.isAppTransportSecurityBlockedError(httpError) {
-                    throw httpsError
+                    throw retryHTTPError
                 }
-                throw httpError
             }
         }
     }
@@ -765,6 +715,13 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
     public func fetchAppList(host: String, httpsPort: Int?) async throws -> [ShadowClientRemoteAppDescriptor] {
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
         let resolvedHTTPSPort = httpsPort ?? defaultHTTPSPort
+        let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
+
+        guard pinnedCertificateDER != nil else {
+            throw ShadowClientGameStreamError.requestFailed(
+                "Host requires a paired HTTPS certificate before app list queries."
+            )
+        }
 
         let httpsXML = try await requestXML(
             host: endpoint.host,

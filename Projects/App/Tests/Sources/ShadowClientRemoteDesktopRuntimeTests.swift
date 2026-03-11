@@ -198,11 +198,6 @@ func metadataClientUsesHTTPFirstForUnpinnedHosts() async throws {
     let transport = ScriptedRequestTransport(
         script: [
             .init(
-                scheme: "https",
-                command: "serverinfo",
-                result: .success(#"<root status_code="401" status_message="Not paired"></root>"#)
-            ),
-            .init(
                 scheme: "http",
                 command: "serverinfo",
                 result: .success(
@@ -230,6 +225,56 @@ func metadataClientUsesHTTPFirstForUnpinnedHosts() async throws {
     #expect(info.displayName == "Example-PC")
     #expect(info.pairStatus == .notPaired)
 
+    #expect(
+        await transport.calls() == [
+            .init(scheme: "http", command: "serverinfo"),
+        ]
+    )
+}
+
+@Test("Metadata client keeps successful HTTP serverinfo results for pinned hosts without HTTPS refresh")
+func metadataClientKeepsSuccessfulHTTPServerInfoForPinnedHosts() async throws {
+    let defaultsSuite = "shadow-client.metadata.serverinfo.pinned-http-success.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "stream-host.example.invalid")
+
+    let transport = ScriptedRequestTransport(
+        script: [
+            .init(
+                scheme: "http",
+                command: "serverinfo",
+                result: .success(
+                    """
+                    <root status_code="200">
+                        <hostname>Example-PC</hostname>
+                        <PairStatus>1</PairStatus>
+                        <currentgame>0</currentgame>
+                        <state>SUNSHINE_SERVER_FREE</state>
+                        <HttpsPort>47984</HttpsPort>
+                    </root>
+                    """
+                )
+            ),
+        ]
+    )
+
+    let client = NativeGameStreamMetadataClient(
+        identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: pinnedStore,
+        transport: transport
+    )
+
+    let info = try await client.fetchServerInfo(host: "stream-host.example.invalid")
+    #expect(info.displayName == "Example-PC")
+    #expect(info.pairStatus == .paired)
     #expect(
         await transport.calls() == [
             .init(scheme: "http", command: "serverinfo"),
@@ -472,6 +517,36 @@ func metadataClientKeepsAppListOnHTTPSWhenTransportFails() async {
             .init(scheme: "https", command: "applist", port: 47984),
         ]
     )
+}
+
+@Test("Metadata client does not hit HTTPS app list when no pinned certificate is available")
+func metadataClientSkipsAppListHTTPSWithoutPinnedCertificate() async {
+    let defaultsSuite = "shadow-client.metadata.applist.no-pin.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let transport = ScriptedRequestTransport(script: [])
+    let client = NativeGameStreamMetadataClient(
+        identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: .init(defaultsSuiteName: defaultsSuite),
+        transport: transport
+    )
+
+    do {
+        _ = try await client.fetchAppList(host: "stream-host.example.invalid", httpsPort: 47984)
+        Issue.record("Expected pinned certificate requirement failure")
+    } catch let error as ShadowClientGameStreamError {
+        #expect(error == .requestFailed("Host requires a paired HTTPS certificate before app list queries."))
+    } catch {
+        Issue.record("Unexpected error: \(error)")
+    }
+
+    #expect(await transport.calls().isEmpty)
 }
 
 @Test("Remote desktop runtime refreshes hosts and loads selected host apps")
