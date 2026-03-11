@@ -232,9 +232,9 @@ func metadataClientUsesHTTPFirstForUnpinnedHosts() async throws {
     )
 }
 
-@Test("Metadata client keeps successful HTTP serverinfo results for pinned hosts without HTTPS refresh")
-func metadataClientKeepsSuccessfulHTTPServerInfoForPinnedHosts() async throws {
-    let defaultsSuite = "shadow-client.metadata.serverinfo.pinned-http-success.\(UUID().uuidString)"
+@Test("Metadata client uses HTTPS first for pinned hosts")
+func metadataClientUsesHTTPSFirstForPinnedHosts() async throws {
+    let defaultsSuite = "shadow-client.metadata.serverinfo.pinned-https-success.\(UUID().uuidString)"
     guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
         Issue.record("Expected isolated defaults suite")
         return
@@ -249,7 +249,7 @@ func metadataClientKeepsSuccessfulHTTPServerInfoForPinnedHosts() async throws {
     let transport = ScriptedRequestTransport(
         script: [
             .init(
-                scheme: "http",
+                scheme: "https",
                 command: "serverinfo",
                 result: .success(
                     """
@@ -277,7 +277,7 @@ func metadataClientKeepsSuccessfulHTTPServerInfoForPinnedHosts() async throws {
     #expect(info.pairStatus == .paired)
     #expect(
         await transport.calls() == [
-            .init(scheme: "http", command: "serverinfo"),
+            .init(scheme: "https", command: "serverinfo"),
         ]
     )
 }
@@ -308,9 +308,11 @@ func metadataClientReturnsUnpairedHostWhenHTTPFallbackIsBlockedByATS() async thr
         ]
     )
 
+    let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "stream-host.example.invalid")
     let client = NativeGameStreamMetadataClient(
         identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
-        pinnedCertificateStore: .init(defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: pinnedStore,
         transport: transport
     )
 
@@ -321,8 +323,8 @@ func metadataClientReturnsUnpairedHostWhenHTTPFallbackIsBlockedByATS() async thr
     #expect(info.httpsPort == 47984)
     #expect(
         await transport.calls() == [
-            .init(scheme: "http", command: "serverinfo"),
             .init(scheme: "https", command: "serverinfo"),
+            .init(scheme: "http", command: "serverinfo"),
         ]
     )
 }
@@ -353,9 +355,11 @@ func metadataClientReturnsUnpairedHostWhenHTTPSCertificateMismatches() async thr
         ]
     )
 
+    let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "stream-host.example.invalid")
     let client = NativeGameStreamMetadataClient(
         identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
-        pinnedCertificateStore: .init(defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: pinnedStore,
         transport: transport
     )
 
@@ -366,8 +370,8 @@ func metadataClientReturnsUnpairedHostWhenHTTPSCertificateMismatches() async thr
     #expect(info.httpsPort == 47984)
     #expect(
         await transport.calls() == [
-            .init(scheme: "http", command: "serverinfo"),
             .init(scheme: "https", command: "serverinfo"),
+            .init(scheme: "http", command: "serverinfo"),
         ]
     )
 }
@@ -398,9 +402,11 @@ func metadataClientReturnsUnpairedHostWhenHTTPSSelfSignedTrustFails() async thro
         ]
     )
 
+    let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "stream-host.example.invalid")
     let client = NativeGameStreamMetadataClient(
         identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
-        pinnedCertificateStore: .init(defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: pinnedStore,
         transport: transport
     )
 
@@ -411,8 +417,8 @@ func metadataClientReturnsUnpairedHostWhenHTTPSSelfSignedTrustFails() async thro
     #expect(info.httpsPort == 47984)
     #expect(
         await transport.calls() == [
-            .init(scheme: "http", command: "serverinfo"),
             .init(scheme: "https", command: "serverinfo"),
+            .init(scheme: "http", command: "serverinfo"),
         ]
     )
 }

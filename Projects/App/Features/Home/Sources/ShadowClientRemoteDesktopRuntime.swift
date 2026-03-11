@@ -653,8 +653,9 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
 
     public func fetchServerInfo(host: String) async throws -> ShadowClientGameStreamServerInfo {
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
+        let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
 
-        do {
+        if pinnedCertificateDER == nil {
             let httpXML = try await requestXML(
                 host: endpoint.host,
                 port: endpoint.port,
@@ -667,47 +668,69 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                 host: endpoint.host,
                 fallbackHTTPSPort: defaultHTTPSPort
             )
-        } catch is ShadowClientGameStreamError {
-            do {
-                let httpsXML = try await requestXML(
-                    host: endpoint.host,
-                    port: defaultHTTPSPort,
-                    scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
-                    command: "serverinfo"
-                )
+        }
 
-                return try ShadowClientGameStreamXMLParsers.parseServerInfo(
-                    xml: httpsXML,
-                    host: endpoint.host,
-                    fallbackHTTPSPort: defaultHTTPSPort
-                )
-            } catch let httpsError as ShadowClientGameStreamError {
-                if Self.isUnauthorizedCertificateError(httpsError) {
-                    // HTTP already failed, but HTTPS 401 still proves the host exists.
-                    return Self.makeUnauthorizedServerInfo(
-                        host: endpoint.host,
-                        fallbackHTTPSPort: defaultHTTPSPort
-                    )
-                }
+        do {
+            let httpsXML = try await requestXML(
+                host: endpoint.host,
+                port: defaultHTTPSPort,
+                scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
+                command: "serverinfo"
+            )
 
+            return try ShadowClientGameStreamXMLParsers.parseServerInfo(
+                xml: httpsXML,
+                host: endpoint.host,
+                fallbackHTTPSPort: defaultHTTPSPort
+            )
+        } catch let httpsError as ShadowClientGameStreamError {
+            if Self.isUnauthorizedCertificateError(httpsError) {
                 do {
-                    let retryHTTPXML = try await requestXML(
+                    let httpXML = try await requestXML(
                         host: endpoint.host,
                         port: endpoint.port,
                         scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
                         command: "serverinfo"
                     )
+
                     return try ShadowClientGameStreamXMLParsers.parseServerInfo(
-                        xml: retryHTTPXML,
+                        xml: httpXML,
                         host: endpoint.host,
                         fallbackHTTPSPort: defaultHTTPSPort
                     )
-                } catch let retryHTTPError as ShadowClientGameStreamError {
-                    if Self.isAppTransportSecurityBlockedError(retryHTTPError) {
-                        throw httpsError
+                } catch let httpError as ShadowClientGameStreamError {
+                    if Self.isAppTransportSecurityBlockedError(httpError) {
+                        return Self.makeUnauthorizedServerInfo(
+                            host: endpoint.host,
+                            fallbackHTTPSPort: defaultHTTPSPort
+                        )
                     }
-                    throw retryHTTPError
+                } catch {}
+
+                return Self.makeUnauthorizedServerInfo(
+                    host: endpoint.host,
+                    fallbackHTTPSPort: defaultHTTPSPort
+                )
+            }
+
+            do {
+                let httpXML = try await requestXML(
+                    host: endpoint.host,
+                    port: endpoint.port,
+                    scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
+                    command: "serverinfo"
+                )
+
+                return try ShadowClientGameStreamXMLParsers.parseServerInfo(
+                    xml: httpXML,
+                    host: endpoint.host,
+                    fallbackHTTPSPort: defaultHTTPSPort
+                )
+            } catch let httpError as ShadowClientGameStreamError {
+                if Self.isAppTransportSecurityBlockedError(httpError) {
+                    throw httpsError
                 }
+                throw httpError
             }
         }
     }
@@ -1444,6 +1467,21 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         return
                     }
                     self.pairingState = .paired("Paired")
+                    self.hosts = self.hosts.map {
+                        Self.markHostAsPaired(
+                            $0,
+                            matching: selectedHost,
+                            preferredHost: pairedHost
+                        )
+                    }
+                    self.latestResolvedHostDescriptors = self.latestResolvedHostDescriptors.map {
+                        Self.markHostAsPaired(
+                            $0,
+                            matching: selectedHost,
+                            preferredHost: pairedHost
+                        )
+                    }
+                    self.performRefreshSelectedHostApps()
                     let candidates = self.latestHostCandidates.isEmpty ? self.hosts.map(\.host) : self.latestHostCandidates
                     self.refreshHosts(
                         candidates: candidates,
@@ -3104,6 +3142,40 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         return selectedHost
+    }
+
+    private static func markHostAsPaired(
+        _ host: ShadowClientRemoteHostDescriptor,
+        matching selectedHost: ShadowClientRemoteHostDescriptor,
+        preferredHost: String?
+    ) -> ShadowClientRemoteHostDescriptor {
+        guard mergeKey(for: host) == mergeKey(for: selectedHost) else {
+            return host
+        }
+
+        let normalizedPreferredHost = normalizeCandidate(preferredHost)
+        let activeRoute = host.routes.allEndpoints.first(where: {
+            $0.host.lowercased() == normalizedPreferredHost
+        }) ?? host.routes.active
+        let routes = ShadowClientRemoteHostRoutes(
+            active: activeRoute,
+            local: host.routes.local,
+            remote: host.routes.remote,
+            manual: host.routes.manual
+        )
+
+        return ShadowClientRemoteHostDescriptor(
+            activeRoute: routes.active,
+            displayName: host.displayName,
+            pairStatus: .paired,
+            currentGameID: host.currentGameID,
+            serverState: host.serverState,
+            appVersion: host.appVersion,
+            gfeVersion: host.gfeVersion,
+            uniqueID: host.uniqueID,
+            lastError: host.lastError,
+            routes: routes
+        )
     }
 
     private static func preferredRouteOverrides(
