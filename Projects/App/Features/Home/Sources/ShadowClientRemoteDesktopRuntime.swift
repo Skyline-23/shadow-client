@@ -1742,20 +1742,46 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
             do {
                 await sessionConnectionClient.disconnect()
-                let resolvedHostDescriptor = await Self.preferredRuntimeHostDescriptor(
+                var resolvedHostDescriptor = await Self.preferredRuntimeHostDescriptor(
                     for: selectedHost,
                     latestResolvedHostDescriptors: latestResolvedHostDescriptors,
                     pairingRouteStore: pairingRouteStore
                 )
 
-                let initialLaunchResult = try await controlClient.launch(
-                    host: resolvedHostDescriptor.host,
-                    httpsPort: resolvedHostDescriptor.httpsPort,
-                    appID: appID,
-                    currentGameID: resolvedHostDescriptor.currentGameID,
-                    forceLaunch: effectiveForceLaunch,
-                    settings: launchSettingsToUse
-                )
+                let initialLaunchResult: ShadowClientGameStreamLaunchResult
+                do {
+                    initialLaunchResult = try await controlClient.launch(
+                        host: resolvedHostDescriptor.host,
+                        httpsPort: resolvedHostDescriptor.httpsPort,
+                        appID: appID,
+                        currentGameID: resolvedHostDescriptor.currentGameID,
+                        forceLaunch: effectiveForceLaunch,
+                        settings: launchSettingsToUse
+                    )
+                } catch {
+                    guard Self.shouldRetryLaunchOnAlternateRoute(error),
+                          let alternateHostDescriptor = Self.alternateRuntimeHostDescriptor(
+                              afterFailureOn: resolvedHostDescriptor,
+                              selectedHost: selectedHost,
+                              latestResolvedHostDescriptors: latestResolvedHostDescriptors
+                          )
+                    else {
+                        throw error
+                    }
+
+                    logger.notice(
+                        "Launch failed on runtime host \(resolvedHostDescriptor.host, privacy: .public); retrying alternate route \(alternateHostDescriptor.host, privacy: .public)"
+                    )
+                    resolvedHostDescriptor = alternateHostDescriptor
+                    initialLaunchResult = try await controlClient.launch(
+                        host: resolvedHostDescriptor.host,
+                        httpsPort: resolvedHostDescriptor.httpsPort,
+                        appID: appID,
+                        currentGameID: resolvedHostDescriptor.currentGameID,
+                        forceLaunch: effectiveForceLaunch,
+                        settings: launchSettingsToUse
+                    )
+                }
 
                 let resolvedTitle: String
                 if let launchedAppTitle, !launchedAppTitle.isEmpty {
@@ -3311,13 +3337,27 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 partialResult.append(endpoint)
             }
 
-        let active = candidateRoutes.first(where: {
+        let reachableHostNames = Set(
+            group
+                .filter(\.isReachable)
+                .map { $0.host.lowercased() }
+        )
+        let activeRouteCandidates = candidateRoutes.filter {
+            reachableHostNames.isEmpty || reachableHostNames.contains($0.host.lowercased())
+        }
+        let selectedReachableHost = group.first(where: {
+            $0.id == selectedHostID && $0.isReachable
+        })?.host.lowercased()
+
+        let active = activeRouteCandidates.first(where: {
             $0.host.lowercased() == preferredHost
-        }) ?? candidateRoutes.first(where: {
+        }) ?? activeRouteCandidates.first(where: {
             $0.host.lowercased() == preferredRoute
-        }) ?? group.first(where: {
-            $0.id == selectedHostID
-        })?.routes.active ?? fallbackPrimary.routes.active
+        }) ?? activeRouteCandidates.first(where: {
+            $0.host.lowercased() == selectedReachableHost
+        }) ?? activeRouteCandidates.first(where: {
+            isLocalPairHost($0.host)
+        }) ?? activeRouteCandidates.first ?? fallbackPrimary.routes.active
 
         return ShadowClientRemoteHostRoutes(
             active: active,
@@ -3336,12 +3376,43 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let preferredHost = await pairingRouteStore.preferredHost(for: pairRouteStoreKey(for: selectedHost))?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
+        let knownRouteHosts = Set(
+            selectedHost.routes.allEndpoints.map { $0.host.lowercased() }
+        )
+        let matchingDescriptors = latestResolvedHostDescriptors.filter {
+            mergeKey(for: $0) == routeGroupKey || knownRouteHosts.contains($0.host.lowercased())
+        }
+        let reachableDescriptors = matchingDescriptors.filter(\.isReachable)
+        let candidateDescriptors = reachableDescriptors.isEmpty ? matchingDescriptors : reachableDescriptors
 
         if let preferredHost,
-           let preferredDescriptor = latestResolvedHostDescriptors.first(where: {
-               mergeKey(for: $0) == routeGroupKey && $0.host.lowercased() == preferredHost
+           let preferredDescriptor = candidateDescriptors.first(where: {
+               $0.host.lowercased() == preferredHost
            }) {
             return preferredDescriptor
+        }
+
+        let currentActiveHost = selectedHost.routes.active.host.lowercased()
+        if let activeDescriptor = candidateDescriptors.first(where: {
+            $0.host.lowercased() == currentActiveHost
+        }) {
+            return activeDescriptor
+        }
+
+        if let localDescriptor = candidateDescriptors.first(where: {
+            isLocalPairHost($0.host)
+        }) {
+            return localDescriptor
+        }
+
+        if let exactDescriptor = candidateDescriptors.first(where: {
+            $0.host.lowercased() == selectedHost.host.lowercased()
+        }) {
+            return exactDescriptor
+        }
+
+        if let firstReachableDescriptor = candidateDescriptors.first {
+            return firstReachableDescriptor
         }
 
         if let preferredHost {
@@ -3359,13 +3430,38 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             )
         }
 
-        if let exactDescriptor = latestResolvedHostDescriptors.first(where: {
-            mergeKey(for: $0) == routeGroupKey && $0.host.lowercased() == selectedHost.host.lowercased()
-        }) {
-            return exactDescriptor
+        return selectedHost
+    }
+
+    private static func alternateRuntimeHostDescriptor(
+        afterFailureOn currentDescriptor: ShadowClientRemoteHostDescriptor,
+        selectedHost: ShadowClientRemoteHostDescriptor,
+        latestResolvedHostDescriptors: [ShadowClientRemoteHostDescriptor]
+    ) -> ShadowClientRemoteHostDescriptor? {
+        let routeGroupKey = mergeKey(for: selectedHost)
+        let knownRouteHosts = Set(
+            selectedHost.routes.allEndpoints.map { $0.host.lowercased() }
+        )
+        let candidates = latestResolvedHostDescriptors.filter {
+            mergeKey(for: $0) == routeGroupKey || knownRouteHosts.contains($0.host.lowercased())
+        }
+        let reachableCandidates = candidates.filter(\.isReachable)
+
+        if !isLocalPairHost(currentDescriptor.host),
+           let localDescriptor = reachableCandidates.first(where: {
+               isLocalPairHost($0.host) && $0.host.lowercased() != currentDescriptor.host.lowercased()
+           }) {
+            return localDescriptor
         }
 
-        return selectedHost
+        return nil
+    }
+
+    private static func shouldRetryLaunchOnAlternateRoute(_ error: Error) -> Bool {
+        let normalized = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.contains("connection refused") ||
+            normalized.contains("could not connect to the server") ||
+            normalized.contains("a server with the specified hostname could not be found")
     }
 
     private static func markHostAsPaired(

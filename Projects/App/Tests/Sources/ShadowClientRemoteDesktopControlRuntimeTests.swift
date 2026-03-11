@@ -723,6 +723,85 @@ func remoteDesktopRuntimeFallsBackCodecAfterAv1RuntimeRecoveryFailure() async {
     }
 }
 
+@Test("Remote desktop runtime retries launch on reachable local route after external connection refused")
+@MainActor
+func remoteDesktopRuntimeRetriesLaunchOnReachableLocalRoute() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "wifi.skyline23.com": .init(
+                host: "wifi.skyline23.com",
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-ROUTE"
+            ),
+            "192.168.0.52": .init(
+                host: "192.168.0.52",
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-ROUTE"
+            ),
+        ],
+        appListByHost: [
+            "wifi.skyline23.com": [
+                .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+            "192.168.0.52": [
+                .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.52:48010/session", verb: "launch"),
+        simulatedLaunchFailures: [
+            ShadowClientGameStreamError.requestFailed("Connection refused")
+        ]
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let pairingRouteStore = ShadowClientPairingRouteStore(
+        defaultsSuiteName: "shadow-client.control.route-fallback.\(UUID().uuidString)"
+    )
+    await pairingRouteStore.setPreferredHost("wifi.skyline23.com", for: "uniqueid:host-route")
+
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector,
+        pairingRouteStore: pairingRouteStore
+    )
+
+    runtime.refreshHosts(
+        candidates: ["wifi.skyline23.com", "192.168.0.52"],
+        preferredHost: "wifi.skyline23.com"
+    )
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 881_448_767,
+        settings: .init(enableHDR: false, enableSurroundAudio: false, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+
+    let launchCalls = await control.launchCalls()
+    #expect(launchCalls.count == 2)
+    #expect(launchCalls[0].host == "wifi.skyline23.com")
+    #expect(launchCalls[1].host == "192.168.0.52")
+    if case .launched = runtime.launchState {
+        #expect(true)
+    } else {
+        Issue.record("Expected launched state after local route retry, got \(runtime.launchState)")
+    }
+}
+
 @Test("Remote desktop runtime auto-relaunches with downgraded codec after post-launch decoder failure")
 @MainActor
 func remoteDesktopRuntimeAutoRelaunchesCodecAfterPostLaunchDecoderFailure() async {
@@ -1755,6 +1834,7 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
     private var recordedLaunchCalls: [LaunchCall] = []
     private var simulatedPairFailures: [any Error & Sendable]
     private var simulatedLaunchResults: [ShadowClientGameStreamLaunchResult]
+    private var simulatedLaunchFailures: [any Error & Sendable]
     private let defaultLaunchResult: ShadowClientGameStreamLaunchResult
     private let simulatedLaunchFailure: (any Error & Sendable)?
 
@@ -1762,10 +1842,12 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
         simulatedPairFailures: [any Error & Sendable] = [],
         simulatedLaunchResult: ShadowClientGameStreamLaunchResult = .init(sessionURL: "rtsp://example/session", verb: "launch"),
         simulatedLaunchResults: [ShadowClientGameStreamLaunchResult] = [],
+        simulatedLaunchFailures: [any Error & Sendable] = [],
         simulatedLaunchFailure: (any Error & Sendable)? = nil
     ) {
         self.simulatedPairFailures = simulatedPairFailures
         self.simulatedLaunchResults = simulatedLaunchResults
+        self.simulatedLaunchFailures = simulatedLaunchFailures
         self.defaultLaunchResult = simulatedLaunchResult
         self.simulatedLaunchFailure = simulatedLaunchFailure
     }
@@ -1806,6 +1888,11 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
                 settings: settings
             )
         )
+
+        if !simulatedLaunchFailures.isEmpty {
+            let nextError = simulatedLaunchFailures.removeFirst()
+            throw nextError
+        }
 
         if let simulatedLaunchFailure {
             throw simulatedLaunchFailure
