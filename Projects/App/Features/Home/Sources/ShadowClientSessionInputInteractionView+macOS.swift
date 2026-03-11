@@ -6,13 +6,15 @@ struct ShadowClientSessionInputInteractionPlatformView: View {
     let visiblePointerRegions: [CGRect]
     let onInputEvent: @MainActor (ShadowClientRemoteInputEvent) -> Void
     let onSessionTerminateCommand: @MainActor () -> Void
+    let onPasteClipboardCommand: @MainActor () -> Void
 
     var body: some View {
         let _ = visiblePointerRegions
         ShadowClientMacOSSessionInputCaptureView(
             referenceVideoSize: referenceVideoSize,
             onInputEvent: onInputEvent,
-            onSessionTerminateCommand: onSessionTerminateCommand
+            onSessionTerminateCommand: onSessionTerminateCommand,
+            onPasteClipboardCommand: onPasteClipboardCommand
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.clear)

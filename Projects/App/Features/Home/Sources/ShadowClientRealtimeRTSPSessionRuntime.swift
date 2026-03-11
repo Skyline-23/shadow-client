@@ -5171,6 +5171,8 @@ private actor ShadowClientRTSPInterleavedClient {
             return "keyDown"
         case .keyUp:
             return "keyUp"
+        case .text:
+            return "text"
         case .pointerMoved:
             return "pointerMoved"
         case .pointerPosition:
@@ -5193,7 +5195,7 @@ private actor ShadowClientRTSPInterleavedClient {
         case let .gamepadState(state):
             return ShadowClientRealtimeRTSPSessionRuntime
                 .shouldTreatGamepadStateAsInteractiveForUDPDatagramRecovery(state)
-        case .keyDown, .keyUp, .pointerMoved, .pointerPosition, .pointerButton, .scroll:
+        case .keyDown, .keyUp, .text, .pointerMoved, .pointerPosition, .pointerButton, .scroll:
             return true
         }
     }

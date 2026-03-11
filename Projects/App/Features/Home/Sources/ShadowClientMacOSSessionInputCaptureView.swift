@@ -8,12 +8,14 @@ struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
     let referenceVideoSize: CGSize?
     let onInputEvent: @MainActor (ShadowClientRemoteInputEvent) -> Void
     let onSessionTerminateCommand: @MainActor () -> Void
+    let onPasteClipboardCommand: @MainActor () -> Void
 
     func makeNSView(context: Context) -> ShadowClientMacOSInputCaptureNSView {
         let view = ShadowClientMacOSInputCaptureNSView()
         view.referenceVideoSize = referenceVideoSize
         view.onInputEvent = onInputEvent
         view.onSessionTerminateCommand = onSessionTerminateCommand
+        view.onPasteClipboardCommand = onPasteClipboardCommand
         return view
     }
 
@@ -21,6 +23,7 @@ struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
         nsView.referenceVideoSize = referenceVideoSize
         nsView.onInputEvent = onInputEvent
         nsView.onSessionTerminateCommand = onSessionTerminateCommand
+        nsView.onPasteClipboardCommand = onPasteClipboardCommand
         nsView.requestInputFocusIfNeeded()
     }
 }
@@ -30,6 +33,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     var referenceVideoSize: CGSize?
     var onInputEvent: (@MainActor (ShadowClientRemoteInputEvent) -> Void)?
     var onSessionTerminateCommand: (@MainActor () -> Void)?
+    var onPasteClipboardCommand: (@MainActor () -> Void)?
 
     private var trackingAreaToken: NSTrackingArea?
     private var activeModifierFlags: NSEvent.ModifierFlags = []
@@ -142,6 +146,9 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        if handleLocalClipboardPasteShortcutIfNeeded(event) {
+            return
+        }
         if handleLocalSessionTerminateShortcutIfNeeded(event) {
             return
         }
@@ -160,6 +167,9 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
             return super.performKeyEquivalent(with: event)
         }
 
+        if handleLocalClipboardPasteShortcutIfNeeded(event) {
+            return true
+        }
         if handleLocalSessionTerminateShortcutIfNeeded(event) {
             return true
         }
@@ -423,6 +433,24 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         return true
     }
 
+    private func handleLocalClipboardPasteShortcutIfNeeded(_ event: NSEvent) -> Bool {
+        let activeFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let requiredFlags: NSEvent.ModifierFlags = [.command]
+        guard requiredFlags.isSubset(of: activeFlags),
+              !activeFlags.contains(.control),
+              !activeFlags.contains(.option),
+              !activeFlags.contains(.shift),
+              !activeFlags.contains(.capsLock),
+              event.keyCode == 0x09 || event.charactersIgnoringModifiers?.lowercased() == "v"
+        else {
+            return false
+        }
+
+        locallyHandledKeyCodes.insert(event.keyCode)
+        onPasteClipboardCommand?()
+        return true
+    }
+
     private func logFirstCaptureEventIfNeeded(_ event: ShadowClientRemoteInputEvent) {
         let kind: String
         switch event {
@@ -430,6 +458,8 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
             kind = "keyDown"
         case .keyUp:
             kind = "keyUp"
+        case .text:
+            kind = "text"
         case .pointerMoved:
             kind = "pointerMoved"
         case .pointerPosition:

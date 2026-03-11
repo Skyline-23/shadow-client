@@ -69,6 +69,7 @@ let project = Project(
                         "UIImageName": "",
                     ],
                     "NSLocalNetworkUsageDescription": "shadow-client discovers streaming hosts on your local network.",
+                    "NSMotionUsageDescription": "shadow-client uses headphone motion data to render head-tracked spatial audio on supported AirPods.",
                     "NSBonjourServices": [
                         "_nvstream._tcp",
                         "_sunshine._tcp",
@@ -105,6 +106,7 @@ let project = Project(
             deploymentTargets: .macOS("14.0"),
             infoPlist: .extendingDefault(
                 with: [
+                    "NSMotionUsageDescription": "shadow-client uses headphone motion data to render head-tracked spatial audio on supported AirPods.",
                     "NSLocalNetworkUsageDescription": "shadow-client discovers streaming hosts on your local network.",
                     "NSBonjourServices": [
                         "_nvstream._tcp",

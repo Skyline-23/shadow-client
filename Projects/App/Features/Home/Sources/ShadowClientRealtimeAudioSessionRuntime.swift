@@ -4,6 +4,10 @@ import Foundation
 import Network
 import os
 
+#if os(iOS) || os(macOS)
+import CoreMotion
+#endif
+
 public enum ShadowClientRealtimeAudioOutputState: Equatable, Sendable {
     case idle
     case starting
@@ -2628,6 +2632,7 @@ private final class ShadowClientRealtimeAudioEngineOutput {
 
     private let engine = AVAudioEngine()
     private var player = AVAudioPlayerNode()
+    private let environmentNode: AVAudioEnvironmentNode?
     private let engineQueue = DispatchQueue(
         label: "com.skyline23.shadow-client.audio-engine-output",
         qos: .userInitiated
@@ -2640,6 +2645,7 @@ private final class ShadowClientRealtimeAudioEngineOutput {
     private var isStarted = false
     private var isTerminated = false
     private var isGraphConfigured = false
+    private var headTrackingController: ShadowClientHeadTrackedSpatialAudioController?
 
     init(
         format: AVAudioFormat,
@@ -2648,6 +2654,7 @@ private final class ShadowClientRealtimeAudioEngineOutput {
         maximumPendingDurationMs: Double
     ) throws {
         self.format = format
+        self.environmentNode = Self.makeEnvironmentNodeIfNeeded(format: format)
         self.maximumQueuedBufferCount = max(
             Self.minimumQueuedBufferCount,
             maximumQueuedBufferCount
@@ -2692,6 +2699,7 @@ private final class ShadowClientRealtimeAudioEngineOutput {
                 initializationState = 3
                 return
             }
+            startHeadTrackingLocked()
         }
         if initializationState == 1 {
             throw NSError(
@@ -2767,11 +2775,18 @@ private final class ShadowClientRealtimeAudioEngineOutput {
                 return
             }
             isTerminated = true
+            stopHeadTrackingLocked()
             let currentPlayer = player
             currentPlayer.stop()
             if currentPlayer.engine === engine {
                 engine.disconnectNodeOutput(currentPlayer)
                 engine.detach(currentPlayer)
+            }
+            if let environmentNode,
+               environmentNode.engine === engine
+            {
+                engine.disconnectNodeOutput(environmentNode)
+                engine.detach(environmentNode)
             }
             engine.stop()
             engine.reset()
@@ -2820,11 +2835,31 @@ private final class ShadowClientRealtimeAudioEngineOutput {
         }
 
         engine.disconnectNodeOutput(player)
-        engine.connect(
-            player,
-            to: engine.mainMixerNode,
-            format: format
-        )
+        if let environmentNode {
+            if environmentNode.engine == nil {
+                engine.attach(environmentNode)
+            }
+            guard environmentNode.engine === engine else {
+                return false
+            }
+            engine.disconnectNodeOutput(environmentNode)
+            engine.connect(
+                player,
+                to: environmentNode,
+                format: format
+            )
+            engine.connect(
+                environmentNode,
+                to: engine.mainMixerNode,
+                format: nil
+            )
+        } else {
+            engine.connect(
+                player,
+                to: engine.mainMixerNode,
+                format: format
+            )
+        }
         isGraphConfigured = true
         return true
     }
@@ -2866,11 +2901,22 @@ private final class ShadowClientRealtimeAudioEngineOutput {
 
         let newPlayer = AVAudioPlayerNode()
         engine.attach(newPlayer)
-        engine.connect(
-            newPlayer,
-            to: engine.mainMixerNode,
-            format: format
-        )
+        if let environmentNode {
+            engine.connect(
+                newPlayer,
+                to: environmentNode,
+                format: format
+            )
+            newPlayer.sourceMode = .ambienceBed
+            newPlayer.renderingAlgorithm = .auto
+            newPlayer.position = AVAudioMake3DPoint(0, 0, 0)
+        } else {
+            engine.connect(
+                newPlayer,
+                to: engine.mainMixerNode,
+                format: format
+            )
+        }
         player = newPlayer
         isGraphConfigured = true
         isStarted = false
@@ -2911,9 +2957,145 @@ private final class ShadowClientRealtimeAudioEngineOutput {
         if !ensureEngineRunningLocked() {
             return false
         }
+        startHeadTrackingLocked()
         return startPlayerLocked()
     }
+
+    private func startHeadTrackingLocked() {
+        guard headTrackingController == nil,
+              let environmentNode,
+              Self.supportsManualHeadMotionTracking
+        else {
+            return
+        }
+
+        headTrackingController = ShadowClientHeadTrackedSpatialAudioController(
+            updateOrientation: { [engineQueue, weak environmentNode] orientation in
+                engineQueue.async {
+                    environmentNode?.listenerAngularOrientation = orientation
+                }
+            }
+        )
+        headTrackingController?.start()
+    }
+
+    private func stopHeadTrackingLocked() {
+        headTrackingController?.stop()
+        headTrackingController = nil
+    }
+
+    private static func makeEnvironmentNodeIfNeeded(format: AVAudioFormat) -> AVAudioEnvironmentNode? {
+        guard supportsSpatialAudio(for: format) else {
+            return nil
+        }
+
+        let environmentNode = AVAudioEnvironmentNode()
+        environmentNode.outputType = preferredEnvironmentOutputType()
+        environmentNode.listenerPosition = AVAudioMake3DPoint(0, 0, 0)
+        environmentNode.listenerAngularOrientation = AVAudioMake3DAngularOrientation(0, 0, 0)
+        environmentNode.reverbParameters.enable = false
+        return environmentNode
+    }
+
+    private static func supportsSpatialAudio(for format: AVAudioFormat) -> Bool {
+        guard format.channelCount > 2 else {
+            return false
+        }
+
+        #if os(iOS)
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        return outputs.contains { output in
+            switch output.portType {
+            case .headphones, .bluetoothA2DP, .bluetoothLE, .bluetoothHFP:
+                return true
+            default:
+                return false
+            }
+        }
+        #elseif os(tvOS)
+        guard format.channelCount > 2 else {
+            return false
+        }
+        return true
+        #elseif os(macOS)
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    private static var supportsManualHeadMotionTracking: Bool {
+        #if os(iOS) || os(macOS)
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    private static func preferredEnvironmentOutputType() -> AVAudioEnvironmentOutputType {
+        #if os(iOS)
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        let headphonesActive = outputs.contains { output in
+            switch output.portType {
+            case .headphones, .bluetoothA2DP, .bluetoothLE, .bluetoothHFP:
+                return true
+            default:
+                return false
+            }
+        }
+        return headphonesActive ? .headphones : .auto
+        #else
+        return .auto
+        #endif
+    }
 }
+
+#if os(iOS) || os(macOS)
+private final class ShadowClientHeadTrackedSpatialAudioController {
+    private let motionManager = CMHeadphoneMotionManager()
+    private let queue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "com.skyline23.shadow-client.head-tracking"
+        queue.maxConcurrentOperationCount = 1
+        return queue
+    }()
+    private let updateOrientation: (AVAudio3DAngularOrientation) -> Void
+
+    init(updateOrientation: @escaping (AVAudio3DAngularOrientation) -> Void) {
+        self.updateOrientation = updateOrientation
+    }
+
+    func start() {
+        guard motionManager.isDeviceMotionAvailable else {
+            return
+        }
+
+        motionManager.startDeviceMotionUpdates(to: queue) { [updateOrientation] motion, _ in
+            guard let attitude = motion?.attitude else {
+                return
+            }
+
+            let radiansToDegrees = 180.0 / Double.pi
+            let orientation = AVAudioMake3DAngularOrientation(
+                Float(attitude.yaw * radiansToDegrees),
+                Float(attitude.pitch * radiansToDegrees),
+                Float(attitude.roll * radiansToDegrees)
+            )
+            updateOrientation(orientation)
+        }
+    }
+
+    func stop() {
+        motionManager.stopDeviceMotionUpdates()
+    }
+}
+#else
+private final class ShadowClientHeadTrackedSpatialAudioController {
+    init(updateOrientation _: @escaping (AVAudio3DAngularOrientation) -> Void) {}
+    func start() {}
+    func stop() {}
+}
+#endif
 
 private enum ShadowClientRealtimeAudioPayloadDecryptorError: Error {
     case invalidKeyLength(Int)

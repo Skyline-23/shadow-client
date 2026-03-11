@@ -16,6 +16,7 @@ enum ShadowClientSunshineInputPacketCodec {
         static let mouseMoveAbsolute: UInt32 = 0x0000_0005
         static let keyDown: UInt32 = 0x0000_0003
         static let keyUp: UInt32 = 0x0000_0004
+        static let utf8Text: UInt32 = 0x0000_0017
         static let mouseMoveRelative: UInt32 = 0x0000_0007
         static let mouseButtonDown: UInt32 = 0x0000_0008
         static let mouseButtonUp: UInt32 = 0x0000_0009
@@ -76,6 +77,14 @@ enum ShadowClientSunshineInputPacketCodec {
                     magic: PacketMagic.keyUp,
                     virtualKey: normalizedSunshineKeyboardKeyCode(virtualKey)
                 )
+            )
+        case let .text(text):
+            guard let payload = makeUTF8TextPacket(text) else {
+                return nil
+            }
+            return .init(
+                channelID: Channel.keyboard,
+                payload: payload
             )
         case let .pointerButton(button, isPressed):
             guard let mappedButton = mouseButtonValue(button) else {
@@ -150,6 +159,20 @@ enum ShadowClientSunshineInputPacketCodec {
         appendUInt16LE(virtualKey, to: &packet)
         packet.append(modifiers)
         appendUInt16LE(0, to: &packet)
+        return packet
+    }
+
+    private static func makeUTF8TextPacket(_ text: String) -> Data? {
+        let payloadBytes = Array(text.utf8)
+        guard !payloadBytes.isEmpty else {
+            return nil
+        }
+
+        var packet = Data()
+        packet.reserveCapacity(8 + payloadBytes.count)
+        appendUInt32BE(UInt32(4 + payloadBytes.count), to: &packet)
+        appendUInt32LE(PacketMagic.utf8Text, to: &packet)
+        packet.append(contentsOf: payloadBytes)
         return packet
     }
 

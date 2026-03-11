@@ -3,6 +3,7 @@ import SwiftUI
 struct ShadowClientSessionInputInteractionView: View {
     let onInputEvent: @MainActor (ShadowClientRemoteInputEvent) -> Void
     let onSessionTerminateCommand: @MainActor () -> Void
+    let onPasteClipboardCommand: @MainActor () -> Void
     let referenceVideoSize: CGSize?
     let visiblePointerRegions: [CGRect]
 
@@ -10,12 +11,14 @@ struct ShadowClientSessionInputInteractionView: View {
         referenceVideoSize: CGSize? = nil,
         visiblePointerRegions: [CGRect] = [],
         onInputEvent: @escaping @MainActor (ShadowClientRemoteInputEvent) -> Void,
-        onSessionTerminateCommand: @escaping @MainActor () -> Void = {}
+        onSessionTerminateCommand: @escaping @MainActor () -> Void = {},
+        onPasteClipboardCommand: @escaping @MainActor () -> Void = {}
     ) {
         self.referenceVideoSize = referenceVideoSize
         self.visiblePointerRegions = visiblePointerRegions
         self.onInputEvent = onInputEvent
         self.onSessionTerminateCommand = onSessionTerminateCommand
+        self.onPasteClipboardCommand = onPasteClipboardCommand
     }
 
     var body: some View {
@@ -23,7 +26,8 @@ struct ShadowClientSessionInputInteractionView: View {
             referenceVideoSize: referenceVideoSize,
             visiblePointerRegions: visiblePointerRegions,
             onInputEvent: onInputEvent,
-            onSessionTerminateCommand: onSessionTerminateCommand
+            onSessionTerminateCommand: onSessionTerminateCommand,
+            onPasteClipboardCommand: onPasteClipboardCommand
         )
     }
 }

@@ -65,6 +65,8 @@ var remoteSessionFlowView: some View {
                         remoteDesktopRuntime.sendInput(event)
                     } onSessionTerminateCommand: {
                         remoteDesktopRuntime.clearActiveSession()
+                    } onPasteClipboardCommand: {
+                        pasteLocalClipboardIntoRemoteSession()
                     }
                     .ignoresSafeArea()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -73,9 +75,27 @@ var remoteSessionFlowView: some View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
 
-#if os(iOS)
                 VStack {
                     HStack {
+                        Button {
+                            pasteLocalClipboardIntoRemoteSession()
+                        } label: {
+                            Label("Paste Clipboard", systemImage: "doc.on.clipboard")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.white.opacity(0.95))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                                .background(.ultraThinMaterial)
+                                .clipShape(Capsule())
+                                .overlay(
+                                    Capsule()
+                                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("shadow.remote.session.pasteClipboard")
+                        .accessibilityLabel("Paste Clipboard Into Remote Session")
+
                         Button {
                             remoteDesktopRuntime.clearActiveSession()
                         } label: {
@@ -111,7 +131,6 @@ var remoteSessionFlowView: some View {
                 .padding(.top, 12)
                 .padding(.leading, 12)
                 .safeAreaPadding([.top, .leading])
-#endif
             }
             .ignoresSafeArea()
             .coordinateSpace(name: "shadow.remote.session.root")
@@ -242,6 +261,14 @@ func panelSurface(cornerRadius: CGFloat) -> some View {
                 x: 0,
                 y: ShadowClientAppShellChrome.Metrics.panelShadowY
             )
+    }
+
+    @MainActor
+    func pasteLocalClipboardIntoRemoteSession() {
+        guard let clipboardText = ShadowClientClipboardBridge.currentString() else {
+            return
+        }
+        remoteDesktopRuntime.sendInput(.text(clipboardText))
     }
 
 func rowSurface(cornerRadius: CGFloat) -> some View {

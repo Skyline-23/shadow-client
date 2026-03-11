@@ -58,6 +58,24 @@ func sunshineInputCodecUsesCharacterMappingForSoftwareKeyboardSyntheticKeyCode()
     #expect(readUInt16LE(payload, at: 9) == 0x8031)
 }
 
+@Test("Sunshine input codec encodes UTF-8 text packet")
+func sunshineInputCodecEncodesUTF8TextPacket() {
+    let encoded = ShadowClientSunshineInputPacketCodec.encode(.text("hello"))
+
+    #expect(encoded != nil)
+    #expect(encoded?.channelID == 0x02)
+
+    guard let payload = encoded?.payload else {
+        Issue.record("Expected UTF-8 text payload")
+        return
+    }
+
+    #expect(payload.count == 13)
+    #expect(readUInt32BE(payload, at: 0) == 9)
+    #expect(readUInt32LE(payload, at: 4) == 0x0000_0017)
+    #expect(String(decoding: payload[8...12], as: UTF8.self) == "hello")
+}
+
 @Test("Sunshine input codec encodes mouse button packet")
 func sunshineInputCodecEncodesMouseButtonPacket() {
     let encoded = ShadowClientSunshineInputPacketCodec.encode(

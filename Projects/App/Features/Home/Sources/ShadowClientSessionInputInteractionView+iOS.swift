@@ -7,6 +7,7 @@ struct ShadowClientSessionInputInteractionPlatformView: UIViewRepresentable {
     let visiblePointerRegions: [CGRect]
     let onInputEvent: @MainActor (ShadowClientRemoteInputEvent) -> Void
     let onSessionTerminateCommand: @MainActor () -> Void
+    let onPasteClipboardCommand: @MainActor () -> Void
 
     func makeUIView(context: Context) -> ShadowClientIOSSessionInputCaptureView {
         let view = ShadowClientIOSSessionInputCaptureView()
@@ -14,6 +15,7 @@ struct ShadowClientSessionInputInteractionPlatformView: UIViewRepresentable {
         view.visiblePointerRegions = visiblePointerRegions
         view.onInputEvent = onInputEvent
         view.onSessionTerminateCommand = onSessionTerminateCommand
+        view.onPasteClipboardCommand = onPasteClipboardCommand
         return view
     }
 
@@ -22,6 +24,7 @@ struct ShadowClientSessionInputInteractionPlatformView: UIViewRepresentable {
         uiView.visiblePointerRegions = visiblePointerRegions
         uiView.onInputEvent = onInputEvent
         uiView.onSessionTerminateCommand = onSessionTerminateCommand
+        uiView.onPasteClipboardCommand = onPasteClipboardCommand
         uiView.requestInputFocusIfNeeded()
         uiView.invalidatePointerSuppressionRegions()
     }
@@ -61,6 +64,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
     var visiblePointerRegions: [CGRect] = []
     var onInputEvent: (@MainActor (ShadowClientRemoteInputEvent) -> Void)?
     var onSessionTerminateCommand: (@MainActor () -> Void)?
+    var onPasteClipboardCommand: (@MainActor () -> Void)?
 
     private let softwareKeyboardInputView = ShadowClientIOSSoftwareKeyboardInputView(frame: .zero)
     private var pointerInteractionRef: UIPointerInteraction?
@@ -347,6 +351,11 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
                 continue
             }
 
+            if isPressed, handleLocalClipboardPasteShortcutIfNeeded(key) {
+                locallyHandledKeyCodes.insert(UInt16(key.keyCode.rawValue))
+                continue
+            }
+
             let hidUsage = UInt16(key.keyCode.rawValue)
             if !isPressed, locallyHandledKeyCodes.remove(hidUsage) != nil {
                 continue
@@ -391,6 +400,22 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         }
 
         onSessionTerminateCommand?()
+        return true
+    }
+
+    private func handleLocalClipboardPasteShortcutIfNeeded(_ key: UIKey) -> Bool {
+        let activeFlags = key.modifierFlags
+        let requiredFlags: UIKeyModifierFlags = [.command]
+        guard requiredFlags.isSubset(of: activeFlags),
+              !activeFlags.contains(.control),
+              !activeFlags.contains(.alternate),
+              !activeFlags.contains(.shift),
+              key.keyCode == .keyboardV || key.charactersIgnoringModifiers.lowercased() == "v"
+        else {
+            return false
+        }
+
+        onPasteClipboardCommand?()
         return true
     }
 

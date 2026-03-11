@@ -466,6 +466,7 @@ public struct ShadowClientRemoteGamepadArrival: Equatable, Sendable {
 public enum ShadowClientRemoteInputEvent: Equatable, Sendable {
     case keyDown(keyCode: UInt16, characters: String?)
     case keyUp(keyCode: UInt16, characters: String?)
+    case text(String)
     case pointerMoved(x: Double, y: Double)
     case pointerPosition(x: Double, y: Double, referenceWidth: Double, referenceHeight: Double)
     case pointerButton(button: ShadowClientRemoteMouseButton, isPressed: Bool)

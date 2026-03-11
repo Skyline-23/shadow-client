@@ -127,18 +127,28 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             return
         }
 
-        guard let drawable = view.currentDrawable,
-              let commandBuffer = commandQueue.makeCommandBuffer()
-        else {
-            return
-        }
-
         let pixelBuffer = snapshot.pixelBuffer?.value
         let colorConfiguration = pixelBuffer.map {
             ShadowClientRealtimeSessionColorPipeline.configuration(
                 for: $0,
                 allowExtendedDynamicRange: surfaceContext.activeDynamicRangeMode == .hdr
             )
+        }
+
+        if let colorConfiguration, let pixelBuffer {
+            let supportsExtendedDynamicRange = cachedExtendedDynamicRangeSupport(for: view)
+            applyColorConfiguration(
+                colorConfiguration,
+                to: view,
+                supportsExtendedDynamicRange: supportsExtendedDynamicRange
+            )
+            _ = pixelBuffer
+        }
+
+        guard let drawable = view.currentDrawable,
+              let commandBuffer = commandQueue.makeCommandBuffer()
+        else {
+            return
         }
 
         if let pixelBuffer,
@@ -166,12 +176,6 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             let supportsExtendedDynamicRange = cachedExtendedDynamicRangeSupport(for: view)
             let shouldToneMapHDRToSDR =
                 colorConfiguration.prefersExtendedDynamicRange && !supportsExtendedDynamicRange
-
-            applyColorConfiguration(
-                colorConfiguration,
-                to: view,
-                supportsExtendedDynamicRange: supportsExtendedDynamicRange
-            )
 
             var sourceOptions: [CIImageOption: Any] = [:]
             if ShadowClientRealtimeSessionColorPipeline.shouldAttachExplicitSourceColorSpace(for: pixelBuffer) {
