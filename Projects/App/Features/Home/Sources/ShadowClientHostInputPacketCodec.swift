@@ -1,6 +1,6 @@
 import Foundation
 
-enum ShadowClientSunshineInputPacketCodec {
+enum ShadowClientHostInputPacketCodec {
     struct EncodedInputPacket: Sendable {
         let channelID: UInt8
         let payload: Data
@@ -61,7 +61,7 @@ enum ShadowClientSunshineInputPacketCodec {
                 channelID: Channel.keyboard,
                 payload: makeKeyboardPacket(
                     magic: PacketMagic.keyDown,
-                    virtualKey: normalizedSunshineKeyboardKeyCode(virtualKey)
+                    virtualKey: normalizedHostKeyboardKeyCode(virtualKey)
                 )
             )
         case let .keyUp(keyCode, characters):
@@ -75,7 +75,7 @@ enum ShadowClientSunshineInputPacketCodec {
                 channelID: Channel.keyboard,
                 payload: makeKeyboardPacket(
                     magic: PacketMagic.keyUp,
-                    virtualKey: normalizedSunshineKeyboardKeyCode(virtualKey)
+                    virtualKey: normalizedHostKeyboardKeyCode(virtualKey)
                 )
             )
         case let .text(text):
@@ -335,7 +335,7 @@ enum ShadowClientSunshineInputPacketCodec {
         return Int16(clamping: min(max(rounded, 0), upperBound))
     }
 
-    private static func normalizedSunshineKeyboardKeyCode(_ virtualKey: UInt16) -> UInt16 {
+    private static func normalizedHostKeyboardKeyCode(_ virtualKey: UInt16) -> UInt16 {
         // Moonlight sets the high bit for Sunshine keyboard input to match
         // the server-side scancode normalization path.
         0x8000 | virtualKey

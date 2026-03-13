@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-enum ShadowClientSunshineControlChannelMode: Sendable {
+enum ShadowClientHostControlChannelMode: Sendable {
     case plaintext
     case encryptedV2(key: Data)
 
@@ -73,14 +73,14 @@ enum ShadowClientSunshineControlChannelMode: Sendable {
     }
 }
 
-enum ShadowClientSunshineControlEncryptionError: Error {
+enum ShadowClientHostControlEncryptionError: Error {
     case invalidKeyLength(Int)
     case invalidEncryptedPacketLength
     case invalidEncryptedPayload
     case invalidEncryptedHeaderType(UInt16)
 }
 
-struct ShadowClientSunshineControlEncryptionCodec: Sendable {
+struct ShadowClientHostControlEncryptionCodec: Sendable {
     static let encryptedHeaderType: UInt16 = 0x0001
     private static let gcmTagLength = 16
 
@@ -88,7 +88,7 @@ struct ShadowClientSunshineControlEncryptionCodec: Sendable {
 
     init(keyData: Data) throws {
         guard keyData.count == 16 else {
-            throw ShadowClientSunshineControlEncryptionError.invalidKeyLength(keyData.count)
+            throw ShadowClientHostControlEncryptionError.invalidKeyLength(keyData.count)
         }
         self.keyData = keyData
     }
@@ -100,7 +100,7 @@ struct ShadowClientSunshineControlEncryptionCodec: Sendable {
         sourceByte10: UInt8 = 0x43
     ) throws -> Data {
         guard let payloadLength = UInt16(exactly: payload.count) else {
-            throw ShadowClientSunshineControlEncryptionError.invalidEncryptedPayload
+            throw ShadowClientHostControlEncryptionError.invalidEncryptedPayload
         }
         let plaintext = makeV2ControlMessage(
             type: type,
@@ -113,7 +113,7 @@ struct ShadowClientSunshineControlEncryptionCodec: Sendable {
 
         let length = 4 + Self.gcmTagLength + sealed.ciphertext.count
         guard let encodedLength = UInt16(exactly: length) else {
-            throw ShadowClientSunshineControlEncryptionError.invalidEncryptedPacketLength
+            throw ShadowClientHostControlEncryptionError.invalidEncryptedPacketLength
         }
 
         var packet = Data()
@@ -128,25 +128,25 @@ struct ShadowClientSunshineControlEncryptionCodec: Sendable {
 
     func decryptControlMessageToV1(_ encryptedPacket: Data) throws -> Data {
         guard encryptedPacket.count >= 4 else {
-            throw ShadowClientSunshineControlEncryptionError.invalidEncryptedPacketLength
+            throw ShadowClientHostControlEncryptionError.invalidEncryptedPacketLength
         }
 
         let headerType = encryptedPacket.readUInt16LE(at: 0)
         guard headerType == Self.encryptedHeaderType else {
-            throw ShadowClientSunshineControlEncryptionError.invalidEncryptedHeaderType(headerType)
+            throw ShadowClientHostControlEncryptionError.invalidEncryptedHeaderType(headerType)
         }
 
         let encryptedLength = Int(encryptedPacket.readUInt16LE(at: 2))
         let expectedLength = encryptedLength + 4
         guard encryptedPacket.count >= expectedLength, encryptedLength >= 4 + Self.gcmTagLength else {
-            throw ShadowClientSunshineControlEncryptionError.invalidEncryptedPacketLength
+            throw ShadowClientHostControlEncryptionError.invalidEncryptedPacketLength
         }
 
         let sequence = encryptedPacket.readUInt32LE(at: 4)
         let tagStart = 8
         let tagEnd = tagStart + Self.gcmTagLength
         guard tagEnd <= expectedLength else {
-            throw ShadowClientSunshineControlEncryptionError.invalidEncryptedPacketLength
+            throw ShadowClientHostControlEncryptionError.invalidEncryptedPacketLength
         }
 
         let ciphertext = Data(encryptedPacket[tagEnd ..< expectedLength])
@@ -159,12 +159,12 @@ struct ShadowClientSunshineControlEncryptionCodec: Sendable {
         )
         let plaintext = try AES.GCM.open(sealedBox, using: key)
         guard plaintext.count >= 4 else {
-            throw ShadowClientSunshineControlEncryptionError.invalidEncryptedPayload
+            throw ShadowClientHostControlEncryptionError.invalidEncryptedPayload
         }
 
         let payloadLength = Int(plaintext.readUInt16LE(at: 2))
         guard plaintext.count >= 4 + payloadLength else {
-            throw ShadowClientSunshineControlEncryptionError.invalidEncryptedPayload
+            throw ShadowClientHostControlEncryptionError.invalidEncryptedPayload
         }
 
         var v1Payload = Data()

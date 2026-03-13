@@ -29,16 +29,16 @@ actor ShadowClientSunshineControlChannelRuntime {
     private var controlReliableSequenceNumber: UInt16 = 0
     private var outgoingReliableSequenceByChannel: [UInt8: UInt16] = [:]
     private var connectID: UInt32 = 0
-    private var controlChannelMode: ShadowClientSunshineControlChannelMode = .plaintext
-    private var controlEncryptionCodec: ShadowClientSunshineControlEncryptionCodec?
+    private var controlChannelMode: ShadowClientHostControlChannelMode = .plaintext
+    private var controlEncryptionCodec: ShadowClientHostControlEncryptionCodec?
     private var controlEncryptionSequenceNumber: UInt32 = 0
     private var receivedControllerFeedbackEventCount: Int = 0
     private var receivedControlMessageTypeCounts: [UInt16: Int] = [:]
     private var controlDecryptFailureCount: Int = 0
 
     init(
-        connectTimeout: Duration = ShadowClientSunshineControlChannelDefaults.connectTimeout,
-        commandAcknowledgeTimeout: Duration = ShadowClientSunshineControlChannelDefaults.commandAcknowledgeTimeout,
+        connectTimeout: Duration = ShadowClientHostControlChannelDefaults.connectTimeout,
+        commandAcknowledgeTimeout: Duration = ShadowClientHostControlChannelDefaults.commandAcknowledgeTimeout,
         onRoundTripSample: (@Sendable (Double) async -> Void)? = nil,
         onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)? = nil,
         onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)? = nil
@@ -54,7 +54,7 @@ actor ShadowClientSunshineControlChannelRuntime {
         host: NWEndpoint.Host,
         port: NWEndpoint.Port,
         connectData: UInt32?,
-        mode: ShadowClientSunshineControlChannelMode = .plaintext
+        mode: ShadowClientHostControlChannelMode = .plaintext
     ) async throws {
         stop()
         do {
@@ -62,7 +62,7 @@ actor ShadowClientSunshineControlChannelRuntime {
             case .plaintext:
                 controlEncryptionCodec = nil
             case let .encryptedV2(key):
-                controlEncryptionCodec = try ShadowClientSunshineControlEncryptionCodec(keyData: key)
+                controlEncryptionCodec = try ShadowClientHostControlEncryptionCodec(keyData: key)
             }
         } catch {
             throw ShadowClientSunshineControlChannelError.invalidEncryptedControlKey
@@ -484,7 +484,7 @@ actor ShadowClientSunshineControlChannelRuntime {
         )
         guard roundTripSampleMs.isFinite,
               roundTripSampleMs >= 0,
-              roundTripSampleMs <= ShadowClientSunshineControlChannelDefaults.maximumRoundTripSampleMs
+              roundTripSampleMs <= ShadowClientHostControlChannelDefaults.maximumRoundTripSampleMs
         else {
             return
         }

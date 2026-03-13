@@ -259,13 +259,13 @@ public enum ShadowClientTelemetrySimulationDefaults {
     public static let stableAVSyncOffsetMs = 11.0
 }
 
-public enum ShadowClientSunshineControlChannelDefaults {
+public enum ShadowClientHostControlChannelDefaults {
     public static let connectTimeout: Duration = .seconds(2)
     public static let commandAcknowledgeTimeout: Duration = .seconds(2)
     public static let maximumRoundTripSampleMs = 5_000.0
 }
 
-public enum ShadowClientSunshineSessionDefaults {
+public enum ShadowClientHostSessionDefaults {
     public static let prefersSessionIdentifierV1 = true
     public static let supportsEncryptedControlChannelV2 = true
 }
