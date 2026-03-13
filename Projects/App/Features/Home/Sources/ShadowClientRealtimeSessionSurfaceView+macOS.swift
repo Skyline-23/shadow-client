@@ -6,6 +6,7 @@ import CoreImage
 import CoreVideo
 import Foundation
 import MetalKit
+import os
 
 struct ShadowClientRealtimeSessionSurfaceRepresentable: NSViewRepresentable {
     let surfaceContext: ShadowClientRealtimeSessionSurfaceContext
@@ -61,6 +62,10 @@ struct ShadowClientRealtimeSessionSurfaceRepresentable: NSViewRepresentable {
 
 @MainActor
 final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate {
+    private let logger = Logger(
+        subsystem: "com.skyline23.shadow-client",
+        category: "SurfaceView.macOS"
+    )
     private let surfaceContext: ShadowClientRealtimeSessionSurfaceContext
     private let frameStore: ShadowClientRealtimeSessionFrameStore
     private let commandQueue: MTLCommandQueue
@@ -76,6 +81,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private var cachedTransform: CGAffineTransform = .identity
     private var lastRenderedFrameRevision: UInt64 = .max
     private var lastRenderedDrawableSize: CGSize = .zero
+    private var hasLoggedRenderPathForCurrentSession = false
 
     init?(
         device: MTLDevice,
@@ -88,8 +94,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         self.frameStore = surfaceContext.frameStore
         self.commandQueue = commandQueue
         self.yuvPipeline = ShadowClientRealtimeSessionYUVMetalPipeline(
-            device: device,
-            colorPixelFormat: .bgra8Unorm
+            device: device
         )
         self.ciContext = CIContext(
             mtlCommandQueue: commandQueue,
@@ -126,6 +131,9 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         }
 
         let pixelBuffer = snapshot.pixelBuffer?.value
+        if pixelBuffer == nil {
+            hasLoggedRenderPathForCurrentSession = false
+        }
         let colorConfiguration = pixelBuffer.map {
             ShadowClientRealtimeSessionColorPipeline.configuration(
                 for: $0,
@@ -150,52 +158,57 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         }
 
         if let pixelBuffer,
-           let colorConfiguration,
            let renderPass = view.currentRenderPassDescriptor,
            let yuvPipeline,
-           yuvPipeline.canRender(pixelBuffer),
-           !colorConfiguration.prefersExtendedDynamicRange
+           yuvPipeline.canRender(pixelBuffer)
         {
-            _ = yuvPipeline.render(
+            if !hasLoggedRenderPathForCurrentSession {
+                logger.notice("Surface render path=metal-yuv pixel-format=0x\(String(CVPixelBufferGetPixelFormatType(pixelBuffer), radix: 16), privacy: .public)")
+                hasLoggedRenderPathForCurrentSession = true
+            }
+            let didRender = yuvPipeline.render(
                 pixelBuffer: pixelBuffer,
                 into: renderPass,
                 commandBuffer: commandBuffer,
-                drawableSize: drawableSize
+                drawableSize: drawableSize,
+                colorPixelFormat: view.colorPixelFormat
             )
-            commandBuffer.present(drawable)
-            commandBuffer.commit()
-            surfaceContext.recordPresentedVideoFrame()
-            lastRenderedFrameRevision = snapshot.revision
-            lastRenderedDrawableSize = drawableSize
-            return
+            if didRender {
+                commandBuffer.present(drawable)
+                commandBuffer.commit()
+                surfaceContext.recordPresentedVideoFrame()
+                lastRenderedFrameRevision = snapshot.revision
+                lastRenderedDrawableSize = drawableSize
+                return
+            }
+            logger.error("Surface render path=metal-yuv failed; falling back to CI")
         }
 
         if let pixelBuffer, let colorConfiguration {
+            if !hasLoggedRenderPathForCurrentSession {
+                logger.notice("Surface render path=core-image pixel-format=0x\(String(CVPixelBufferGetPixelFormatType(pixelBuffer), radix: 16), privacy: .public)")
+                hasLoggedRenderPathForCurrentSession = true
+            }
             let supportsExtendedDynamicRange = supportsExtendedDynamicRangeDisplay(for: view)
             let shouldToneMapHDRToSDR =
                 colorConfiguration.prefersExtendedDynamicRange && !supportsExtendedDynamicRange
 
-            let sourceOptions: [CIImageOption: Any] = [
-                .colorSpace: colorConfiguration.renderColorSpace,
-            ]
+            let sourceOptions = ciSourceOptions(
+                for: pixelBuffer,
+                renderColorSpace: colorConfiguration.renderColorSpace
+            )
             var sourceImage = CIImage(
                 cvPixelBuffer: pixelBuffer,
                 options: sourceOptions
             )
-            if let expansion = colorConfiguration.videoRangeExpansion {
-                sourceImage = expandVideoRange(
-                    sourceImage,
-                    scale: expansion.scale,
-                    bias: expansion.bias
-                )
-            }
             if shouldToneMapHDRToSDR {
                 sourceImage = toneMapHDRToSDRSoftwareFallback(sourceImage)
             }
             let outputColorSpace = resolvedDisplayColorSpace(
                 for: view,
                 prefersExtendedDynamicRange: colorConfiguration.prefersExtendedDynamicRange && !shouldToneMapHDRToSDR,
-                fallback: colorConfiguration.displayColorSpace
+                sdrSourceColorSpace: colorConfiguration.renderColorSpace,
+                hdrDisplayColorSpace: colorConfiguration.displayColorSpace
             )
             let drawableRect = CGRect(origin: .zero, size: drawableSize)
             let sourceRect = sourceImage.extent
@@ -273,7 +286,8 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         view.colorspace = resolvedDisplayColorSpace(
             for: view,
             prefersExtendedDynamicRange: shouldRenderExtendedDynamicRange,
-            fallback: configuration.displayColorSpace
+            sdrSourceColorSpace: configuration.renderColorSpace,
+            hdrDisplayColorSpace: configuration.displayColorSpace
         )
 
         if #available(macOS 10.15, *),
@@ -282,7 +296,8 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             metalLayer.colorspace = resolvedDisplayColorSpace(
                 for: view,
                 prefersExtendedDynamicRange: shouldRenderExtendedDynamicRange,
-                fallback: configuration.displayColorSpace
+                sdrSourceColorSpace: configuration.renderColorSpace,
+                hdrDisplayColorSpace: configuration.displayColorSpace
             )
             metalLayer.wantsExtendedDynamicRangeContent = shouldRenderExtendedDynamicRange
         }
@@ -300,17 +315,33 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private func resolvedDisplayColorSpace(
         for view: MTKView,
         prefersExtendedDynamicRange: Bool,
-        fallback: CGColorSpace
+        sdrSourceColorSpace: CGColorSpace,
+        hdrDisplayColorSpace: CGColorSpace
     ) -> CGColorSpace {
         guard let screen = view.window?.screen ?? NSScreen.main else {
-            return prefersExtendedDynamicRange ? fallback : ShadowClientRealtimeSessionColorPipeline.defaultDisplayColorSpace
+            return prefersExtendedDynamicRange ? hdrDisplayColorSpace : sdrSourceColorSpace
         }
 
         if prefersExtendedDynamicRange {
-            return screen.colorSpace?.cgColorSpace ?? fallback
+            return screen.colorSpace?.cgColorSpace ?? hdrDisplayColorSpace
         }
 
-        return screen.colorSpace?.cgColorSpace ?? ShadowClientRealtimeSessionColorPipeline.defaultDisplayColorSpace
+        return sdrSourceColorSpace
+    }
+
+    private func ciSourceOptions(
+        for pixelBuffer: CVPixelBuffer,
+        renderColorSpace: CGColorSpace
+    ) -> [CIImageOption: Any] {
+        switch CVPixelBufferGetPixelFormatType(pixelBuffer) {
+        case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
+             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+            return [:]
+        default:
+            return [.colorSpace: renderColorSpace]
+        }
     }
 
     private func toneMapHDRToSDRSoftwareFallback(_ image: CIImage) -> CIImage {

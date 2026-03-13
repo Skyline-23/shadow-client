@@ -74,11 +74,11 @@ private actor ShadowClientControlRoundTripStreamHub {
 }
 
 private actor ShadowClientControllerFeedbackStreamHub {
-    private var continuations: [UUID: AsyncStream<ShadowClientSunshineControllerFeedbackEvent>.Continuation] = [:]
+    private var continuations: [UUID: AsyncStream<ShadowClientHostControllerFeedbackEvent>.Continuation] = [:]
 
     func register(
         id: UUID,
-        continuation: AsyncStream<ShadowClientSunshineControllerFeedbackEvent>.Continuation
+        continuation: AsyncStream<ShadowClientHostControllerFeedbackEvent>.Continuation
     ) {
         continuations[id] = continuation
     }
@@ -87,7 +87,7 @@ private actor ShadowClientControllerFeedbackStreamHub {
         continuations.removeValue(forKey: id)
     }
 
-    func publish(_ event: ShadowClientSunshineControllerFeedbackEvent) {
+    func publish(_ event: ShadowClientHostControllerFeedbackEvent) {
         continuations.values.forEach { $0.yield(event) }
     }
 
@@ -220,7 +220,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         }
     }
 
-    func controllerFeedbackAsyncStream() -> AsyncStream<ShadowClientSunshineControllerFeedbackEvent> {
+    func controllerFeedbackAsyncStream() -> AsyncStream<ShadowClientHostControllerFeedbackEvent> {
         AsyncStream(bufferingPolicy: .bufferingNewest(8)) { continuation in
             let identifier = UUID()
             let feedbackHub = controllerFeedbackStreamHub
@@ -331,7 +331,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     }
 
     func publishControllerFeedbackEvent(
-        _ event: ShadowClientSunshineControllerFeedbackEvent
+        _ event: ShadowClientHostControllerFeedbackEvent
     ) {
         let feedbackHub = controllerFeedbackStreamHub
         Task {

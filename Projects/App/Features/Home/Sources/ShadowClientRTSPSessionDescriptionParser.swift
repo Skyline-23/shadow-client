@@ -1,6 +1,6 @@
 import Foundation
 
-public enum ShadowClientVideoCodec: String, Equatable, Sendable {
+public enum ShadowClientVideoCodec: String, Codable, Equatable, Sendable {
     case h264
     case h265
     case av1

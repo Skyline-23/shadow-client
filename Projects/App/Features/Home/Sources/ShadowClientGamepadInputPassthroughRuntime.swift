@@ -143,7 +143,7 @@ final class ShadowClientGamepadInputPassthroughRuntime {
         }
     }
 
-    func applyControllerFeedback(_ event: ShadowClientSunshineControllerFeedbackEvent) {
+    func applyControllerFeedback(_ event: ShadowClientHostControllerFeedbackEvent) {
         guard isSessionActive else {
             logger.notice("RUMBLE TRACE dropped feedback because session is inactive")
             return
@@ -313,7 +313,7 @@ final class ShadowClientGamepadInputPassthroughRuntime {
             return
         }
         announcedControllerIndices.insert(controllerNumber)
-        let arrival = ShadowClientSunshineInputPacketCodec.defaultGamepadArrival(
+        let arrival = ShadowClientHostInputPacketCodec.defaultGamepadArrival(
             controllerNumber: controllerNumber,
             activeGamepadMask: activeMask,
             supportedButtonFlags: supportedGamepadButtons
@@ -461,7 +461,7 @@ final class ShadowClientGamepadInputPassthroughRuntime {
 #endif
     }
 
-    private func applyRumble(_ rumble: ShadowClientSunshineControllerRumbleEvent) {
+    private func applyRumble(_ rumble: ShadowClientHostControllerRumbleEvent) {
         guard let controller = controller(for: rumble.controllerNumber) else {
             logger.notice(
                 "RUMBLE TRACE dropped rumble: unknown controllerNumber=\(rumble.controllerNumber, privacy: .public)"
@@ -509,7 +509,7 @@ final class ShadowClientGamepadInputPassthroughRuntime {
         )
     }
 
-    private func applyTriggerRumble(_ rumble: ShadowClientSunshineControllerTriggerRumbleEvent) {
+    private func applyTriggerRumble(_ rumble: ShadowClientHostControllerTriggerRumbleEvent) {
         guard let controller = controller(for: rumble.controllerNumber) else {
             logger.notice(
                 "RUMBLE TRACE dropped trigger rumble: unknown controllerNumber=\(rumble.controllerNumber, privacy: .public)"
@@ -682,7 +682,7 @@ final class ShadowClientGamepadInputPassthroughRuntime {
     }
 
     private func controllerFeedbackSummary(
-        for event: ShadowClientSunshineControllerFeedbackEvent
+        for event: ShadowClientHostControllerFeedbackEvent
     ) -> String {
         switch event {
         case let .rumble(rumble):

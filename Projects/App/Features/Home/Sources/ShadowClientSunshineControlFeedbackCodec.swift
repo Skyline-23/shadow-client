@@ -23,9 +23,9 @@ struct ShadowClientSunshineTerminationEvent: Equatable, Sendable {
     var message: String {
         switch reasonCode {
         case 0x80030023:
-            return "Sunshine terminated the session gracefully (0x80030023)."
+            return "Apollo terminated the session gracefully (0x80030023)."
         default:
-            return String(format: "Sunshine terminated the session (0x%08X).", reasonCode)
+            return String(format: "Apollo terminated the session (0x%08X).", reasonCode)
         }
     }
 }

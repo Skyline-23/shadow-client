@@ -2,9 +2,14 @@ import AVFoundation
 import Foundation
 import ShadowClientFeatureHome
 import SwiftOpus
+import os
 
 public enum ShadowClientNativeAudioDecodingPlugin {
     private static let compatibilityProfile = ShadowClientNativeOpusCompatibilityProfile.detect()
+    private static let logger = Logger(
+        subsystem: "com.skyline23.shadow-client",
+        category: "NativeAudioDecoding"
+    )
     private actor RegistrationState {
         private var didRegister = false
 
@@ -13,11 +18,17 @@ public enum ShadowClientNativeAudioDecodingPlugin {
                 return
             }
             didRegister = true
+            ShadowClientNativeAudioDecodingPlugin.logger.notice(
+                "Registering native audio decoders runtime-libopus=\(compatibilityProfile.runtimeLibopusVersionString, privacy: .public) resolved-tag=\(compatibilityProfile.resolvedRuntimeLibopusTag?.rawValue ?? "unresolved", privacy: .public) surround=\(compatibilityProfile.supportsMultistreamLayout, privacy: .public)"
+            )
             await ShadowClientRealtimeCustomAudioDecoderRegistry.register(
                 provider: { track in
                     guard track.codec == .opus, track.channelCount > 0 else {
                         return nil
                     }
+                    ShadowClientNativeAudioDecodingPlugin.logger.notice(
+                        "Native Opus decoder requested sampleRate=\(track.sampleRate, privacy: .public) channels=\(track.channelCount, privacy: .public)"
+                    )
                     return try ShadowClientNativeOpusDecoder(
                         sampleRate: track.sampleRate,
                         channels: track.channelCount,

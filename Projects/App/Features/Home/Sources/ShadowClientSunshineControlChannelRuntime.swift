@@ -99,7 +99,7 @@ actor ShadowClientSunshineControlChannelRuntime {
             try await sendBootstrapStartMessages(over: connection)
 
             logger.notice(
-                "Sunshine ENet control bootstrap ready on UDP \(port.rawValue, privacy: .public) peer=\(self.outgoingPeerID, privacy: .public)"
+                "Apollo ENet control bootstrap ready on UDP \(port.rawValue, privacy: .public) peer=\(self.outgoingPeerID, privacy: .public)"
             )
 
             receiveTask = Task { [weak self] in
@@ -176,10 +176,10 @@ actor ShadowClientSunshineControlChannelRuntime {
                 over: connection
             )
             logger.notice(
-                "Sunshine video recovery request sent type=\(request.type, privacy: .public) channel=\(request.channelID, privacy: .public)"
+                "Apollo video recovery request sent type=\(request.type, privacy: .public) channel=\(request.channelID, privacy: .public)"
             )
         } catch {
-            logger.error("Sunshine video recovery request failed: \(error.localizedDescription, privacy: .public)")
+            logger.error("Apollo video recovery request failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -203,11 +203,11 @@ actor ShadowClientSunshineControlChannelRuntime {
                 over: connection
             )
             logger.notice(
-                "Sunshine reference frame invalidation request sent type=\(request.type, privacy: .public) channel=\(request.channelID, privacy: .public) range=\(startFrameIndex, privacy: .public)-\(endFrameIndex, privacy: .public)"
+                "Apollo reference frame invalidation request sent type=\(request.type, privacy: .public) channel=\(request.channelID, privacy: .public) range=\(startFrameIndex, privacy: .public)-\(endFrameIndex, privacy: .public)"
             )
         } catch {
             logger.error(
-                "Sunshine reference frame invalidation request failed: \(error.localizedDescription, privacy: .public)"
+                "Apollo reference frame invalidation request failed: \(error.localizedDescription, privacy: .public)"
             )
         }
     }
@@ -286,7 +286,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                         command: command
                     ) {
                         logger.error(
-                            "Sunshine control termination received reason=0x\(String(terminationEvent.reasonCode, radix: 16), privacy: .public)"
+                            "Apollo control termination received reason=0x\(String(terminationEvent.reasonCode, radix: 16), privacy: .public)"
                         )
                         await onTermination?(terminationEvent)
                     }
@@ -306,7 +306,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                 }
             } catch {
                 if !Task.isCancelled {
-                    logger.debug("Sunshine ENet control receive loop ended: \(error.localizedDescription, privacy: .public)")
+                    logger.debug("Apollo ENet control receive loop ended: \(error.localizedDescription, privacy: .public)")
                 }
                 break
             }
@@ -337,7 +337,7 @@ actor ShadowClientSunshineControlChannelRuntime {
         let reliableSequenceNumber = nextReliableSequenceNumber(for: channelID)
         let controlModeLabel = controlEncryptionCodec == nil ? "plain" : "enc-v2"
         logger.notice(
-            "Sunshine control send type=\(type, privacy: .public) relSeq=\(reliableSequenceNumber, privacy: .public) payloadBytes=\(controlPayload.count, privacy: .public) mode=\(controlModeLabel, privacy: .public)"
+            "Apollo control send type=\(type, privacy: .public) relSeq=\(reliableSequenceNumber, privacy: .public) payloadBytes=\(controlPayload.count, privacy: .public) mode=\(controlModeLabel, privacy: .public)"
         )
         let packet = try ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
             outgoingPeerID: outgoingPeerID,
@@ -387,7 +387,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                 controlEncryptionSequenceNumber &+= 1
                 return encryptedPayload
             } catch {
-                logger.error("Sunshine encrypted control payload encoding failed: \(error.localizedDescription, privacy: .public)")
+                logger.error("Apollo encrypted control payload encoding failed: \(error.localizedDescription, privacy: .public)")
                 throw ShadowClientSunshineControlChannelError.encryptedControlEncodingFailed
             }
         }
@@ -427,10 +427,10 @@ actor ShadowClientSunshineControlChannelRuntime {
         while !Task.isCancelled {
             let datagram = try await Self.receiveDatagram(over: connection)
             logger.notice(
-                "Sunshine control ACK wait datagram bytes=\(datagram.count, privacy: .public) expectedRelSeq=\(expectedReliableSequenceNumber, privacy: .public)"
+                "Apollo control ACK wait datagram bytes=\(datagram.count, privacy: .public) expectedRelSeq=\(expectedReliableSequenceNumber, privacy: .public)"
             )
             guard let packet = ShadowClientSunshineENetPacketCodec.parsePacket(datagram) else {
-                logger.error("Sunshine control ACK wait failed to parse ENet packet")
+                logger.error("Apollo control ACK wait failed to parse ENet packet")
                 continue
             }
 
@@ -441,7 +441,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                 )
 
                 logger.notice(
-                    "Sunshine control ACK wait command number=\(command.number, privacy: .public) flags=\(command.flags, privacy: .public) relSeq=\(command.reliableSequenceNumber, privacy: .public) channel=\(command.channelID, privacy: .public)"
+                    "Apollo control ACK wait command number=\(command.number, privacy: .public) flags=\(command.flags, privacy: .public) relSeq=\(command.reliableSequenceNumber, privacy: .public) channel=\(command.channelID, privacy: .public)"
                 )
                 if command.isAcknowledgeRequired, let sentTime = packet.sentTime {
                     try await acknowledge(
@@ -457,7 +457,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                     command: command
                 ), acknowledge.receivedReliableSequenceNumber == expectedReliableSequenceNumber {
                     logger.notice(
-                        "Sunshine control ACK matched relSeq=\(acknowledge.receivedReliableSequenceNumber, privacy: .public)"
+                        "Apollo control ACK matched relSeq=\(acknowledge.receivedReliableSequenceNumber, privacy: .public)"
                     )
                     return
                 }
@@ -674,7 +674,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                     lastPeerPingUptime = nowUptime
                     if didLogENetPing < 4 {
                         logger.notice(
-                            "Sunshine low-level ENet ping sent relSeq=\(reliableSequenceNumber, privacy: .public)"
+                            "Apollo low-level ENet ping sent relSeq=\(reliableSequenceNumber, privacy: .public)"
                         )
                         didLogENetPing += 1
                     }
@@ -687,7 +687,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                 )
             } catch {
                 if !didLogFailure {
-                    logger.error("Sunshine control periodic ping failed: \(error.localizedDescription, privacy: .public)")
+                    logger.error("Apollo control periodic ping failed: \(error.localizedDescription, privacy: .public)")
                     didLogFailure = true
                 }
             }

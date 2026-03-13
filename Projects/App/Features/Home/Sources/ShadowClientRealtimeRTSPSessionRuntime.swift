@@ -26,6 +26,170 @@ extension ShadowClientRealtimeSessionRuntimeError: LocalizedError {
     }
 }
 
+private actor ShadowClientRealtimeInputChannelGateway {
+    private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "InputChannel")
+    private let inputChannelUnavailableLogMinimumIntervalSeconds: TimeInterval = 2.0
+
+    private var controlChannelRuntime: ShadowClientHostControlChannelRuntime?
+    private var loggedInputSendKinds = Set<String>()
+    private var loggedInputDropKinds = Set<String>()
+    private var transientInputSendFailureCount = 0
+    private var firstTransientInputSendFailureUptime: TimeInterval = 0
+    private var lastInputChannelUnavailableLogUptime: TimeInterval = 0
+
+    func install(_ runtime: ShadowClientHostControlChannelRuntime?) {
+        controlChannelRuntime = runtime
+        if runtime == nil {
+            resetFailureState()
+        }
+    }
+
+    func clear() {
+        controlChannelRuntime = nil
+        loggedInputSendKinds.removeAll(keepingCapacity: false)
+        loggedInputDropKinds.removeAll(keepingCapacity: false)
+        resetFailureState()
+    }
+
+    func sendInput(
+        _ event: ShadowClientRemoteInputEvent,
+        ensureRuntime: @escaping @Sendable () async -> ShadowClientHostControlChannelRuntime?,
+        invalidateRuntime: @escaping @Sendable (ShadowClientHostControlChannelRuntime) async -> Void
+    ) async throws {
+        guard let packet = ShadowClientHostInputPacketCodec.encode(event) else {
+            let kind = inputEventKind(event)
+            if loggedInputDropKinds.insert(kind).inserted {
+                logger.notice("Apollo input dropped during encode for event \(kind, privacy: .public)")
+            }
+            return
+        }
+
+        let kind = inputEventKind(event)
+        if loggedInputSendKinds.insert(kind).inserted {
+            logger.notice(
+                "Apollo input send enabled for event \(kind, privacy: .public) channel=\(packet.channelID, privacy: .public) bytes=\(packet.payload.count, privacy: .public)"
+            )
+        }
+
+        guard let runtime = await resolvedRuntime(ensureRuntime: ensureRuntime) else {
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - lastInputChannelUnavailableLogUptime >= inputChannelUnavailableLogMinimumIntervalSeconds {
+                logger.notice("Apollo input send skipped: control channel unavailable")
+                lastInputChannelUnavailableLogUptime = now
+            }
+            return
+        }
+
+        do {
+            try await runtime.sendInputPacket(
+                packet.payload,
+                channelID: packet.channelID
+            )
+            resetFailureState()
+        } catch {
+            if ShadowClientRealtimeRTSPSessionRuntime.isTransientInputSendError(error) {
+                let now = ProcessInfo.processInfo.systemUptime
+                if firstTransientInputSendFailureUptime == 0 ||
+                    now - firstTransientInputSendFailureUptime >
+                    ShadowClientRealtimeSessionDefaults.transientInputSendFailureBurstWindowSeconds
+                {
+                    firstTransientInputSendFailureUptime = now
+                    transientInputSendFailureCount = 0
+                }
+                transientInputSendFailureCount += 1
+                if ShadowClientRealtimeRTSPSessionRuntime.shouldResetControlChannelAfterTransientInputSendFailures(
+                    failureCount: transientInputSendFailureCount,
+                    now: now,
+                    firstFailureUptime: firstTransientInputSendFailureUptime
+                ) {
+                    logger.notice(
+                        "Apollo input channel reset after transient send failure burst (count=\(self.transientInputSendFailureCount, privacy: .public), window=\(ShadowClientRealtimeSessionDefaults.transientInputSendFailureBurstWindowSeconds, privacy: .public)s)"
+                    )
+                    await invalidateRuntime(runtime)
+                    controlChannelRuntime = nil
+                    resetFailureState()
+                }
+                return
+            }
+            if ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(error) {
+                logger.notice(
+                    "Apollo input channel reset after send failure: \(error.localizedDescription, privacy: .public)"
+                )
+                await invalidateRuntime(runtime)
+                controlChannelRuntime = nil
+                resetFailureState()
+                return
+            }
+            throw error
+        }
+    }
+
+    func sendKeepAlive(
+        ensureRuntime: @escaping @Sendable () async -> ShadowClientHostControlChannelRuntime?,
+        invalidateRuntime: @escaping @Sendable (ShadowClientHostControlChannelRuntime) async -> Void
+    ) async throws {
+        guard let runtime = await resolvedRuntime(ensureRuntime: ensureRuntime) else {
+            throw ShadowClientRealtimeSessionRuntimeError.connectionClosed
+        }
+
+        do {
+            try await runtime.sendInputKeepAlive()
+            resetFailureState()
+        } catch {
+            if ShadowClientRealtimeRTSPSessionRuntime.isTransientInputSendError(error) {
+                return
+            }
+            if ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(error) {
+                await invalidateRuntime(runtime)
+                controlChannelRuntime = nil
+                resetFailureState()
+                throw ShadowClientRealtimeSessionRuntimeError.connectionClosed
+            }
+            throw error
+        }
+    }
+
+    private func resolvedRuntime(
+        ensureRuntime: @escaping @Sendable () async -> ShadowClientHostControlChannelRuntime?
+    ) async -> ShadowClientHostControlChannelRuntime? {
+        if let controlChannelRuntime {
+            return controlChannelRuntime
+        }
+        let runtime = await ensureRuntime()
+        controlChannelRuntime = runtime
+        return runtime
+    }
+
+    private func resetFailureState() {
+        transientInputSendFailureCount = 0
+        firstTransientInputSendFailureUptime = 0
+        lastInputChannelUnavailableLogUptime = 0
+    }
+
+    private func inputEventKind(_ event: ShadowClientRemoteInputEvent) -> String {
+        switch event {
+        case .keyDown:
+            return "keyDown"
+        case .keyUp:
+            return "keyUp"
+        case .text:
+            return "text"
+        case .pointerMoved:
+            return "pointerMoved"
+        case .pointerPosition:
+            return "pointerPosition"
+        case .pointerButton:
+            return "pointerButton"
+        case .scroll:
+            return "scroll"
+        case .gamepadState:
+            return "gamepadState"
+        case .gamepadArrival:
+            return "gamepadArrival"
+        }
+    }
+}
+
 private actor ShadowClientVideoDecodeQueue {
     private let capacity: Int
     private var bufferedUnits: [ShadowClientRealtimeRTSPSessionRuntime.VideoAccessUnit?]
@@ -1077,7 +1241,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     }
 
     private func handleSunshineTerminationEvent(
-        _ event: ShadowClientSunshineTerminationEvent
+        _ event: ShadowClientHostTerminationEvent
     ) async {
         await failStreamingSession(message: event.message)
     }
@@ -3151,7 +3315,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             return true
         }
 
-        if let controlError = error as? ShadowClientSunshineControlChannelError {
+        if let controlError = error as? ShadowClientHostControlChannelError {
             switch controlError {
             case .connectionClosed,
                  .connectionTimedOut,
@@ -3820,8 +3984,9 @@ private actor ShadowClientRTSPInterleavedClient {
     private let timeout: Duration
     private let onControlRoundTripSample: (@Sendable (Double) async -> Void)?
     private let onAudioOutputStateChanged: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)?
-    private let onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)?
-    private let onTermination: (@Sendable (ShadowClientSunshineTerminationEvent) async -> Void)?
+    private let onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)?
+    private let onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)?
+    private let inputChannelGateway = ShadowClientRealtimeInputChannelGateway()
     private let audioSessionActivation: (@Sendable () async -> Void)?
     private let audioSessionDeactivation: (@Sendable () async -> Void)?
     private let defaultClientPortBase: UInt16 = ShadowClientRTSPProtocolProfile.clientPortBase
@@ -3842,8 +4007,8 @@ private actor ShadowClientRTSPInterleavedClient {
     private var prePlayVideoUDPSocket: ShadowClientUDPDatagramSocket?
     private var prePlayVideoPingWarmupTask: Task<Void, Never>?
     private var controlConnectData: UInt32?
-    private var controlChannelRuntime: ShadowClientSunshineControlChannelRuntime?
-    private var controlChannelMode: ShadowClientSunshineControlChannelMode = .plaintext
+    private var controlChannelRuntime: ShadowClientHostControlChannelRuntime?
+    private var controlChannelMode: ShadowClientHostControlChannelMode = .plaintext
     private var hasStartedControlChannelBootstrap = false
     private var useSessionIdentifierV1 = false
     private var remoteInputKey: Data?
@@ -3859,20 +4024,14 @@ private actor ShadowClientRTSPInterleavedClient {
     private let videoFECUnrecoverableRecoveryRequestCooldownSeconds: TimeInterval = 0.35
     private let videoFECUnrecoverableRecoveryBurstWindowSeconds: TimeInterval = 2.0
     private let videoFECUnrecoverableRecoveryBurstThreshold = 1
-    private let inputChannelUnavailableLogMinimumIntervalSeconds: TimeInterval = 2.0
-    private var loggedInputSendKinds = Set<String>()
-    private var loggedInputDropKinds = Set<String>()
-    private var transientInputSendFailureCount = 0
-    private var firstTransientInputSendFailureUptime: TimeInterval = 0
-    private var lastInputChannelUnavailableLogUptime: TimeInterval = 0
     private var lastInteractiveInputEventUptime: TimeInterval = 0
 
     init(
         timeout: Duration,
         onControlRoundTripSample: (@Sendable (Double) async -> Void)? = nil,
         onAudioOutputStateChanged: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)? = nil,
-        onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)? = nil,
-        onTermination: (@Sendable (ShadowClientSunshineTerminationEvent) async -> Void)? = nil,
+        onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)? = nil,
+        onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)? = nil,
         audioSessionActivation: (@Sendable () async -> Void)? = nil,
         audioSessionDeactivation: (@Sendable () async -> Void)? = nil
     ) {
@@ -3928,11 +4087,7 @@ private actor ShadowClientRTSPInterleavedClient {
 
         self.remoteInputKey = remoteInputKey
         self.remoteInputKeyID = remoteInputKeyID
-        loggedInputSendKinds.removeAll(keepingCapacity: true)
-        loggedInputDropKinds.removeAll(keepingCapacity: true)
-        transientInputSendFailureCount = 0
-        firstTransientInputSendFailureUptime = 0
-        lastInputChannelUnavailableLogUptime = 0
+        await inputChannelGateway.clear()
         lastInteractiveInputEventUptime = 0
         let normalizedURL = normalizeRTSPURL(url)
         guard let host = normalizedURL.host else {
@@ -4077,6 +4232,9 @@ private actor ShadowClientRTSPInterleavedClient {
             candidateRTPPayloadTypes: parsedTrack.candidateRTPPayloadTypes,
             controlURL: parsedTrack.controlURL,
             parameterSets: announceCodec == parsedTrack.codec ? parsedTrack.parameterSets : []
+        )
+        logger.notice(
+            "RTSP ANNOUNCE preparing described-codec=\(parsedTrack.codec.rawValue, privacy: .public) announce-codec=\(announceCodec.rawValue, privacy: .public) bitStreamFormat=\(ShadowClientRTSPAnnounceProfile.bitStreamFormat(for: announceCodec), privacy: .public) hdr=\(videoConfiguration.enableHDR, privacy: .public) yuv444=\(videoConfiguration.enableYUV444, privacy: .public)"
         )
         let useModernControlStreamIdentifier = Self.isServerVersionAtLeast(
             videoConfiguration.serverAppVersion,
@@ -4364,13 +4522,13 @@ private actor ShadowClientRTSPInterleavedClient {
         let effectiveEncryptionRequestedFlags = encryptionSupportedFlags == 0 ?
             encryptionRequestedFlags :
             (encryptionRequestedFlags & encryptionSupportedFlags)
-        let handshakeNegotiation = ShadowClientSunshineHandshakeNegotiation(
+        let handshakeNegotiation = ShadowClientHostHandshakeNegotiation(
             audioPingPayload: audioPingPayload,
             videoPingPayload: videoPingPayload,
             controlConnectData: parsedControlConnectData,
             encryptionRequestedFlags: effectiveEncryptionRequestedFlags,
-            prefersSessionIdentifierV1: ShadowClientSunshineSessionDefaults.prefersSessionIdentifierV1,
-            supportsEncryptedControlChannelV2: ShadowClientSunshineSessionDefaults.supportsEncryptedControlChannelV2 && remoteInputKey != nil,
+            prefersSessionIdentifierV1: ShadowClientHostSessionDefaults.prefersSessionIdentifierV1,
+            supportsEncryptedControlChannelV2: ShadowClientHostSessionDefaults.supportsEncryptedControlChannelV2 && remoteInputKey != nil,
             supportsEncryptedAudioTransport: remoteInputKey != nil && remoteInputKeyID != nil
         )
         useSessionIdentifierV1 = handshakeNegotiation.supportsSessionIdentifierV1
@@ -4523,9 +4681,9 @@ private actor ShadowClientRTSPInterleavedClient {
             await ensureSunshineControlChannelStarted(fallbackHost: remoteHost ?? .init(host))
             didStartSunshineControl = hasStartedControlChannelBootstrap
             if didStartSunshineControl {
-                logger.debug("RTSP control path negotiated; Sunshine control bootstrap ready")
+                logger.debug("RTSP control path negotiated; Apollo control bootstrap ready")
             } else {
-                logger.debug("RTSP control path negotiated; Sunshine bootstrap unavailable, trying legacy first-frame compatibility probe")
+                logger.debug("RTSP control path negotiated; Apollo bootstrap unavailable, trying legacy first-frame compatibility probe")
             }
         }
         if !didStartSunshineControl {
@@ -4542,11 +4700,11 @@ private actor ShadowClientRTSPInterleavedClient {
         case .auto:
             return describedCodec
         case .av1:
-            return describedCodec == .av1 ? .av1 : describedCodec
+            return .av1
         case .h265:
-            return describedCodec == .h265 ? .h265 : describedCodec
+            return .h265
         case .h264:
-            return describedCodec == .h264 ? .h264 : describedCodec
+            return .h264
         }
     }
 
@@ -4991,7 +5149,7 @@ private actor ShadowClientRTSPInterleavedClient {
         }
 
         let controlHost = remoteHost ?? .init(host)
-        let runtime = ShadowClientSunshineControlChannelRuntime(
+        let runtime = ShadowClientHostControlChannelRuntime(
             onRoundTripSample: onControlRoundTripSample,
             onControllerFeedback: onControllerFeedback,
             onTermination: onTermination
@@ -5005,6 +5163,7 @@ private actor ShadowClientRTSPInterleavedClient {
                 mode: controlChannelMode
             )
             controlChannelRuntime = runtime
+            await inputChannelGateway.install(runtime)
             return true
         } catch {
             logger.error("RTSP control bootstrap failed: \(error.localizedDescription, privacy: .public)")
@@ -5017,6 +5176,7 @@ private actor ShadowClientRTSPInterleavedClient {
         if let controlChannelRuntime {
             await controlChannelRuntime.stop()
         }
+        await inputChannelGateway.clear()
         controlChannelRuntime = nil
         hasStartedControlChannelBootstrap = false
         cancelPrePlayPingWarmupTasks()
@@ -5048,113 +5208,30 @@ private actor ShadowClientRTSPInterleavedClient {
         rtspHostHeaderValue = nil
         rtspClientVersionHeaderValue = ShadowClientRTSPRequestDefaults.clientVersionHeaderValue
         currentServerAppVersion = nil
-        loggedInputSendKinds.removeAll(keepingCapacity: false)
-        loggedInputDropKinds.removeAll(keepingCapacity: false)
-        transientInputSendFailureCount = 0
-        firstTransientInputSendFailureUptime = 0
-        lastInputChannelUnavailableLogUptime = 0
         lastInteractiveInputEventUptime = 0
     }
 
-    func sendInput(_ event: ShadowClientRemoteInputEvent) async throws {
-        if isInteractiveInputEvent(event) {
-            lastInteractiveInputEventUptime = ProcessInfo.processInfo.systemUptime
-        }
-        await ensureSunshineControlChannelStarted(
-            fallbackHost: remoteHost ?? .init("127.0.0.1")
+    nonisolated func sendInput(_ event: ShadowClientRemoteInputEvent) async throws {
+        try await inputChannelGateway.sendInput(
+            event,
+            ensureRuntime: { [weak self] in
+                await self?.ensureInputControlChannelForGateway()
+            },
+            invalidateRuntime: { [weak self] runtime in
+                await self?.invalidateInputControlChannelForGateway(runtime)
+            }
         )
-
-        guard let controlChannelRuntime else {
-            let now = ProcessInfo.processInfo.systemUptime
-            if now - lastInputChannelUnavailableLogUptime >= inputChannelUnavailableLogMinimumIntervalSeconds {
-                logger.notice(
-                    "Sunshine input send skipped: control channel unavailable"
-                )
-                lastInputChannelUnavailableLogUptime = now
-            }
-            return
-        }
-        guard let packet = ShadowClientSunshineInputPacketCodec.encode(event) else {
-            let kind = inputEventKind(event)
-            if loggedInputDropKinds.insert(kind).inserted {
-                logger.notice("Sunshine input dropped during encode for event \(kind, privacy: .public)")
-            }
-            return
-        }
-
-        let kind = inputEventKind(event)
-        if loggedInputSendKinds.insert(kind).inserted {
-            logger.notice(
-                "Sunshine input send enabled for event \(kind, privacy: .public) channel=\(packet.channelID, privacy: .public) bytes=\(packet.payload.count, privacy: .public)"
-            )
-        }
-
-        do {
-            try await controlChannelRuntime.sendInputPacket(
-                packet.payload,
-                channelID: packet.channelID
-            )
-            transientInputSendFailureCount = 0
-            firstTransientInputSendFailureUptime = 0
-        } catch {
-            if ShadowClientRealtimeRTSPSessionRuntime.isTransientInputSendError(error) {
-                let now = ProcessInfo.processInfo.systemUptime
-                if firstTransientInputSendFailureUptime == 0 ||
-                    now - firstTransientInputSendFailureUptime >
-                    ShadowClientRealtimeSessionDefaults.transientInputSendFailureBurstWindowSeconds
-                {
-                    firstTransientInputSendFailureUptime = now
-                    transientInputSendFailureCount = 0
-                }
-                transientInputSendFailureCount += 1
-                if ShadowClientRealtimeRTSPSessionRuntime.shouldResetControlChannelAfterTransientInputSendFailures(
-                    failureCount: transientInputSendFailureCount,
-                    now: now,
-                    firstFailureUptime: firstTransientInputSendFailureUptime
-                ) {
-                    logger.notice(
-                        "Sunshine input channel reset after transient send failure burst (count=\(self.transientInputSendFailureCount, privacy: .public), window=\(ShadowClientRealtimeSessionDefaults.transientInputSendFailureBurstWindowSeconds, privacy: .public)s)"
-                    )
-                    await controlChannelRuntime.stop()
-                    self.controlChannelRuntime = nil
-                    hasStartedControlChannelBootstrap = false
-                    transientInputSendFailureCount = 0
-                    firstTransientInputSendFailureUptime = 0
-                }
-                return
-            }
-            if ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(error) {
-                logger.notice(
-                    "Sunshine input channel reset after send failure: \(error.localizedDescription, privacy: .public)"
-                )
-                await controlChannelRuntime.stop()
-                self.controlChannelRuntime = nil
-                hasStartedControlChannelBootstrap = false
-                transientInputSendFailureCount = 0
-                firstTransientInputSendFailureUptime = 0
-                return
-            }
-            throw error
-        }
     }
 
-    func sendInputKeepAlive() async throws {
-        await ensureSunshineControlChannelStarted(
-            fallbackHost: remoteHost ?? .init("127.0.0.1")
-        )
-
-        guard let controlChannelRuntime else {
-            throw ShadowClientRealtimeSessionRuntimeError.connectionClosed
-        }
-
-        do {
-            try await controlChannelRuntime.sendInputKeepAlive()
-        } catch {
-            if ShadowClientRealtimeRTSPSessionRuntime.isTransientInputSendError(error) {
-                return
+    nonisolated func sendInputKeepAlive() async throws {
+        try await inputChannelGateway.sendKeepAlive(
+            ensureRuntime: { [weak self] in
+                await self?.ensureInputControlChannelForGateway()
+            },
+            invalidateRuntime: { [weak self] runtime in
+                await self?.invalidateInputControlChannelForGateway(runtime)
             }
-            throw error
-        }
+        )
     }
 
     func requestVideoRecoveryFrame(lastSeenFrameIndex: UInt32?) async {
@@ -5185,39 +5262,28 @@ private actor ShadowClientRTSPInterleavedClient {
         )
     }
 
-    private func inputEventKind(_ event: ShadowClientRemoteInputEvent) -> String {
-        switch event {
-        case .keyDown:
-            return "keyDown"
-        case .keyUp:
-            return "keyUp"
-        case .text:
-            return "text"
-        case .pointerMoved:
-            return "pointerMoved"
-        case .pointerPosition:
-            return "pointerPosition"
-        case .pointerButton:
-            return "pointerButton"
-        case .scroll:
-            return "scroll"
-        case .gamepadState:
-            return "gamepadState"
-        case .gamepadArrival:
-            return "gamepadArrival"
-        }
+    private func ensureInputControlChannelForGateway() async -> ShadowClientHostControlChannelRuntime? {
+        await ensureSunshineControlChannelStarted(
+            fallbackHost: remoteHost ?? .init("127.0.0.1")
+        )
+        return controlChannelRuntime
     }
 
-    private func isInteractiveInputEvent(_ event: ShadowClientRemoteInputEvent) -> Bool {
-        switch event {
-        case .gamepadArrival:
-            return false
-        case let .gamepadState(state):
-            return ShadowClientRealtimeRTSPSessionRuntime
-                .shouldTreatGamepadStateAsInteractiveForUDPDatagramRecovery(state)
-        case .keyDown, .keyUp, .text, .pointerMoved, .pointerPosition, .pointerButton, .scroll:
-            return true
+    private func invalidateInputControlChannelForGateway(
+        _ runtime: ShadowClientHostControlChannelRuntime
+    ) async {
+        guard let controlChannelRuntime else {
+            hasStartedControlChannelBootstrap = false
+            await inputChannelGateway.install(nil)
+            return
         }
+        guard controlChannelRuntime === runtime else {
+            return
+        }
+        await controlChannelRuntime.stop()
+        self.controlChannelRuntime = nil
+        hasStartedControlChannelBootstrap = false
+        await inputChannelGateway.install(nil)
     }
 
     func receiveInterleavedVideoPackets(
@@ -5380,7 +5446,7 @@ private actor ShadowClientRTSPInterleavedClient {
         )
 
         do {
-            let initialVideoPings = ShadowClientSunshinePingPacketCodec.makePingPackets(
+            let initialVideoPings = ShadowClientHostPingPacketCodec.makePingPackets(
                 sequence: 1,
                 negotiatedPayload: pingPayload
             )
@@ -5428,7 +5494,7 @@ private actor ShadowClientRTSPInterleavedClient {
             while !Task.isCancelled {
                 sequence &+= 1
                 do {
-                    let pingPackets = ShadowClientSunshinePingPacketCodec.makePingPackets(
+                    let pingPackets = ShadowClientHostPingPacketCodec.makePingPackets(
                         sequence: sequence,
                         negotiatedPayload: pingPayload
                     )
@@ -5666,7 +5732,7 @@ private actor ShadowClientRTSPInterleavedClient {
             )
             prePlayVideoUDPSocket = socket
 
-            let prePlayPings = ShadowClientSunshinePingPacketCodec.makePingPackets(
+            let prePlayPings = ShadowClientHostPingPacketCodec.makePingPackets(
                 sequence: 1,
                 negotiatedPayload: videoPingPayload
             )
@@ -5683,7 +5749,7 @@ private actor ShadowClientRTSPInterleavedClient {
                 var loggedSendCount = 0
                 while !Task.isCancelled {
                     sequence &+= 1
-                    let pingPackets = ShadowClientSunshinePingPacketCodec.makePingPackets(
+                    let pingPackets = ShadowClientHostPingPacketCodec.makePingPackets(
                         sequence: sequence,
                         negotiatedPayload: payload
                     )

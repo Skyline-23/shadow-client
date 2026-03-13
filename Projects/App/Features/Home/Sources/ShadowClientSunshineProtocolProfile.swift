@@ -162,7 +162,11 @@ enum ShadowClientRTSPAnnounceProfile {
     static let surroundAudioQualityDisabled = "0"
     static let surroundAudioQualityEnabled = "1"
     static let aqosPacketDuration = "5"
-    static let encoderCSCMode = "0"
+    // Sunshine interprets encoderCscMode as:
+    // - low bit: range (0 limited, 1 full)
+    // - upper bits: SDR colorspace (0 Rec.601, 1 Rec.709, 2 Rec.2020)
+    // Use Rec.709 limited for normal SDR desktop/game streaming.
+    static let encoderCSCMode = "2"
 
     static let sdpVersion = "0"
     static let sdpOriginUsername = "shadowclient"

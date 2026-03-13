@@ -921,7 +921,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             var sequence: UInt32 = 1
             while !Task.isCancelled {
                 sequence &+= 1
-                let pingPackets = ShadowClientSunshinePingPacketCodec.makePingPackets(
+                let pingPackets = ShadowClientHostPingPacketCodec.makePingPackets(
                     sequence: sequence,
                     negotiatedPayload: pingPayload
                 )
@@ -942,7 +942,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         over connection: NWConnection,
         pingPayload: Data?
     ) async throws {
-        let initialPackets = ShadowClientSunshinePingPacketCodec.makePingPackets(
+        let initialPackets = ShadowClientHostPingPacketCodec.makePingPackets(
             sequence: 1,
             negotiatedPayload: pingPayload
         )
@@ -2280,11 +2280,19 @@ private extension ShadowClientRealtimeAudioPacketDecoding {
 }
 
 private enum ShadowClientRealtimeAudioDecoderFactory {
+    private static let logger = Logger(
+        subsystem: "com.skyline23.shadow-client",
+        category: "RealtimeAudioDecoderFactory"
+    )
+
     static func canDecode(track: ShadowClientRTSPAudioTrackDescriptor) async -> Bool {
         do {
             _ = try await make(for: track)
             return true
         } catch {
+            logger.notice(
+                "Audio decoder unavailable codec=\(track.codec.label, privacy: .public) sampleRate=\(track.sampleRate, privacy: .public) channels=\(track.channelCount, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
             return false
         }
     }
@@ -3109,6 +3117,9 @@ private final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Send
         } ?? Self.channelLayoutData(for: Int(format.channelCount))
 
         guard let channelLayoutData else {
+            Self.logger.error(
+                "Sample buffer renderer format missing channel layout inputChannels=\(format.channelCount, privacy: .public) sampleRate=\(Int(format.sampleRate), privacy: .public)"
+            )
             throw NSError(
                 domain: "ShadowClientRealtimeSampleBufferAudioOutput",
                 code: 2,

@@ -78,6 +78,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private var lastRenderedDrawableSize: CGSize = .zero
     private var hasDumpedCurrentSessionFrameDiagnostics = false
     private var hasDumpedCurrentSessionDrawableSample = false
+    private var hasLoggedRenderPathForCurrentSession = false
 
     init?(
         device: MTLDevice,
@@ -89,7 +90,9 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         self.surfaceContext = surfaceContext
         self.frameStore = surfaceContext.frameStore
         self.commandQueue = commandQueue
-        self.yuvPipeline = nil
+        self.yuvPipeline = ShadowClientRealtimeSessionYUVMetalPipeline(
+            device: device
+        )
         self.ciContext = CIContext(
             mtlCommandQueue: commandQueue,
             options: [
@@ -128,6 +131,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         if pixelBuffer == nil {
             hasDumpedCurrentSessionFrameDiagnostics = false
             hasDumpedCurrentSessionDrawableSample = false
+            hasLoggedRenderPathForCurrentSession = false
         }
         let colorConfiguration = pixelBuffer.map {
             ShadowClientRealtimeSessionColorPipeline.configuration(
@@ -153,52 +157,63 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         }
 
         if let pixelBuffer,
-           let colorConfiguration,
            let renderPass = view.currentRenderPassDescriptor,
            let yuvPipeline,
-           yuvPipeline.canRender(pixelBuffer),
-           !colorConfiguration.prefersExtendedDynamicRange
+           yuvPipeline.canRender(pixelBuffer)
         {
-            _ = yuvPipeline.render(
+            if !hasLoggedRenderPathForCurrentSession {
+                logger.notice("Surface render path=metal-yuv pixel-format=0x\(String(CVPixelBufferGetPixelFormatType(pixelBuffer), radix: 16), privacy: .public)")
+                hasLoggedRenderPathForCurrentSession = true
+            }
+            let didRender = yuvPipeline.render(
                 pixelBuffer: pixelBuffer,
                 into: renderPass,
                 commandBuffer: commandBuffer,
-                drawableSize: drawableSize
+                drawableSize: drawableSize,
+                colorPixelFormat: view.colorPixelFormat
             )
-            commandBuffer.present(drawable)
-            commandBuffer.commit()
-            surfaceContext.recordPresentedVideoFrame()
-            lastRenderedFrameRevision = snapshot.revision
-            lastRenderedDrawableSize = drawableSize
-            return
+            if didRender {
+                commandBuffer.present(drawable)
+                if pixelBuffer != nil {
+                    scheduleDrawableTextureSampleIfNeeded(
+                        drawable: drawable,
+                        commandBuffer: commandBuffer
+                    )
+                }
+                commandBuffer.commit()
+                surfaceContext.recordPresentedVideoFrame()
+                lastRenderedFrameRevision = snapshot.revision
+                lastRenderedDrawableSize = drawableSize
+                return
+            }
+            logger.error("Surface render path=metal-yuv failed; falling back to CI")
         }
 
         if let pixelBuffer, let colorConfiguration {
+            if !hasLoggedRenderPathForCurrentSession {
+                logger.notice("Surface render path=core-image pixel-format=0x\(String(CVPixelBufferGetPixelFormatType(pixelBuffer), radix: 16), privacy: .public)")
+                hasLoggedRenderPathForCurrentSession = true
+            }
             let supportsExtendedDynamicRange = supportsExtendedDynamicRangeDisplay(for: view)
             let shouldToneMapHDRToSDR =
                 colorConfiguration.prefersExtendedDynamicRange && !supportsExtendedDynamicRange
 
-            let sourceOptions: [CIImageOption: Any] = [
-                .colorSpace: colorConfiguration.renderColorSpace,
-            ]
+            let sourceOptions = ciSourceOptions(
+                for: pixelBuffer,
+                renderColorSpace: colorConfiguration.renderColorSpace
+            )
             var sourceImage = CIImage(
                 cvPixelBuffer: pixelBuffer,
                 options: sourceOptions
             )
-            if let expansion = colorConfiguration.videoRangeExpansion {
-                sourceImage = expandVideoRange(
-                    sourceImage,
-                    scale: expansion.scale,
-                    bias: expansion.bias
-                )
-            }
             if shouldToneMapHDRToSDR {
                 sourceImage = toneMapHDRToSDRSoftwareFallback(sourceImage)
             }
             let outputColorSpace = resolvedDisplayColorSpace(
                 for: view,
                 prefersExtendedDynamicRange: colorConfiguration.prefersExtendedDynamicRange && !shouldToneMapHDRToSDR,
-                fallback: colorConfiguration.displayColorSpace
+                sdrSourceColorSpace: colorConfiguration.renderColorSpace,
+                hdrDisplayColorSpace: colorConfiguration.displayColorSpace
             )
             dumpFrameDiagnosticsIfNeeded(
                 view: view,
@@ -296,7 +311,8 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             metalLayer.colorspace = resolvedDisplayColorSpace(
                 for: view,
                 prefersExtendedDynamicRange: shouldRenderExtendedDynamicRange,
-                fallback: configuration.displayColorSpace
+                sdrSourceColorSpace: configuration.renderColorSpace,
+                hdrDisplayColorSpace: configuration.displayColorSpace
             )
             metalLayer.wantsExtendedDynamicRangeContent = shouldRenderExtendedDynamicRange
         }
@@ -313,7 +329,8 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private func resolvedDisplayColorSpace(
         for view: MTKView,
         prefersExtendedDynamicRange: Bool,
-        fallback: CGColorSpace
+        sdrSourceColorSpace: CGColorSpace,
+        hdrDisplayColorSpace: CGColorSpace
     ) -> CGColorSpace {
         let screen = view.window?.screen ?? UIScreen.main
 
@@ -323,16 +340,27 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             {
                 return p3
             }
-            return fallback
+            return hdrDisplayColorSpace
         }
 
-        if screen.traitCollection.displayGamut == .P3,
-           let p3 = CGColorSpace(name: CGColorSpace.displayP3)
-        {
-            return p3
-        }
+        return sdrSourceColorSpace
+    }
 
-        return ShadowClientRealtimeSessionColorPipeline.defaultDisplayColorSpace
+    private func ciSourceOptions(
+        for pixelBuffer: CVPixelBuffer,
+        renderColorSpace: CGColorSpace
+    ) -> [CIImageOption: Any] {
+        switch CVPixelBufferGetPixelFormatType(pixelBuffer) {
+        case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
+             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+            // Let Core Image honor the YUV attachments for bi-planar decode output.
+            // Forcing a source color space here can skew Apple decode output for SDR.
+            return [:]
+        default:
+            return [.colorSpace: renderColorSpace]
+        }
     }
 
     private func toneMapHDRToSDRSoftwareFallback(_ image: CIImage) -> CIImage {
@@ -413,6 +441,10 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             for: sourceImage,
             colorSpace: outputColorSpace
         ) ?? "nil"
+        let ciSamplePoints = sampledRGBAAtNormalizedPoints(
+            for: sourceImage,
+            colorSpace: outputColorSpace
+        ) ?? "nil"
         let ciCenter709 = sampledCenterRGBA(
             for: sourceImage,
             colorSpace: CGColorSpace(name: CGColorSpace.itur_709) ?? configuration.renderColorSpace
@@ -422,10 +454,11 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             colorSpace: CGColorSpace(name: CGColorSpace.sRGB) ?? configuration.displayColorSpace
         ) ?? "nil"
         let centerYUVSummary = sampledCenterYUVSummary(pixelBuffer) ?? "nil"
+        let yuvSamplePoints = sampledYUVAtNormalizedPoints(pixelBuffer) ?? "nil"
 
         logger.notice(
             """
-            Frame dump revision=\(snapshotRevision, privacy: .public) pixel-format=0x\(String(pixelFormat, radix: 16), privacy: .public) size=\(width, privacy: .public)x\(height, privacy: .public) primaries=\(primaries, privacy: .public) transfer=\(transfer, privacy: .public) matrix=\(matrix, privacy: .public) buffer-colorspace=\(bufferColorSpace, privacy: .public) render-colorspace=\(renderColorSpace, privacy: .public) display-colorspace=\(displayColorSpace, privacy: .public) output-colorspace=\(outputColorSpaceName, privacy: .public) pixel-format-target=\(view.colorPixelFormat.rawValue, privacy: .public) supports-edr=\(supportsExtendedDynamicRange, privacy: .public) tone-map=\(shouldToneMapHDRToSDR, privacy: .public) edr=\(configuration.prefersExtendedDynamicRange, privacy: .public) planes=\(planeSummary, privacy: .public) center-yuv=\(centerYUVSummary, privacy: .public) ci-average=\(ciAverageRGBA, privacy: .public) ci-center=\(ciCenterRGBA, privacy: .public) ci-center-709=\(ciCenter709, privacy: .public) ci-center-srgb=\(ciCenterSRGB, privacy: .public)
+            Frame dump revision=\(snapshotRevision, privacy: .public) pixel-format=0x\(String(pixelFormat, radix: 16), privacy: .public) size=\(width, privacy: .public)x\(height, privacy: .public) primaries=\(primaries, privacy: .public) transfer=\(transfer, privacy: .public) matrix=\(matrix, privacy: .public) buffer-colorspace=\(bufferColorSpace, privacy: .public) render-colorspace=\(renderColorSpace, privacy: .public) display-colorspace=\(displayColorSpace, privacy: .public) output-colorspace=\(outputColorSpaceName, privacy: .public) pixel-format-target=\(view.colorPixelFormat.rawValue, privacy: .public) supports-edr=\(supportsExtendedDynamicRange, privacy: .public) tone-map=\(shouldToneMapHDRToSDR, privacy: .public) edr=\(configuration.prefersExtendedDynamicRange, privacy: .public) planes=\(planeSummary, privacy: .public) center-yuv=\(centerYUVSummary, privacy: .public) yuv-samples=\(yuvSamplePoints, privacy: .public) ci-average=\(ciAverageRGBA, privacy: .public) ci-center=\(ciCenterRGBA, privacy: .public) ci-samples=\(ciSamplePoints, privacy: .public) ci-center-709=\(ciCenter709, privacy: .public) ci-center-srgb=\(ciCenterSRGB, privacy: .public)
             """
         )
     }
@@ -480,6 +513,30 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         return "[\(dataPointer[offset]),\(dataPointer[offset + 1]),\(dataPointer[offset + 2]),\(dataPointer[offset + 3])]"
     }
 
+    private func sampledRGBAAtNormalizedPoints(
+        for image: CIImage,
+        colorSpace: CGColorSpace
+    ) -> String? {
+        let extent = image.extent.integral
+        guard extent.width >= 1, extent.height >= 1,
+              let cgImage = ciContext.createCGImage(image, from: extent, format: .RGBA8, colorSpace: colorSpace)
+        else {
+            return nil
+        }
+
+        let labels: [(String, CGFloat, CGFloat)] = [
+            ("tl", 0.1, 0.1),
+            ("tr", 0.9, 0.1),
+            ("c", 0.5, 0.5),
+            ("bl", 0.1, 0.9),
+            ("br", 0.9, 0.9),
+        ]
+        return sampledRGBAValues(
+            in: cgImage,
+            atNormalizedPoints: labels
+        )
+    }
+
     private func sampledCenterYUVSummary(_ pixelBuffer: CVPixelBuffer) -> String? {
         let pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
         guard pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
@@ -521,6 +578,58 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         let videoRangeRGB = convertBT709(y: ySample, cb: cbSample, cr: crSample, fullRange: false)
 
         return "Y=\(ySample),Cb=\(cbSample),Cr=\(crSample),full=\(fullRangeRGB),video=\(videoRangeRGB)"
+    }
+
+    private func sampledYUVAtNormalizedPoints(_ pixelBuffer: CVPixelBuffer) -> String? {
+        let pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        guard pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+            pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        else {
+            return nil
+        }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        guard let yBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0),
+              let uvBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1)
+        else {
+            return nil
+        }
+
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let yRowBytes = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+        let uvRowBytes = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1)
+        let yPointer = yBase.bindMemory(to: UInt8.self, capacity: yRowBytes * height)
+        let uvPointer = uvBase.bindMemory(
+            to: UInt8.self,
+            capacity: uvRowBytes * CVPixelBufferGetHeightOfPlane(pixelBuffer, 1)
+        )
+
+        let labels: [(String, CGFloat, CGFloat)] = [
+            ("tl", 0.1, 0.1),
+            ("tr", 0.9, 0.1),
+            ("c", 0.5, 0.5),
+            ("bl", 0.1, 0.9),
+            ("br", 0.9, 0.9),
+        ]
+
+        var parts: [String] = []
+        for (label, normalizedX, normalizedY) in labels {
+            let x = max(0, min(width - 1, Int(CGFloat(width - 1) * normalizedX)))
+            let y = max(0, min(height - 1, Int(CGFloat(height - 1) * normalizedY)))
+            let ySample = Int(yPointer[y * yRowBytes + x])
+            let uvX = (x / 2) * 2
+            let uvY = y / 2
+            let uvOffset = uvY * uvRowBytes + uvX
+            let cbSample = Int(uvPointer[uvOffset])
+            let crSample = Int(uvPointer[uvOffset + 1])
+            let fullRangeRGB = convertBT709(y: ySample, cb: cbSample, cr: crSample, fullRange: true)
+            let videoRangeRGB = convertBT709(y: ySample, cb: cbSample, cr: crSample, fullRange: false)
+            parts.append("\(label)=Y\(ySample)/Cb\(cbSample)/Cr\(crSample):full\(fullRangeRGB):video\(videoRangeRGB)")
+        }
+        return parts.joined(separator: " ")
     }
 
     private func convertBT709(y: Int, cb: Int, cr: Int, fullRange: Bool) -> String {
@@ -635,14 +744,16 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             logger.notice("Drawable sample skipped unsupported pixel-format=\(texture.pixelFormat.rawValue, privacy: .public)")
             return
         }
-        guard let stagingTexture = makeDrawableSampleTexture(pixelFormat: texture.pixelFormat) else {
+        guard let stagingTexture = makeDrawableSampleTexture(
+            pixelFormat: texture.pixelFormat,
+            width: texture.width,
+            height: texture.height
+        ) else {
             logger.error("Drawable sample staging texture allocation failed")
             return
         }
 
         hasDumpedCurrentSessionDrawableSample = true
-        let centerX = max(0, min(texture.width - 1, texture.width / 2))
-        let centerY = max(0, min(texture.height - 1, texture.height / 2))
         guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else {
             logger.error("Drawable sample blit encoder allocation failed")
             return
@@ -652,8 +763,8 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             from: texture,
             sourceSlice: 0,
             sourceLevel: 0,
-            sourceOrigin: MTLOrigin(x: centerX, y: centerY, z: 0),
-            sourceSize: MTLSize(width: 1, height: 1, depth: 1),
+            sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+            sourceSize: MTLSize(width: texture.width, height: texture.height, depth: 1),
             to: stagingTexture,
             destinationSlice: 0,
             destinationLevel: 0,
@@ -672,15 +783,19 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 return
             }
 
-            self.logger.notice("Drawable center RGBA=\(sampledRGBA, privacy: .public)")
+            self.logger.notice("Drawable samples RGBA=\(sampledRGBA, privacy: .public)")
         }
     }
 
-    private func makeDrawableSampleTexture(pixelFormat: MTLPixelFormat) -> MTLTexture? {
+    private func makeDrawableSampleTexture(
+        pixelFormat: MTLPixelFormat,
+        width: Int,
+        height: Int
+    ) -> MTLTexture? {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: pixelFormat,
-            width: 1,
-            height: 1,
+            width: max(1, width),
+            height: max(1, height),
             mipmapped: false
         )
         descriptor.storageMode = .shared
@@ -693,18 +808,52 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             return nil
         }
 
+        let labels: [(String, Int, Int)] = [
+            ("tl", max(0, texture.width / 10), max(0, texture.height / 10)),
+            ("tr", max(0, texture.width - 1 - texture.width / 10), max(0, texture.height / 10)),
+            ("c", max(0, texture.width / 2), max(0, texture.height / 2)),
+            ("bl", max(0, texture.width / 10), max(0, texture.height - 1 - texture.height / 10)),
+            ("br", max(0, texture.width - 1 - texture.width / 10), max(0, texture.height - 1 - texture.height / 10)),
+        ]
+        var parts: [String] = []
         var bytes = [UInt8](repeating: 0, count: 4)
-        texture.getBytes(
-            &bytes,
-            bytesPerRow: 4,
-            from: MTLRegionMake2D(0, 0, 1, 1),
-            mipmapLevel: 0
-        )
-        let blue = bytes[0]
-        let green = bytes[1]
-        let red = bytes[2]
-        let alpha = bytes[3]
-        return "[\(red),\(green),\(blue),\(alpha)]"
+        for (label, x, y) in labels {
+            texture.getBytes(
+                &bytes,
+                bytesPerRow: 4,
+                from: MTLRegionMake2D(x, y, 1, 1),
+                mipmapLevel: 0
+            )
+            let blue = bytes[0]
+            let green = bytes[1]
+            let red = bytes[2]
+            let alpha = bytes[3]
+            parts.append("\(label)=\(red),\(green),\(blue),\(alpha)")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private func sampledRGBAValues(
+        in cgImage: CGImage,
+        atNormalizedPoints labels: [(String, CGFloat, CGFloat)]
+    ) -> String? {
+        guard let providerData = cgImage.dataProvider?.data,
+              let dataPointer = CFDataGetBytePtr(providerData)
+        else {
+            return nil
+        }
+
+        let bytesPerPixel = 4
+        var parts: [String] = []
+        for (label, normalizedX, normalizedY) in labels {
+            let x = max(0, min(cgImage.width - 1, Int(CGFloat(cgImage.width - 1) * normalizedX)))
+            let y = max(0, min(cgImage.height - 1, Int(CGFloat(cgImage.height - 1) * normalizedY)))
+            let offset = y * cgImage.bytesPerRow + x * bytesPerPixel
+            parts.append(
+                "\(label)=\(dataPointer[offset]),\(dataPointer[offset + 1]),\(dataPointer[offset + 2]),\(dataPointer[offset + 3])"
+            )
+        }
+        return parts.joined(separator: " ")
     }
 }
 #endif
