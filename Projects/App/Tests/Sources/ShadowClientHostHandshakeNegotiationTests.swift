@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import ShadowClientFeatureHome
 
-@Test("Sunshine handshake negotiation enables session-id-v1 when ping payloads and connect data exist")
-func sunshineHandshakeNegotiationEnablesSessionIdentifierV1() {
+@Test("Host handshake negotiation enables session-id-v1 when ping payloads and connect data exist")
+func hostHandshakeNegotiationEnablesSessionIdentifierV1() {
     let negotiation = ShadowClientHostHandshakeNegotiation(
         audioPingPayload: Data("AUDIOPAYLOAD12345".utf8),
         videoPingPayload: Data("VIDEOPAYLOAD1234".utf8),
@@ -20,8 +20,8 @@ func sunshineHandshakeNegotiationEnablesSessionIdentifierV1() {
     #expect(negotiation.encryptionEnabledFlags == 0x00)
 }
 
-@Test("Sunshine handshake negotiation falls back to legacy ping when payload negotiation is incomplete")
-func sunshineHandshakeNegotiationDisablesSessionIdentifierV1WhenPayloadMissing() {
+@Test("Host handshake negotiation falls back to legacy ping when payload negotiation is incomplete")
+func hostHandshakeNegotiationDisablesSessionIdentifierV1WhenPayloadMissing() {
     let negotiation = ShadowClientHostHandshakeNegotiation(
         audioPingPayload: nil,
         videoPingPayload: Data("VIDEOPAYLOAD1234".utf8),
@@ -38,8 +38,8 @@ func sunshineHandshakeNegotiationDisablesSessionIdentifierV1WhenPayloadMissing()
     #expect(negotiation.encryptionEnabledFlags == 0x00)
 }
 
-@Test("Sunshine handshake negotiation enables control-v2 only when client supports encrypted control channel")
-func sunshineHandshakeNegotiationGatesEncryptedControlV2OnClientCapability() {
+@Test("Host handshake negotiation enables control-v2 only when client supports encrypted control channel")
+func hostHandshakeNegotiationGatesEncryptedControlV2OnClientCapability() {
     let negotiation = ShadowClientHostHandshakeNegotiation(
         audioPingPayload: Data("AUDIOPAYLOAD12345".utf8),
         videoPingPayload: Data("VIDEOPAYLOAD1234".utf8),
@@ -55,8 +55,8 @@ func sunshineHandshakeNegotiationGatesEncryptedControlV2OnClientCapability() {
     #expect(negotiation.encryptionEnabledFlags == 0x01)
 }
 
-@Test("Sunshine handshake negotiation enables encrypted audio flag when supported and requested")
-func sunshineHandshakeNegotiationEnablesEncryptedAudioWhenRequested() {
+@Test("Host handshake negotiation enables encrypted audio flag when supported and requested")
+func hostHandshakeNegotiationEnablesEncryptedAudioWhenRequested() {
     let negotiation = ShadowClientHostHandshakeNegotiation(
         audioPingPayload: Data("AUDIOPAYLOAD12345".utf8),
         videoPingPayload: Data("VIDEOPAYLOAD1234".utf8),

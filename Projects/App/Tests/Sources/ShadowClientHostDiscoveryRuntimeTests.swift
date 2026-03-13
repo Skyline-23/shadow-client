@@ -16,7 +16,7 @@ func hostDiscoveryCatalogDeduplicatesHosts() {
     catalog.upsert(
         serviceKey: "b",
         host: .init(
-            name: "LivingRoom-PC (Sunshine)",
+            name: "LivingRoom-PC (Host)",
             host: "192.168.0.20",
             port: 47984,
             serviceType: "_sunshine._tcp"

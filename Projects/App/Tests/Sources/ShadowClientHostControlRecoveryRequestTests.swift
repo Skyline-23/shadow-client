@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import ShadowClientFeatureHome
 
-@Test("Encrypted Sunshine control mode uses IDR recovery request packet")
-func sunshineEncryptedControlModeRecoveryRequestShape() {
+@Test("Encrypted Host control mode uses IDR recovery request packet")
+func hostEncryptedControlModeRecoveryRequestShape() {
     let mode = ShadowClientHostControlChannelMode.encryptedV2(
         key: Data(repeating: 0xAB, count: 16)
     )
@@ -14,8 +14,8 @@ func sunshineEncryptedControlModeRecoveryRequestShape() {
     #expect(request.payload == Data([0x00, 0x00]))
 }
 
-@Test("Plaintext Sunshine control mode uses reference frame invalidation payload")
-func sunshinePlaintextControlModeRecoveryRequestShape() {
+@Test("Plaintext Host control mode uses reference frame invalidation payload")
+func hostPlaintextControlModeRecoveryRequestShape() {
     let mode = ShadowClientHostControlChannelMode.plaintext
     let request = mode.makeIDRRequest(lastSeenFrameIndex: nil)
 
@@ -26,7 +26,7 @@ func sunshinePlaintextControlModeRecoveryRequestShape() {
 }
 
 @Test("Reference frame invalidation payload encodes frame range in little endian")
-func sunshineInvalidateReferenceFramesPayloadEncodesFrameBounds() {
+func hostInvalidateReferenceFramesPayloadEncodesFrameBounds() {
     let payload = ShadowClientHostControlMessageProfile.invalidateReferenceFramesPayload(
         firstFrame: 0x0506_0708,
         lastFrame: 0x1516_1718

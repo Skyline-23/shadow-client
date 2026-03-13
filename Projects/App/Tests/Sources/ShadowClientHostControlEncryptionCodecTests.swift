@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import ShadowClientFeatureHome
 
-@Test("Encrypted control codec writes Sunshine V2 envelope fields")
-func sunshineEncryptedControlCodecEncodesEnvelope() throws {
+@Test("Encrypted control codec writes Host V2 envelope fields")
+func hostEncryptedControlCodecEncodesEnvelope() throws {
     let codec = try ShadowClientHostControlEncryptionCodec(
         keyData: Data(repeating: 0x11, count: 16)
     )
@@ -20,7 +20,7 @@ func sunshineEncryptedControlCodecEncodesEnvelope() throws {
 }
 
 @Test("Encrypted control codec decrypts host-originated V2 packet to V1 payload")
-func sunshineEncryptedControlCodecDecryptsToV1Payload() throws {
+func hostEncryptedControlCodecDecryptsToV1Payload() throws {
     let codec = try ShadowClientHostControlEncryptionCodec(
         keyData: Data(repeating: 0x22, count: 16)
     )
@@ -37,7 +37,7 @@ func sunshineEncryptedControlCodecDecryptsToV1Payload() throws {
 }
 
 @Test("Encrypted control codec rejects invalid AES key length")
-func sunshineEncryptedControlCodecRejectsInvalidKeyLength() {
+func hostEncryptedControlCodecRejectsInvalidKeyLength() {
     #expect(throws: ShadowClientHostControlEncryptionError.self) {
         _ = try ShadowClientHostControlEncryptionCodec(
             keyData: Data(repeating: 0x33, count: 8)

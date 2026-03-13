@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import ShadowClientFeatureHome
 
-@Test("Sunshine control feedback codec parses rumble payload with reserved prefix")
-func sunshineControlFeedbackCodecParsesRumblePayload() {
+@Test("Host control feedback codec parses rumble payload with reserved prefix")
+func hostControlFeedbackCodecParsesRumblePayload() {
     let payload = Data([
         0xEE, 0xFF, 0xC0, 0x00, // reserved prefix (ignored)
         0x02, 0x00, // controller id
@@ -28,8 +28,8 @@ func sunshineControlFeedbackCodecParsesRumblePayload() {
     )
 }
 
-@Test("Sunshine control feedback codec parses trigger rumble payload")
-func sunshineControlFeedbackCodecParsesTriggerRumblePayload() {
+@Test("Host control feedback codec parses trigger rumble payload")
+func hostControlFeedbackCodecParsesTriggerRumblePayload() {
     let payload = Data([
         0x01, 0x00, // controller id
         0xAA, 0x00, // left trigger
@@ -53,8 +53,8 @@ func sunshineControlFeedbackCodecParsesTriggerRumblePayload() {
     )
 }
 
-@Test("Sunshine control feedback codec maps adaptive trigger payload to trigger rumble")
-func sunshineControlFeedbackCodecParsesAdaptiveTriggerPayload() {
+@Test("Host control feedback codec maps adaptive trigger payload to trigger rumble")
+func hostControlFeedbackCodecParsesAdaptiveTriggerPayload() {
     let payload = Data([
         0x03, 0x00, // controller id
         0x0C, // event flags (left + right)
@@ -83,8 +83,8 @@ func sunshineControlFeedbackCodecParsesAdaptiveTriggerPayload() {
     )
 }
 
-@Test("Sunshine control feedback codec returns nil for unsupported control type")
-func sunshineControlFeedbackCodecIgnoresUnsupportedType() {
+@Test("Host control feedback codec returns nil for unsupported control type")
+func hostControlFeedbackCodecIgnoresUnsupportedType() {
     let event = ShadowClientHostControlFeedbackCodec.parse(
         type: 0x0206,
         payload: Data([0x00, 0x01])
@@ -93,8 +93,8 @@ func sunshineControlFeedbackCodecIgnoresUnsupportedType() {
     #expect(event == nil)
 }
 
-@Test("Sunshine control feedback codec parses termination payload")
-func sunshineControlFeedbackCodecParsesTerminationPayload() {
+@Test("Host control feedback codec parses termination payload")
+func hostControlFeedbackCodecParsesTerminationPayload() {
     let payload = Data([0x80, 0x03, 0x00, 0x23])
 
     let event = ShadowClientHostControlFeedbackCodec.parseTermination(
@@ -103,5 +103,5 @@ func sunshineControlFeedbackCodecParsesTerminationPayload() {
     )
 
     #expect(event == .init(reasonCode: 0x80030023))
-    #expect(event?.message == "Sunshine terminated the session gracefully (0x80030023).")
+    #expect(event?.message == "Host terminated the session gracefully (0x80030023).")
 }
