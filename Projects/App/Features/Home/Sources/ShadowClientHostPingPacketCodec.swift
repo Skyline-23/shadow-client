@@ -1,6 +1,6 @@
 import Foundation
 
-enum ShadowClientSunshinePingPacketCodec {
+enum ShadowClientHostPingPacketCodec {
     static func makePingPackets(
         sequence: UInt32,
         negotiatedPayload: Data?,

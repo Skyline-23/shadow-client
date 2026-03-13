@@ -16,8 +16,8 @@ actor ShadowClientSunshineControlChannelRuntime {
     private let connectTimeout: Duration
     private let commandAcknowledgeTimeout: Duration
     private let onRoundTripSample: (@Sendable (Double) async -> Void)?
-    private let onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)?
-    private let onTermination: (@Sendable (ShadowClientSunshineTerminationEvent) async -> Void)?
+    private let onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)?
+    private let onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)?
     private let queue = DispatchQueue(label: "com.skyline23.shadowclient.control.enet")
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "ControlChannel")
 
@@ -40,8 +40,8 @@ actor ShadowClientSunshineControlChannelRuntime {
         connectTimeout: Duration = ShadowClientSunshineControlChannelDefaults.connectTimeout,
         commandAcknowledgeTimeout: Duration = ShadowClientSunshineControlChannelDefaults.commandAcknowledgeTimeout,
         onRoundTripSample: (@Sendable (Double) async -> Void)? = nil,
-        onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)? = nil,
-        onTermination: (@Sendable (ShadowClientSunshineTerminationEvent) async -> Void)? = nil
+        onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)? = nil,
+        onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)? = nil
     ) {
         self.connectTimeout = connectTimeout
         self.commandAcknowledgeTimeout = commandAcknowledgeTimeout
@@ -495,7 +495,7 @@ actor ShadowClientSunshineControlChannelRuntime {
     private func parseControllerFeedbackEvent(
         from packet: ShadowClientSunshineENetPacketCodec.ParsedPacket,
         command: ShadowClientSunshineENetPacketCodec.ParsedPacket.Command
-    ) -> ShadowClientSunshineControllerFeedbackEvent? {
+    ) -> ShadowClientHostControllerFeedbackEvent? {
         guard let controlPayload = parseControlPayload(from: packet, command: command) else {
             return nil
         }
@@ -503,20 +503,20 @@ actor ShadowClientSunshineControlChannelRuntime {
         let type = readUInt16LE(controlPayload, at: 0)
         let payload = Data(controlPayload.dropFirst(2))
         reportControlMessageTypeIfNeeded(type: type, payloadBytes: payload.count)
-        return ShadowClientSunshineControlFeedbackCodec.parse(type: type, payload: payload)
+        return ShadowClientHostControlFeedbackCodec.parse(type: type, payload: payload)
     }
 
     private func parseTerminationEvent(
         from packet: ShadowClientSunshineENetPacketCodec.ParsedPacket,
         command: ShadowClientSunshineENetPacketCodec.ParsedPacket.Command
-    ) -> ShadowClientSunshineTerminationEvent? {
+    ) -> ShadowClientHostTerminationEvent? {
         guard let controlPayload = parseControlPayload(from: packet, command: command) else {
             return nil
         }
 
         let type = readUInt16LE(controlPayload, at: 0)
         let payload = Data(controlPayload.dropFirst(2))
-        return ShadowClientSunshineControlFeedbackCodec.parseTermination(
+        return ShadowClientHostControlFeedbackCodec.parseTermination(
             type: type,
             payload: payload
         )
@@ -566,7 +566,7 @@ actor ShadowClientSunshineControlChannelRuntime {
     }
 
     private func reportControllerFeedbackEventIfNeeded(
-        _ event: ShadowClientSunshineControllerFeedbackEvent
+        _ event: ShadowClientHostControllerFeedbackEvent
     ) {
         receivedControllerFeedbackEventCount &+= 1
         guard receivedControllerFeedbackEventCount <= 16 ||
@@ -581,7 +581,7 @@ actor ShadowClientSunshineControlChannelRuntime {
     }
 
     private func controllerFeedbackSummary(
-        for event: ShadowClientSunshineControllerFeedbackEvent
+        for event: ShadowClientHostControllerFeedbackEvent
     ) -> String {
         switch event {
         case let .rumble(rumble):

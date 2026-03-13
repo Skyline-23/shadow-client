@@ -1,6 +1,6 @@
 import Foundation
 
-struct ShadowClientSunshineHandshakeNegotiation: Sendable {
+struct ShadowClientHostHandshakeNegotiation: Sendable {
     let audioPingPayload: Data?
     let videoPingPayload: Data?
     let controlConnectData: UInt32?

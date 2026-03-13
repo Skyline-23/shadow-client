@@ -1,23 +1,23 @@
 import Foundation
 
-struct ShadowClientSunshineControllerRumbleEvent: Equatable, Sendable {
+struct ShadowClientHostControllerRumbleEvent: Equatable, Sendable {
     let controllerNumber: UInt16
     let lowFrequencyMotor: UInt16
     let highFrequencyMotor: UInt16
 }
 
-struct ShadowClientSunshineControllerTriggerRumbleEvent: Equatable, Sendable {
+struct ShadowClientHostControllerTriggerRumbleEvent: Equatable, Sendable {
     let controllerNumber: UInt16
     let leftTriggerMotor: UInt16
     let rightTriggerMotor: UInt16
 }
 
-enum ShadowClientSunshineControllerFeedbackEvent: Equatable, Sendable {
-    case rumble(ShadowClientSunshineControllerRumbleEvent)
-    case triggerRumble(ShadowClientSunshineControllerTriggerRumbleEvent)
+enum ShadowClientHostControllerFeedbackEvent: Equatable, Sendable {
+    case rumble(ShadowClientHostControllerRumbleEvent)
+    case triggerRumble(ShadowClientHostControllerTriggerRumbleEvent)
 }
 
-struct ShadowClientSunshineTerminationEvent: Equatable, Sendable {
+struct ShadowClientHostTerminationEvent: Equatable, Sendable {
     let reasonCode: UInt32
 
     var message: String {
@@ -30,11 +30,11 @@ struct ShadowClientSunshineTerminationEvent: Equatable, Sendable {
     }
 }
 
-enum ShadowClientSunshineControlFeedbackCodec {
+enum ShadowClientHostControlFeedbackCodec {
     static func parse(
         type: UInt16,
         payload: Data
-    ) -> ShadowClientSunshineControllerFeedbackEvent? {
+    ) -> ShadowClientHostControllerFeedbackEvent? {
         if type == ShadowClientSunshineControlMessageProfile.rumbleType {
             return parseRumble(payload: payload)
         }
@@ -50,7 +50,7 @@ enum ShadowClientSunshineControlFeedbackCodec {
     static func parseTermination(
         type: UInt16,
         payload: Data
-    ) -> ShadowClientSunshineTerminationEvent? {
+    ) -> ShadowClientHostTerminationEvent? {
         guard type == ShadowClientSunshineControlMessageProfile.terminationType,
               payload.count >= 4
         else {
@@ -63,7 +63,7 @@ enum ShadowClientSunshineControlFeedbackCodec {
 
     private static func parseRumble(
         payload: Data
-    ) -> ShadowClientSunshineControllerFeedbackEvent? {
+    ) -> ShadowClientHostControllerFeedbackEvent? {
         // Sunshine control_rumble_t packs a 4-byte reserved field before id/low/high.
         guard payload.count >= 10 else {
             return nil
@@ -82,7 +82,7 @@ enum ShadowClientSunshineControlFeedbackCodec {
 
     private static func parseTriggerRumble(
         payload: Data
-    ) -> ShadowClientSunshineControllerFeedbackEvent? {
+    ) -> ShadowClientHostControllerFeedbackEvent? {
         guard payload.count >= 6 else {
             return nil
         }
@@ -100,7 +100,7 @@ enum ShadowClientSunshineControlFeedbackCodec {
 
     private static func parseAdaptiveTriggers(
         payload: Data
-    ) -> ShadowClientSunshineControllerFeedbackEvent? {
+    ) -> ShadowClientHostControllerFeedbackEvent? {
         // Sunshine control_adaptive_triggers_t:
         // id(2) + event_flags(1) + type_left(1) + type_right(1) + left[10] + right[10]
         guard payload.count >= 25 else {
