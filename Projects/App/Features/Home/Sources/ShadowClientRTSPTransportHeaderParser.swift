@@ -1,7 +1,7 @@
 import Foundation
 
 enum ShadowClientRTSPTransportHeaderParser {
-    private static let sunshineTokenQuoteCharacters = CharacterSet(charactersIn: "\"'")
+    private static let hostTokenQuoteCharacters = CharacterSet(charactersIn: "\"'")
 
     static func parseServerPort(from transportHeader: String) -> UInt16? {
         let lower = transportHeader.lowercased()
@@ -20,8 +20,8 @@ enum ShadowClientRTSPTransportHeaderParser {
         return port
     }
 
-    static func parseSunshinePingPayload(from headerValue: String?) -> Data? {
-        for token in sunshineTokens(from: headerValue) {
+    static func parseHostPingPayload(from headerValue: String?) -> Data? {
+        for token in hostTokens(from: headerValue) {
             let bytes = Data(token.utf8)
             if bytes.count == 16 {
                 return bytes
@@ -30,8 +30,8 @@ enum ShadowClientRTSPTransportHeaderParser {
         return nil
     }
 
-    static func parseSunshineControlConnectData(from headerValue: String?) -> UInt32? {
-        for token in sunshineTokens(from: headerValue) {
+    static func parseHostControlConnectData(from headerValue: String?) -> UInt32? {
+        for token in hostTokens(from: headerValue) {
             if token.lowercased().hasPrefix("0x") {
                 let hexValue = String(token.dropFirst(2))
                 guard !hexValue.isEmpty else {
@@ -50,7 +50,7 @@ enum ShadowClientRTSPTransportHeaderParser {
         return nil
     }
 
-    private static func sunshineTokens(from headerValue: String?) -> [String] {
+    private static func hostTokens(from headerValue: String?) -> [String] {
         guard let headerValue else {
             return []
         }
@@ -65,7 +65,7 @@ enum ShadowClientRTSPTransportHeaderParser {
                 character == ";" || character == "," || character.isWhitespace
             })
             .map { token in
-                token.trimmingCharacters(in: sunshineTokenQuoteCharacters)
+                token.trimmingCharacters(in: hostTokenQuoteCharacters)
             }
             .filter { !$0.isEmpty }
     }

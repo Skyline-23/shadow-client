@@ -4366,7 +4366,7 @@ private actor ShadowClientRTSPInterleavedClient {
                     audioServerPort = NWEndpoint.Port(rawValue: ShadowClientRealtimeSessionDefaults.fallbackAudioPort)
                     logger.notice("RTSP audio server port missing in SETUP transport; using fallback \(ShadowClientRealtimeSessionDefaults.fallbackAudioPort, privacy: .public)")
                 }
-                audioPingPayload = ShadowClientRTSPTransportHeaderParser.parseSunshinePingPayload(
+                audioPingPayload = ShadowClientRTSPTransportHeaderParser.parseHostPingPayload(
                     from: response.headers[ShadowClientRTSPRequestDefaults.responseHeaderPingPayload]
                 )
                 if let audioPingPayload,
@@ -4448,7 +4448,7 @@ private actor ShadowClientRTSPInterleavedClient {
                 "RTSP SETUP failed: missing session header"
             )
         }
-        videoPingPayload = ShadowClientRTSPTransportHeaderParser.parseSunshinePingPayload(
+        videoPingPayload = ShadowClientRTSPTransportHeaderParser.parseHostPingPayload(
             from: setup.headers[ShadowClientRTSPRequestDefaults.responseHeaderPingPayload]
         )
         if let videoPingPayload,
@@ -4495,7 +4495,7 @@ private actor ShadowClientRTSPInterleavedClient {
                     parsedControlServerPort = NWEndpoint.Port(rawValue: ShadowClientRealtimeSessionDefaults.fallbackControlPort)
                     logger.notice("RTSP control server port missing in SETUP transport; using fallback \(ShadowClientRealtimeSessionDefaults.fallbackControlPort, privacy: .public)")
                 }
-                if let parsed = ShadowClientRTSPTransportHeaderParser.parseSunshineControlConnectData(
+                if let parsed = ShadowClientRTSPTransportHeaderParser.parseHostControlConnectData(
                     from: response.headers[ShadowClientRTSPRequestDefaults.responseHeaderConnectData]
                 ) {
                     parsedControlConnectData = parsed
