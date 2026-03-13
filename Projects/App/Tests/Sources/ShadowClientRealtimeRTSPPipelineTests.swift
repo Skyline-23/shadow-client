@@ -79,7 +79,7 @@ func rtspSdpParserExtractsAV1Track() throws {
     #expect(track.parameterSets.isEmpty)
 }
 
-@Test("RTSP SDP parser infers video track when Sunshine-style DESCRIBE omits media section")
+@Test("RTSP SDP parser infers video track when Apollo-style DESCRIBE omits media section")
 func rtspSdpParserHandlesDescribeWithoutMediaSection() throws {
     let sdp = """
     a=x-ss-general.featureFlags:3
@@ -155,8 +155,8 @@ func rtspSdpParserExtractsOpusAudioTrack() {
     #expect(track?.controlURL == "rtsp://example-pc.local:48010/audio/0/0")
 }
 
-@Test("RTSP SDP parser infers Opus for Sunshine PT97 surround params without rtpmap")
-func rtspSdpParserInfersSunshineOpusWithoutRtpmap() {
+@Test("RTSP SDP parser infers Opus for host PT97 surround params without rtpmap")
+func rtspSdpParserInfersHostOpusWithoutRtpmap() {
     let sdp = """
     v=0
     o=- 0 0 IN IP4 127.0.0.1
@@ -180,7 +180,7 @@ func rtspSdpParserInfersSunshineOpusWithoutRtpmap() {
     #expect(track?.channelCount == 2)
 }
 
-@Test("RTSP SDP parser infers 5.1 channels from Sunshine surround params")
+@Test("RTSP SDP parser infers 5.1 channels from host surround params")
 func rtspSdpParserInfersSurroundChannelCountFromSurroundParams() {
     let sdp = """
     v=0
@@ -226,7 +226,7 @@ func rtspSdpParserIgnoresMalformedSurroundParams() {
     #expect(track?.channelCount == 2)
 }
 
-@Test("RTSP SDP parser infers audio track from Sunshine global fmtp lines without m=audio")
+@Test("RTSP SDP parser infers audio track from host global fmtp lines without m=audio")
 func rtspSdpParserInfersAudioTrackWithoutAudioMediaSection() {
     let sdp = """
     a=x-ss-general.featureFlags:3
@@ -317,8 +317,8 @@ func rtspSdpParserExtractsAV1CodecConfigurationFromFmtpConfig() throws {
     #expect(track.parameterSets[0] == Data([0x81, 0x02, 0x40, 0x05]))
 }
 
-@Test("RTSP SDP parser falls back to Sunshine codec hint when m=video payload list is empty")
-func rtspSdpParserHandlesSunshineVideoMediaWithoutPayloadType() throws {
+@Test("RTSP SDP parser falls back to host codec hint when m=video payload list is empty")
+func rtspSdpParserHandlesHostVideoMediaWithoutPayloadType() throws {
     let sdp = """
     v=0
     o=- 0 0 IN IP4 127.0.0.1
@@ -600,13 +600,13 @@ func videoRtpReorderBufferDropsGapRunAtDepthThreshold() {
     #expect(recoveryReady.map(\.sequenceNumber) == [201])
 }
 
-@Test("Sunshine ping payload parser accepts 16-byte ASCII payload")
+@Test("Host ping payload parser accepts 16-byte ASCII payload")
 func sunshinePingPayloadParserAcceptsAsciiPayload() {
     let payload = ShadowClientRTSPTransportHeaderParser.parseHostPingPayload(from: "3727B184C4E23026")
     #expect(payload == Data("3727B184C4E23026".utf8))
 }
 
-@Test("Sunshine ping packet codec emits strict v2 packet when negotiated payload exists")
+@Test("Host ping packet codec emits strict v2 packet when negotiated payload exists")
 func sunshinePingPacketCodecEmitsStrictV2Packet() {
     let negotiatedPayload = Data("A1B2C3D4E5F60708".utf8)
     let packets = ShadowClientHostPingPacketCodec.makePingPackets(
@@ -620,7 +620,7 @@ func sunshinePingPacketCodecEmitsStrictV2Packet() {
     #expect(Data(packets[0].suffix(4)) == Data([0x00, 0x00, 0x00, 0x07]))
 }
 
-@Test("Sunshine ping packet codec emits legacy ASCII ping when negotiated payload is unavailable")
+@Test("Host ping packet codec emits legacy ASCII ping when negotiated payload is unavailable")
 func sunshinePingPacketCodecEmitsLegacyAsciiFallback() {
     let packets = ShadowClientHostPingPacketCodec.makePingPackets(
         sequence: 42,
@@ -1029,7 +1029,7 @@ func av1DepacketizerSkipsPacketsWithoutPictureDataFlag() {
     }
 }
 
-@Test("AV1 depacketizer ignores FEC parity shards from Sunshine payload stream")
+@Test("AV1 depacketizer ignores FEC parity shards from host payload stream")
 func av1DepacketizerIgnoresFECParityShards() {
     var depacketizer = ShadowClientAV1RTPDepacketizer()
     let frameIndex: UInt32 = 66
@@ -1444,7 +1444,7 @@ func av1VideoFECReconstructionQueueUsesFixedShardPayloadSizeForRecoveredShard() 
     #expect(result.orderedDataPackets[0].payload.count == 40)
 }
 
-@Test("AV1 depacketizer applies Sunshine 7.1.446 frame header profile for 0x81 packets")
+@Test("AV1 depacketizer applies host 7.1.446 frame header profile for 0x81 packets")
 func av1DepacketizerUsesVersionAware41ByteHeader() {
     var depacketizer = ShadowClientAV1RTPDepacketizer()
     depacketizer.configureFrameHeaderProfile(appVersion: "7.1.446.0")
@@ -2813,8 +2813,8 @@ func realtimeRuntimeAV1SyncFrameClassifierAdmitsType4WhenAllowed() {
     )
 }
 
-@Test("Realtime runtime AV1 sync-frame classifier rejects Sunshine frame type 104")
-func realtimeRuntimeAV1SyncFrameClassifierRejectsSunshine104() {
+@Test("Realtime runtime AV1 sync-frame classifier rejects host frame type 104")
+func realtimeRuntimeAV1SyncFrameClassifierRejectsHost104() {
     #expect(
         !ShadowClientRealtimeRTSPSessionRuntime.isAV1SyncFrameType(
             104,

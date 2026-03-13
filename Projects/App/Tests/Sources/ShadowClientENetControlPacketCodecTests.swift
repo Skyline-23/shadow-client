@@ -163,7 +163,7 @@ func enetControlPayloadCodecUsesLittleEndianType() {
     #expect(payload == Data([0x07, 0x03, 0x00]))
 }
 
-@Test("Sunshine control periodic ping payload follows Moonlight loss-stats format")
+@Test("Host control periodic ping payload follows Moonlight loss-stats format")
 func sunshineControlPeriodicPingPayloadMatchesProfile() {
     #expect(ShadowClientHostControlMessageProfile.periodicPingType == 0x0200)
     #expect(

@@ -159,8 +159,8 @@ func gameStreamParserMapsAttributeBasedAppListXML() throws {
     #expect(apps[1] == .init(id: 1093255277, title: "Steam Big Picture", hdrSupported: true, isAppCollectorGame: false))
 }
 
-@Test("GameStream parser maps Sunshine applist XML without status_message")
-func gameStreamParserMapsSunshineAppListWithoutStatusMessage() throws {
+@Test("GameStream parser maps host applist XML without status_message")
+func gameStreamParserMapsHostAppListWithoutStatusMessage() throws {
     let xml = """
     <?xml version="1.0" encoding="utf-8"?>
     <root status_code="200">
