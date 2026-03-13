@@ -839,7 +839,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 sessionSurfaceContext.publishControllerFeedbackEvent(feedbackEvent)
             },
             onTermination: { [runtime = self] terminationEvent in
-                await runtime.handleSunshineTerminationEvent(terminationEvent)
+                await runtime.handleHostTerminationEvent(terminationEvent)
             },
             audioSessionActivation: audioSessionActivation,
             audioSessionDeactivation: audioSessionDeactivation
@@ -1240,7 +1240,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         await closeVideoDecodeQueue()
     }
 
-    private func handleSunshineTerminationEvent(
+    private func handleHostTerminationEvent(
         _ event: ShadowClientHostTerminationEvent
     ) async {
         await failStreamingSession(message: event.message)
@@ -4516,9 +4516,9 @@ private actor ShadowClientRTSPInterleavedClient {
         controlConnectData = parsedControlConnectData
         controlServerPort = parsedControlServerPort
 
-        let sunshineFeatureFlags = parseSunshineFeatureFlags(from: sdp)
-        let encryptionSupportedFlags = parseSunshineEncryptionSupportedFlags(from: sdp)
-        let encryptionRequestedFlags = parseSunshineEncryptionRequestedFlags(from: sdp)
+        let hostFeatureFlags = parseHostFeatureFlags(from: sdp)
+        let encryptionSupportedFlags = parseHostEncryptionSupportedFlags(from: sdp)
+        let encryptionRequestedFlags = parseHostEncryptionRequestedFlags(from: sdp)
         let effectiveEncryptionRequestedFlags = encryptionSupportedFlags == 0 ?
             encryptionRequestedFlags :
             (encryptionRequestedFlags & encryptionSupportedFlags)
@@ -4558,7 +4558,7 @@ private actor ShadowClientRTSPInterleavedClient {
         }
         let audioEncryptionLabel = handshakeNegotiation.audioEncryptionEnabled ? "encrypted" : "plaintext"
         logger.notice(
-            "RTSP negotiation session-id-v1=\(handshakeNegotiation.supportsSessionIdentifierV1, privacy: .public) ml-flags=\(handshakeNegotiation.moonlightFeatureFlags, privacy: .public) ss-feature-flags=\(sunshineFeatureFlags, privacy: .public) encryption-supported=\(encryptionSupportedFlags, privacy: .public) encryption-requested=\(encryptionRequestedFlags, privacy: .public) encryption-enabled=\(handshakeNegotiation.encryptionEnabledFlags, privacy: .public) control-mode=\(controlModeLabel, privacy: .public) audio-mode=\(audioEncryptionLabel, privacy: .public)"
+            "RTSP negotiation session-id-v1=\(handshakeNegotiation.supportsSessionIdentifierV1, privacy: .public) ml-flags=\(handshakeNegotiation.moonlightFeatureFlags, privacy: .public) ss-feature-flags=\(hostFeatureFlags, privacy: .public) encryption-supported=\(encryptionSupportedFlags, privacy: .public) encryption-requested=\(encryptionRequestedFlags, privacy: .public) encryption-enabled=\(handshakeNegotiation.encryptionEnabledFlags, privacy: .public) control-mode=\(controlModeLabel, privacy: .public) audio-mode=\(audioEncryptionLabel, privacy: .public)"
         )
 
         let announcePayload = ShadowClientRTSPAnnouncePayloadBuilder.build(
@@ -4676,17 +4676,17 @@ private actor ShadowClientRTSPInterleavedClient {
             }
         }
 
-        var didStartSunshineControl = false
+        var didStartHostControl = false
         if controlServerPort != nil {
-            await ensureSunshineControlChannelStarted(fallbackHost: remoteHost ?? .init(host))
-            didStartSunshineControl = hasStartedControlChannelBootstrap
-            if didStartSunshineControl {
+            await ensureHostControlChannelStarted(fallbackHost: remoteHost ?? .init(host))
+            didStartHostControl = hasStartedControlChannelBootstrap
+            if didStartHostControl {
                 logger.debug("RTSP control path negotiated; Apollo control bootstrap ready")
             } else {
                 logger.debug("RTSP control path negotiated; Apollo bootstrap unavailable, trying legacy first-frame compatibility probe")
             }
         }
-        if !didStartSunshineControl {
+        if !didStartHostControl {
             await attemptLegacyFirstFrameBootstrap(host: remoteHost ?? .init(host))
         }
         return track
@@ -5081,28 +5081,28 @@ private actor ShadowClientRTSPInterleavedClient {
         return candidates
     }
 
-    private func parseSunshineFeatureFlags(from sdp: String) -> UInt32 {
-        parseSunshineUIntAttribute(
+    private func parseHostFeatureFlags(from sdp: String) -> UInt32 {
+        parseHostUIntAttribute(
             from: sdp,
-            prefix: ShadowClientSunshineHandshakeProfile.featureFlagsAttributePrefix
+            prefix: ShadowClientHostHandshakeProfile.featureFlagsAttributePrefix
         ) ?? 0
     }
 
-    private func parseSunshineEncryptionSupportedFlags(from sdp: String) -> UInt32 {
-        parseSunshineUIntAttribute(
+    private func parseHostEncryptionSupportedFlags(from sdp: String) -> UInt32 {
+        parseHostUIntAttribute(
             from: sdp,
-            prefix: ShadowClientSunshineHandshakeProfile.encryptionSupportedAttributePrefix
+            prefix: ShadowClientHostHandshakeProfile.encryptionSupportedAttributePrefix
         ) ?? 0
     }
 
-    private func parseSunshineEncryptionRequestedFlags(from sdp: String) -> UInt32 {
-        parseSunshineUIntAttribute(
+    private func parseHostEncryptionRequestedFlags(from sdp: String) -> UInt32 {
+        parseHostUIntAttribute(
             from: sdp,
-            prefix: ShadowClientSunshineHandshakeProfile.encryptionRequestedAttributePrefix
-        ) ?? ShadowClientSunshineHandshakeProfile.encryptionDisabled
+            prefix: ShadowClientHostHandshakeProfile.encryptionRequestedAttributePrefix
+        ) ?? ShadowClientHostHandshakeProfile.encryptionDisabled
     }
 
-    private func parseSunshineUIntAttribute(
+    private func parseHostUIntAttribute(
         from sdp: String,
         prefix: String
     ) -> UInt32? {
@@ -5126,19 +5126,19 @@ private actor ShadowClientRTSPInterleavedClient {
         return nil
     }
 
-    private func ensureSunshineControlChannelStarted(
+    private func ensureHostControlChannelStarted(
         fallbackHost: NWEndpoint.Host
     ) async {
         guard !hasStartedControlChannelBootstrap else {
             return
         }
-        let started = await startSunshineControlChannelIfNeeded(
+        let started = await startHostControlChannelIfNeeded(
             host: String(describing: fallbackHost)
         )
         hasStartedControlChannelBootstrap = started
     }
 
-    private func startSunshineControlChannelIfNeeded(host: String) async -> Bool {
+    private func startHostControlChannelIfNeeded(host: String) async -> Bool {
         guard let controlServerPort else {
             logger.notice("RTSP control bootstrap skipped (no negotiated control server port)")
             return true
@@ -5235,7 +5235,7 @@ private actor ShadowClientRTSPInterleavedClient {
     }
 
     func requestVideoRecoveryFrame(lastSeenFrameIndex: UInt32?) async {
-        await ensureSunshineControlChannelStarted(
+        await ensureHostControlChannelStarted(
             fallbackHost: remoteHost ?? .init("127.0.0.1")
         )
         guard let controlChannelRuntime else {
@@ -5250,7 +5250,7 @@ private actor ShadowClientRTSPInterleavedClient {
         startFrameIndex: UInt32,
         endFrameIndex: UInt32
     ) async {
-        await ensureSunshineControlChannelStarted(
+        await ensureHostControlChannelStarted(
             fallbackHost: remoteHost ?? .init("127.0.0.1")
         )
         guard let controlChannelRuntime else {
@@ -5263,7 +5263,7 @@ private actor ShadowClientRTSPInterleavedClient {
     }
 
     private func ensureInputControlChannelForGateway() async -> ShadowClientHostControlChannelRuntime? {
-        await ensureSunshineControlChannelStarted(
+        await ensureHostControlChannelStarted(
             fallbackHost: remoteHost ?? .init("127.0.0.1")
         )
         return controlChannelRuntime
@@ -5345,7 +5345,7 @@ private actor ShadowClientRTSPInterleavedClient {
 
                 packetCount += 1
                 if packetCount == 1 {
-                    await ensureSunshineControlChannelStarted(
+                    await ensureHostControlChannelStarted(
                         fallbackHost: remoteHost ?? .init("127.0.0.1")
                     )
                     logger.notice(
@@ -5602,7 +5602,7 @@ private actor ShadowClientRTSPInterleavedClient {
 
             packetCount += 1
             if packetCount == 1 {
-                await ensureSunshineControlChannelStarted(fallbackHost: host)
+                await ensureHostControlChannelStarted(fallbackHost: host)
                 logger.notice(
                     "First RTP video packet received: payloadType=\(packet.payloadType, privacy: .public), marker=\(packet.marker, privacy: .public), payloadBytes=\(packet.payload.count, privacy: .public)"
                 )

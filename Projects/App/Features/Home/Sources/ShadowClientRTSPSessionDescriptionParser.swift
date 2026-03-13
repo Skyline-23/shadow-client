@@ -134,7 +134,7 @@ public enum ShadowClientRTSPSessionDescriptionParser {
         var fmtpByPayloadType: [Int: [String: String]] = [:]
         var globalCodecByPayloadType: [Int: ShadowClientVideoCodec] = [:]
         var globalFmtpByPayloadType: [Int: [String: String]] = [:]
-        let sunshineHint = parseSunshineVideoHint(from: normalizedLines)
+        let hostVideoHint = parseHostVideoHint(from: normalizedLines)
 
         for line in normalizedLines {
             if line.hasPrefix("m=") {
@@ -195,13 +195,13 @@ public enum ShadowClientRTSPSessionDescriptionParser {
         }
 
         if advertisedPayloadTypes.isEmpty,
-           let hintedPayloadType = sunshineHint.payloadType
+           let hintedPayloadType = hostVideoHint.payloadType
         {
             advertisedPayloadTypes = [hintedPayloadType]
         }
 
-        if let hintedCodec = sunshineHint.codec {
-            let payloadType = sunshineHint.payloadType ?? advertisedPayloadTypes.first ?? ShadowClientRTSPProtocolProfile.fallbackVideoPayloadType
+        if let hintedCodec = hostVideoHint.codec {
+            let payloadType = hostVideoHint.payloadType ?? advertisedPayloadTypes.first ?? ShadowClientRTSPProtocolProfile.fallbackVideoPayloadType
             if !advertisedPayloadTypes.contains(payloadType) {
                 advertisedPayloadTypes.append(payloadType)
             }
@@ -598,7 +598,7 @@ public enum ShadowClientRTSPSessionDescriptionParser {
         return (payloadType, codec, sampleRate, channelCount)
     }
 
-    private static func parseSunshineVideoHint(
+    private static func parseHostVideoHint(
         from lines: [String]
     ) -> (payloadType: Int?, codec: ShadowClientVideoCodec?) {
         var payloadType: Int?
