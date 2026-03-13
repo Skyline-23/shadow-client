@@ -15,7 +15,7 @@ enum ShadowClientSunshineENetPacketCodec {
             let length: Int
 
             var isAcknowledgeRequired: Bool {
-                (flags & ShadowClientSunshineENetProtocolProfile.protocolCommandFlagAcknowledge) != 0
+                (flags & ShadowClientHostENetProtocolProfile.protocolCommandFlagAcknowledge) != 0
             }
         }
 
@@ -42,8 +42,8 @@ enum ShadowClientSunshineENetPacketCodec {
         let receivedSentTime: UInt16
     }
 
-    static let maximumPeerID: UInt16 = ShadowClientSunshineENetProtocolProfile.maximumPeerID
-    static let controlChannelCount: UInt32 = ShadowClientSunshineENetProtocolProfile.controlChannelCount
+    static let maximumPeerID: UInt16 = ShadowClientHostENetProtocolProfile.maximumPeerID
+    static let controlChannelCount: UInt32 = ShadowClientHostENetProtocolProfile.controlChannelCount
 
     static func makeConnectPacket(
         connectID: UInt32,
@@ -54,28 +54,28 @@ enum ShadowClientSunshineENetPacketCodec {
         var packet = Data()
         packet.reserveCapacity(52)
 
-        let peerIDWithFlags = maximumPeerID | ShadowClientSunshineENetProtocolProfile.protocolHeaderFlagSentTime
+        let peerIDWithFlags = maximumPeerID | ShadowClientHostENetProtocolProfile.protocolHeaderFlagSentTime
         packet.appendUInt16BE(peerIDWithFlags)
         packet.appendUInt16BE(sentTime)
 
         packet.append(
-            ShadowClientSunshineENetProtocolProfile.protocolCommandConnect |
-                ShadowClientSunshineENetProtocolProfile.protocolCommandFlagAcknowledge
+            ShadowClientHostENetProtocolProfile.protocolCommandConnect |
+                ShadowClientHostENetProtocolProfile.protocolCommandFlagAcknowledge
         )
-        packet.append(ShadowClientSunshineENetProtocolProfile.wildcardSessionID)
-        packet.appendUInt16BE(ShadowClientSunshineENetProtocolProfile.firstOutgoingReliableSequence)
+        packet.append(ShadowClientHostENetProtocolProfile.wildcardSessionID)
+        packet.appendUInt16BE(ShadowClientHostENetProtocolProfile.firstOutgoingReliableSequence)
         // outgoingPeerID = incomingPeerID for local peer index 0
-        packet.appendUInt16BE(ShadowClientSunshineENetProtocolProfile.localIncomingPeerID)
-        packet.append(ShadowClientSunshineENetProtocolProfile.wildcardSessionID) // incomingSessionID
-        packet.append(ShadowClientSunshineENetProtocolProfile.wildcardSessionID) // outgoingSessionID
-        packet.appendUInt32BE(ShadowClientSunshineENetProtocolProfile.defaultMTU)
-        packet.appendUInt32BE(ShadowClientSunshineENetProtocolProfile.maximumWindowSize)
+        packet.appendUInt16BE(ShadowClientHostENetProtocolProfile.localIncomingPeerID)
+        packet.append(ShadowClientHostENetProtocolProfile.wildcardSessionID) // incomingSessionID
+        packet.append(ShadowClientHostENetProtocolProfile.wildcardSessionID) // outgoingSessionID
+        packet.appendUInt32BE(ShadowClientHostENetProtocolProfile.defaultMTU)
+        packet.appendUInt32BE(ShadowClientHostENetProtocolProfile.maximumWindowSize)
         packet.appendUInt32BE(channelCount)
         packet.appendUInt32BE(0) // incomingBandwidth
         packet.appendUInt32BE(0) // outgoingBandwidth
-        packet.appendUInt32BE(ShadowClientSunshineENetProtocolProfile.packetThrottleIntervalMs)
-        packet.appendUInt32BE(ShadowClientSunshineENetProtocolProfile.packetThrottleAcceleration)
-        packet.appendUInt32BE(ShadowClientSunshineENetProtocolProfile.packetThrottleDeceleration)
+        packet.appendUInt32BE(ShadowClientHostENetProtocolProfile.packetThrottleIntervalMs)
+        packet.appendUInt32BE(ShadowClientHostENetProtocolProfile.packetThrottleAcceleration)
+        packet.appendUInt32BE(ShadowClientHostENetProtocolProfile.packetThrottleDeceleration)
         // ENet transmits connectID without host/network byte swapping.
         packet.appendUInt32LE(connectID)
         packet.appendUInt32BE(connectData)
@@ -93,16 +93,16 @@ enum ShadowClientSunshineENetPacketCodec {
         var packet = Data()
         packet.reserveCapacity(12)
 
-        let sessionBits = UInt16(outgoingSessionID & ShadowClientSunshineENetProtocolProfile.sessionValueMask) <<
-            ShadowClientSunshineENetProtocolProfile.protocolHeaderSessionShift
+        let sessionBits = UInt16(outgoingSessionID & ShadowClientHostENetProtocolProfile.sessionValueMask) <<
+            ShadowClientHostENetProtocolProfile.protocolHeaderSessionShift
         let peerIDWithSession =
             (outgoingPeerID & maximumPeerID) |
             sessionBits |
-            ShadowClientSunshineENetProtocolProfile.protocolHeaderFlagSentTime
+            ShadowClientHostENetProtocolProfile.protocolHeaderFlagSentTime
         packet.appendUInt16BE(peerIDWithSession)
         packet.appendUInt16BE(sentTime)
 
-        packet.append(ShadowClientSunshineENetProtocolProfile.protocolCommandAcknowledge)
+        packet.append(ShadowClientHostENetProtocolProfile.protocolCommandAcknowledge)
         packet.append(commandChannelID)
         packet.appendUInt16BE(receivedReliableSequenceNumber)
         packet.appendUInt16BE(receivedReliableSequenceNumber)
@@ -119,19 +119,19 @@ enum ShadowClientSunshineENetPacketCodec {
         var packet = Data()
         packet.reserveCapacity(8)
 
-        let sessionBits = UInt16(outgoingSessionID & ShadowClientSunshineENetProtocolProfile.sessionValueMask) <<
-            ShadowClientSunshineENetProtocolProfile.protocolHeaderSessionShift
+        let sessionBits = UInt16(outgoingSessionID & ShadowClientHostENetProtocolProfile.sessionValueMask) <<
+            ShadowClientHostENetProtocolProfile.protocolHeaderSessionShift
         let peerIDWithSession =
             (outgoingPeerID & maximumPeerID) |
             sessionBits |
-            ShadowClientSunshineENetProtocolProfile.protocolHeaderFlagSentTime
+            ShadowClientHostENetProtocolProfile.protocolHeaderFlagSentTime
         packet.appendUInt16BE(peerIDWithSession)
         packet.appendUInt16BE(sentTime)
         packet.append(
-            ShadowClientSunshineENetProtocolProfile.protocolCommandPing |
-                ShadowClientSunshineENetProtocolProfile.protocolCommandFlagAcknowledge
+            ShadowClientHostENetProtocolProfile.protocolCommandPing |
+                ShadowClientHostENetProtocolProfile.protocolCommandFlagAcknowledge
         )
-        packet.append(ShadowClientSunshineENetProtocolProfile.wildcardSessionID)
+        packet.append(ShadowClientHostENetProtocolProfile.wildcardSessionID)
         packet.appendUInt16BE(reliableSequenceNumber)
         return packet
     }
@@ -150,18 +150,18 @@ enum ShadowClientSunshineENetPacketCodec {
         var packet = Data()
         packet.reserveCapacity(10 + payload.count)
 
-        let sessionBits = UInt16(outgoingSessionID & ShadowClientSunshineENetProtocolProfile.sessionValueMask) <<
-            ShadowClientSunshineENetProtocolProfile.protocolHeaderSessionShift
+        let sessionBits = UInt16(outgoingSessionID & ShadowClientHostENetProtocolProfile.sessionValueMask) <<
+            ShadowClientHostENetProtocolProfile.protocolHeaderSessionShift
         let peerIDWithSession =
             (outgoingPeerID & maximumPeerID) |
             sessionBits |
-            ShadowClientSunshineENetProtocolProfile.protocolHeaderFlagSentTime
+            ShadowClientHostENetProtocolProfile.protocolHeaderFlagSentTime
         packet.appendUInt16BE(peerIDWithSession)
         packet.appendUInt16BE(sentTime)
 
         packet.append(
-            ShadowClientSunshineENetProtocolProfile.protocolCommandSendReliable |
-                ShadowClientSunshineENetProtocolProfile.protocolCommandFlagAcknowledge
+            ShadowClientHostENetProtocolProfile.protocolCommandSendReliable |
+                ShadowClientHostENetProtocolProfile.protocolCommandFlagAcknowledge
         )
         packet.append(channelID)
         packet.appendUInt16BE(reliableSequenceNumber)
@@ -184,16 +184,16 @@ enum ShadowClientSunshineENetPacketCodec {
         }
 
         let rawPeerID = data.readUInt16BE(at: 0)
-        if (rawPeerID & ShadowClientSunshineENetProtocolProfile.protocolHeaderFlagCompressed) != 0 {
+        if (rawPeerID & ShadowClientHostENetProtocolProfile.protocolHeaderFlagCompressed) != 0 {
             return nil
         }
 
         let peerID = rawPeerID & maximumPeerID
         let sessionID = UInt8(
-            (rawPeerID & ShadowClientSunshineENetProtocolProfile.protocolHeaderSessionMask) >>
-                ShadowClientSunshineENetProtocolProfile.protocolHeaderSessionShift
+            (rawPeerID & ShadowClientHostENetProtocolProfile.protocolHeaderSessionMask) >>
+                ShadowClientHostENetProtocolProfile.protocolHeaderSessionShift
         )
-        let hasSentTime = (rawPeerID & ShadowClientSunshineENetProtocolProfile.protocolHeaderFlagSentTime) != 0
+        let hasSentTime = (rawPeerID & ShadowClientHostENetProtocolProfile.protocolHeaderFlagSentTime) != 0
         let headerLength = hasSentTime ? 4 : 2
         guard data.count >= headerLength else {
             return nil
@@ -205,8 +205,8 @@ enum ShadowClientSunshineENetPacketCodec {
 
         while cursor + 4 <= data.count {
             let commandByte = data[cursor]
-            let commandNumber = commandByte & ShadowClientSunshineENetProtocolProfile.protocolCommandMask
-            guard let fixedSize = ShadowClientSunshineENetProtocolProfile.fixedCommandSizes[commandNumber] else {
+            let commandNumber = commandByte & ShadowClientHostENetProtocolProfile.protocolCommandMask
+            guard let fixedSize = ShadowClientHostENetProtocolProfile.fixedCommandSizes[commandNumber] else {
                 break
             }
             guard cursor + fixedSize <= data.count else {
@@ -215,13 +215,13 @@ enum ShadowClientSunshineENetPacketCodec {
 
             let payloadSize: Int
             switch commandNumber {
-            case ShadowClientSunshineENetProtocolProfile.protocolCommandSendReliable:
+            case ShadowClientHostENetProtocolProfile.protocolCommandSendReliable:
                 payloadSize = Int(data.readUInt16BE(at: cursor + 4))
-            case ShadowClientSunshineENetProtocolProfile.protocolCommandSendUnreliable,
-                ShadowClientSunshineENetProtocolProfile.protocolCommandSendUnsequenced:
+            case ShadowClientHostENetProtocolProfile.protocolCommandSendUnreliable,
+                ShadowClientHostENetProtocolProfile.protocolCommandSendUnsequenced:
                 payloadSize = Int(data.readUInt16BE(at: cursor + 6))
-            case ShadowClientSunshineENetProtocolProfile.protocolCommandSendFragment,
-                ShadowClientSunshineENetProtocolProfile.protocolCommandSendUnreliableFragment:
+            case ShadowClientHostENetProtocolProfile.protocolCommandSendFragment,
+                ShadowClientHostENetProtocolProfile.protocolCommandSendUnreliableFragment:
                 payloadSize = Int(data.readUInt16BE(at: cursor + 6))
             default:
                 payloadSize = 0
@@ -260,7 +260,7 @@ enum ShadowClientSunshineENetPacketCodec {
             return nil
         }
 
-        for command in packet.commands where command.number == ShadowClientSunshineENetProtocolProfile.protocolCommandVerifyConnect {
+        for command in packet.commands where command.number == ShadowClientHostENetProtocolProfile.protocolCommandVerifyConnect {
             guard command.length >= 44 else {
                 continue
             }
@@ -283,7 +283,7 @@ enum ShadowClientSunshineENetPacketCodec {
         from packet: ParsedPacket,
         command: ParsedPacket.Command
     ) -> Acknowledge? {
-        guard command.number == ShadowClientSunshineENetProtocolProfile.protocolCommandAcknowledge,
+        guard command.number == ShadowClientHostENetProtocolProfile.protocolCommandAcknowledge,
               command.length >= 8
         else {
             return nil

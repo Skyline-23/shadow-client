@@ -8,28 +8,28 @@ enum ShadowClientHostControlChannelMode: Sendable {
     var startAType: UInt16 {
         switch self {
         case .plaintext:
-            return ShadowClientSunshineControlMessageProfile.startATypeLegacy
+            return ShadowClientHostControlMessageProfile.startATypeLegacy
         case .encryptedV2:
-            return ShadowClientSunshineControlMessageProfile.startATypeEncryptedV2
+            return ShadowClientHostControlMessageProfile.startATypeEncryptedV2
         }
     }
 
     var startBType: UInt16 {
-        ShadowClientSunshineControlMessageProfile.startBType
+        ShadowClientHostControlMessageProfile.startBType
     }
 
     var startAPayload: Data {
-        ShadowClientSunshineControlMessageProfile.startAPayload
+        ShadowClientHostControlMessageProfile.startAPayload
     }
 
     var startBPayload: Data {
-        ShadowClientSunshineControlMessageProfile.startBPayload
+        ShadowClientHostControlMessageProfile.startBPayload
     }
 
     private static let plaintextIDRFallbackFrameWindow: UInt32 = 0x20
 
     var recoveryRequestChannelID: UInt8 {
-        ShadowClientSunshineControlMessageProfile.urgentChannelID
+        ShadowClientHostControlMessageProfile.urgentChannelID
     }
 
     func makeIDRRequest(
@@ -42,8 +42,8 @@ enum ShadowClientHostControlChannelMode: Sendable {
                 lastFrame - Self.plaintextIDRFallbackFrameWindow :
                 0
             return (
-                ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesType,
-                ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesPayload(
+                ShadowClientHostControlMessageProfile.invalidateReferenceFramesType,
+                ShadowClientHostControlMessageProfile.invalidateReferenceFramesPayload(
                     firstFrame: firstFrame,
                     lastFrame: lastFrame
                 ),
@@ -51,8 +51,8 @@ enum ShadowClientHostControlChannelMode: Sendable {
             )
         case .encryptedV2:
             return (
-                ShadowClientSunshineControlMessageProfile.startATypeEncryptedV2,
-                ShadowClientSunshineControlMessageProfile.startAPayload,
+                ShadowClientHostControlMessageProfile.startATypeEncryptedV2,
+                ShadowClientHostControlMessageProfile.startAPayload,
                 recoveryRequestChannelID
             )
         }
@@ -63,8 +63,8 @@ enum ShadowClientHostControlChannelMode: Sendable {
         endFrameIndex: UInt32
     ) -> (type: UInt16, payload: Data, channelID: UInt8) {
         (
-            ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesType,
-            ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesPayload(
+            ShadowClientHostControlMessageProfile.invalidateReferenceFramesType,
+            ShadowClientHostControlMessageProfile.invalidateReferenceFramesPayload(
                 firstFrame: min(startFrameIndex, endFrameIndex),
                 lastFrame: max(startFrameIndex, endFrameIndex)
             ),

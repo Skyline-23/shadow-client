@@ -35,13 +35,13 @@ enum ShadowClientHostControlFeedbackCodec {
         type: UInt16,
         payload: Data
     ) -> ShadowClientHostControllerFeedbackEvent? {
-        if type == ShadowClientSunshineControlMessageProfile.rumbleType {
+        if type == ShadowClientHostControlMessageProfile.rumbleType {
             return parseRumble(payload: payload)
         }
-        if type == ShadowClientSunshineControlMessageProfile.rumbleTriggersType {
+        if type == ShadowClientHostControlMessageProfile.rumbleTriggersType {
             return parseTriggerRumble(payload: payload)
         }
-        if type == ShadowClientSunshineControlMessageProfile.adaptiveTriggersType {
+        if type == ShadowClientHostControlMessageProfile.adaptiveTriggersType {
             return parseAdaptiveTriggers(payload: payload)
         }
         return nil
@@ -51,7 +51,7 @@ enum ShadowClientHostControlFeedbackCodec {
         type: UInt16,
         payload: Data
     ) -> ShadowClientHostTerminationEvent? {
-        guard type == ShadowClientSunshineControlMessageProfile.terminationType,
+        guard type == ShadowClientHostControlMessageProfile.terminationType,
               payload.count >= 4
         else {
             return nil

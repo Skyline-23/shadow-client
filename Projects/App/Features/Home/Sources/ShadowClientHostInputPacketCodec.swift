@@ -7,9 +7,9 @@ enum ShadowClientHostInputPacketCodec {
     }
 
     private enum Channel {
-        static let keyboard: UInt8 = ShadowClientSunshineControlMessageProfile.keyboardChannelID
-        static let mouse: UInt8 = ShadowClientSunshineControlMessageProfile.mouseChannelID
-        static let gamepadBase: UInt8 = ShadowClientSunshineControlMessageProfile.gamepadChannelBaseID
+        static let keyboard: UInt8 = ShadowClientHostControlMessageProfile.keyboardChannelID
+        static let mouse: UInt8 = ShadowClientHostControlMessageProfile.mouseChannelID
+        static let gamepadBase: UInt8 = ShadowClientHostControlMessageProfile.gamepadChannelBaseID
     }
 
     private enum PacketMagic {

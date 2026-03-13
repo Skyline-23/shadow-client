@@ -1,6 +1,6 @@
 import Foundation
 
-enum ShadowClientSunshineENetProtocolProfile {
+enum ShadowClientHostENetProtocolProfile {
     static let maximumPeerID: UInt16 = 0x0FFF
     static let controlChannelCount: UInt32 = 0x30
 
@@ -54,7 +54,7 @@ enum ShadowClientSunshineENetProtocolProfile {
     static let peerPingIntervalNanoseconds: UInt64 = 500_000_000
 }
 
-enum ShadowClientSunshineHandshakeProfile {
+enum ShadowClientHostHandshakeProfile {
     static let encryptionDisabled: UInt32 = 0
     static let moonlightFeatureFlagFECStatus: UInt32 = 0x01
     static let moonlightFeatureFlagSessionIDV1: UInt32 = 0x02
@@ -66,7 +66,7 @@ enum ShadowClientSunshineHandshakeProfile {
     static let encryptionRequestedAttributePrefix = "x-ss-general.encryptionrequested:"
 }
 
-enum ShadowClientSunshineControlMessageProfile {
+enum ShadowClientHostControlMessageProfile {
     static let genericChannelID: UInt8 = 0x00
     static let urgentChannelID: UInt8 = 0x01
     static let keyboardChannelID: UInt8 = 0x02
@@ -199,17 +199,17 @@ enum ShadowClientRTSPAnnounceProfile {
     }
 
     static func reliableUDPMode(encryptionEnabledFlags: UInt32) -> String {
-        (encryptionEnabledFlags & ShadowClientSunshineHandshakeProfile.sunshineEncryptionControlV2) != 0
+        (encryptionEnabledFlags & ShadowClientHostHandshakeProfile.sunshineEncryptionControlV2) != 0
             ? reliableUDPModeEncrypted
             : reliableUDPModeStandard
     }
 
     static func negotiatedNVFeatureFlags(encryptionEnabledFlags: UInt32) -> UInt32 {
         var flags = nvFeatureFlagsBase
-        if (encryptionEnabledFlags & ShadowClientSunshineHandshakeProfile.sunshineEncryptionControlV2) != 0 {
+        if (encryptionEnabledFlags & ShadowClientHostHandshakeProfile.sunshineEncryptionControlV2) != 0 {
             flags |= nvFeatureFlagEncryptionControlV2
         }
-        if (encryptionEnabledFlags & ShadowClientSunshineHandshakeProfile.sunshineEncryptionAudio) != 0 {
+        if (encryptionEnabledFlags & ShadowClientHostHandshakeProfile.sunshineEncryptionAudio) != 0 {
             flags |= nvFeatureFlagEncryptedAudio
         }
         return flags

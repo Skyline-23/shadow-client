@@ -88,7 +88,7 @@ actor ShadowClientHostControlChannelRuntime {
 
             let verify = try await waitForVerifyConnect(over: connection, expectedConnectID: connectID)
             outgoingPeerID = verify.outgoingPeerID
-            outgoingSessionID = verify.outgoingSessionID & ShadowClientSunshineENetProtocolProfile.sessionValueMask
+            outgoingSessionID = verify.outgoingSessionID & ShadowClientHostENetProtocolProfile.sessionValueMask
 
             try await acknowledge(
                 commandChannelID: verify.commandChannelID,
@@ -143,7 +143,7 @@ actor ShadowClientHostControlChannelRuntime {
         // for processing ACKs. Waiting for ACK here can race with the receive loop and
         // cause dropped input when the ACK is consumed by the background receiver first.
         try await sendReliableControlMessageWithoutBlockingForAcknowledge(
-            type: ShadowClientSunshineControlMessageProfile.inputDataType,
+            type: ShadowClientHostControlMessageProfile.inputDataType,
             payload: payload,
             channelID: channelID,
             over: connection
@@ -156,8 +156,8 @@ actor ShadowClientHostControlChannelRuntime {
         }
 
         try await sendReliableControlMessageWithoutBlockingForAcknowledge(
-            type: ShadowClientSunshineControlMessageProfile.periodicPingType,
-            payload: ShadowClientSunshineControlMessageProfile.periodicPingPayload,
+            type: ShadowClientHostControlMessageProfile.periodicPingType,
+            payload: ShadowClientHostControlMessageProfile.periodicPingPayload,
             over: connection
         )
     }
@@ -330,7 +330,7 @@ actor ShadowClientHostControlChannelRuntime {
     private func sendReliableControlMessage(
         type: UInt16,
         payload: Data,
-        channelID: UInt8 = ShadowClientSunshineControlMessageProfile.genericChannelID,
+        channelID: UInt8 = ShadowClientHostControlMessageProfile.genericChannelID,
         over connection: NWConnection
     ) async throws {
         let controlPayload = try buildControlPayload(type: type, payload: payload)
@@ -357,7 +357,7 @@ actor ShadowClientHostControlChannelRuntime {
     private func sendReliableControlMessageWithoutBlockingForAcknowledge(
         type: UInt16,
         payload: Data,
-        channelID: UInt8 = ShadowClientSunshineControlMessageProfile.genericChannelID,
+        channelID: UInt8 = ShadowClientHostControlMessageProfile.genericChannelID,
         over connection: NWConnection
     ) async throws {
         let controlPayload = try buildControlPayload(type: type, payload: payload)
@@ -526,7 +526,7 @@ actor ShadowClientHostControlChannelRuntime {
         from packet: ShadowClientSunshineENetPacketCodec.ParsedPacket,
         command: ShadowClientSunshineENetPacketCodec.ParsedPacket.Command
     ) -> Data? {
-        guard command.number == ShadowClientSunshineENetProtocolProfile.protocolCommandSendReliable else {
+        guard command.number == ShadowClientHostENetProtocolProfile.protocolCommandSendReliable else {
             return nil
         }
 
@@ -609,31 +609,31 @@ actor ShadowClientHostControlChannelRuntime {
 
     private func controlMessageName(_ type: UInt16) -> String {
         switch type {
-        case ShadowClientSunshineControlMessageProfile.startATypeLegacy:
+        case ShadowClientHostControlMessageProfile.startATypeLegacy:
             return "startA-legacy"
-        case ShadowClientSunshineControlMessageProfile.startATypeEncryptedV2:
+        case ShadowClientHostControlMessageProfile.startATypeEncryptedV2:
             return "startA-encryptedV2"
-        case ShadowClientSunshineControlMessageProfile.startBType:
+        case ShadowClientHostControlMessageProfile.startBType:
             return "startB"
-        case ShadowClientSunshineControlMessageProfile.periodicPingType:
+        case ShadowClientHostControlMessageProfile.periodicPingType:
             return "periodicPing"
-        case ShadowClientSunshineControlMessageProfile.inputDataType:
+        case ShadowClientHostControlMessageProfile.inputDataType:
             return "inputData"
-        case ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesType:
+        case ShadowClientHostControlMessageProfile.invalidateReferenceFramesType:
             return "invalidateReferenceFrames"
-        case ShadowClientSunshineControlMessageProfile.terminationType:
+        case ShadowClientHostControlMessageProfile.terminationType:
             return "termination"
-        case ShadowClientSunshineControlMessageProfile.rumbleType:
+        case ShadowClientHostControlMessageProfile.rumbleType:
             return "rumble"
-        case ShadowClientSunshineControlMessageProfile.rumbleTriggersType:
+        case ShadowClientHostControlMessageProfile.rumbleTriggersType:
             return "triggerRumble"
-        case ShadowClientSunshineControlMessageProfile.setMotionEventType:
+        case ShadowClientHostControlMessageProfile.setMotionEventType:
             return "setMotionEvent"
-        case ShadowClientSunshineControlMessageProfile.setRGBLEDType:
+        case ShadowClientHostControlMessageProfile.setRGBLEDType:
             return "setRGBLED"
-        case ShadowClientSunshineControlMessageProfile.adaptiveTriggersType:
+        case ShadowClientHostControlMessageProfile.adaptiveTriggersType:
             return "adaptiveTriggers"
-        case ShadowClientSunshineControlMessageProfile.hdrModeType:
+        case ShadowClientHostControlMessageProfile.hdrModeType:
             return "hdrMode"
         default:
             return "unknown"
@@ -660,9 +660,9 @@ actor ShadowClientHostControlChannelRuntime {
             do {
                 let nowUptime = DispatchTime.now().uptimeNanoseconds
                 if lastPeerPingUptime == 0 ||
-                    nowUptime - lastPeerPingUptime >= ShadowClientSunshineENetProtocolProfile.peerPingIntervalNanoseconds {
+                    nowUptime - lastPeerPingUptime >= ShadowClientHostENetProtocolProfile.peerPingIntervalNanoseconds {
                     let reliableSequenceNumber = nextReliableSequenceNumber(
-                        for: ShadowClientSunshineENetProtocolProfile.wildcardSessionID
+                        for: ShadowClientHostENetProtocolProfile.wildcardSessionID
                     )
                     let pingPacket = ShadowClientSunshineENetPacketCodec.makePingPacket(
                         outgoingPeerID: outgoingPeerID,
@@ -681,8 +681,8 @@ actor ShadowClientHostControlChannelRuntime {
                 }
 
                 try await sendReliableControlMessageWithoutBlockingForAcknowledge(
-                    type: ShadowClientSunshineControlMessageProfile.periodicPingType,
-                    payload: ShadowClientSunshineControlMessageProfile.periodicPingPayload,
+                    type: ShadowClientHostControlMessageProfile.periodicPingType,
+                    payload: ShadowClientHostControlMessageProfile.periodicPingPayload,
                     over: connection
                 )
             } catch {
@@ -691,7 +691,7 @@ actor ShadowClientHostControlChannelRuntime {
                     didLogFailure = true
                 }
             }
-            try? await Task.sleep(for: ShadowClientSunshineControlMessageProfile.periodicPingInterval)
+            try? await Task.sleep(for: ShadowClientHostControlMessageProfile.periodicPingInterval)
         }
     }
 
@@ -780,7 +780,7 @@ actor ShadowClientHostControlChannelRuntime {
     }
 
     private func nextReliableSequenceNumber(for channelID: UInt8) -> UInt16 {
-        if channelID == ShadowClientSunshineENetProtocolProfile.wildcardSessionID {
+        if channelID == ShadowClientHostENetProtocolProfile.wildcardSessionID {
             controlReliableSequenceNumber &+= 1
             return controlReliableSequenceNumber
         }
