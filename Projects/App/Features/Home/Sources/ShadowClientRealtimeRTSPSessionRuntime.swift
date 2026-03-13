@@ -2639,7 +2639,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     ) -> ShadowClientMoonlightNVRTPDepacketizer.TailTruncationStrategy {
         switch codec {
         case .h264, .h265:
-            // H264/H265 tolerate trailing zero padding and Sunshine doesn't guarantee valid lastPayloadLength.
+            // H264/H265 tolerate trailing zero padding and the Apollo host doesn't guarantee valid lastPayloadLength.
             return .passthroughForAnnexBCodecs
         case .av1:
             return .trimUsingLastPacketLength
@@ -3223,7 +3223,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         if isLikelyRTSPTransportTerminationError(error) {
             return true
         }
-        // Runtime policy for Sunshine UDP path: keep session alive and continue
+        // Runtime policy for Apollo-host UDP path: keep session alive and continue
         // in-session receive recovery for non-cancellation failures instead of
         // surfacing terminal transport errors to the launcher.
         return true
@@ -3469,7 +3469,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         _ = observedPayloadType
         _ = videoPayloadCandidates
         _ = baseThreshold
-        // Mirror Moonlight behavior on Sunshine video sockets: switch to the
+        // Mirror Moonlight behavior on Apollo-host video sockets: switch to the
         // first valid non-audio/control payload type immediately so we don't
         // drop initial keyframe packets while probing mismatched PT values.
         return 1
@@ -3872,7 +3872,7 @@ enum ShadowClientRTPPacketPayloadParser {
         }
 
         if hasExtension {
-            // Moonlight/Sunshine RTP video packets carry a fixed 4-byte extension preamble
+            // Moonlight/Apollo-host RTP video packets carry a fixed 4-byte extension preamble
             // before NV packet data. The extension length field is not used in the same way
             // as generic RFC3550 streams, so we intentionally skip only these 4 bytes.
             headerLength += 4
@@ -4172,7 +4172,7 @@ private actor ShadowClientRTSPInterleavedClient {
             logger.notice(
                 "RTSP DESCRIBE retry on fresh TCP connection after failure: \(error.localizedDescription, privacy: .public)"
             )
-            // Some GameStream/Sunshine stacks close the RTSP socket after OPTIONS.
+            // Some Apollo/GameStream stacks close the RTSP socket after OPTIONS.
             // Retry DESCRIBE on a fresh socket before failing the handshake.
             try await reconnect(host: host, port: port)
             do {
@@ -4194,7 +4194,7 @@ private actor ShadowClientRTSPInterleavedClient {
         logger.notice("RTSP DESCRIBE parsed body bytes \(describe.body.count, privacy: .public), characters \(sdp.count, privacy: .public)")
 
         // Keep one RTSP socket for the SETUP/ANNOUNCE/PLAY sequence, like Moonlight.
-        // Sunshine can acknowledge PLAY on a new socket but still keep UDP routing tied
+        // Apollo can acknowledge PLAY on a new socket but still keep UDP routing tied
         // to the transport state negotiated on the original connection.
         try await reconnect(host: host, port: port)
         let contentBase =
@@ -6363,7 +6363,7 @@ private actor ShadowClientRTSPInterleavedClient {
                 minimumIncompleteLength: ShadowClientRealtimeSessionDefaults.minimumTransportReadLength,
                 maximumLength: ShadowClientRealtimeSessionDefaults.maximumTransportReadLength
             ) { content, _, isComplete, error in
-                // Sunshine can close/reset a RTSP TCP socket right after writing a valid
+                // Apollo can close/reset a RTSP TCP socket right after writing a valid
                 // response chunk. In that case Network.framework may deliver `content`
                 // together with a terminal error. Keep the bytes and let response parsing
                 // decide whether the message is complete.

@@ -129,7 +129,7 @@ enum ShadowClientRTSPAnnounceProfile {
     static let reliableUDPModeEncrypted = "13"
     static let useControlChannelEnabled = "1"
 
-    // Match Moonlight Gen5 baseline flags so Sunshine parsing stays on the
+    // Match Moonlight Gen5 baseline flags so Apollo-host parsing stays on the
     // expected feature path instead of host defaults.
     static let nvFeatureFlagsBase: UInt32 = 0x87
     static let nvFeatureFlagEncryptionControlV2: UInt32 = 0x80
@@ -162,7 +162,7 @@ enum ShadowClientRTSPAnnounceProfile {
     static let surroundAudioQualityDisabled = "0"
     static let surroundAudioQualityEnabled = "1"
     static let aqosPacketDuration = "5"
-    // Sunshine interprets encoderCscMode as:
+    // Apollo interprets encoderCscMode as:
     // - low bit: range (0 limited, 1 full)
     // - upper bits: SDR colorspace (0 Rec.601, 1 Rec.709, 2 Rec.2020)
     // Use Rec.709 limited for normal SDR desktop/game streaming.

@@ -972,7 +972,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             "Launch decision verb=\(verb.rawValue, privacy: .public), appID=\(appID, privacy: .public), currentGameID=\(currentGameID, privacy: .public), forceLaunch=\(forceLaunch, privacy: .public), preferredCodec=\(settings.preferredCodec.rawValue, privacy: .public), resolvedCodec=\(resolvedCodecPreference.rawValue, privacy: .public)"
         )
         if let codec = resolvedCodecPreference.launchParameterValue {
-            // Sunshine/GameStream stacks don't fully agree on this key, so send both.
+            // Apollo/GameStream stacks don't fully agree on this key, so send both.
             parameters["videoCodec"] = codec
             parameters["codec"] = codec
         }
@@ -1491,7 +1491,7 @@ enum ShadowClientGameStreamTLSFailure: Equatable, Sendable {
 }
 
 enum ShadowClientGameStreamHTTPTransport {
-    // Preserve the legacy protocol token expected by Sunshine/GameStream endpoints.
+    // Preserve the legacy protocol token expected by Apollo/GameStream endpoints.
     private static let shadowClientCompatibleUniqueID = "0123456789ABCDEF"
     private static let logger = Logger(
         subsystem: "com.skyline23.shadow-client",
@@ -2310,7 +2310,7 @@ private final class ShadowClientServerTrustURLSessionDelegate: NSObject, URLSess
             }
         }
 
-        // Sunshine commonly presents a self-signed leaf certificate and doesn't match the
+        // Apollo commonly presents a self-signed leaf certificate and doesn't match the
         // public host name. Treat the leaf as the trust anchor and evaluate under basic X509
         // so we can apply our own TOFU/pinning policy instead of system CA/hostname rules.
         let trustPolicy = SecPolicyCreateBasicX509()

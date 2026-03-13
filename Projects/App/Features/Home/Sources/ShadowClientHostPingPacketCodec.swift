@@ -12,7 +12,7 @@ enum ShadowClientHostPingPacketCodec {
             let sequenceBytes = withUnsafeBytes(of: sequence.bigEndian) { Data($0) }
             var payloadThenSequence = negotiatedPayload
             payloadThenSequence.append(sequenceBytes)
-            // Moonlight/Sunshine v2 ping format:
+            // Moonlight/Apollo-host v2 ping format:
             // [16-byte payload token][big-endian sequence].
             return [payloadThenSequence]
         }

@@ -382,7 +382,7 @@ public enum ShadowClientRTSPSessionDescriptionParser {
         } else if selectedPayloadType == ShadowClientMoonlightProtocolPolicy.Audio.primaryPayloadType ||
             fmtpByPayloadType[selectedPayloadType]?["surround-params"] != nil
         {
-            // Sunshine commonly advertises audio PT=97 with surround-params while omitting rtpmap.
+            // Apollo commonly advertises audio PT=97 with surround-params while omitting rtpmap.
             codec = .opus
         } else {
             codec = .unknown("payload-\(selectedPayloadType)")
@@ -710,7 +710,7 @@ public enum ShadowClientRTSPSessionDescriptionParser {
         if isKnownAudioCodec(mapping.codec) {
             return true
         }
-        // Sunshine frequently omits full audio media descriptors but still uses PT97 Opus.
+        // Apollo commonly omits full audio media descriptors but still uses PT97 Opus.
         return mapping.payloadType == ShadowClientMoonlightProtocolPolicy.Audio.primaryPayloadType
     }
 

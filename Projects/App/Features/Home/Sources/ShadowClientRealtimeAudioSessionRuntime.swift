@@ -1273,7 +1273,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         guard normalizedMissingCount > 0, normalizedObservedFECShardCount > 0 else {
             return normalizedMissingCount
         }
-        // Moonlight/Sunshine often interleave PT127 FEC shards in RTP sequence space.
+        // Moonlight/Apollo-host often interleave PT127 FEC shards in RTP sequence space.
         // Exclude observed FEC-only gaps from primary audio loss accounting.
         let estimatedFECGapCount = min(normalizedMissingCount, normalizedObservedFECShardCount)
         return max(0, normalizedMissingCount - estimatedFECGapCount)

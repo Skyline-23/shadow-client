@@ -336,7 +336,7 @@ enum ShadowClientHostInputPacketCodec {
     }
 
     private static func normalizedHostKeyboardKeyCode(_ virtualKey: UInt16) -> UInt16 {
-        // Moonlight sets the high bit for Sunshine keyboard input to match
+        // Moonlight sets the high bit for Apollo-host keyboard input to match
         // the server-side scancode normalization path.
         0x8000 | virtualKey
     }
