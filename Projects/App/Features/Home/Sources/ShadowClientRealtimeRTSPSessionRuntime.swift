@@ -760,7 +760,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
         rtspClient = nil
 
-        await decoder.resetForRecovery()
+        await decoder.reset()
         videoQueuePressurePolicy = .conservative
         activeVideoConfiguration = nil
         hasLoggedDecodedFrameMetadata = false
