@@ -221,6 +221,11 @@ public protocol ShadowClientGameStreamControlClient: Sendable {
         appVersion: String?,
         httpsPort: Int?
     ) async throws -> ShadowClientGameStreamPairingResult
+    func setClipboard(
+        host: String,
+        httpsPort: Int,
+        text: String
+    ) async throws
     func launch(
         host: String,
         httpsPort: Int,
@@ -232,6 +237,17 @@ public protocol ShadowClientGameStreamControlClient: Sendable {
 }
 
 public extension ShadowClientGameStreamControlClient {
+    func setClipboard(
+        host: String,
+        httpsPort: Int,
+        text: String
+    ) async throws {
+        _ = host
+        _ = httpsPort
+        _ = text
+        throw ShadowClientGameStreamError.requestFailed("Clipboard sync is unsupported.")
+    }
+
     func launch(
         host: String,
         httpsPort: Int,
@@ -1107,6 +1123,74 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                 }
             }
             throw Self.remapLaunchError(error)
+        }
+    }
+
+    public func setClipboard(
+        host: String,
+        httpsPort: Int,
+        text: String
+    ) async throws {
+        let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
+        let uniqueID = await identityStore.uniqueID()
+        let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
+        let tlsClientCredential = try? await identityStore.tlsClientCertificateCredential()
+
+        guard pinnedServerCertificate != nil else {
+            throw ShadowClientGameStreamError.requestFailed(
+                "Host requires pairing before clipboard actions."
+            )
+        }
+
+        var components = URLComponents()
+        components.scheme = ShadowClientGameStreamNetworkDefaults.httpsScheme
+        components.host = endpoint.host
+        components.port = httpsPort
+        components.path = "/actions/clipboard"
+        components.queryItems = [
+            .init(name: "type", value: "text"),
+            .init(name: "uniqueid", value: "0123456789ABCDEF"),
+            .init(name: "uuid", value: UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()),
+        ]
+        guard let url = components.url else {
+            throw ShadowClientGameStreamError.invalidURL
+        }
+
+        let delegate = ShadowClientServerTrustURLSessionDelegate(
+            pinnedServerCertificateDER: pinnedServerCertificate,
+            clientCertificateCredential: tlsClientCredential
+        )
+        let session = URLSession(
+            configuration: .ephemeral,
+            delegate: delegate,
+            delegateQueue: nil
+        )
+        defer {
+            session.invalidateAndCancel()
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = defaultRequestTimeout
+        request.httpBody = Data(text.utf8)
+        request.setValue("text/plain; charset=utf-8", forHTTPHeaderField: "Content-Type")
+
+        do {
+            let (_, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw ShadowClientGameStreamError.invalidResponse
+            }
+            guard (200 ... 299).contains(httpResponse.statusCode) else {
+                throw ShadowClientGameStreamError.responseRejected(
+                    code: httpResponse.statusCode,
+                    message: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+                )
+            }
+        } catch {
+            throw ShadowClientGameStreamHTTPTransport.requestFailureError(
+                error,
+                tlsFailure: delegate.tlsFailure
+            )
         }
     }
 

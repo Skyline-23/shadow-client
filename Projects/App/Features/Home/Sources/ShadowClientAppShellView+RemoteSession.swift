@@ -268,7 +268,7 @@ func panelSurface(cornerRadius: CGFloat) -> some View {
         guard let clipboardText = ShadowClientClipboardBridge.currentString() else {
             return
         }
-        remoteDesktopRuntime.sendInput(.text(clipboardText))
+        remoteDesktopRuntime.syncClipboard(clipboardText)
     }
 
 func rowSurface(cornerRadius: CGFloat) -> some View {

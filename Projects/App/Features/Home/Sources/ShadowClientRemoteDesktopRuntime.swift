@@ -1068,6 +1068,7 @@ private actor ShadowClientRemoteInputSendQueue {
 private enum ShadowClientRemoteDesktopCommand: Sendable {
     case refreshHosts(candidates: [String], preferredHost: String?)
     case pairSelectedHost
+    case syncClipboard(String)
     case launchSelectedApp(
         appID: Int,
         appTitle: String?,
@@ -1340,6 +1341,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             performRefreshHosts(candidates: candidates, preferredHost: preferredHost)
         case .pairSelectedHost:
             performPairSelectedHost()
+        case let .syncClipboard(text):
+            await performSyncClipboard(text)
         case let .launchSelectedApp(appID, appTitle, forceLaunch, settings):
             performLaunchSelectedApp(
                 appID: appID,
@@ -1647,6 +1650,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
             }
         }
+    }
+
+    @MainActor
+    public func syncClipboard(_ text: String) {
+        commandContinuation.yield(.syncClipboard(text))
     }
 
     @MainActor
@@ -2081,6 +2089,42 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
+    private func performSyncClipboard(_ text: String) async {
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            return
+        }
+
+        guard case .launched = launchState,
+              let endpoint = activeSessionClipboardEndpoint()
+        else {
+            return
+        }
+
+        do {
+            try await controlClient.setClipboard(
+                host: endpoint.host,
+                httpsPort: endpoint.httpsPort,
+                text: normalized
+            )
+        } catch {
+            logger.error(
+                "Apollo clipboard sync failed for host=\(endpoint.host, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            guard let destination = activeSessionInputDestination() else {
+                return
+            }
+            await inputSendQueue.enqueue(
+                event: .text(normalized),
+                host: destination.host,
+                sessionURL: destination.sessionURL
+            )
+        }
+    }
+
+    @MainActor
     private func activeSessionInputDestination() -> (host: String, sessionURL: String)? {
         guard let activeSession else {
             return nil
@@ -2097,6 +2141,24 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         lastKnownSessionURL = sessionURL
         return (host: activeSession.host, sessionURL: sessionURL)
+    }
+
+    @MainActor
+    private func activeSessionClipboardEndpoint() -> (host: String, httpsPort: Int)? {
+        guard let activeSession else {
+            return nil
+        }
+
+        if let selectedHost {
+            if let matchingEndpoint = selectedHost.routes.allEndpoints.first(where: {
+                $0.host.lowercased() == activeSession.host.lowercased()
+            }) {
+                return (host: matchingEndpoint.host, httpsPort: matchingEndpoint.httpsPort)
+            }
+            return (host: activeSession.host, httpsPort: selectedHost.httpsPort)
+        }
+
+        return (host: activeSession.host, httpsPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort)
     }
 
     @MainActor
