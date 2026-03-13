@@ -2,7 +2,7 @@ import Foundation
 import Network
 import os
 
-enum ShadowClientSunshineControlChannelError: Error {
+enum ShadowClientHostControlChannelError: Error {
     case connectionTimedOut
     case connectionClosed
     case handshakeTimedOut
@@ -12,7 +12,7 @@ enum ShadowClientSunshineControlChannelError: Error {
     case encryptedControlEncodingFailed
 }
 
-actor ShadowClientSunshineControlChannelRuntime {
+actor ShadowClientHostControlChannelRuntime {
     private let connectTimeout: Duration
     private let commandAcknowledgeTimeout: Duration
     private let onRoundTripSample: (@Sendable (Double) async -> Void)?
@@ -65,7 +65,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                 controlEncryptionCodec = try ShadowClientHostControlEncryptionCodec(keyData: key)
             }
         } catch {
-            throw ShadowClientSunshineControlChannelError.invalidEncryptedControlKey
+            throw ShadowClientHostControlChannelError.invalidEncryptedControlKey
         }
         controlChannelMode = mode
 
@@ -136,7 +136,7 @@ actor ShadowClientSunshineControlChannelRuntime {
 
     func sendInputPacket(_ payload: Data, channelID: UInt8) async throws {
         guard let connection else {
-            throw ShadowClientSunshineControlChannelError.connectionClosed
+            throw ShadowClientHostControlChannelError.connectionClosed
         }
 
         // Input events are high-frequency and the receive loop is already responsible
@@ -152,7 +152,7 @@ actor ShadowClientSunshineControlChannelRuntime {
 
     func sendInputKeepAlive() async throws {
         guard let connection else {
-            throw ShadowClientSunshineControlChannelError.connectionClosed
+            throw ShadowClientHostControlChannelError.connectionClosed
         }
 
         try await sendReliableControlMessageWithoutBlockingForAcknowledge(
@@ -230,12 +230,12 @@ actor ShadowClientSunshineControlChannelRuntime {
 
             group.addTask {
                 try await Task.sleep(for: timeout)
-                throw ShadowClientSunshineControlChannelError.handshakeTimedOut
+                throw ShadowClientHostControlChannelError.handshakeTimedOut
             }
 
             guard let verify = try await group.next() else {
                 group.cancelAll()
-                throw ShadowClientSunshineControlChannelError.verifyConnectNotReceived
+                throw ShadowClientHostControlChannelError.verifyConnectNotReceived
             }
             group.cancelAll()
             return verify
@@ -388,7 +388,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                 return encryptedPayload
             } catch {
                 logger.error("Apollo encrypted control payload encoding failed: \(error.localizedDescription, privacy: .public)")
-                throw ShadowClientSunshineControlChannelError.encryptedControlEncodingFailed
+                throw ShadowClientHostControlChannelError.encryptedControlEncodingFailed
             }
         }
 
@@ -412,7 +412,7 @@ actor ShadowClientSunshineControlChannelRuntime {
             }
             group.addTask {
                 try await Task.sleep(for: timeout)
-                throw ShadowClientSunshineControlChannelError.commandAcknowledgeTimedOut
+                throw ShadowClientHostControlChannelError.commandAcknowledgeTimedOut
             }
 
             _ = try await group.next()
@@ -464,7 +464,7 @@ actor ShadowClientSunshineControlChannelRuntime {
             }
         }
 
-        throw ShadowClientSunshineControlChannelError.commandAcknowledgeTimedOut
+        throw ShadowClientHostControlChannelError.commandAcknowledgeTimedOut
     }
 
     private func reportRoundTripSampleIfAvailable(
@@ -737,7 +737,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                             }
                         case .cancelled:
                             Task {
-                                if await gate.finish(.failure(ShadowClientSunshineControlChannelError.connectionClosed)) {
+                                if await gate.finish(.failure(ShadowClientHostControlChannelError.connectionClosed)) {
                                     connection.stateUpdateHandler = nil
                                 }
                             }
@@ -753,13 +753,13 @@ actor ShadowClientSunshineControlChannelRuntime {
                 do {
                     try await Task.sleep(for: timeout)
                     connection.cancel()
-                    return .failure(ShadowClientSunshineControlChannelError.connectionTimedOut)
+                    return .failure(ShadowClientHostControlChannelError.connectionTimedOut)
                 } catch {
                     return .failure(error)
                 }
             }
 
-            let first = await group.next() ?? .failure(ShadowClientSunshineControlChannelError.connectionTimedOut)
+            let first = await group.next() ?? .failure(ShadowClientHostControlChannelError.connectionTimedOut)
             group.cancelAll()
             return first
         }
@@ -819,7 +819,7 @@ actor ShadowClientSunshineControlChannelRuntime {
             }
         }
 
-        throw ShadowClientSunshineControlChannelError.verifyConnectNotReceived
+        throw ShadowClientHostControlChannelError.verifyConnectNotReceived
     }
 
     private static func send(bytes: Data, over connection: NWConnection) async throws {
@@ -843,7 +843,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                 }
 
                 guard let content else {
-                    continuation.resume(throwing: ShadowClientSunshineControlChannelError.connectionClosed)
+                    continuation.resume(throwing: ShadowClientHostControlChannelError.connectionClosed)
                     return
                 }
                 continuation.resume(returning: content)
