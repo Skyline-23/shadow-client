@@ -97,11 +97,11 @@ func enetAcknowledgePacketGenerationUsesBigEndianOrder() {
 
 @Test("ENet send-reliable packet wraps control payload with channel and payload length")
 func enetSendReliablePacketEncodesHeaderAndPayload() throws {
-    let payload = ShadowClientSunshineENetPacketCodec.makeControlMessagePayload(
+    let payload = ShadowClientHostENetPacketCodec.makeControlMessagePayload(
         type: 0x0305,
         payload: Data([0x00, 0x00])
     )
-    let packet = try ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
+    let packet = try ShadowClientHostENetPacketCodec.makeSendReliablePacket(
         outgoingPeerID: 0x0123,
         outgoingSessionID: 0x02,
         reliableSequenceNumber: 0x3456,
@@ -122,7 +122,7 @@ func enetSendReliablePacketEncodesHeaderAndPayload() throws {
 
 @Test("ENet ping packet uses wildcard channel and acknowledge flag")
 func enetPingPacketEncodesWildcardChannel() {
-    let packet = ShadowClientSunshineENetPacketCodec.makePingPacket(
+    let packet = ShadowClientHostENetPacketCodec.makePingPacket(
         outgoingPeerID: 0x0123,
         outgoingSessionID: 0x02,
         reliableSequenceNumber: 0x3456,
@@ -141,8 +141,8 @@ func enetPingPacketEncodesWildcardChannel() {
 func enetSendReliablePacketRejectsOversizedPayload() throws {
     let oversizedPayload = Data(repeating: 0xFF, count: Int(UInt16.max) + 1)
 
-    #expect(throws: ShadowClientSunshineENetPacketCodecError.reliablePayloadTooLarge(oversizedPayload.count)) {
-        _ = try ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
+    #expect(throws: ShadowClientHostENetPacketCodecError.reliablePayloadTooLarge(oversizedPayload.count)) {
+        _ = try ShadowClientHostENetPacketCodec.makeSendReliablePacket(
             outgoingPeerID: 0x0001,
             outgoingSessionID: 0x00,
             reliableSequenceNumber: 0x0001,
@@ -155,7 +155,7 @@ func enetSendReliablePacketRejectsOversizedPayload() throws {
 
 @Test("ENet control payload codec stores control packet type as little-endian")
 func enetControlPayloadCodecUsesLittleEndianType() {
-    let payload = ShadowClientSunshineENetPacketCodec.makeControlMessagePayload(
+    let payload = ShadowClientHostENetPacketCodec.makeControlMessagePayload(
         type: 0x0307,
         payload: Data([0x00])
     )
@@ -165,9 +165,9 @@ func enetControlPayloadCodecUsesLittleEndianType() {
 
 @Test("Sunshine control periodic ping payload follows Moonlight loss-stats format")
 func sunshineControlPeriodicPingPayloadMatchesProfile() {
-    #expect(ShadowClientSunshineControlMessageProfile.periodicPingType == 0x0200)
+    #expect(ShadowClientHostControlMessageProfile.periodicPingType == 0x0200)
     #expect(
-        ShadowClientSunshineControlMessageProfile.periodicPingPayload ==
+        ShadowClientHostControlMessageProfile.periodicPingPayload ==
             Data([0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
     )
 }
@@ -182,10 +182,10 @@ func enetAcknowledgeParserDecodesReceivedSequence() throws {
     packet.append(contentsOf: [0x00, 0x77]) // received reliable sequence
     packet.append(contentsOf: [0xAA, 0x55]) // received sent time
 
-    let parsedPacket = try #require(ShadowClientSunshineENetPacketCodec.parsePacket(packet))
+    let parsedPacket = try #require(ShadowClientHostENetPacketCodec.parsePacket(packet))
     let command = try #require(parsedPacket.commands.first)
     let acknowledge = try #require(
-        ShadowClientSunshineENetPacketCodec.parseAcknowledge(
+        ShadowClientHostENetPacketCodec.parseAcknowledge(
             from: parsedPacket,
             command: command
         )

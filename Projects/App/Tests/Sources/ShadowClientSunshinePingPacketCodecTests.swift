@@ -5,7 +5,7 @@ import Testing
 @Test("Sunshine ping codec appends big-endian sequence after negotiated payload")
 func sunshinePingCodecAppendsSequenceAfterPayload() {
     let payload = Data("3727B184C4E23026".utf8)
-    let packets = ShadowClientSunshinePingPacketCodec.makePingPackets(
+    let packets = ShadowClientHostPingPacketCodec.makePingPackets(
         sequence: 0x0102_0304,
         negotiatedPayload: payload
     )
@@ -17,7 +17,7 @@ func sunshinePingCodecAppendsSequenceAfterPayload() {
 
 @Test("Sunshine ping codec falls back to legacy ASCII ping when payload is absent")
 func sunshinePingCodecFallsBackToLegacyAsciiPing() {
-    let packets = ShadowClientSunshinePingPacketCodec.makePingPackets(
+    let packets = ShadowClientHostPingPacketCodec.makePingPackets(
         sequence: 7,
         negotiatedPayload: nil
     )

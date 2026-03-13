@@ -4,7 +4,7 @@ import Testing
 
 @Test("Sunshine input codec encodes keyboard keyDown packet")
 func sunshineInputCodecEncodesKeyboardKeyDownPacket() {
-    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+    let encoded = ShadowClientHostInputPacketCodec.encode(
         .keyDown(keyCode: 13, characters: "w")
     )
 
@@ -27,7 +27,7 @@ func sunshineInputCodecEncodesKeyboardKeyDownPacket() {
 
 @Test("Sunshine input codec maps mac key code to US virtual key regardless of composed characters")
 func sunshineInputCodecMapsMacKeyCodeIndependentlyOfKeyboardLayoutCharacters() {
-    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+    let encoded = ShadowClientHostInputPacketCodec.encode(
         .keyDown(keyCode: 0x0D, characters: "ㅈ")
     )
 
@@ -42,7 +42,7 @@ func sunshineInputCodecMapsMacKeyCodeIndependentlyOfKeyboardLayoutCharacters() {
 
 @Test("Sunshine input codec uses character mapping for software keyboard synthetic key code")
 func sunshineInputCodecUsesCharacterMappingForSoftwareKeyboardSyntheticKeyCode() {
-    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+    let encoded = ShadowClientHostInputPacketCodec.encode(
         .keyDown(
             keyCode: ShadowClientRemoteInputEvent.softwareKeyboardSyntheticKeyCode,
             characters: "1"
@@ -60,7 +60,7 @@ func sunshineInputCodecUsesCharacterMappingForSoftwareKeyboardSyntheticKeyCode()
 
 @Test("Sunshine input codec encodes UTF-8 text packet")
 func sunshineInputCodecEncodesUTF8TextPacket() {
-    let encoded = ShadowClientSunshineInputPacketCodec.encode(.text("hello"))
+    let encoded = ShadowClientHostInputPacketCodec.encode(.text("hello"))
 
     #expect(encoded != nil)
     #expect(encoded?.channelID == 0x02)
@@ -78,7 +78,7 @@ func sunshineInputCodecEncodesUTF8TextPacket() {
 
 @Test("Sunshine input codec encodes mouse button packet")
 func sunshineInputCodecEncodesMouseButtonPacket() {
-    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+    let encoded = ShadowClientHostInputPacketCodec.encode(
         .pointerButton(button: .left, isPressed: true)
     )
 
@@ -98,7 +98,7 @@ func sunshineInputCodecEncodesMouseButtonPacket() {
 
 @Test("Sunshine input codec encodes relative mouse move packet")
 func sunshineInputCodecEncodesRelativeMouseMovePacket() {
-    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+    let encoded = ShadowClientHostInputPacketCodec.encode(
         .pointerMoved(x: 2.4, y: -3.2)
     )
 
@@ -119,7 +119,7 @@ func sunshineInputCodecEncodesRelativeMouseMovePacket() {
 
 @Test("Sunshine input codec encodes absolute mouse move packet")
 func sunshineInputCodecEncodesAbsoluteMouseMovePacket() {
-    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+    let encoded = ShadowClientHostInputPacketCodec.encode(
         .pointerPosition(x: 319.6, y: 179.9, referenceWidth: 640, referenceHeight: 360)
     )
 
@@ -143,7 +143,7 @@ func sunshineInputCodecEncodesAbsoluteMouseMovePacket() {
 
 @Test("Sunshine input codec drops zero-delta relative mouse move packet")
 func sunshineInputCodecDropsZeroDeltaRelativeMouseMovePacket() {
-    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+    let encoded = ShadowClientHostInputPacketCodec.encode(
         .pointerMoved(x: 0, y: 0)
     )
 
@@ -152,7 +152,7 @@ func sunshineInputCodecDropsZeroDeltaRelativeMouseMovePacket() {
 
 @Test("Sunshine input codec encodes vertical scroll packet")
 func sunshineInputCodecEncodesScrollPacket() {
-    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+    let encoded = ShadowClientHostInputPacketCodec.encode(
         .scroll(deltaX: 0, deltaY: 1)
     )
 
@@ -173,7 +173,7 @@ func sunshineInputCodecEncodesScrollPacket() {
 
 @Test("Sunshine input codec drops unknown key event")
 func sunshineInputCodecDropsUnknownKeyEvent() {
-    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+    let encoded = ShadowClientHostInputPacketCodec.encode(
         .keyDown(keyCode: 0x0A0A, characters: nil)
     )
 
@@ -182,7 +182,7 @@ func sunshineInputCodecDropsUnknownKeyEvent() {
 
 @Test("Sunshine input codec uses pretranslated Windows virtual keys for hardware keyboard events")
 func sunshineInputCodecUsesPretranslatedVirtualKeys() {
-    let encoded = ShadowClientSunshineInputPacketCodec.encode(
+    let encoded = ShadowClientHostInputPacketCodec.encode(
         .keyDown(
             keyCode: ShadowClientRemoteInputEvent.pretranslatedWindowsVirtualKey(0x41),
             characters: nil
@@ -212,7 +212,7 @@ func sunshineInputCodecEncodesGamepadStatePacket() {
         rightStickY: -4567
     )
 
-    let encoded = ShadowClientSunshineInputPacketCodec.encode(.gamepadState(state))
+    let encoded = ShadowClientHostInputPacketCodec.encode(.gamepadState(state))
 
     #expect(encoded != nil)
     #expect(encoded?.channelID == 0x11)
@@ -251,7 +251,7 @@ func sunshineInputCodecEncodesGamepadArrivalPacket() {
         supportedButtonFlags: 0x0001_FF3F
     )
 
-    let encoded = ShadowClientSunshineInputPacketCodec.encode(.gamepadArrival(arrival))
+    let encoded = ShadowClientHostInputPacketCodec.encode(.gamepadArrival(arrival))
 
     #expect(encoded != nil)
     #expect(encoded?.channelID == 0x12)
@@ -272,7 +272,7 @@ func sunshineInputCodecEncodesGamepadArrivalPacket() {
 
 @Test("Sunshine input codec default gamepad arrival advertises analog triggers with rumble and trigger rumble")
 func sunshineInputCodecDefaultGamepadArrivalAdvertisesRumble() {
-    let arrival = ShadowClientSunshineInputPacketCodec.defaultGamepadArrival(
+    let arrival = ShadowClientHostInputPacketCodec.defaultGamepadArrival(
         controllerNumber: 0,
         activeGamepadMask: 0x0001,
         supportedButtonFlags: 0x0000_FFFF

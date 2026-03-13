@@ -76,7 +76,7 @@ func realtimeSessionSurfaceContextResetRestoresDefaultPreferredRenderFPS() {
 func realtimeSessionSurfaceContextStreamsControllerFeedbackEvents() async {
     let context = ShadowClientRealtimeSessionSurfaceContext()
     let stream = context.controllerFeedbackAsyncStream()
-    let expected = ShadowClientSunshineControllerFeedbackEvent.rumble(
+    let expected = ShadowClientHostControllerFeedbackEvent.rumble(
         .init(
             controllerNumber: 0,
             lowFrequencyMotor: 0x1111,

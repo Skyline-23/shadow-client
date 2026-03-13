@@ -11,8 +11,8 @@ func sunshineControlFeedbackCodecParsesRumblePayload() {
         0x78, 0x56, // high motor
     ])
 
-    let event = ShadowClientSunshineControlFeedbackCodec.parse(
-        type: ShadowClientSunshineControlMessageProfile.rumbleType,
+    let event = ShadowClientHostControlFeedbackCodec.parse(
+        type: ShadowClientHostControlMessageProfile.rumbleType,
         payload: payload
     )
 
@@ -36,8 +36,8 @@ func sunshineControlFeedbackCodecParsesTriggerRumblePayload() {
         0x55, 0x01, // right trigger
     ])
 
-    let event = ShadowClientSunshineControlFeedbackCodec.parse(
-        type: ShadowClientSunshineControlMessageProfile.rumbleTriggersType,
+    let event = ShadowClientHostControlFeedbackCodec.parse(
+        type: ShadowClientHostControlMessageProfile.rumbleTriggersType,
         payload: payload
     )
 
@@ -66,8 +66,8 @@ func sunshineControlFeedbackCodecParsesAdaptiveTriggerPayload() {
         0x04, 0x08, 0x10, 0x20, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02,
     ])
 
-    let event = ShadowClientSunshineControlFeedbackCodec.parse(
-        type: ShadowClientSunshineControlMessageProfile.adaptiveTriggersType,
+    let event = ShadowClientHostControlFeedbackCodec.parse(
+        type: ShadowClientHostControlMessageProfile.adaptiveTriggersType,
         payload: payload
     )
 
@@ -85,7 +85,7 @@ func sunshineControlFeedbackCodecParsesAdaptiveTriggerPayload() {
 
 @Test("Sunshine control feedback codec returns nil for unsupported control type")
 func sunshineControlFeedbackCodecIgnoresUnsupportedType() {
-    let event = ShadowClientSunshineControlFeedbackCodec.parse(
+    let event = ShadowClientHostControlFeedbackCodec.parse(
         type: 0x0206,
         payload: Data([0x00, 0x01])
     )
@@ -97,8 +97,8 @@ func sunshineControlFeedbackCodecIgnoresUnsupportedType() {
 func sunshineControlFeedbackCodecParsesTerminationPayload() {
     let payload = Data([0x80, 0x03, 0x00, 0x23])
 
-    let event = ShadowClientSunshineControlFeedbackCodec.parseTermination(
-        type: ShadowClientSunshineControlMessageProfile.terminationType,
+    let event = ShadowClientHostControlFeedbackCodec.parseTermination(
+        type: ShadowClientHostControlMessageProfile.terminationType,
         payload: payload
     )
 

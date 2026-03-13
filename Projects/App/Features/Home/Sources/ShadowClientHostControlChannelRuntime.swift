@@ -24,7 +24,7 @@ actor ShadowClientHostControlChannelRuntime {
     private var connection: NWConnection?
     private var receiveTask: Task<Void, Never>?
     private var periodicPingTask: Task<Void, Never>?
-    private var outgoingPeerID: UInt16 = ShadowClientSunshineENetPacketCodec.maximumPeerID
+    private var outgoingPeerID: UInt16 = ShadowClientHostENetPacketCodec.maximumPeerID
     private var outgoingSessionID: UInt8 = 0
     private var controlReliableSequenceNumber: UInt16 = 0
     private var outgoingReliableSequenceByChannel: [UInt8: UInt16] = [:]
@@ -79,7 +79,7 @@ actor ShadowClientHostControlChannelRuntime {
             connectID = UInt32.random(in: .min ... .max)
             controlReliableSequenceNumber = 1
 
-            let connectPacket = ShadowClientSunshineENetPacketCodec.makeConnectPacket(
+            let connectPacket = ShadowClientHostENetPacketCodec.makeConnectPacket(
                 connectID: connectID,
                 connectData: connectData ?? 0,
                 sentTime: currentSentTime()
@@ -215,11 +215,11 @@ actor ShadowClientHostControlChannelRuntime {
     private func waitForVerifyConnect(
         over connection: NWConnection,
         expectedConnectID: UInt32
-    ) async throws -> ShadowClientSunshineENetPacketCodec.VerifyConnect {
+    ) async throws -> ShadowClientHostENetPacketCodec.VerifyConnect {
         let timeout = connectTimeout
         return try await withThrowingTaskGroup(
-            of: ShadowClientSunshineENetPacketCodec.VerifyConnect.self,
-            returning: ShadowClientSunshineENetPacketCodec.VerifyConnect.self
+            of: ShadowClientHostENetPacketCodec.VerifyConnect.self,
+            returning: ShadowClientHostENetPacketCodec.VerifyConnect.self
         ) { group in
             group.addTask {
                 try await Self.receiveVerifyConnect(
@@ -248,7 +248,7 @@ actor ShadowClientHostControlChannelRuntime {
         receivedSentTime: UInt16,
         over connection: NWConnection
     ) async throws {
-        let packet = ShadowClientSunshineENetPacketCodec.makeAcknowledgePacket(
+        let packet = ShadowClientHostENetPacketCodec.makeAcknowledgePacket(
             outgoingPeerID: outgoingPeerID,
             outgoingSessionID: outgoingSessionID,
             commandChannelID: commandChannelID,
@@ -263,7 +263,7 @@ actor ShadowClientHostControlChannelRuntime {
         while !Task.isCancelled {
             do {
                 let datagram = try await Self.receiveDatagram(over: connection)
-                guard let packet = ShadowClientSunshineENetPacketCodec.parsePacket(datagram) else {
+                guard let packet = ShadowClientHostENetPacketCodec.parsePacket(datagram) else {
                     continue
                 }
 
@@ -339,7 +339,7 @@ actor ShadowClientHostControlChannelRuntime {
         logger.notice(
             "Apollo control send type=\(type, privacy: .public) relSeq=\(reliableSequenceNumber, privacy: .public) payloadBytes=\(controlPayload.count, privacy: .public) mode=\(controlModeLabel, privacy: .public)"
         )
-        let packet = try ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
+        let packet = try ShadowClientHostENetPacketCodec.makeSendReliablePacket(
             outgoingPeerID: outgoingPeerID,
             outgoingSessionID: outgoingSessionID,
             reliableSequenceNumber: reliableSequenceNumber,
@@ -362,7 +362,7 @@ actor ShadowClientHostControlChannelRuntime {
     ) async throws {
         let controlPayload = try buildControlPayload(type: type, payload: payload)
         let reliableSequenceNumber = nextReliableSequenceNumber(for: channelID)
-        let packet = try ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
+        let packet = try ShadowClientHostENetPacketCodec.makeSendReliablePacket(
             outgoingPeerID: outgoingPeerID,
             outgoingSessionID: outgoingSessionID,
             reliableSequenceNumber: reliableSequenceNumber,
@@ -392,7 +392,7 @@ actor ShadowClientHostControlChannelRuntime {
             }
         }
 
-        return ShadowClientSunshineENetPacketCodec.makeControlMessagePayload(
+        return ShadowClientHostENetPacketCodec.makeControlMessagePayload(
             type: type,
             payload: payload
         )
@@ -429,7 +429,7 @@ actor ShadowClientHostControlChannelRuntime {
             logger.notice(
                 "Apollo control ACK wait datagram bytes=\(datagram.count, privacy: .public) expectedRelSeq=\(expectedReliableSequenceNumber, privacy: .public)"
             )
-            guard let packet = ShadowClientSunshineENetPacketCodec.parsePacket(datagram) else {
+            guard let packet = ShadowClientHostENetPacketCodec.parsePacket(datagram) else {
                 logger.error("Apollo control ACK wait failed to parse ENet packet")
                 continue
             }
@@ -452,7 +452,7 @@ actor ShadowClientHostControlChannelRuntime {
                     )
                 }
 
-                if let acknowledge = ShadowClientSunshineENetPacketCodec.parseAcknowledge(
+                if let acknowledge = ShadowClientHostENetPacketCodec.parseAcknowledge(
                     from: packet,
                     command: command
                 ), acknowledge.receivedReliableSequenceNumber == expectedReliableSequenceNumber {
@@ -468,10 +468,10 @@ actor ShadowClientHostControlChannelRuntime {
     }
 
     private func reportRoundTripSampleIfAvailable(
-        from packet: ShadowClientSunshineENetPacketCodec.ParsedPacket,
-        command: ShadowClientSunshineENetPacketCodec.ParsedPacket.Command
+        from packet: ShadowClientHostENetPacketCodec.ParsedPacket,
+        command: ShadowClientHostENetPacketCodec.ParsedPacket.Command
     ) async {
-        guard let acknowledge = ShadowClientSunshineENetPacketCodec.parseAcknowledge(
+        guard let acknowledge = ShadowClientHostENetPacketCodec.parseAcknowledge(
             from: packet,
             command: command
         ) else {
@@ -493,8 +493,8 @@ actor ShadowClientHostControlChannelRuntime {
     }
 
     private func parseControllerFeedbackEvent(
-        from packet: ShadowClientSunshineENetPacketCodec.ParsedPacket,
-        command: ShadowClientSunshineENetPacketCodec.ParsedPacket.Command
+        from packet: ShadowClientHostENetPacketCodec.ParsedPacket,
+        command: ShadowClientHostENetPacketCodec.ParsedPacket.Command
     ) -> ShadowClientHostControllerFeedbackEvent? {
         guard let controlPayload = parseControlPayload(from: packet, command: command) else {
             return nil
@@ -507,8 +507,8 @@ actor ShadowClientHostControlChannelRuntime {
     }
 
     private func parseTerminationEvent(
-        from packet: ShadowClientSunshineENetPacketCodec.ParsedPacket,
-        command: ShadowClientSunshineENetPacketCodec.ParsedPacket.Command
+        from packet: ShadowClientHostENetPacketCodec.ParsedPacket,
+        command: ShadowClientHostENetPacketCodec.ParsedPacket.Command
     ) -> ShadowClientHostTerminationEvent? {
         guard let controlPayload = parseControlPayload(from: packet, command: command) else {
             return nil
@@ -523,8 +523,8 @@ actor ShadowClientHostControlChannelRuntime {
     }
 
     private func parseControlPayload(
-        from packet: ShadowClientSunshineENetPacketCodec.ParsedPacket,
-        command: ShadowClientSunshineENetPacketCodec.ParsedPacket.Command
+        from packet: ShadowClientHostENetPacketCodec.ParsedPacket,
+        command: ShadowClientHostENetPacketCodec.ParsedPacket.Command
     ) -> Data? {
         guard command.number == ShadowClientHostENetProtocolProfile.protocolCommandSendReliable else {
             return nil
@@ -664,7 +664,7 @@ actor ShadowClientHostControlChannelRuntime {
                     let reliableSequenceNumber = nextReliableSequenceNumber(
                         for: ShadowClientHostENetProtocolProfile.wildcardSessionID
                     )
-                    let pingPacket = ShadowClientSunshineENetPacketCodec.makePingPacket(
+                    let pingPacket = ShadowClientHostENetPacketCodec.makePingPacket(
                         outgoingPeerID: outgoingPeerID,
                         outgoingSessionID: outgoingSessionID,
                         reliableSequenceNumber: reliableSequenceNumber,
@@ -768,7 +768,7 @@ actor ShadowClientHostControlChannelRuntime {
     }
 
     private func resetSessionState() {
-        outgoingPeerID = ShadowClientSunshineENetPacketCodec.maximumPeerID
+        outgoingPeerID = ShadowClientHostENetPacketCodec.maximumPeerID
         outgoingSessionID = 0
         controlReliableSequenceNumber = 0
         outgoingReliableSequenceByChannel.removeAll(keepingCapacity: false)
@@ -805,11 +805,11 @@ actor ShadowClientHostControlChannelRuntime {
     private static func receiveVerifyConnect(
         over connection: NWConnection,
         expectedConnectID: UInt32
-    ) async throws -> ShadowClientSunshineENetPacketCodec.VerifyConnect {
+    ) async throws -> ShadowClientHostENetPacketCodec.VerifyConnect {
         while !Task.isCancelled {
             let datagram = try await receiveDatagram(over: connection)
-            guard let packet = ShadowClientSunshineENetPacketCodec.parsePacket(datagram),
-                  let verify = ShadowClientSunshineENetPacketCodec.parseVerifyConnect(from: packet)
+            guard let packet = ShadowClientHostENetPacketCodec.parsePacket(datagram),
+                  let verify = ShadowClientHostENetPacketCodec.parseVerifyConnect(from: packet)
             else {
                 continue
             }

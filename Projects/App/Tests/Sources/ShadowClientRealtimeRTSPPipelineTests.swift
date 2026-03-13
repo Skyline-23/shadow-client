@@ -602,14 +602,14 @@ func videoRtpReorderBufferDropsGapRunAtDepthThreshold() {
 
 @Test("Sunshine ping payload parser accepts 16-byte ASCII payload")
 func sunshinePingPayloadParserAcceptsAsciiPayload() {
-    let payload = ShadowClientRTSPTransportHeaderParser.parseSunshinePingPayload(from: "3727B184C4E23026")
+    let payload = ShadowClientRTSPTransportHeaderParser.parseHostPingPayload(from: "3727B184C4E23026")
     #expect(payload == Data("3727B184C4E23026".utf8))
 }
 
 @Test("Sunshine ping packet codec emits strict v2 packet when negotiated payload exists")
 func sunshinePingPacketCodecEmitsStrictV2Packet() {
     let negotiatedPayload = Data("A1B2C3D4E5F60708".utf8)
-    let packets = ShadowClientSunshinePingPacketCodec.makePingPackets(
+    let packets = ShadowClientHostPingPacketCodec.makePingPackets(
         sequence: 7,
         negotiatedPayload: negotiatedPayload
     )
@@ -622,7 +622,7 @@ func sunshinePingPacketCodecEmitsStrictV2Packet() {
 
 @Test("Sunshine ping packet codec emits legacy ASCII ping when negotiated payload is unavailable")
 func sunshinePingPacketCodecEmitsLegacyAsciiFallback() {
-    let packets = ShadowClientSunshinePingPacketCodec.makePingPackets(
+    let packets = ShadowClientHostPingPacketCodec.makePingPackets(
         sequence: 42,
         negotiatedPayload: nil
     )
@@ -2508,12 +2508,12 @@ func realtimeRuntimeInputSendClassifierResetsForFatalErrors() {
     )
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(
-            ShadowClientSunshineControlChannelError.connectionClosed
+            ShadowClientHostControlChannelError.connectionClosed
         )
     )
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(
-            ShadowClientSunshineControlChannelError.commandAcknowledgeTimedOut
+            ShadowClientHostControlChannelError.commandAcknowledgeTimedOut
         )
     )
     #expect(

@@ -4,30 +4,30 @@ import Testing
 
 @Test("Encrypted Sunshine control mode uses IDR recovery request packet")
 func sunshineEncryptedControlModeRecoveryRequestShape() {
-    let mode = ShadowClientSunshineControlChannelMode.encryptedV2(
+    let mode = ShadowClientHostControlChannelMode.encryptedV2(
         key: Data(repeating: 0xAB, count: 16)
     )
     let request = mode.makeIDRRequest(lastSeenFrameIndex: 0x1234_5678)
 
-    #expect(request.type == ShadowClientSunshineControlMessageProfile.startATypeEncryptedV2)
-    #expect(request.channelID == ShadowClientSunshineControlMessageProfile.urgentChannelID)
+    #expect(request.type == ShadowClientHostControlMessageProfile.startATypeEncryptedV2)
+    #expect(request.channelID == ShadowClientHostControlMessageProfile.urgentChannelID)
     #expect(request.payload == Data([0x00, 0x00]))
 }
 
 @Test("Plaintext Sunshine control mode uses reference frame invalidation payload")
 func sunshinePlaintextControlModeRecoveryRequestShape() {
-    let mode = ShadowClientSunshineControlChannelMode.plaintext
+    let mode = ShadowClientHostControlChannelMode.plaintext
     let request = mode.makeIDRRequest(lastSeenFrameIndex: nil)
 
-    #expect(request.type == ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesType)
-    #expect(request.channelID == ShadowClientSunshineControlMessageProfile.urgentChannelID)
+    #expect(request.type == ShadowClientHostControlMessageProfile.invalidateReferenceFramesType)
+    #expect(request.channelID == ShadowClientHostControlMessageProfile.urgentChannelID)
     #expect(request.payload.count == 24)
     #expect(request.payload == Data(repeating: 0, count: 24))
 }
 
 @Test("Reference frame invalidation payload encodes frame range in little endian")
 func sunshineInvalidateReferenceFramesPayloadEncodesFrameBounds() {
-    let payload = ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesPayload(
+    let payload = ShadowClientHostControlMessageProfile.invalidateReferenceFramesPayload(
         firstFrame: 0x0506_0708,
         lastFrame: 0x1516_1718
     )

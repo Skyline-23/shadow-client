@@ -4,7 +4,7 @@ import Testing
 
 @Test("Encrypted control codec writes Sunshine V2 envelope fields")
 func sunshineEncryptedControlCodecEncodesEnvelope() throws {
-    let codec = try ShadowClientSunshineControlEncryptionCodec(
+    let codec = try ShadowClientHostControlEncryptionCodec(
         keyData: Data(repeating: 0x11, count: 16)
     )
     let packet = try codec.encryptControlMessage(
@@ -21,7 +21,7 @@ func sunshineEncryptedControlCodecEncodesEnvelope() throws {
 
 @Test("Encrypted control codec decrypts host-originated V2 packet to V1 payload")
 func sunshineEncryptedControlCodecDecryptsToV1Payload() throws {
-    let codec = try ShadowClientSunshineControlEncryptionCodec(
+    let codec = try ShadowClientHostControlEncryptionCodec(
         keyData: Data(repeating: 0x22, count: 16)
     )
 
@@ -38,8 +38,8 @@ func sunshineEncryptedControlCodecDecryptsToV1Payload() throws {
 
 @Test("Encrypted control codec rejects invalid AES key length")
 func sunshineEncryptedControlCodecRejectsInvalidKeyLength() {
-    #expect(throws: ShadowClientSunshineControlEncryptionError.self) {
-        _ = try ShadowClientSunshineControlEncryptionCodec(
+    #expect(throws: ShadowClientHostControlEncryptionError.self) {
+        _ = try ShadowClientHostControlEncryptionCodec(
             keyData: Data(repeating: 0x33, count: 8)
         )
     }
