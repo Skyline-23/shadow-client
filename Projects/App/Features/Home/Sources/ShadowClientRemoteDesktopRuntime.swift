@@ -159,7 +159,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         case .paired:
             return "Pair status verified"
         case .notPaired:
-            return "Host reachable. Pair this client in Sunshine to continue."
+            return "Host reachable. Pair this client in Apollo to continue."
         case .unknown:
             return "Host reachable"
         }
@@ -1152,6 +1152,7 @@ private struct ShadowClientPersistedRemoteSessionFingerprint: Codable, Equatable
     let hostKey: String
     let appID: Int
     let settingsKey: String
+    let negotiatedVideoCodec: ShadowClientVideoCodec?
 }
 
 private struct ShadowClientRemoteDesktopPersistence {
@@ -1408,6 +1409,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             appState = .idle
             pairingState = .idle
             launchState = .idle
+            return
+        }
+
+        if launchState == .launching || activeSession != nil {
+            logger.notice(
+                "Skipping host metadata refresh while session transition is active"
+            )
             return
         }
 
@@ -1682,6 +1690,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let sessionConnectionClient = sessionConnectionClient
         let latestResolvedHostDescriptors = latestResolvedHostDescriptors
         let pairingRouteStore = pairingRouteStore
+        let runtimeLogger = logger
         let selectedHostKey = Self.mergeKey(for: selectedHost)
         let launchedAppTitle = appTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let launchSettingsToUse = launchSettingsApplyingPersistentFallback(settings)
@@ -1698,14 +1707,31 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             previouslyAppliedSettings != nil &&
             previouslyAppliedSettings != launchSettingsToUse
         let localFingerprintMatchesActiveGame = selectedHost.currentGameID == appID &&
-            lastLocalSessionFingerprint == currentFingerprint
+            Self.sessionFingerprintMatches(
+                lastLocalSessionFingerprint,
+                currentFingerprint,
+                requestedCodec: launchSettingsToUse.preferredCodec
+            )
+        let negotiatedCodecMismatchForCurrentGame = selectedHost.currentGameID == appID &&
+            Self.sessionSettingsMatch(lastLocalSessionFingerprint, currentFingerprint) &&
+            !localFingerprintMatchesActiveGame
         let activeGameSettingsUnknown = selectedHost.currentGameID == appID &&
             !localFingerprintMatchesActiveGame &&
-            !settingsChangedForCurrentGame
-        let effectiveForceLaunch = forceLaunch || settingsChangedForCurrentGame || activeGameSettingsUnknown
+            !settingsChangedForCurrentGame &&
+            !negotiatedCodecMismatchForCurrentGame
+        let effectiveForceLaunch = forceLaunch ||
+            settingsChangedForCurrentGame ||
+            negotiatedCodecMismatchForCurrentGame ||
+            activeGameSettingsUnknown
         if settingsChangedForCurrentGame {
             logger.notice(
                 "Launch settings changed for active game appID=\(appID, privacy: .public); forcing relaunch instead of resume"
+            )
+        }
+        if negotiatedCodecMismatchForCurrentGame,
+           let negotiatedVideoCodec = lastLocalSessionFingerprint?.negotiatedVideoCodec?.rawValue {
+            logger.notice(
+                "Last negotiated codec \(negotiatedVideoCodec, privacy: .public) is incompatible with requested codec mode \(launchSettingsToUse.preferredCodec.rawValue, privacy: .public) for active game appID=\(appID, privacy: .public); forcing relaunch instead of resume"
             )
         }
         if activeGameSettingsUnknown {
@@ -1769,7 +1795,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         throw error
                     }
 
-                    logger.notice(
+                    runtimeLogger.notice(
                         "Launch failed on runtime host \(resolvedHostDescriptor.host, privacy: .public); retrying alternate route \(alternateHostDescriptor.host, privacy: .public)"
                     )
                     resolvedHostDescriptor = alternateHostDescriptor
@@ -1890,13 +1916,22 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         sessionURL: connectedSessionURL
                     )
                     self.lastConnectedLaunchSettings = connectedSettings
+                    let negotiatedVideoCodec = self.sessionSurfaceContext.activeVideoCodec
                     let connectedFingerprint = Self.sessionFingerprint(
                         hostKey: selectedHostKey,
                         appID: appID,
-                        settings: connectedSettings
+                        settings: connectedSettings,
+                        negotiatedVideoCodec: negotiatedVideoCodec
                     )
                     self.lastLocalSessionFingerprint = connectedFingerprint
                     self.persistence.saveSessionFingerprint(connectedFingerprint)
+                    if let negotiatedVideoCodec,
+                       connectedSettings.preferredCodec != .auto,
+                       negotiatedVideoCodec.rawValue != connectedSettings.preferredCodec.rawValue {
+                        self.logger.notice(
+                            "Connected session negotiated codec \(negotiatedVideoCodec.rawValue, privacy: .public) while requested codec was \(connectedSettings.preferredCodec.rawValue, privacy: .public)"
+                        )
+                    }
                     self.lastKnownSessionURL = Self.normalizedSessionURL(connectedSessionURL)
                     if self.sessionPresentationMode == .externalRuntime {
                         self.launchState = .launched(
@@ -2127,7 +2162,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             }
         }
 
-        if let controlError = error as? ShadowClientSunshineControlChannelError {
+        if let controlError = error as? ShadowClientHostControlChannelError {
             switch controlError {
             case .connectionClosed, .connectionTimedOut:
                 return true
@@ -2696,7 +2731,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private static func sessionFingerprint(
         hostKey: String,
         appID: Int,
-        settings: ShadowClientGameStreamLaunchSettings
+        settings: ShadowClientGameStreamLaunchSettings,
+        negotiatedVideoCodec: ShadowClientVideoCodec? = nil
     ) -> ShadowClientPersistedRemoteSessionFingerprint {
         ShadowClientPersistedRemoteSessionFingerprint(
             hostKey: hostKey,
@@ -2718,8 +2754,55 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 "optgame=\(settings.optimizeGameSettingsForStreaming ? 1 : 0)",
                 "quit=\(settings.quitAppOnHostAfterStreamEnds ? 1 : 0)",
                 "hostaudio=\(settings.playAudioOnHost ? 1 : 0)",
-            ].joined(separator: "|")
+            ].joined(separator: "|"),
+            negotiatedVideoCodec: negotiatedVideoCodec
         )
+    }
+
+    private static func sessionSettingsMatch(
+        _ persisted: ShadowClientPersistedRemoteSessionFingerprint?,
+        _ current: ShadowClientPersistedRemoteSessionFingerprint
+    ) -> Bool {
+        guard let persisted else {
+            return false
+        }
+
+        return persisted.hostKey == current.hostKey &&
+            persisted.appID == current.appID &&
+            persisted.settingsKey == current.settingsKey
+    }
+
+    private static func sessionFingerprintMatches(
+        _ persisted: ShadowClientPersistedRemoteSessionFingerprint?,
+        _ current: ShadowClientPersistedRemoteSessionFingerprint,
+        requestedCodec: ShadowClientVideoCodecPreference
+    ) -> Bool {
+        guard sessionSettingsMatch(persisted, current),
+              let persisted
+        else {
+            return false
+        }
+
+        return negotiatedCodecIsCompatible(
+            persisted.negotiatedVideoCodec,
+            with: requestedCodec
+        )
+    }
+
+    private static func negotiatedCodecIsCompatible(
+        _ negotiatedCodec: ShadowClientVideoCodec?,
+        with requestedCodec: ShadowClientVideoCodecPreference
+    ) -> Bool {
+        switch requestedCodec {
+        case .auto:
+            return true
+        case .av1:
+            return negotiatedCodec == .av1
+        case .h265:
+            return negotiatedCodec == .h265
+        case .h264:
+            return negotiatedCodec == .h264
+        }
     }
 
     private func persistCodecFallbackIfNeeded(
@@ -2788,6 +2871,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private func performRefreshSelectedHostApps() {
         appRefreshGeneration &+= 1
         let refreshGeneration = appRefreshGeneration
+
+        if launchState == .launching || activeSession != nil {
+            logger.notice(
+                "Skipping app list refresh while session transition is active"
+            )
+            return
+        }
 
         guard let selectedHost else {
             refreshAppsTask?.cancel()
@@ -3191,8 +3281,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         preferredHost: String?,
         preferredRoutesByKey: [String: String]
     ) -> [ShadowClientRemoteHostDescriptor] {
-        let groupedHosts = Dictionary(grouping: hosts, by: mergeKey(for:))
-        return groupedHosts.values.compactMap {
+        let groupedHosts = clusterResolvedHosts(hosts)
+        return groupedHosts.compactMap {
             mergeResolvedHostGroup(
                 $0,
                 selectedHostID: selectedHostID,
@@ -3201,6 +3291,48 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             )
         }
         .sorted(by: compareHosts)
+    }
+
+    private static func clusterResolvedHosts(
+        _ hosts: [ShadowClientRemoteHostDescriptor]
+    ) -> [[ShadowClientRemoteHostDescriptor]] {
+        var clusters: [[ShadowClientRemoteHostDescriptor]] = []
+
+        for host in hosts {
+            if let matchingClusterIndex = clusters.firstIndex(where: { cluster in
+                cluster.contains(where: { clusteredHost in
+                    descriptorsBelongToSamePhysicalHost(clusteredHost, host)
+                })
+            }) {
+                clusters[matchingClusterIndex].append(host)
+                continue
+            }
+            clusters.append([host])
+        }
+
+        var merged = true
+        while merged {
+            merged = false
+            outer: for lhsIndex in clusters.indices {
+                for rhsIndex in clusters.indices where lhsIndex < rhsIndex {
+                    let lhsCluster = clusters[lhsIndex]
+                    let rhsCluster = clusters[rhsIndex]
+                    let overlaps = lhsCluster.contains { lhsHost in
+                        rhsCluster.contains { rhsHost in
+                            descriptorsBelongToSamePhysicalHost(lhsHost, rhsHost)
+                        }
+                    }
+                    if overlaps {
+                        clusters[lhsIndex].append(contentsOf: rhsCluster)
+                        clusters.remove(at: rhsIndex)
+                        merged = true
+                        break outer
+                    }
+                }
+            }
+        }
+
+        return clusters
     }
 
     private static func mergeResolvedHostGroup(
@@ -3308,6 +3440,27 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         return lhs.host.localizedCaseInsensitiveCompare(rhs.host) == .orderedAscending
     }
 
+    private static func descriptorsBelongToSamePhysicalHost(
+        _ lhs: ShadowClientRemoteHostDescriptor,
+        _ rhs: ShadowClientRemoteHostDescriptor
+    ) -> Bool {
+        if let lhsUniqueID = lhs.uniqueID?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+           let rhsUniqueID = rhs.uniqueID?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+           !lhsUniqueID.isEmpty,
+           !rhsUniqueID.isEmpty
+        {
+            return lhsUniqueID == rhsUniqueID
+        }
+
+        let lhsRouteHosts = routeHostSet(for: lhs)
+        let rhsRouteHosts = routeHostSet(for: rhs)
+        if !lhsRouteHosts.isDisjoint(with: rhsRouteHosts) {
+            return true
+        }
+
+        return false
+    }
+
     private static func mergeKey(for host: ShadowClientRemoteHostDescriptor) -> String {
         if let uniqueID = host.uniqueID?.trimmingCharacters(in: .whitespacesAndNewlines),
            !uniqueID.isEmpty
@@ -3315,7 +3468,21 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return "uniqueid:\(uniqueID.lowercased())"
         }
 
+        let routeHosts = routeHostSet(for: host).sorted()
+        if !routeHosts.isEmpty {
+            return "routes:\(routeHosts.joined(separator: "|"))"
+        }
+
         return "host:\(host.id)"
+    }
+
+    private static func routeHostSet(for host: ShadowClientRemoteHostDescriptor) -> Set<String> {
+        Set(
+            host.routes.allEndpoints.map {
+                $0.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            }
+            .filter { !$0.isEmpty }
+        )
     }
 
     private static func mergedHostRoutes(

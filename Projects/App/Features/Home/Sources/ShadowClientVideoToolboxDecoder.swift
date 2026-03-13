@@ -259,8 +259,14 @@ public actor ShadowClientVideoToolboxDecoder {
         hdrEnabled: Bool,
         yuv444Enabled: Bool
     ) {
+        let didChangeAV1FallbackMode =
+            av1FallbackHDR != hdrEnabled ||
+            av1FallbackYUV444 != yuv444Enabled
         av1FallbackHDR = hdrEnabled
         av1FallbackYUV444 = yuv444Enabled
+        if didChangeAV1FallbackMode, codec == .av1 {
+            reset()
+        }
     }
 
     public func reportQueueSaturationSignal() {

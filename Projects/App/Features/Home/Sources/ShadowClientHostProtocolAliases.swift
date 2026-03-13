@@ -1,0 +1,5 @@
+import Foundation
+
+typealias ShadowClientHostENetPacketCodec = ShadowClientSunshineENetPacketCodec
+typealias ShadowClientHostENetPacketCodecError = ShadowClientSunshineENetPacketCodecError
+typealias ShadowClientHostProtocolProfile = ShadowClientRTSPAnnounceProfile

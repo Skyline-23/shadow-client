@@ -16,6 +16,8 @@ struct ShadowYUVCSCParameters {
     float3 row1;
     float3 row2;
     float3 offsets;
+    float2 chromaOffset;
+    float bitnessScaleFactor;
 };
 
 vertex ShadowYUVVertexOut shadowYUVVertex(
@@ -40,9 +42,13 @@ fragment half4 shadowYUVBiplanarFragment(
         filter::linear
     );
 
-    const float y = lumaTexture.sample(textureSampler, in.texCoord).r;
-    const float2 uv = chromaTexture.sample(textureSampler, in.texCoord).rg;
-    const float3 yuv = float3(y, uv.x, uv.y) - params.offsets;
+    const float2 chromaOffset = params.chromaOffset / float2(lumaTexture.get_width(), lumaTexture.get_height());
+    float3 yuv = float3(
+        lumaTexture.sample(textureSampler, in.texCoord).r,
+        chromaTexture.sample(textureSampler, in.texCoord + chromaOffset).rg
+    );
+    yuv *= params.bitnessScaleFactor;
+    yuv -= params.offsets;
 
     const float3 rgb = float3(
         dot(params.row0, yuv),

@@ -18,7 +18,7 @@ public extension ShadowClientRemotePairingState {
         case .idle:
             return "Idle"
         case let .pairing(host, _):
-            return "Pairing with \(host). Enter displayed PIN in Sunshine."
+            return "Pairing with \(host). Enter displayed PIN in Apollo."
         case let .paired(message):
             return message
         case let .failed(message):
@@ -894,7 +894,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             let stage5Doc = try parsePairStageXML(stage5XML, stage: "pairchallenge")
             if stage5Doc.values["paired"]?.first != "1" {
                 Self.pairingLogger.error(
-                    "Pair stage pairchallenge rejected after successful clientpairingsecret; keeping pair result because Sunshine already marked the client paired"
+                    "Pair stage pairchallenge rejected after successful clientpairingsecret; keeping pair result because Apollo already marked the client paired"
                 )
             }
         } catch let error as ShadowClientGameStreamError {
@@ -1394,7 +1394,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             }
 
             return .requestFailed(
-                "Pairing timed out while waiting for Sunshine PIN confirmation. Enter the displayed PIN on the host and retry."
+                "Pairing timed out while waiting for Apollo PIN confirmation. Enter the displayed PIN on the host and retry."
             )
         case let .responseRejected(code, message):
             let detail = message.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1493,6 +1493,10 @@ enum ShadowClientGameStreamTLSFailure: Equatable, Sendable {
 enum ShadowClientGameStreamHTTPTransport {
     // Preserve the legacy protocol token expected by Sunshine/GameStream endpoints.
     private static let shadowClientCompatibleUniqueID = "0123456789ABCDEF"
+    private static let logger = Logger(
+        subsystem: "com.skyline23.shadow-client",
+        category: "GameStreamHTTP"
+    )
 
     static func requestXML(
         host: String,
@@ -1528,6 +1532,9 @@ enum ShadowClientGameStreamHTTPTransport {
         }
 
         let requestStageLabel = "\(scheme.uppercased()) \(command)"
+        logger.notice(
+            "GameStream request start stage=\(requestStageLabel, privacy: .public) host=\(host, privacy: .public) port=\(port, privacy: .public)"
+        )
 
         do {
             if scheme == ShadowClientGameStreamNetworkDefaults.httpsScheme {
@@ -1545,6 +1552,9 @@ enum ShadowClientGameStreamHTTPTransport {
                 )
             }
         } catch {
+            logger.error(
+                "GameStream request failed stage=\(requestStageLabel, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
             throw requestStageFailureError(
                 error,
                 stageLabel: requestStageLabel
@@ -1615,14 +1625,29 @@ enum ShadowClientGameStreamHTTPTransport {
             port: port,
             using: .tcp
         )
-        try await waitForReady(connection, timeout: timeout)
+        do {
+            try await waitForReady(connection, timeout: timeout)
+        } catch let urlError as URLError where urlError.code == .timedOut {
+            logger.error(
+                "Plain HTTP connection ready timed out host=\(host, privacy: .public) port=\(port.rawValue, privacy: .public)"
+            )
+            throw ShadowClientGameStreamError.requestFailed("connection ready timed out")
+        }
         defer {
             connection.cancel()
         }
 
         let requestData = makePlainHTTPRequestData(url: url, host: host)
         try await send(requestData, over: connection)
-        let responseData = try await receiveHTTPResponse(over: connection, timeout: timeout)
+        let responseData: Data
+        do {
+            responseData = try await receiveHTTPResponse(over: connection, timeout: timeout)
+        } catch let urlError as URLError where urlError.code == .timedOut {
+            logger.error(
+                "Plain HTTP response receive timed out host=\(host, privacy: .public) port=\(port.rawValue, privacy: .public)"
+            )
+            throw ShadowClientGameStreamError.requestFailed("response receive timed out")
+        }
         let body = try extractHTTPBody(from: responseData)
         guard let xml = String(data: body, encoding: .utf8), !xml.isEmpty else {
             throw ShadowClientGameStreamError.malformedXML
@@ -1787,6 +1812,10 @@ enum ShadowClientGameStreamHTTPTransport {
 }
 
 private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
+    private static let logger = Logger(
+        subsystem: "com.skyline23.shadow-client",
+        category: "GameStreamHTTPS"
+    )
     private let host: String
     private let url: URL
     private let pinnedServerCertificateDER: Data?
@@ -1808,6 +1837,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
     private var writeOpen = false
     private var peerValidated = false
     private var completed = false
+    private var timeoutStage = "stream open"
 
     private init(
         url: URL,
@@ -1928,7 +1958,13 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         }
 
         let timeoutWorkItem = DispatchWorkItem { [weak self] in
-            self?.finish(.failure(URLError(.timedOut)))
+            guard let self else { return }
+            Self.logger.error(
+                "Secure HTTP timed out host=\(self.host, privacy: .public) stage=\(self.timeoutStage, privacy: .public)"
+            )
+            self.finish(.failure(
+                ShadowClientGameStreamError.requestFailed("HTTPS \(self.timeoutStage) timed out")
+            ))
         }
         self.timeoutWorkItem = timeoutWorkItem
         queue.asyncAfter(deadline: .now() + timeout, execute: timeoutWorkItem)
@@ -1982,6 +2018,10 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
             validatePeerIfPossible()
         case .canAcceptBytes:
             guard validatePeerIfPossible() else { return }
+            timeoutStage = "request write"
+            Self.logger.notice(
+                "Secure HTTP writable host=\(self.host, privacy: .public) stage=\(self.timeoutStage, privacy: .public)"
+            )
             writePendingBytes()
         case .endEncountered:
             completeIfPossible()
@@ -2038,6 +2078,12 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         }
 
         requestOffset += bytesWritten
+        if requestOffset >= requestData.count {
+            timeoutStage = "response read"
+            Self.logger.notice(
+                "Secure HTTP request write complete host=\(self.host, privacy: .public) next-stage=\(self.timeoutStage, privacy: .public)"
+            )
+        }
     }
 
     private func readAvailableBytes() {

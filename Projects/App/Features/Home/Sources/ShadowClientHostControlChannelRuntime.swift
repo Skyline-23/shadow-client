@@ -2,7 +2,7 @@ import Foundation
 import Network
 import os
 
-enum ShadowClientSunshineControlChannelError: Error {
+enum ShadowClientHostControlChannelError: Error {
     case connectionTimedOut
     case connectionClosed
     case handshakeTimedOut
@@ -12,12 +12,12 @@ enum ShadowClientSunshineControlChannelError: Error {
     case encryptedControlEncodingFailed
 }
 
-actor ShadowClientSunshineControlChannelRuntime {
+actor ShadowClientHostControlChannelRuntime {
     private let connectTimeout: Duration
     private let commandAcknowledgeTimeout: Duration
     private let onRoundTripSample: (@Sendable (Double) async -> Void)?
-    private let onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)?
-    private let onTermination: (@Sendable (ShadowClientSunshineTerminationEvent) async -> Void)?
+    private let onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)?
+    private let onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)?
     private let queue = DispatchQueue(label: "com.skyline23.shadowclient.control.enet")
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "ControlChannel")
 
@@ -29,19 +29,19 @@ actor ShadowClientSunshineControlChannelRuntime {
     private var controlReliableSequenceNumber: UInt16 = 0
     private var outgoingReliableSequenceByChannel: [UInt8: UInt16] = [:]
     private var connectID: UInt32 = 0
-    private var controlChannelMode: ShadowClientSunshineControlChannelMode = .plaintext
-    private var controlEncryptionCodec: ShadowClientSunshineControlEncryptionCodec?
+    private var controlChannelMode: ShadowClientHostControlChannelMode = .plaintext
+    private var controlEncryptionCodec: ShadowClientHostControlEncryptionCodec?
     private var controlEncryptionSequenceNumber: UInt32 = 0
     private var receivedControllerFeedbackEventCount: Int = 0
     private var receivedControlMessageTypeCounts: [UInt16: Int] = [:]
     private var controlDecryptFailureCount: Int = 0
 
     init(
-        connectTimeout: Duration = ShadowClientSunshineControlChannelDefaults.connectTimeout,
-        commandAcknowledgeTimeout: Duration = ShadowClientSunshineControlChannelDefaults.commandAcknowledgeTimeout,
+        connectTimeout: Duration = ShadowClientHostControlChannelDefaults.connectTimeout,
+        commandAcknowledgeTimeout: Duration = ShadowClientHostControlChannelDefaults.commandAcknowledgeTimeout,
         onRoundTripSample: (@Sendable (Double) async -> Void)? = nil,
-        onControllerFeedback: (@Sendable (ShadowClientSunshineControllerFeedbackEvent) async -> Void)? = nil,
-        onTermination: (@Sendable (ShadowClientSunshineTerminationEvent) async -> Void)? = nil
+        onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)? = nil,
+        onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)? = nil
     ) {
         self.connectTimeout = connectTimeout
         self.commandAcknowledgeTimeout = commandAcknowledgeTimeout
@@ -54,7 +54,7 @@ actor ShadowClientSunshineControlChannelRuntime {
         host: NWEndpoint.Host,
         port: NWEndpoint.Port,
         connectData: UInt32?,
-        mode: ShadowClientSunshineControlChannelMode = .plaintext
+        mode: ShadowClientHostControlChannelMode = .plaintext
     ) async throws {
         stop()
         do {
@@ -62,10 +62,10 @@ actor ShadowClientSunshineControlChannelRuntime {
             case .plaintext:
                 controlEncryptionCodec = nil
             case let .encryptedV2(key):
-                controlEncryptionCodec = try ShadowClientSunshineControlEncryptionCodec(keyData: key)
+                controlEncryptionCodec = try ShadowClientHostControlEncryptionCodec(keyData: key)
             }
         } catch {
-            throw ShadowClientSunshineControlChannelError.invalidEncryptedControlKey
+            throw ShadowClientHostControlChannelError.invalidEncryptedControlKey
         }
         controlChannelMode = mode
 
@@ -88,7 +88,7 @@ actor ShadowClientSunshineControlChannelRuntime {
 
             let verify = try await waitForVerifyConnect(over: connection, expectedConnectID: connectID)
             outgoingPeerID = verify.outgoingPeerID
-            outgoingSessionID = verify.outgoingSessionID & ShadowClientSunshineENetProtocolProfile.sessionValueMask
+            outgoingSessionID = verify.outgoingSessionID & ShadowClientHostENetProtocolProfile.sessionValueMask
 
             try await acknowledge(
                 commandChannelID: verify.commandChannelID,
@@ -99,7 +99,7 @@ actor ShadowClientSunshineControlChannelRuntime {
             try await sendBootstrapStartMessages(over: connection)
 
             logger.notice(
-                "Sunshine ENet control bootstrap ready on UDP \(port.rawValue, privacy: .public) peer=\(self.outgoingPeerID, privacy: .public)"
+                "Apollo ENet control bootstrap ready on UDP \(port.rawValue, privacy: .public) peer=\(self.outgoingPeerID, privacy: .public)"
             )
 
             receiveTask = Task { [weak self] in
@@ -136,14 +136,14 @@ actor ShadowClientSunshineControlChannelRuntime {
 
     func sendInputPacket(_ payload: Data, channelID: UInt8) async throws {
         guard let connection else {
-            throw ShadowClientSunshineControlChannelError.connectionClosed
+            throw ShadowClientHostControlChannelError.connectionClosed
         }
 
         // Input events are high-frequency and the receive loop is already responsible
         // for processing ACKs. Waiting for ACK here can race with the receive loop and
         // cause dropped input when the ACK is consumed by the background receiver first.
         try await sendReliableControlMessageWithoutBlockingForAcknowledge(
-            type: ShadowClientSunshineControlMessageProfile.inputDataType,
+            type: ShadowClientHostControlMessageProfile.inputDataType,
             payload: payload,
             channelID: channelID,
             over: connection
@@ -152,12 +152,12 @@ actor ShadowClientSunshineControlChannelRuntime {
 
     func sendInputKeepAlive() async throws {
         guard let connection else {
-            throw ShadowClientSunshineControlChannelError.connectionClosed
+            throw ShadowClientHostControlChannelError.connectionClosed
         }
 
         try await sendReliableControlMessageWithoutBlockingForAcknowledge(
-            type: ShadowClientSunshineControlMessageProfile.periodicPingType,
-            payload: ShadowClientSunshineControlMessageProfile.periodicPingPayload,
+            type: ShadowClientHostControlMessageProfile.periodicPingType,
+            payload: ShadowClientHostControlMessageProfile.periodicPingPayload,
             over: connection
         )
     }
@@ -176,10 +176,10 @@ actor ShadowClientSunshineControlChannelRuntime {
                 over: connection
             )
             logger.notice(
-                "Sunshine video recovery request sent type=\(request.type, privacy: .public) channel=\(request.channelID, privacy: .public)"
+                "Apollo video recovery request sent type=\(request.type, privacy: .public) channel=\(request.channelID, privacy: .public)"
             )
         } catch {
-            logger.error("Sunshine video recovery request failed: \(error.localizedDescription, privacy: .public)")
+            logger.error("Apollo video recovery request failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -203,11 +203,11 @@ actor ShadowClientSunshineControlChannelRuntime {
                 over: connection
             )
             logger.notice(
-                "Sunshine reference frame invalidation request sent type=\(request.type, privacy: .public) channel=\(request.channelID, privacy: .public) range=\(startFrameIndex, privacy: .public)-\(endFrameIndex, privacy: .public)"
+                "Apollo reference frame invalidation request sent type=\(request.type, privacy: .public) channel=\(request.channelID, privacy: .public) range=\(startFrameIndex, privacy: .public)-\(endFrameIndex, privacy: .public)"
             )
         } catch {
             logger.error(
-                "Sunshine reference frame invalidation request failed: \(error.localizedDescription, privacy: .public)"
+                "Apollo reference frame invalidation request failed: \(error.localizedDescription, privacy: .public)"
             )
         }
     }
@@ -230,12 +230,12 @@ actor ShadowClientSunshineControlChannelRuntime {
 
             group.addTask {
                 try await Task.sleep(for: timeout)
-                throw ShadowClientSunshineControlChannelError.handshakeTimedOut
+                throw ShadowClientHostControlChannelError.handshakeTimedOut
             }
 
             guard let verify = try await group.next() else {
                 group.cancelAll()
-                throw ShadowClientSunshineControlChannelError.verifyConnectNotReceived
+                throw ShadowClientHostControlChannelError.verifyConnectNotReceived
             }
             group.cancelAll()
             return verify
@@ -286,7 +286,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                         command: command
                     ) {
                         logger.error(
-                            "Sunshine control termination received reason=0x\(String(terminationEvent.reasonCode, radix: 16), privacy: .public)"
+                            "Apollo control termination received reason=0x\(String(terminationEvent.reasonCode, radix: 16), privacy: .public)"
                         )
                         await onTermination?(terminationEvent)
                     }
@@ -306,7 +306,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                 }
             } catch {
                 if !Task.isCancelled {
-                    logger.debug("Sunshine ENet control receive loop ended: \(error.localizedDescription, privacy: .public)")
+                    logger.debug("Apollo ENet control receive loop ended: \(error.localizedDescription, privacy: .public)")
                 }
                 break
             }
@@ -330,14 +330,14 @@ actor ShadowClientSunshineControlChannelRuntime {
     private func sendReliableControlMessage(
         type: UInt16,
         payload: Data,
-        channelID: UInt8 = ShadowClientSunshineControlMessageProfile.genericChannelID,
+        channelID: UInt8 = ShadowClientHostControlMessageProfile.genericChannelID,
         over connection: NWConnection
     ) async throws {
         let controlPayload = try buildControlPayload(type: type, payload: payload)
         let reliableSequenceNumber = nextReliableSequenceNumber(for: channelID)
         let controlModeLabel = controlEncryptionCodec == nil ? "plain" : "enc-v2"
         logger.notice(
-            "Sunshine control send type=\(type, privacy: .public) relSeq=\(reliableSequenceNumber, privacy: .public) payloadBytes=\(controlPayload.count, privacy: .public) mode=\(controlModeLabel, privacy: .public)"
+            "Apollo control send type=\(type, privacy: .public) relSeq=\(reliableSequenceNumber, privacy: .public) payloadBytes=\(controlPayload.count, privacy: .public) mode=\(controlModeLabel, privacy: .public)"
         )
         let packet = try ShadowClientSunshineENetPacketCodec.makeSendReliablePacket(
             outgoingPeerID: outgoingPeerID,
@@ -357,7 +357,7 @@ actor ShadowClientSunshineControlChannelRuntime {
     private func sendReliableControlMessageWithoutBlockingForAcknowledge(
         type: UInt16,
         payload: Data,
-        channelID: UInt8 = ShadowClientSunshineControlMessageProfile.genericChannelID,
+        channelID: UInt8 = ShadowClientHostControlMessageProfile.genericChannelID,
         over connection: NWConnection
     ) async throws {
         let controlPayload = try buildControlPayload(type: type, payload: payload)
@@ -387,8 +387,8 @@ actor ShadowClientSunshineControlChannelRuntime {
                 controlEncryptionSequenceNumber &+= 1
                 return encryptedPayload
             } catch {
-                logger.error("Sunshine encrypted control payload encoding failed: \(error.localizedDescription, privacy: .public)")
-                throw ShadowClientSunshineControlChannelError.encryptedControlEncodingFailed
+                logger.error("Apollo encrypted control payload encoding failed: \(error.localizedDescription, privacy: .public)")
+                throw ShadowClientHostControlChannelError.encryptedControlEncodingFailed
             }
         }
 
@@ -412,7 +412,7 @@ actor ShadowClientSunshineControlChannelRuntime {
             }
             group.addTask {
                 try await Task.sleep(for: timeout)
-                throw ShadowClientSunshineControlChannelError.commandAcknowledgeTimedOut
+                throw ShadowClientHostControlChannelError.commandAcknowledgeTimedOut
             }
 
             _ = try await group.next()
@@ -427,10 +427,10 @@ actor ShadowClientSunshineControlChannelRuntime {
         while !Task.isCancelled {
             let datagram = try await Self.receiveDatagram(over: connection)
             logger.notice(
-                "Sunshine control ACK wait datagram bytes=\(datagram.count, privacy: .public) expectedRelSeq=\(expectedReliableSequenceNumber, privacy: .public)"
+                "Apollo control ACK wait datagram bytes=\(datagram.count, privacy: .public) expectedRelSeq=\(expectedReliableSequenceNumber, privacy: .public)"
             )
             guard let packet = ShadowClientSunshineENetPacketCodec.parsePacket(datagram) else {
-                logger.error("Sunshine control ACK wait failed to parse ENet packet")
+                logger.error("Apollo control ACK wait failed to parse ENet packet")
                 continue
             }
 
@@ -441,7 +441,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                 )
 
                 logger.notice(
-                    "Sunshine control ACK wait command number=\(command.number, privacy: .public) flags=\(command.flags, privacy: .public) relSeq=\(command.reliableSequenceNumber, privacy: .public) channel=\(command.channelID, privacy: .public)"
+                    "Apollo control ACK wait command number=\(command.number, privacy: .public) flags=\(command.flags, privacy: .public) relSeq=\(command.reliableSequenceNumber, privacy: .public) channel=\(command.channelID, privacy: .public)"
                 )
                 if command.isAcknowledgeRequired, let sentTime = packet.sentTime {
                     try await acknowledge(
@@ -457,14 +457,14 @@ actor ShadowClientSunshineControlChannelRuntime {
                     command: command
                 ), acknowledge.receivedReliableSequenceNumber == expectedReliableSequenceNumber {
                     logger.notice(
-                        "Sunshine control ACK matched relSeq=\(acknowledge.receivedReliableSequenceNumber, privacy: .public)"
+                        "Apollo control ACK matched relSeq=\(acknowledge.receivedReliableSequenceNumber, privacy: .public)"
                     )
                     return
                 }
             }
         }
 
-        throw ShadowClientSunshineControlChannelError.commandAcknowledgeTimedOut
+        throw ShadowClientHostControlChannelError.commandAcknowledgeTimedOut
     }
 
     private func reportRoundTripSampleIfAvailable(
@@ -484,7 +484,7 @@ actor ShadowClientSunshineControlChannelRuntime {
         )
         guard roundTripSampleMs.isFinite,
               roundTripSampleMs >= 0,
-              roundTripSampleMs <= ShadowClientSunshineControlChannelDefaults.maximumRoundTripSampleMs
+              roundTripSampleMs <= ShadowClientHostControlChannelDefaults.maximumRoundTripSampleMs
         else {
             return
         }
@@ -495,7 +495,7 @@ actor ShadowClientSunshineControlChannelRuntime {
     private func parseControllerFeedbackEvent(
         from packet: ShadowClientSunshineENetPacketCodec.ParsedPacket,
         command: ShadowClientSunshineENetPacketCodec.ParsedPacket.Command
-    ) -> ShadowClientSunshineControllerFeedbackEvent? {
+    ) -> ShadowClientHostControllerFeedbackEvent? {
         guard let controlPayload = parseControlPayload(from: packet, command: command) else {
             return nil
         }
@@ -503,20 +503,20 @@ actor ShadowClientSunshineControlChannelRuntime {
         let type = readUInt16LE(controlPayload, at: 0)
         let payload = Data(controlPayload.dropFirst(2))
         reportControlMessageTypeIfNeeded(type: type, payloadBytes: payload.count)
-        return ShadowClientSunshineControlFeedbackCodec.parse(type: type, payload: payload)
+        return ShadowClientHostControlFeedbackCodec.parse(type: type, payload: payload)
     }
 
     private func parseTerminationEvent(
         from packet: ShadowClientSunshineENetPacketCodec.ParsedPacket,
         command: ShadowClientSunshineENetPacketCodec.ParsedPacket.Command
-    ) -> ShadowClientSunshineTerminationEvent? {
+    ) -> ShadowClientHostTerminationEvent? {
         guard let controlPayload = parseControlPayload(from: packet, command: command) else {
             return nil
         }
 
         let type = readUInt16LE(controlPayload, at: 0)
         let payload = Data(controlPayload.dropFirst(2))
-        return ShadowClientSunshineControlFeedbackCodec.parseTermination(
+        return ShadowClientHostControlFeedbackCodec.parseTermination(
             type: type,
             payload: payload
         )
@@ -526,7 +526,7 @@ actor ShadowClientSunshineControlChannelRuntime {
         from packet: ShadowClientSunshineENetPacketCodec.ParsedPacket,
         command: ShadowClientSunshineENetPacketCodec.ParsedPacket.Command
     ) -> Data? {
-        guard command.number == ShadowClientSunshineENetProtocolProfile.protocolCommandSendReliable else {
+        guard command.number == ShadowClientHostENetProtocolProfile.protocolCommandSendReliable else {
             return nil
         }
 
@@ -566,7 +566,7 @@ actor ShadowClientSunshineControlChannelRuntime {
     }
 
     private func reportControllerFeedbackEventIfNeeded(
-        _ event: ShadowClientSunshineControllerFeedbackEvent
+        _ event: ShadowClientHostControllerFeedbackEvent
     ) {
         receivedControllerFeedbackEventCount &+= 1
         guard receivedControllerFeedbackEventCount <= 16 ||
@@ -581,7 +581,7 @@ actor ShadowClientSunshineControlChannelRuntime {
     }
 
     private func controllerFeedbackSummary(
-        for event: ShadowClientSunshineControllerFeedbackEvent
+        for event: ShadowClientHostControllerFeedbackEvent
     ) -> String {
         switch event {
         case let .rumble(rumble):
@@ -609,31 +609,31 @@ actor ShadowClientSunshineControlChannelRuntime {
 
     private func controlMessageName(_ type: UInt16) -> String {
         switch type {
-        case ShadowClientSunshineControlMessageProfile.startATypeLegacy:
+        case ShadowClientHostControlMessageProfile.startATypeLegacy:
             return "startA-legacy"
-        case ShadowClientSunshineControlMessageProfile.startATypeEncryptedV2:
+        case ShadowClientHostControlMessageProfile.startATypeEncryptedV2:
             return "startA-encryptedV2"
-        case ShadowClientSunshineControlMessageProfile.startBType:
+        case ShadowClientHostControlMessageProfile.startBType:
             return "startB"
-        case ShadowClientSunshineControlMessageProfile.periodicPingType:
+        case ShadowClientHostControlMessageProfile.periodicPingType:
             return "periodicPing"
-        case ShadowClientSunshineControlMessageProfile.inputDataType:
+        case ShadowClientHostControlMessageProfile.inputDataType:
             return "inputData"
-        case ShadowClientSunshineControlMessageProfile.invalidateReferenceFramesType:
+        case ShadowClientHostControlMessageProfile.invalidateReferenceFramesType:
             return "invalidateReferenceFrames"
-        case ShadowClientSunshineControlMessageProfile.terminationType:
+        case ShadowClientHostControlMessageProfile.terminationType:
             return "termination"
-        case ShadowClientSunshineControlMessageProfile.rumbleType:
+        case ShadowClientHostControlMessageProfile.rumbleType:
             return "rumble"
-        case ShadowClientSunshineControlMessageProfile.rumbleTriggersType:
+        case ShadowClientHostControlMessageProfile.rumbleTriggersType:
             return "triggerRumble"
-        case ShadowClientSunshineControlMessageProfile.setMotionEventType:
+        case ShadowClientHostControlMessageProfile.setMotionEventType:
             return "setMotionEvent"
-        case ShadowClientSunshineControlMessageProfile.setRGBLEDType:
+        case ShadowClientHostControlMessageProfile.setRGBLEDType:
             return "setRGBLED"
-        case ShadowClientSunshineControlMessageProfile.adaptiveTriggersType:
+        case ShadowClientHostControlMessageProfile.adaptiveTriggersType:
             return "adaptiveTriggers"
-        case ShadowClientSunshineControlMessageProfile.hdrModeType:
+        case ShadowClientHostControlMessageProfile.hdrModeType:
             return "hdrMode"
         default:
             return "unknown"
@@ -660,9 +660,9 @@ actor ShadowClientSunshineControlChannelRuntime {
             do {
                 let nowUptime = DispatchTime.now().uptimeNanoseconds
                 if lastPeerPingUptime == 0 ||
-                    nowUptime - lastPeerPingUptime >= ShadowClientSunshineENetProtocolProfile.peerPingIntervalNanoseconds {
+                    nowUptime - lastPeerPingUptime >= ShadowClientHostENetProtocolProfile.peerPingIntervalNanoseconds {
                     let reliableSequenceNumber = nextReliableSequenceNumber(
-                        for: ShadowClientSunshineENetProtocolProfile.wildcardSessionID
+                        for: ShadowClientHostENetProtocolProfile.wildcardSessionID
                     )
                     let pingPacket = ShadowClientSunshineENetPacketCodec.makePingPacket(
                         outgoingPeerID: outgoingPeerID,
@@ -674,24 +674,24 @@ actor ShadowClientSunshineControlChannelRuntime {
                     lastPeerPingUptime = nowUptime
                     if didLogENetPing < 4 {
                         logger.notice(
-                            "Sunshine low-level ENet ping sent relSeq=\(reliableSequenceNumber, privacy: .public)"
+                            "Apollo low-level ENet ping sent relSeq=\(reliableSequenceNumber, privacy: .public)"
                         )
                         didLogENetPing += 1
                     }
                 }
 
                 try await sendReliableControlMessageWithoutBlockingForAcknowledge(
-                    type: ShadowClientSunshineControlMessageProfile.periodicPingType,
-                    payload: ShadowClientSunshineControlMessageProfile.periodicPingPayload,
+                    type: ShadowClientHostControlMessageProfile.periodicPingType,
+                    payload: ShadowClientHostControlMessageProfile.periodicPingPayload,
                     over: connection
                 )
             } catch {
                 if !didLogFailure {
-                    logger.error("Sunshine control periodic ping failed: \(error.localizedDescription, privacy: .public)")
+                    logger.error("Apollo control periodic ping failed: \(error.localizedDescription, privacy: .public)")
                     didLogFailure = true
                 }
             }
-            try? await Task.sleep(for: ShadowClientSunshineControlMessageProfile.periodicPingInterval)
+            try? await Task.sleep(for: ShadowClientHostControlMessageProfile.periodicPingInterval)
         }
     }
 
@@ -737,7 +737,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                             }
                         case .cancelled:
                             Task {
-                                if await gate.finish(.failure(ShadowClientSunshineControlChannelError.connectionClosed)) {
+                                if await gate.finish(.failure(ShadowClientHostControlChannelError.connectionClosed)) {
                                     connection.stateUpdateHandler = nil
                                 }
                             }
@@ -753,13 +753,13 @@ actor ShadowClientSunshineControlChannelRuntime {
                 do {
                     try await Task.sleep(for: timeout)
                     connection.cancel()
-                    return .failure(ShadowClientSunshineControlChannelError.connectionTimedOut)
+                    return .failure(ShadowClientHostControlChannelError.connectionTimedOut)
                 } catch {
                     return .failure(error)
                 }
             }
 
-            let first = await group.next() ?? .failure(ShadowClientSunshineControlChannelError.connectionTimedOut)
+            let first = await group.next() ?? .failure(ShadowClientHostControlChannelError.connectionTimedOut)
             group.cancelAll()
             return first
         }
@@ -780,7 +780,7 @@ actor ShadowClientSunshineControlChannelRuntime {
     }
 
     private func nextReliableSequenceNumber(for channelID: UInt8) -> UInt16 {
-        if channelID == ShadowClientSunshineENetProtocolProfile.wildcardSessionID {
+        if channelID == ShadowClientHostENetProtocolProfile.wildcardSessionID {
             controlReliableSequenceNumber &+= 1
             return controlReliableSequenceNumber
         }
@@ -819,7 +819,7 @@ actor ShadowClientSunshineControlChannelRuntime {
             }
         }
 
-        throw ShadowClientSunshineControlChannelError.verifyConnectNotReceived
+        throw ShadowClientHostControlChannelError.verifyConnectNotReceived
     }
 
     private static func send(bytes: Data, over connection: NWConnection) async throws {
@@ -843,7 +843,7 @@ actor ShadowClientSunshineControlChannelRuntime {
                 }
 
                 guard let content else {
-                    continuation.resume(throwing: ShadowClientSunshineControlChannelError.connectionClosed)
+                    continuation.resume(throwing: ShadowClientHostControlChannelError.connectionClosed)
                     return
                 }
                 continuation.resume(returning: content)

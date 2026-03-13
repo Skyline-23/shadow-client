@@ -2,6 +2,7 @@ import CoreGraphics
 import CoreVideo
 import Foundation
 import Metal
+import os
 import simd
 
 final class ShadowClientRealtimeSessionYUVMetalPipeline {
@@ -10,6 +11,8 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         var row1: SIMD3<Float>
         var row2: SIMD3<Float>
         var offsets: SIMD3<Float>
+        var chromaOffset: SIMD2<Float>
+        var bitnessScaleFactor: Float
     }
 
     struct Vertex {
@@ -35,27 +38,49 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         )
     }
 
-    private let device: MTLDevice
-    private let pipelineState: MTLRenderPipelineState
-    private let textureCache: CVMetalTextureCache
+    private static let logger = Logger(
+        subsystem: "com.skyline23.shadow-client",
+        category: "SurfaceView.YUVMetal"
+    )
 
-    init?(device: MTLDevice, colorPixelFormat: MTLPixelFormat) {
+    private let device: MTLDevice
+    private let pipelineStates: [MTLPixelFormat: MTLRenderPipelineState]
+    private let textureCache: CVMetalTextureCache
+    private var lastLoggedDiagnosticsSignature: String?
+
+    init?(device: MTLDevice) {
         self.device = device
 
-        let bundle = Bundle(for: ShadowClientRealtimeSessionYUVMetalBundleMarker.self)
-        guard let library = try? device.makeDefaultLibrary(bundle: bundle) else {
-            return nil
+        let library: MTLLibrary?
+        if let defaultLibrary = device.makeDefaultLibrary() {
+            Self.logger.notice("YUV Metal pipeline loaded default Metal library from app bundle")
+            library = defaultLibrary
+        } else {
+            let bundle = Bundle(for: ShadowClientRealtimeSessionYUVMetalBundleMarker.self)
+            if let bundledLibrary = try? device.makeDefaultLibrary(bundle: bundle) {
+                Self.logger.notice("YUV Metal pipeline loaded bundled Metal library")
+                library = bundledLibrary
+            } else {
+                Self.logger.error("YUV Metal pipeline failed to load Metal library")
+                library = nil
+            }
         }
 
-        let descriptor = MTLRenderPipelineDescriptor()
-        descriptor.vertexFunction = library.makeFunction(name: "shadowYUVVertex")
-        descriptor.fragmentFunction = library.makeFunction(name: "shadowYUVBiplanarFragment")
-        descriptor.colorAttachments[0].pixelFormat = colorPixelFormat
-
-        guard let pipelineState = try? device.makeRenderPipelineState(descriptor: descriptor) else {
+        guard let library else {
             return nil
         }
-        self.pipelineState = pipelineState
+        var pipelineStates: [MTLPixelFormat: MTLRenderPipelineState] = [:]
+        for pixelFormat in [MTLPixelFormat.bgra8Unorm, .rgba16Float] {
+            let descriptor = MTLRenderPipelineDescriptor()
+            descriptor.vertexFunction = library.makeFunction(name: "shadowYUVVertex")
+            descriptor.fragmentFunction = library.makeFunction(name: "shadowYUVBiplanarFragment")
+            descriptor.colorAttachments[0].pixelFormat = pixelFormat
+            guard let pipelineState = try? device.makeRenderPipelineState(descriptor: descriptor) else {
+                return nil
+            }
+            pipelineStates[pixelFormat] = pipelineState
+        }
+        self.pipelineStates = pipelineStates
 
         var textureCache: CVMetalTextureCache?
         guard CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &textureCache) == kCVReturnSuccess,
@@ -82,9 +107,11 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         pixelBuffer: CVPixelBuffer,
         into renderPassDescriptor: MTLRenderPassDescriptor,
         commandBuffer: MTLCommandBuffer,
-        drawableSize: CGSize
+        drawableSize: CGSize,
+        colorPixelFormat: MTLPixelFormat
     ) -> Bool {
         guard canRender(pixelBuffer),
+              let pipelineState = pipelineStates[colorPixelFormat],
               let lumaTextureRef = makeTexture(
                 from: pixelBuffer,
                 planeIndex: 0,
@@ -112,6 +139,11 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             drawableSize: drawableSize
         )
         var parameters = cscParameters(for: pixelBuffer)
+        logDiagnosticsIfNeeded(
+            pixelBuffer: pixelBuffer,
+            colorPixelFormat: colorPixelFormat,
+            parameters: parameters
+        )
 
         renderEncoder.setRenderPipelineState(pipelineState)
         renderEncoder.setVertexBytes(
@@ -203,23 +235,163 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
                 yMin / channelRange,
                 Float(1 << (bitDepth - 1)) / channelRange,
                 Float(1 << (bitDepth - 1)) / channelRange
-            )
+            ),
+            chromaOffset: chromaOffsets(for: pixelBuffer),
+            bitnessScaleFactor: 1
         )
     }
 
-    private func cscMatrix(for pixelBuffer: CVPixelBuffer) -> (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>) {
-        let value = attachmentStringValue(
+    private func logDiagnosticsIfNeeded(
+        pixelBuffer: CVPixelBuffer,
+        colorPixelFormat: MTLPixelFormat,
+        parameters: CSCParameters
+    ) {
+        let primaries = attachmentStringValue(
             forKey: kCVImageBufferColorPrimariesKey,
             pixelBuffer: pixelBuffer
-        )?.uppercased() ?? ""
+        ) ?? "nil"
+        let transfer = attachmentStringValue(
+            forKey: kCVImageBufferTransferFunctionKey,
+            pixelBuffer: pixelBuffer
+        ) ?? "nil"
+        let matrix = attachmentStringValue(
+            forKey: kCVImageBufferYCbCrMatrixKey,
+            pixelBuffer: pixelBuffer
+        ) ?? "nil"
+        let chromaLocation = attachmentStringValue(
+            forKey: kCVImageBufferChromaLocationTopFieldKey,
+            pixelBuffer: pixelBuffer
+        ) ?? attachmentStringValue(
+            forKey: kCVImageBufferChromaLocationBottomFieldKey,
+            pixelBuffer: pixelBuffer
+        ) ?? "nil"
+        let sourceStandard = String(describing: ShadowClientRealtimeSessionColorPipeline.sourceStandard(for: pixelBuffer))
+        let fullRange = isFullRange(pixelBuffer)
+        let bitDepth = bitsPerChannel(for: pixelBuffer)
+        let sampleSummary = sampledDiagnostics(
+            pixelBuffer: pixelBuffer,
+            parameters: parameters
+        ) ?? "nil"
+        let signature = [
+            String(CVPixelBufferGetPixelFormatType(pixelBuffer)),
+            primaries,
+            transfer,
+            matrix,
+            chromaLocation,
+            sourceStandard,
+            fullRange ? "full" : "limited",
+            String(bitDepth),
+            String(colorPixelFormat.rawValue),
+        ].joined(separator: "|")
 
-        if value.contains("2020") {
+        guard signature != lastLoggedDiagnosticsSignature else {
+            return
+        }
+        lastLoggedDiagnosticsSignature = signature
+
+        Self.logger.notice(
+            """
+            YUV Metal diagnostics pixel-format=0x\(String(CVPixelBufferGetPixelFormatType(pixelBuffer), radix: 16), privacy: .public) drawable-format=\(colorPixelFormat.rawValue, privacy: .public) source-standard=\(sourceStandard, privacy: .public) primaries=\(primaries, privacy: .public) transfer=\(transfer, privacy: .public) matrix=\(matrix, privacy: .public) chroma-location=\(chromaLocation, privacy: .public) range=\(fullRange ? "full" : "limited", privacy: .public) bit-depth=\(bitDepth, privacy: .public) csc-row0=[\(parameters.row0.x, privacy: .public),\(parameters.row0.y, privacy: .public),\(parameters.row0.z, privacy: .public)] csc-row1=[\(parameters.row1.x, privacy: .public),\(parameters.row1.y, privacy: .public),\(parameters.row1.z, privacy: .public)] csc-row2=[\(parameters.row2.x, privacy: .public),\(parameters.row2.y, privacy: .public),\(parameters.row2.z, privacy: .public)] offsets=[\(parameters.offsets.x, privacy: .public),\(parameters.offsets.y, privacy: .public),\(parameters.offsets.z, privacy: .public)] chroma-offset=[\(parameters.chromaOffset.x, privacy: .public),\(parameters.chromaOffset.y, privacy: .public)] bitness-scale=\(parameters.bitnessScaleFactor, privacy: .public) samples=\(sampleSummary, privacy: .public)
+            """
+        )
+    }
+
+    private func sampledDiagnostics(
+        pixelBuffer: CVPixelBuffer,
+        parameters: CSCParameters
+    ) -> String? {
+        let pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        guard pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+            pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        else {
+            return nil
+        }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        guard let yBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0),
+              let uvBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1)
+        else {
+            return nil
+        }
+
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let yRowBytes = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+        let uvRowBytes = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1)
+        let yPointer = yBase.bindMemory(to: UInt8.self, capacity: yRowBytes * height)
+        let uvPointer = uvBase.bindMemory(
+            to: UInt8.self,
+            capacity: uvRowBytes * CVPixelBufferGetHeightOfPlane(pixelBuffer, 1)
+        )
+        let labels: [(String, CGFloat, CGFloat)] = [
+            ("tl", 0.1, 0.1),
+            ("tr", 0.9, 0.1),
+            ("c", 0.5, 0.5),
+            ("bl", 0.1, 0.9),
+            ("br", 0.9, 0.9),
+        ]
+
+        var parts: [String] = []
+        for (label, normalizedX, normalizedY) in labels {
+            let x = max(0, min(width - 1, Int(CGFloat(width - 1) * normalizedX)))
+            let y = max(0, min(height - 1, Int(CGFloat(height - 1) * normalizedY)))
+            let ySample = Int(yPointer[y * yRowBytes + x])
+            let uvX = (x / 2) * 2
+            let uvY = y / 2
+            let uvOffset = uvY * uvRowBytes + uvX
+            let cbSample = Int(uvPointer[uvOffset])
+            let crSample = Int(uvPointer[uvOffset + 1])
+            let predicted = predictedRGB(
+                y: ySample,
+                cb: cbSample,
+                cr: crSample,
+                parameters: parameters
+            )
+            parts.append("\(label)=Y\(ySample)/Cb\(cbSample)/Cr\(crSample)->RGB\(predicted)")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private func predictedRGB(
+        y: Int,
+        cb: Int,
+        cr: Int,
+        parameters: CSCParameters
+    ) -> String {
+        var yuv = SIMD3<Float>(
+            Float(y) / 255.0,
+            Float(cb) / 255.0,
+            Float(cr) / 255.0
+        )
+        yuv *= parameters.bitnessScaleFactor
+        yuv -= parameters.offsets
+
+        let rgb = SIMD3<Float>(
+            dot(parameters.row0, yuv),
+            dot(parameters.row1, yuv),
+            dot(parameters.row2, yuv)
+        )
+        let r = clampToByte(rgb.x * 255.0)
+        let g = clampToByte(rgb.y * 255.0)
+        let b = clampToByte(rgb.z * 255.0)
+        return "[\(r),\(g),\(b)]"
+    }
+
+    private func clampToByte(_ value: Float) -> Int {
+        Int(max(0, min(255, lroundf(value))))
+    }
+
+    private func cscMatrix(for pixelBuffer: CVPixelBuffer) -> (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>) {
+        switch ShadowClientRealtimeSessionColorPipeline.sourceStandard(for: pixelBuffer) {
+        case .rec2020:
             return Constants.bt2020
-        }
-        if value.contains("709") {
+        case .rec709:
             return Constants.bt709
+        case .rec601:
+            return Constants.bt601
         }
-        return Constants.bt601
     }
 
     private func isFullRange(_ pixelBuffer: CVPixelBuffer) -> Bool {
@@ -240,6 +412,39 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         default:
             return 8
         }
+    }
+
+    private func chromaOffsets(for pixelBuffer: CVPixelBuffer) -> SIMD2<Float> {
+        let location = attachmentStringValue(
+            forKey: kCVImageBufferChromaLocationTopFieldKey,
+            pixelBuffer: pixelBuffer
+        ) ?? attachmentStringValue(
+            forKey: kCVImageBufferChromaLocationBottomFieldKey,
+            pixelBuffer: pixelBuffer
+        ) ?? (kCVImageBufferChromaLocation_Left as String)
+
+        let horizontalSubsampled = CVPixelBufferGetWidthOfPlane(pixelBuffer, 1) < CVPixelBufferGetWidthOfPlane(pixelBuffer, 0)
+        let verticalSubsampled = CVPixelBufferGetHeightOfPlane(pixelBuffer, 1) < CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
+
+        let offset: SIMD2<Float>
+        if location == (kCVImageBufferChromaLocation_Center as String) {
+            offset = SIMD2<Float>(0, 0)
+        } else if location == (kCVImageBufferChromaLocation_TopLeft as String) {
+            offset = SIMD2<Float>(0.5, 0.5)
+        } else if location == (kCVImageBufferChromaLocation_Top as String) {
+            offset = SIMD2<Float>(0, 0.5)
+        } else if location == (kCVImageBufferChromaLocation_BottomLeft as String) {
+            offset = SIMD2<Float>(0.5, -0.5)
+        } else if location == (kCVImageBufferChromaLocation_Bottom as String) {
+            offset = SIMD2<Float>(0, -0.5)
+        } else {
+            offset = SIMD2<Float>(0.5, 0)
+        }
+
+        return SIMD2<Float>(
+            horizontalSubsampled ? offset.x : 0,
+            verticalSubsampled ? offset.y : 0
+        )
     }
 
     private func vertexData(

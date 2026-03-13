@@ -1,6 +1,6 @@
 import Foundation
 
-struct ShadowClientSunshineHandshakeNegotiation: Sendable {
+struct ShadowClientHostHandshakeNegotiation: Sendable {
     let audioPingPayload: Data?
     let videoPingPayload: Data?
     let controlConnectData: UInt32?
@@ -17,9 +17,9 @@ struct ShadowClientSunshineHandshakeNegotiation: Sendable {
     }
 
     var moonlightFeatureFlags: UInt32 {
-        var flags = ShadowClientSunshineHandshakeProfile.moonlightFeatureFlagFECStatus
+        var flags = ShadowClientHostHandshakeProfile.moonlightFeatureFlagFECStatus
         if supportsSessionIdentifierV1 {
-            flags |= ShadowClientSunshineHandshakeProfile.moonlightFeatureFlagSessionIDV1
+            flags |= ShadowClientHostHandshakeProfile.moonlightFeatureFlagSessionIDV1
         }
         return flags
     }
@@ -28,23 +28,23 @@ struct ShadowClientSunshineHandshakeNegotiation: Sendable {
         guard supportsSessionIdentifierV1, supportsEncryptedControlChannelV2 else {
             return false
         }
-        return (encryptionRequestedFlags & ShadowClientSunshineHandshakeProfile.sunshineEncryptionControlV2) != 0
+        return (encryptionRequestedFlags & ShadowClientHostHandshakeProfile.sunshineEncryptionControlV2) != 0
     }
 
     var audioEncryptionEnabled: Bool {
         guard supportsSessionIdentifierV1, supportsEncryptedAudioTransport else {
             return false
         }
-        return (encryptionRequestedFlags & ShadowClientSunshineHandshakeProfile.sunshineEncryptionAudio) != 0
+        return (encryptionRequestedFlags & ShadowClientHostHandshakeProfile.sunshineEncryptionAudio) != 0
     }
 
     var encryptionEnabledFlags: UInt32 {
         var flags: UInt32 = 0
         if controlChannelEncryptionEnabled {
-            flags |= ShadowClientSunshineHandshakeProfile.sunshineEncryptionControlV2
+            flags |= ShadowClientHostHandshakeProfile.sunshineEncryptionControlV2
         }
         if audioEncryptionEnabled {
-            flags |= ShadowClientSunshineHandshakeProfile.sunshineEncryptionAudio
+            flags |= ShadowClientHostHandshakeProfile.sunshineEncryptionAudio
         }
         return flags
     }
