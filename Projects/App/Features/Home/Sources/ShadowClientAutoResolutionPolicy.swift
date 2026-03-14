@@ -8,6 +8,13 @@ import UIKit
 #endif
 
 enum ShadowClientAutoResolutionPolicy {
+    private struct DisplayMetrics {
+        let logicalSize: CGSize
+        let safeAreaInsets: EdgeInsets
+        let scale: CGFloat
+        let pixelSize: CGSize?
+    }
+
     struct LaunchGeometry: Equatable {
         let renderSize: CGSize
         let pixelSize: CGSize
@@ -63,14 +70,16 @@ enum ShadowClientAutoResolutionPolicy {
         return resolveLaunchGeometry(
             displayLogicalSize: metrics.logicalSize,
             safeAreaInsets: metrics.safeAreaInsets,
-            scale: metrics.scale
+            scale: metrics.scale,
+            displayPixelSize: metrics.pixelSize
         )
     }
 
     static func resolveLaunchGeometry(
         displayLogicalSize: CGSize,
         safeAreaInsets: EdgeInsets,
-        scale: CGFloat
+        scale: CGFloat,
+        displayPixelSize: CGSize? = nil
     ) -> LaunchGeometry {
         let safeAreaWidth = max(
             1,
@@ -85,15 +94,24 @@ enum ShadowClientAutoResolutionPolicy {
             height: alignedPixelDimension(safeAreaHeight)
         )
         let resolvedScale = max(1.0, scale)
-        let pixelSize = CGSize(
+        let resolvedPixelSize = displayPixelSize.map {
+            CGSize(
+                width: alignedPixelDimension($0.width),
+                height: alignedPixelDimension($0.height)
+            )
+        } ?? CGSize(
             width: alignedPixelDimension(renderSize.width * resolvedScale),
             height: alignedPixelDimension(renderSize.height * resolvedScale)
+        )
+        let effectiveScale = max(
+            1.0,
+            resolvedPixelSize.width / max(1.0, renderSize.width)
         )
 
         return .init(
             renderSize: renderSize,
-            pixelSize: pixelSize,
-            scalePercent: max(100, Int((resolvedScale * 100).rounded()))
+            pixelSize: resolvedPixelSize,
+            scalePercent: max(100, Int((effectiveScale * 100).rounded()))
         )
     }
 
@@ -101,18 +119,19 @@ enum ShadowClientAutoResolutionPolicy {
     private static func effectiveDisplayMetrics(
         fallbackLogicalSize: CGSize,
         fallbackSafeAreaInsets: EdgeInsets
-    ) -> (logicalSize: CGSize, safeAreaInsets: EdgeInsets, scale: CGFloat) {
+    ) -> DisplayMetrics {
         #if os(macOS)
         if let screen = NSApp.keyWindow?.screen ?? NSScreen.main {
-            return (
+            return .init(
                 logicalSize: screen.frame.size,
                 safeAreaInsets: .init(),
-                scale: screen.backingScaleFactor
+                scale: screen.backingScaleFactor,
+                pixelSize: currentDisplayModePixelSize(for: screen)
             )
         }
         #elseif os(iOS) || os(tvOS)
         if let window = activeWindow() {
-            return (
+            return .init(
                 logicalSize: window.bounds.size,
                 safeAreaInsets: EdgeInsets(
                     top: window.safeAreaInsets.top,
@@ -120,15 +139,17 @@ enum ShadowClientAutoResolutionPolicy {
                     bottom: window.safeAreaInsets.bottom,
                     trailing: window.safeAreaInsets.right
                 ),
-                scale: window.screen.scale
+                scale: window.screen.scale,
+                pixelSize: nil
             )
         }
         #endif
 
-        return (
+        return .init(
             logicalSize: fallbackLogicalSize,
             safeAreaInsets: fallbackSafeAreaInsets,
-            scale: currentDisplayScale()
+            scale: currentDisplayScale(),
+            pixelSize: nil
         )
     }
 
@@ -144,6 +165,20 @@ enum ShadowClientAutoResolutionPolicy {
         return 1.0
         #endif
     }
+
+    #if os(macOS)
+    @MainActor
+    private static func currentDisplayModePixelSize(for screen: NSScreen) -> CGSize? {
+        guard let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+            return nil
+        }
+        let displayID = CGDirectDisplayID(screenNumber.uint32Value)
+        guard let mode = CGDisplayCopyDisplayMode(displayID) else {
+            return nil
+        }
+        return CGSize(width: mode.pixelWidth, height: mode.pixelHeight)
+    }
+    #endif
 
     #if os(iOS) || os(tvOS)
     @MainActor
