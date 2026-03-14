@@ -130,14 +130,15 @@ var remoteDesktopHostCard: some View {
     }
 
     var remoteDesktopHostHeader: some View {
-        HStack(spacing: RemoteHostCardMetrics.headerSpacing) {
-            Label("Remote Desktop Hosts", systemImage: "desktopcomputer")
+        let badge = ShadowClientHostPanelPresentationKit.headerBadge(autoFindHosts: autoFindHosts)
+        return HStack(spacing: RemoteHostCardMetrics.headerSpacing) {
+            Label(ShadowClientHostPanelPresentationKit.headerTitle(), systemImage: "desktopcomputer")
                 .font(.system(.title3, design: .rounded).weight(.bold))
                 .foregroundStyle(.white)
 
             Spacer(minLength: 8)
 
-            Label(autoFindHosts ? "Auto Scan" : "Manual", systemImage: autoFindHosts ? "dot.radiowaves.left.and.right" : "plus.circle")
+            Label(badge.title, systemImage: badge.symbol)
                 .font(.caption.weight(.semibold))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -167,7 +168,7 @@ var remoteDesktopHostCard: some View {
     var remoteDesktopManualEntryCard: some View {
         settingsRow {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Add device")
+                Text(ShadowClientHostPanelPresentationKit.manualEntryTitle())
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(.white)
                 ShadowClientManualHostAddressField(
@@ -214,12 +215,10 @@ var remoteDesktopHostCard: some View {
     var remoteDesktopEmptyStateCard: some View {
         settingsRow {
             VStack(alignment: .leading, spacing: 4) {
-                Text("No devices")
+                Text(ShadowClientHostPanelPresentationKit.emptyStateTitle())
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(.white)
-                Text(autoFindHosts
-                    ? "Auto Scan is running. Tap + to add one manually if your device does not appear."
-                    : "Auto Scan is off. Tap + to add a device manually.")
+                Text(ShadowClientHostPanelPresentationKit.emptyStateMessage(autoFindHosts: autoFindHosts))
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(Color.white.opacity(0.76))
             }
@@ -1002,7 +1001,12 @@ var remoteDesktopHostCard: some View {
     }
 
     var remoteDesktopHostsAccessibilityValue: String {
-        "\(remoteDesktopRuntime.hosts.count) host(s). Auto Scan \(autoFindHosts ? remoteDesktopRuntime.hostState.label : "Disabled"). Pairing \(remoteDesktopRuntime.pairingState.label)."
+        ShadowClientHostPanelPresentationKit.hostsAccessibilityValue(
+            hostCount: remoteDesktopRuntime.hosts.count,
+            autoFindHosts: autoFindHosts,
+            hostStateLabel: remoteDesktopRuntime.hostState.label,
+            pairingStateLabel: remoteDesktopRuntime.pairingState.label
+        )
     }
 
     var canPairSelectedHost: Bool {
