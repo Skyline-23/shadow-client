@@ -1282,7 +1282,7 @@ var pairingStateColor: Color {
         switch remoteDesktopRuntime.pairingState {
         case .idle:
             return Color.white.opacity(0.74)
-        case .pairing, .pairingOTP:
+        case .pairing:
             return .orange
         case .paired:
             return .green

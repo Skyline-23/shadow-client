@@ -1111,7 +1111,6 @@ private enum ShadowClientRemoteDesktopCommand: Sendable {
     )
     case disconnectSelectedHostApolloAdmin(username: String, password: String)
     case unpairSelectedHostApolloAdmin(username: String, password: String)
-    case pairApolloOTPRequest(ShadowClientApolloOTPPairingRequest)
 }
 
 private struct ShadowClientLaunchRequestContext: Sendable {
@@ -1434,8 +1433,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 username: username,
                 password: password
             )
-        case let .pairApolloOTPRequest(request):
-            performPairApolloOTPRequest(request)
         }
     }
 
@@ -1584,11 +1581,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    public func pairApolloOTPRequest(_ request: ShadowClientApolloOTPPairingRequest) {
-        commandContinuation.yield(.pairApolloOTPRequest(request))
-    }
-
-    @MainActor
     private func performPairSelectedHost() {
         guard let selectedHost else {
             pairingState = .failed("Select host first.")
@@ -1720,74 +1712,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     return
                 }
 
-                await MainActor.run { [weak self] in
-                    guard let self,
-                          self.pairGeneration == currentPairGeneration
-                    else {
-                        return
-                    }
-                    self.pairingState = .failed(error.localizedDescription)
-                }
-            }
-        }
-    }
-
-    @MainActor
-    private func performPairApolloOTPRequest(_ request: ShadowClientApolloOTPPairingRequest) {
-        let hostAddress = request.hostAddress
-        let normalizedHostID = hostAddress.lowercased()
-        if !latestHostCandidates.contains(hostAddress) {
-            latestHostCandidates.append(hostAddress)
-        }
-        refreshHostsTask?.cancel()
-        hostState = .loading
-        let metadataClient = metadataClient
-        let controlClient = controlClient
-        let currentPairGeneration = pairGeneration &+ 1
-        pairGeneration = currentPairGeneration
-        pairingState = .pairingOTP(host: hostAddress)
-        pairTask?.cancel()
-        pairTask = Task { [weak self] in
-            do {
-                let descriptor = try await Self.fetchDirectHostDescriptor(
-                    hostAddress: hostAddress,
-                    metadataClient: metadataClient
-                )
-                await MainActor.run { [weak self] in
-                    guard let self,
-                          self.pairGeneration == currentPairGeneration
-                    else {
-                        return
-                    }
-                    self.hosts = Self.mergeResolvedHosts(
-                        [descriptor],
-                        selectedHostID: normalizedHostID,
-                        preferredHost: hostAddress,
-                        preferredRoutesByKey: [:]
-                    )
-                    self.selectedHostID = normalizedHostID
-                }
-
-                let result = try await controlClient.pair(
-                    host: hostAddress,
-                    pin: request.pin,
-                    otpPassphrase: request.passphrase,
-                    appVersion: descriptor.appVersion,
-                    httpsPort: request.pairPort == nil ? descriptor.httpsPort : nil
-                )
-                await MainActor.run { [weak self] in
-                    guard let self,
-                          self.pairGeneration == currentPairGeneration
-                    else {
-                        return
-                    }
-                    self.pairingState = .paired("Paired")
-                    self.performRefreshHosts(
-                        candidates: self.latestHostCandidates,
-                        preferredHost: result.host
-                    )
-                }
-            } catch {
                 await MainActor.run { [weak self] in
                     guard let self,
                           self.pairGeneration == currentPairGeneration
