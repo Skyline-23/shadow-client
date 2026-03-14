@@ -134,6 +134,13 @@ let project = Project(
                             ],
                         ],
                     ],
+                    "CFBundleURLTypes": [
+                        [
+                            "CFBundleTypeRole": "Viewer",
+                            "CFBundleURLName": "com.skyline23.shadow-client.tvos.art",
+                            "CFBundleURLSchemes": ["art"],
+                        ],
+                    ],
                 ]
             ),
             buildableFolders: [

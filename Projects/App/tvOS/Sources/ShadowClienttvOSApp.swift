@@ -25,6 +25,12 @@ struct ShadowClienttvOSApp: App {
             ContentView(
                 dependencies: container.dependencies
             )
+            .onOpenURL { url in
+                NotificationCenter.default.post(
+                    name: .shadowClientApolloPairingLinkReceived,
+                    object: url
+                )
+            }
         }
     }
 }
