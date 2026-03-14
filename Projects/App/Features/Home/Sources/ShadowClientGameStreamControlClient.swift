@@ -1887,7 +1887,7 @@ enum ShadowClientGameStreamHTTPTransport {
         )
     }
 
-    fileprivate static func makeHTTPRequestData(
+    static func makeHTTPRequestData(
         url: URL,
         host: String,
         method: String,
