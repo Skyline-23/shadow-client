@@ -188,7 +188,7 @@ var remoteDesktopHostCard: some View {
                         addManualHostToCatalog()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(manualHostDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!ShadowClientManualHostEntryKit.canSubmit(manualHostDraft))
 
                     Button("Cancel") {
                         cancelManualHostEntry()
@@ -201,7 +201,7 @@ var remoteDesktopHostCard: some View {
                         addManualHostToCatalog()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(manualHostDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!ShadowClientManualHostEntryKit.canSubmit(manualHostDraft))
 
                     Button("Cancel") {
                         cancelManualHostEntry()

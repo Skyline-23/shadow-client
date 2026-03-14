@@ -367,21 +367,7 @@ var normalizedConnectionHost: String {
     }
 
 var normalizedManualHostDraft: String {
-        let trimmed = manualHostDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return ""
-        }
-
-        let candidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(trimmed)
-        guard let url = URL(string: candidate), let host = url.host else {
-            return trimmed
-        }
-
-        if let port = url.port {
-            return "\(host.lowercased()):\(port)"
-        }
-
-        return host.lowercased()
+        ShadowClientManualHostEntryKit.normalizedDraft(manualHostDraft)
     }
 
 var canConnect: Bool {
