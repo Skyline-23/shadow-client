@@ -131,6 +131,27 @@ func realtimeSessionHUDMapperSurfacesSessionPermissionIssue() {
     )
 }
 
+@Test("Realtime session HUD mapper surfaces host termination recovery issues ahead of telemetry")
+func realtimeSessionHUDMapperSurfacesHostTerminationIssue() {
+    let model = ShadowClientRealtimeSessionHUDDisplayStateMapper.make(
+        showDiagnosticsHUD: true,
+        diagnosticsModel: makeDiagnosticsModel(),
+        controlRoundTripMs: 8,
+        renderState: .rendering,
+        sessionIssue: .init(
+            title: "Host Desktop Paused",
+            message: "Apollo paused or closed the desktop session (0x80030023).\nReturn to the normal Windows desktop, dismiss the secure prompt or popup, then launch the session again."
+        )
+    )
+
+    #expect(
+        model == .connectionIssue(
+            title: "Host Desktop Paused",
+            message: "Apollo paused or closed the desktop session (0x80030023).\nReturn to the normal Windows desktop, dismiss the secure prompt or popup, then launch the session again."
+        )
+    )
+}
+
 private func makeDiagnosticsModel() -> SettingsDiagnosticsHUDModel {
     let tick = HomeDiagnosticsTick(
         model: .init(

@@ -1295,6 +1295,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var clipboardReadPermissionDenied = false
     private var clipboardWritePermissionDenied = false
     private var clipboardActionRequiresActiveStream = false
+    private var hostTerminationIssue: ShadowClientRemoteSessionIssue?
 
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
@@ -2173,14 +2174,20 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     public func handleSessionRenderStateTransition(
         _ state: ShadowClientRealtimeSessionSurfaceContext.RenderState
     ) {
-        guard case let .failed(message) = state else {
+        switch state {
+        case let .disconnected(message):
+            if let hostTerminationIssue = Self.hostTerminationSessionIssue(message: message) {
+                sessionIssue = hostTerminationIssue
+            }
+            return
+        case let .failed(message):
+            if attemptRuntimeStreamReconnect(afterFailureMessage: message) {
+                return
+            }
+            attemptRuntimeCodecRecovery(afterFailureMessage: message)
+        case .idle, .connecting, .waitingForFirstFrame, .rendering:
             return
         }
-
-        if attemptRuntimeStreamReconnect(afterFailureMessage: message) {
-            return
-        }
-        attemptRuntimeCodecRecovery(afterFailureMessage: message)
     }
 
     @MainActor
@@ -2432,6 +2439,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         clipboardReadPermissionDenied = false
         clipboardWritePermissionDenied = false
         clipboardActionRequiresActiveStream = false
+        hostTerminationIssue = nil
         sessionIssue = nil
     }
 
@@ -2471,11 +2479,24 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     @MainActor
     private func refreshSessionIssue() {
-        sessionIssue = Self.sessionIssue(
+        sessionIssue = hostTerminationIssue ?? Self.sessionIssue(
             clipboardReadPermissionDenied: clipboardReadPermissionDenied,
             clipboardWritePermissionDenied: clipboardWritePermissionDenied,
             clipboardActionRequiresActiveStream: clipboardActionRequiresActiveStream
         )
+    }
+
+    @MainActor
+    func reportHostTerminationIssue(message: String) {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return
+        }
+        hostTerminationIssue = .init(
+            title: "Host Desktop Paused",
+            message: "\(trimmed)\nReturn to the normal Windows desktop, dismiss the popup or secure prompt, then launch the session again."
+        )
+        refreshSessionIssue()
     }
 
     private enum ClipboardOperation {
@@ -2542,6 +2563,22 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return .init(
                 title: "Clipboard Sync Unavailable",
                 message: "Apollo clipboard actions require an active stream for this client."
+            )
+        }
+
+        return nil
+    }
+
+    private static func hostTerminationSessionIssue(message: String) -> ShadowClientRemoteSessionIssue? {
+        let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            return nil
+        }
+
+        if normalized.localizedCaseInsensitiveContains("0x80030023") {
+            return .init(
+                title: "Host Desktop Paused",
+                message: "\(normalized)\nReturn to the normal Windows desktop, dismiss the secure prompt or popup, then launch the session again."
             )
         }
 

@@ -2239,6 +2239,26 @@ func remoteDesktopRuntimeSurfacesClipboardReadPermissionDenial() async {
     )
 }
 
+@Test("Remote desktop runtime surfaces Apollo host termination as a recovery issue")
+@MainActor
+func remoteDesktopRuntimeSurfacesApolloHostTerminationIssue() async {
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: FakeControlTestMetadataClient(serverInfoByHost: [:], appListByHost: [:]),
+        controlClient: FakeControlClient()
+    )
+
+    runtime.handleSessionRenderStateTransition(
+        .disconnected("Apollo paused or closed the desktop session (0x80030023). This often happens when Windows shows a secure desktop, password prompt, or UAC dialog.")
+    )
+
+    #expect(
+        runtime.sessionIssue == .init(
+            title: "Host Desktop Paused",
+            message: "Apollo paused or closed the desktop session (0x80030023). This often happens when Windows shows a secure desktop, password prompt, or UAC dialog.\nReturn to the normal Windows desktop, dismiss the secure prompt or popup, then launch the session again."
+        )
+    )
+}
+
 @Test("Remote desktop runtime sends keepalive when input stays idle during launched session")
 @MainActor
 func remoteDesktopRuntimeSendsInputKeepAliveWhenIdle() async {
