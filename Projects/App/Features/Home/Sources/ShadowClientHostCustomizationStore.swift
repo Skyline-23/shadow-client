@@ -64,6 +64,13 @@ public actor ShadowClientHostCustomizationPersistence {
         persistMap(passwords, forKey: ShadowClientAppSettings.StorageKeys.apolloAdminPasswords)
     }
 
+    public func removeHost(_ hostID: String) {
+        saveAlias(nil, forHostID: hostID)
+        saveNote(nil, forHostID: hostID)
+        saveApolloAdminUsername(nil, forHostID: hostID)
+        saveApolloAdminPassword(nil, forHostID: hostID)
+    }
+
     private func decodeMap(forKey key: String) -> [String: String] {
         guard
             let rawValue = defaults.string(forKey: key),
@@ -177,6 +184,17 @@ public final class ShadowClientHostCustomizationStore: ObservableObject {
 
         Task {
             await persistence.saveApolloAdminPassword(trimmed.isEmpty ? nil : value, forHostID: hostID)
+        }
+    }
+
+    public func removeHost(_ hostID: String) {
+        aliases.removeValue(forKey: hostID)
+        notes.removeValue(forKey: hostID)
+        apolloAdminUsernames.removeValue(forKey: hostID)
+        apolloAdminPasswords.removeValue(forKey: hostID)
+
+        Task {
+            await persistence.removeHost(hostID)
         }
     }
 }

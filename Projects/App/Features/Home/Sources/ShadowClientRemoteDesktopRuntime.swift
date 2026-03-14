@@ -1086,6 +1086,7 @@ private actor ShadowClientRemoteInputSendQueue {
 private enum ShadowClientRemoteDesktopCommand: Sendable {
     case refreshHosts(candidates: [String], preferredHost: String?)
     case pairSelectedHost
+    case deleteHost(String)
     case syncClipboardIfNeeded
     case pullClipboard
     case syncClipboard(String)
@@ -1259,6 +1260,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private let sessionInputClient: any ShadowClientRemoteSessionInputClient
     private let inputSendQueue: ShadowClientRemoteInputSendQueue
     private let pinProvider: any ShadowClientPairingPINProviding
+    private let pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
     private let pairingRouteStore: ShadowClientPairingRouteStore
     private let persistence: ShadowClientRemoteDesktopPersistence
     private let inputKeepAliveInterval: Duration
@@ -1301,6 +1303,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient = NoopShadowClientRemoteSessionConnectionClient(),
         sessionInputClient: any ShadowClientRemoteSessionInputClient = NoopShadowClientRemoteSessionInputClient(),
         pinProvider: any ShadowClientPairingPINProviding = ShadowClientRandomPairingPINProvider(),
+        pinnedCertificateStore: ShadowClientPinnedHostCertificateStore = .shared,
         pairingRouteStore: ShadowClientPairingRouteStore = .shared,
         inputKeepAliveInterval: Duration = .seconds(3),
         clipboardSyncInterval: Duration = .milliseconds(750),
@@ -1338,6 +1341,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             }
         )
         self.pinProvider = pinProvider
+        self.pinnedCertificateStore = pinnedCertificateStore
         self.pairingRouteStore = pairingRouteStore
         self.inputKeepAliveInterval = inputKeepAliveInterval
         self.clipboardSyncInterval = clipboardSyncInterval
@@ -1388,6 +1392,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             performRefreshHosts(candidates: candidates, preferredHost: preferredHost)
         case .pairSelectedHost:
             performPairSelectedHost()
+        case let .deleteHost(hostID):
+            performDeleteHost(hostID)
         case .syncClipboardIfNeeded:
             await performSyncClipboardIfNeeded()
         case .pullClipboard:
@@ -1498,6 +1504,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         refreshHostsTask?.cancel()
         let metadataClient = metadataClient
         let pairingRouteStore = pairingRouteStore
+        let pinnedCertificateStore = self.pinnedCertificateStore
+        let existingHosts = latestResolvedHostDescriptors.isEmpty ? hosts : latestResolvedHostDescriptors
         refreshHostsTask = Task { [weak self] in
             let descriptors = await withTaskGroup(
                 of: ShadowClientRemoteHostDescriptor.self,
@@ -1517,6 +1525,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             }
 
             let sorted = descriptors.sorted(by: Self.compareHosts)
+            let pairedHostKeys = await Self.pairedHostKeys(
+                for: sorted,
+                existingHosts: existingHosts,
+                pinnedCertificateStore: pinnedCertificateStore
+            )
             let preferredRoutes = await Self.preferredRouteOverrides(
                 for: sorted,
                 pairingRouteStore: pairingRouteStore
@@ -1535,7 +1548,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     sorted,
                     selectedHostID: self.selectedHostID,
                     preferredHost: preferredNormalized,
-                    preferredRoutesByKey: preferredRoutes
+                    preferredRoutesByKey: preferredRoutes,
+                    pairedHostKeys: pairedHostKeys
                 )
                 self.hosts = mergedHosts
                 self.persistence.saveCachedHosts(mergedHosts)
@@ -1578,6 +1592,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @MainActor
     public func pairSelectedHost() {
         commandContinuation.yield(.pairSelectedHost)
+    }
+
+    @MainActor
+    public func deleteHost(_ hostID: String) {
+        commandContinuation.yield(.deleteHost(hostID))
     }
 
     @MainActor
@@ -1720,6 +1739,35 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     }
                     self.pairingState = .failed(error.localizedDescription)
                 }
+            }
+        }
+    }
+
+    @MainActor
+    private func performDeleteHost(_ hostID: String) {
+        guard let host = hosts.first(where: { $0.id == hostID }) else {
+            return
+        }
+
+        let mergeKey = Self.mergeKey(for: host)
+        let remainingHosts = hosts.filter { $0.id != hostID }
+
+        hosts = remainingHosts
+        latestResolvedHostDescriptors = latestResolvedHostDescriptors.filter { $0.id != hostID }
+        cachedAppsByHostID.removeValue(forKey: hostID)
+        persistence.saveCachedHosts(remainingHosts)
+
+        if selectedHostID == hostID {
+            selectedHostID = remainingHosts.first?.id
+            apps = []
+            appState = remainingHosts.isEmpty ? .idle : appState
+            clearSelectedHostApolloAdminState()
+        }
+
+        Task {
+            await self.pairingRouteStore.setPreferredHost(nil, for: mergeKey)
+            for endpoint in host.routes.allEndpoints {
+                await self.pinnedCertificateStore.removeCertificate(forHost: endpoint.host)
             }
         }
     }
@@ -4007,7 +4055,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         _ hosts: [ShadowClientRemoteHostDescriptor],
         selectedHostID: String?,
         preferredHost: String?,
-        preferredRoutesByKey: [String: String]
+        preferredRoutesByKey: [String: String],
+        pairedHostKeys: Set<String>
     ) -> [ShadowClientRemoteHostDescriptor] {
         let groupedHosts = clusterResolvedHosts(hosts)
         return groupedHosts.compactMap {
@@ -4015,7 +4064,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 $0,
                 selectedHostID: selectedHostID,
                 preferredHost: preferredHost,
-                preferredRoutesByKey: preferredRoutesByKey
+                preferredRoutesByKey: preferredRoutesByKey,
+                pairedHostKeys: pairedHostKeys
             )
         }
         .sorted(by: compareHosts)
@@ -4067,7 +4117,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         _ group: [ShadowClientRemoteHostDescriptor],
         selectedHostID: String?,
         preferredHost: String?,
-        preferredRoutesByKey: [String: String]
+        preferredRoutesByKey: [String: String],
+        pairedHostKeys: Set<String>
     ) -> ShadowClientRemoteHostDescriptor? {
         guard let primary = group.sorted(by: {
             compareMergePriority(
@@ -4087,7 +4138,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         })?.displayName ?? primary.displayName
 
         let pairStatus: ShadowClientRemoteHostPairStatus
-        if group.contains(where: { $0.pairStatus == .paired }) {
+        if pairedHostKeys.contains(mergeKey(for: primary)) || group.contains(where: { $0.pairStatus == .paired }) {
             pairStatus = .paired
         } else if group.contains(where: { $0.pairStatus == .notPaired }) {
             pairStatus = .notPaired
@@ -4120,6 +4171,34 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             lastError: lastError,
             routes: mergedRoutes
         )
+    }
+
+    private static func pairedHostKeys(
+        for hosts: [ShadowClientRemoteHostDescriptor],
+        existingHosts: [ShadowClientRemoteHostDescriptor],
+        pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
+    ) async -> Set<String> {
+        var pairedKeys = Set(
+            existingHosts
+                .filter { $0.pairStatus == .paired }
+                .map(mergeKey(for:))
+        )
+
+        for host in hosts {
+            if host.pairStatus == .paired {
+                pairedKeys.insert(mergeKey(for: host))
+                continue
+            }
+
+            for endpoint in host.routes.allEndpoints {
+                if await pinnedCertificateStore.certificateDER(forHost: endpoint.host) != nil {
+                    pairedKeys.insert(mergeKey(for: host))
+                    break
+                }
+            }
+        }
+
+        return pairedKeys
     }
 
     private static func compareMergePriority(

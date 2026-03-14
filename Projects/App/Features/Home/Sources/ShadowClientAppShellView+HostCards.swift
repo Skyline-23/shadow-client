@@ -439,6 +439,21 @@ var remoteDesktopHostCard: some View {
                 remoteDesktopHostActionBar(host)
                     .allowsHitTesting(interactive)
 
+                Button(role: .destructive) {
+                    let dismissingHostID = spotlightedHostID
+                    dismissHostSpotlight()
+                    deleteStoredHost(host)
+                    if dismissingHostID == host.id {
+                        spotlightedHostID = nil
+                    }
+                } label: {
+                    Label("Delete Device", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(.red)
+                .allowsHitTesting(interactive)
+
                 if let pairingPIN = remoteDesktopRuntime.activePairingPIN {
                     HStack(spacing: 8) {
                         Label("Pair PIN", systemImage: "number.square")

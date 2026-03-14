@@ -541,6 +541,15 @@ func cancelManualHostEntry() {
     }
 
     @MainActor
+    func deleteStoredHost(_ host: ShadowClientRemoteHostDescriptor) {
+        hostCustomizationStore.removeHost(host.id)
+        apolloDisplayModeDrafts.removeValue(forKey: host.id)
+        apolloAlwaysUseVirtualDisplayDrafts.removeValue(forKey: host.id)
+        apolloPermissionDrafts.removeValue(forKey: host.id)
+        remoteDesktopRuntime.deleteHost(host.id)
+    }
+
+    @MainActor
 func presentHostSpotlight(for host: ShadowClientRemoteHostDescriptor) {
         connectionHost = host.host
         remoteDesktopRuntime.selectHost(host.id)

@@ -864,6 +864,111 @@ func remoteDesktopRuntimeMergesDescriptorsSharingUniqueID() async {
     #expect(runtime.hosts.first?.pairStatus == .paired)
 }
 
+@Test("Remote desktop runtime preserves paired status when a host has a pinned certificate")
+@MainActor
+func remoteDesktopRuntimePreservesPairedStatusForPinnedHosts() async {
+    let defaultsSuite = "shadow-client.runtime.pinned-paired.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "192.168.0.20")
+
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
+                displayName: "Example-PC",
+                pairStatus: .notPaired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
+        ],
+        appListByHost: [:]
+    )
+
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient(),
+        pinnedCertificateStore: pinnedStore,
+        defaults: defaults
+    )
+
+    runtime.refreshHosts(
+        candidates: ["192.168.0.20"],
+        preferredHost: "192.168.0.20"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(runtime.hosts.first?.pairStatus == .paired)
+}
+
+@Test("Remote desktop runtime deletes cached hosts and clears pairing artifacts")
+@MainActor
+func remoteDesktopRuntimeDeletesHostAndClearsPairingArtifacts() async {
+    let defaultsSuite = "shadow-client.runtime.delete-host.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "192.168.0.20")
+
+    let pairingRouteStore = ShadowClientPairingRouteStore(defaultsSuiteName: defaultsSuite)
+    await pairingRouteStore.setPreferredHost("192.168.0.20", for: "uniqueid:host-123")
+
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
+        ],
+        appListByHost: [:]
+    )
+
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient(),
+        pinnedCertificateStore: pinnedStore,
+        pairingRouteStore: pairingRouteStore,
+        defaults: defaults
+    )
+
+    runtime.refreshHosts(
+        candidates: ["192.168.0.20"],
+        preferredHost: "192.168.0.20"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    runtime.deleteHost("192.168.0.20")
+
+    #expect(runtime.hosts.isEmpty)
+    #expect(runtime.selectedHost == nil)
+    #expect(await pinnedStore.certificateDER(forHost: "192.168.0.20") == nil)
+    #expect(await pairingRouteStore.preferredHost(for: "uniqueid:host-123") == nil)
+}
+
 @Test("Remote desktop runtime prefers reachable local route when merging host routes")
 @MainActor
 func remoteDesktopRuntimePrefersReachableLocalRouteWhenMerging() async {

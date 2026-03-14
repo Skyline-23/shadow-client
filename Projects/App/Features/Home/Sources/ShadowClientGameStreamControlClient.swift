@@ -671,6 +671,12 @@ public actor ShadowClientPinnedHostCertificateStore {
         defaults.set(cached, forKey: DefaultsKeys.pinnedCertificates)
     }
 
+    public func removeCertificate(forHost host: String) {
+        let key = normalizedHost(host)
+        cached.removeValue(forKey: key)
+        defaults.set(cached, forKey: DefaultsKeys.pinnedCertificates)
+    }
+
     private func normalizedHost(_ host: String) -> String {
         host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
