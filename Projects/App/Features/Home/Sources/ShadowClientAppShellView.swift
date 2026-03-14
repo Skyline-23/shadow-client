@@ -83,6 +83,8 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
         logicalSize: .zero,
         safeAreaInsets: .init()
     )
+    @State var macDisplayScale: CGFloat = 2.0
+    @State var macDisplayPixelSize: CGSize?
 #if os(macOS)
     @State var activeSessionProcessActivity: NSObjectProtocol?
 #endif
@@ -116,6 +118,14 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
                 )
             }
         )
+#if os(macOS)
+        .background(
+            ShadowClientMacDisplayMetricsObserver { scale, pixelSize in
+                macDisplayScale = scale
+                macDisplayPixelSize = pixelSize
+            }
+        )
+#endif
         .tint(accentColor)
         .preferredColorScheme(.dark)
         .task {
@@ -797,10 +807,19 @@ func launchDesktopFallbackIfNeeded() async {
             return base
         }
 
+        #if os(macOS)
+        let launchGeometry = ShadowClientAutoResolutionPolicy.resolveLaunchGeometry(
+            displayLogicalSize: launchViewportMetrics.logicalSize,
+            safeAreaInsets: launchViewportMetrics.safeAreaInsets,
+            scale: macDisplayScale,
+            displayPixelSize: macDisplayPixelSize
+        )
+        #else
         let launchGeometry = ShadowClientAutoResolutionPolicy.resolveLaunchGeometry(
             logicalSize: launchViewportMetrics.logicalSize,
             safeAreaInsets: launchViewportMetrics.safeAreaInsets
         )
+        #endif
         #if os(macOS)
         let launchSize = launchGeometry.pixelSize
         #else
