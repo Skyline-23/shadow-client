@@ -1006,42 +1006,34 @@ var remoteDesktopHostCard: some View {
     }
 
     var canPairSelectedHost: Bool {
-        guard let selectedHost = remoteDesktopRuntime.selectedHost else {
-            return false
-        }
-        return selectedHost.isReachable && selectedHost.pairStatus != .paired
+        ShadowClientRemoteHostActionKit.canPair(
+            selectedHost: remoteDesktopRuntime.selectedHost
+        )
     }
 
     var canRefreshSelectedHostApps: Bool {
-        guard let selectedHost = remoteDesktopRuntime.selectedHost else {
-            return false
-        }
-        return selectedHost.isReachable && selectedHost.pairStatus == .paired
+        ShadowClientRemoteHostActionKit.canRefreshApps(
+            selectedHost: remoteDesktopRuntime.selectedHost
+        )
     }
 
     func hostCanConnect(_ host: ShadowClientRemoteHostDescriptor) -> Bool {
-        canInitiateSessionConnection && host.isReachable && host.pairStatus == .paired
+        ShadowClientRemoteHostActionKit.canConnect(
+            host: host,
+            canInitiateSessionConnection: canInitiateSessionConnection
+        )
     }
 
     func shouldShowPairAction(for host: ShadowClientRemoteHostDescriptor) -> Bool {
-        host.isReachable && host.pairStatus != .paired
+        ShadowClientRemoteHostActionKit.shouldShowPairAction(host: host)
     }
 
     func hostRowActionColor(_ host: ShadowClientRemoteHostDescriptor, isSelected: Bool) -> Color {
-        if !host.isReachable {
-            return .red.opacity(0.92)
-        }
-        if isSelected {
-            return accentColor
-        }
-        switch host.pairStatus {
-        case .paired:
-            return .mint
-        case .notPaired:
-            return .yellow
-        case .unknown:
-            return Color.white.opacity(0.72)
-        }
+        ShadowClientRemoteHostActionKit.rowActionColor(
+            host: host,
+            isSelected: isSelected,
+            accentColor: accentColor
+        )
     }
 
     func hostCardSurface(isSelected: Bool) -> some View {
