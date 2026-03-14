@@ -23,7 +23,7 @@ struct ShadowClientHostTerminationEvent: Equatable, Sendable {
     var message: String {
         switch reasonCode {
         case 0x80030023:
-            return "Apollo terminated the session gracefully (0x80030023)."
+            return "Apollo paused or closed the desktop session (0x80030023). This often happens when Windows shows a secure desktop, password prompt, or UAC dialog."
         default:
             return String(format: "Apollo terminated the session (0x%08X).", reasonCode)
         }

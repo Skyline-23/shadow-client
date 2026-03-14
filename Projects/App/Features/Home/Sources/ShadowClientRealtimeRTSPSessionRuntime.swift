@@ -1243,7 +1243,20 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private func handleHostTerminationEvent(
         _ event: ShadowClientHostTerminationEvent
     ) async {
-        await failStreamingSession(message: event.message)
+        logger.error("\(event.message, privacy: .public)")
+        receiveTask?.cancel()
+        depacketizeTask?.cancel()
+        depacketizeTask = nil
+        stallMonitorTask?.cancel()
+        stallMonitorTask = nil
+        awaitingAV1SyncFrame = false
+        av1SyncGateAllowsReferenceInvalidatedFrame = false
+        av1SyncGateDroppedFrameCount = 0
+        av1PendingRecoveryRequestAfterSuccessfulFrame = false
+        lastAV1DecodeSubmissionContext = nil
+        await transitionSurfaceState(.disconnected(event.message))
+        await closeVideoPacketQueue()
+        await closeVideoDecodeQueue()
     }
 
     private func consumeRTPPayload(
