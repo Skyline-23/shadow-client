@@ -1120,49 +1120,40 @@ var remoteDesktopHostCard: some View {
         }
 
         switch remoteDesktopRuntime.selectedHostApolloAdminState {
-        case .idle:
-            return "Idle"
-        case .loading:
-            return "Loading…"
-        case .saving:
-            return "Saving…"
-        case .loaded:
-            return remoteDesktopRuntime.selectedHostApolloAdminProfile == nil ? "Client not found" : "Loaded"
-        case let .failed(message):
-            return message
+        case let state:
+            return ShadowClientApolloAdminPresentationKit.stateLabel(
+                state: state,
+                selectedProfile: remoteDesktopRuntime.selectedHostApolloAdminProfile
+            )
         }
     }
 
     func hostApolloAdminSummary(_ profile: ShadowClientApolloAdminClientProfile) -> String {
-        let displayMode = profile.displayModeOverride.trimmingCharacters(in: .whitespacesAndNewlines)
-        let displayDescription = displayMode.isEmpty ? "Display mode override: automatic" : "Display mode override: \(displayMode)"
-        let virtualDisplayDescription = profile.alwaysUseVirtualDisplay
-            ? "Always use virtual display: ON"
-            : "Always use virtual display: OFF"
-        let connectedDescription = profile.connected ? "Connected" : "Not connected"
-        let permissionsDescription = ShadowClientApolloPermission.summary(for: profile.permissions)
-        return [displayDescription, virtualDisplayDescription, permissionsDescription, connectedDescription].joined(separator: "\n")
+        ShadowClientApolloAdminPresentationKit.summary(profile)
     }
 
     func hostApolloDisplayModeDraft(for host: ShadowClientRemoteHostDescriptor) -> String {
-        if let draft = apolloDisplayModeDrafts[host.id] {
-            return draft
-        }
-        return hostApolloAdminProfile(host)?.displayModeOverride ?? ""
+        ShadowClientApolloAdminPresentationKit.displayModeDraft(
+            hostID: host.id,
+            drafts: apolloDisplayModeDrafts,
+            profile: hostApolloAdminProfile(host)
+        )
     }
 
     func hostApolloAlwaysUseVirtualDisplayDraft(for host: ShadowClientRemoteHostDescriptor) -> Bool {
-        if let draft = apolloAlwaysUseVirtualDisplayDrafts[host.id] {
-            return draft
-        }
-        return hostApolloAdminProfile(host)?.alwaysUseVirtualDisplay ?? false
+        ShadowClientApolloAdminPresentationKit.alwaysUseVirtualDisplayDraft(
+            hostID: host.id,
+            drafts: apolloAlwaysUseVirtualDisplayDrafts,
+            profile: hostApolloAdminProfile(host)
+        )
     }
 
     func hostApolloPermissionDraft(for host: ShadowClientRemoteHostDescriptor) -> UInt32 {
-        if let draft = apolloPermissionDrafts[host.id] {
-            return draft
-        }
-        return hostApolloAdminProfile(host)?.permissions ?? 0
+        ShadowClientApolloAdminPresentationKit.permissionDraft(
+            hostID: host.id,
+            drafts: apolloPermissionDrafts,
+            profile: hostApolloAdminProfile(host)
+        )
     }
 
     func hostApolloDisplayModeBinding(for host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
