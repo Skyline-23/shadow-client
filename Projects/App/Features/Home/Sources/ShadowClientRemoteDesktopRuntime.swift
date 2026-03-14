@@ -1111,7 +1111,7 @@ private enum ShadowClientRemoteDesktopCommand: Sendable {
     )
     case disconnectSelectedHostApolloAdmin(username: String, password: String)
     case unpairSelectedHostApolloAdmin(username: String, password: String)
-    case pairApolloOTPLink(ShadowClientApolloPairingLink)
+    case pairApolloOTPRequest(ShadowClientApolloOTPPairingRequest)
 }
 
 private struct ShadowClientLaunchRequestContext: Sendable {
@@ -1434,8 +1434,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 username: username,
                 password: password
             )
-        case let .pairApolloOTPLink(link):
-            performPairApolloOTPLink(link)
+        case let .pairApolloOTPRequest(request):
+            performPairApolloOTPRequest(request)
         }
     }
 
@@ -1584,8 +1584,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    public func pairApolloOTPLink(_ link: ShadowClientApolloPairingLink) {
-        commandContinuation.yield(.pairApolloOTPLink(link))
+    public func pairApolloOTPRequest(_ request: ShadowClientApolloOTPPairingRequest) {
+        commandContinuation.yield(.pairApolloOTPRequest(request))
     }
 
     @MainActor
@@ -1669,7 +1669,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     await MainActor.run { [weak self] in
                         guard let self,
                               self.pairGeneration == currentPairGeneration,
-                              case .pairing = self.pairingState
+                              self.pairingState.isInProgress
                         else {
                             return
                         }
@@ -1711,7 +1711,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     await MainActor.run { [weak self] in
                         guard let self,
                               self.pairGeneration == currentPairGeneration,
-                              case .pairing = self.pairingState
+                              self.pairingState.isInProgress
                         else {
                             return
                         }
@@ -1733,8 +1733,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    private func performPairApolloOTPLink(_ link: ShadowClientApolloPairingLink) {
-        let hostAddress = link.hostAddress
+    private func performPairApolloOTPRequest(_ request: ShadowClientApolloOTPPairingRequest) {
+        let hostAddress = request.hostAddress
         let normalizedHostID = hostAddress.lowercased()
         if !latestHostCandidates.contains(hostAddress) {
             latestHostCandidates.append(hostAddress)
@@ -1745,7 +1745,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let controlClient = controlClient
         let currentPairGeneration = pairGeneration &+ 1
         pairGeneration = currentPairGeneration
-        pairingState = .pairing(host: hostAddress, pin: link.pin)
+        pairingState = .pairingOTP(host: hostAddress)
         pairTask?.cancel()
         pairTask = Task { [weak self] in
             do {
@@ -1770,10 +1770,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
                 let result = try await controlClient.pair(
                     host: hostAddress,
-                    pin: link.pin,
-                    otpPassphrase: link.passphrase,
+                    pin: request.pin,
+                    otpPassphrase: request.passphrase,
                     appVersion: descriptor.appVersion,
-                    httpsPort: link.pairPort == nil ? descriptor.httpsPort : nil
+                    httpsPort: request.pairPort == nil ? descriptor.httpsPort : nil
                 )
                 await MainActor.run { [weak self] in
                     guard let self,

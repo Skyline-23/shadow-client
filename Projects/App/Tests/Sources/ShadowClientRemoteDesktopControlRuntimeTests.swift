@@ -2887,7 +2887,7 @@ private func waitForPairingState(
     maxAttempts: Int = 50
 ) async {
     for _ in 0..<maxAttempts {
-        if case .pairing = runtime.pairingState {
+        if runtime.pairingState.isInProgress {
             try? await Task.sleep(for: .milliseconds(20))
             continue
         } else {

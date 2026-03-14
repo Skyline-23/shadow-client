@@ -29,13 +29,6 @@ let project = Project(
                             ],
                         ],
                     ],
-                    "CFBundleURLTypes": [
-                        [
-                            "CFBundleTypeRole": "Viewer",
-                            "CFBundleURLName": "com.skyline23.shadow-client.art",
-                            "CFBundleURLSchemes": ["art"],
-                        ],
-                    ],
                 ]
             ),
             buildableFolders: [
@@ -90,13 +83,6 @@ let project = Project(
                             ],
                         ],
                     ],
-                    "CFBundleURLTypes": [
-                        [
-                            "CFBundleTypeRole": "Viewer",
-                            "CFBundleURLName": "com.skyline23.shadow-client.macos.art",
-                            "CFBundleURLSchemes": ["art"],
-                        ],
-                    ],
                 ]
             ),
             buildableFolders: [
@@ -132,13 +118,6 @@ let project = Project(
                                 "NSExceptionAllowsInsecureHTTPLoads": true,
                                 "NSTemporaryExceptionAllowsInsecureHTTPLoads": true,
                             ],
-                        ],
-                    ],
-                    "CFBundleURLTypes": [
-                        [
-                            "CFBundleTypeRole": "Viewer",
-                            "CFBundleURLName": "com.skyline23.shadow-client.tvos.art",
-                            "CFBundleURLSchemes": ["art"],
                         ],
                     ],
                 ]
