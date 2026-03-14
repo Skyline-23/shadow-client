@@ -489,7 +489,13 @@ var remoteDesktopHostCard: some View {
 
     @ViewBuilder
     func remoteDesktopHostStatusCallout(_ host: ShadowClientRemoteHostDescriptor) -> some View {
-        if let lastError = host.lastError, !lastError.isEmpty {
+        if let issue = hostPresentationIssue(host) {
+            remoteDesktopCalloutRow(
+                title: issue.title,
+                message: issue.message,
+                accent: .yellow
+            )
+        } else if let lastError = host.lastError, !lastError.isEmpty {
             remoteDesktopCalloutRow(
                 title: "Connection Issue",
                 message: lastError,
@@ -508,6 +514,16 @@ var remoteDesktopHostCard: some View {
                 accent: .yellow
             )
         }
+    }
+
+    func hostPresentationIssue(_ host: ShadowClientRemoteHostDescriptor) -> ShadowClientRemoteHostIssuePresentation? {
+        ShadowClientRemoteHostIssueMapper.issue(
+            for: host,
+            selectedHostID: remoteDesktopRuntime.selectedHostID,
+            appState: remoteDesktopRuntime.appState,
+            launchState: remoteDesktopRuntime.launchState,
+            sessionIssue: remoteDesktopRuntime.sessionIssue
+        )
     }
 
     func remoteDesktopHostActionBar(_ host: ShadowClientRemoteHostDescriptor) -> some View {
@@ -655,6 +671,9 @@ var remoteDesktopHostCard: some View {
     }
 
     func hostSummaryText(_ host: ShadowClientRemoteHostDescriptor) -> String {
+        if let issue = hostPresentationIssue(host) {
+            return issue.message
+        }
         let notes = hostNotes(for: host).trimmingCharacters(in: .whitespacesAndNewlines)
         if !notes.isEmpty {
             return notes
@@ -666,6 +685,9 @@ var remoteDesktopHostCard: some View {
     }
 
     func hostTileActionLabel(_ host: ShadowClientRemoteHostDescriptor) -> String {
+        if hostPresentationIssue(host) != nil {
+            return "Permissions"
+        }
         if !host.isReachable {
             return "Needs Attention"
         }
@@ -680,6 +702,9 @@ var remoteDesktopHostCard: some View {
     }
 
     func hostFrontHint(_ host: ShadowClientRemoteHostDescriptor) -> String {
+        if hostPresentationIssue(host) != nil {
+            return "Permissions"
+        }
         if !host.isReachable {
             return "Connection issue"
         }
@@ -690,6 +715,9 @@ var remoteDesktopHostCard: some View {
     }
 
     func hostFrontHintSymbol(_ host: ShadowClientRemoteHostDescriptor) -> String {
+        if hostPresentationIssue(host) != nil {
+            return "lock.trianglebadge.exclamationmark"
+        }
         if !host.isReachable {
             return "exclamationmark.shield"
         }
@@ -700,6 +728,9 @@ var remoteDesktopHostCard: some View {
     }
 
     func hostFrontHintColor(_ host: ShadowClientRemoteHostDescriptor) -> Color {
+        if hostPresentationIssue(host) != nil {
+            return .yellow
+        }
         if !host.isReachable {
             return .red.opacity(0.9)
         }
@@ -710,6 +741,9 @@ var remoteDesktopHostCard: some View {
     }
 
     func hostFrontMessage(_ host: ShadowClientRemoteHostDescriptor) -> String {
+        if let issue = hostPresentationIssue(host) {
+            return issue.message
+        }
         if let lastError = host.lastError, !lastError.isEmpty {
             return lastError
         }
@@ -720,6 +754,9 @@ var remoteDesktopHostCard: some View {
     }
 
     func hostGlyphSymbol(_ host: ShadowClientRemoteHostDescriptor) -> String {
+        if hostPresentationIssue(host) != nil {
+            return "lock.trianglebadge.exclamationmark.fill"
+        }
         if !host.isReachable {
             return "wifi.exclamationmark"
         }
@@ -730,6 +767,9 @@ var remoteDesktopHostCard: some View {
     }
 
     func hostGlyphColor(_ host: ShadowClientRemoteHostDescriptor) -> Color {
+        if hostPresentationIssue(host) != nil {
+            return .yellow
+        }
         if !host.isReachable {
             return .red.opacity(0.92)
         }
