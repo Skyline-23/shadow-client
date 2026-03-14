@@ -10,9 +10,9 @@ struct ShadowClientSessionInputInteractionPlatformView: View {
     let onPasteClipboardCommand: @MainActor () -> Void
 
     var body: some View {
-        let _ = visiblePointerRegions
         ShadowClientMacOSSessionInputCaptureView(
             referenceVideoSize: referenceVideoSize,
+            visiblePointerRegions: visiblePointerRegions,
             onInputEvent: onInputEvent,
             onSessionTerminateCommand: onSessionTerminateCommand,
             onCopyClipboardCommand: onCopyClipboardCommand,

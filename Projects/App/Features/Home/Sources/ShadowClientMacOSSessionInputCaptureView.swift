@@ -6,6 +6,7 @@ import SwiftUI
 
 struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
     let referenceVideoSize: CGSize?
+    let visiblePointerRegions: [CGRect]
     let onInputEvent: @MainActor (ShadowClientRemoteInputEvent) -> Void
     let onSessionTerminateCommand: @MainActor () -> Void
     let onCopyClipboardCommand: @MainActor () -> Void
@@ -14,6 +15,7 @@ struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
     func makeNSView(context: Context) -> ShadowClientMacOSInputCaptureNSView {
         let view = ShadowClientMacOSInputCaptureNSView()
         view.referenceVideoSize = referenceVideoSize
+        view.visiblePointerRegions = visiblePointerRegions
         view.onInputEvent = onInputEvent
         view.onSessionTerminateCommand = onSessionTerminateCommand
         view.onCopyClipboardCommand = onCopyClipboardCommand
@@ -23,17 +25,20 @@ struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
 
     func updateNSView(_ nsView: ShadowClientMacOSInputCaptureNSView, context: Context) {
         nsView.referenceVideoSize = referenceVideoSize
+        nsView.visiblePointerRegions = visiblePointerRegions
         nsView.onInputEvent = onInputEvent
         nsView.onSessionTerminateCommand = onSessionTerminateCommand
         nsView.onCopyClipboardCommand = onCopyClipboardCommand
         nsView.onPasteClipboardCommand = onPasteClipboardCommand
         nsView.requestInputFocusIfNeeded()
+        nsView.refreshPointerCaptureForCurrentLocation()
     }
 }
 
 @MainActor
 final class ShadowClientMacOSInputCaptureNSView: NSView {
     var referenceVideoSize: CGSize?
+    var visiblePointerRegions: [CGRect] = []
     var onInputEvent: (@MainActor (ShadowClientRemoteInputEvent) -> Void)?
     var onSessionTerminateCommand: (@MainActor () -> Void)?
     var onCopyClipboardCommand: (@MainActor () -> Void)?
@@ -48,6 +53,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     private var isCursorHidden = false
     private var locallyHandledKeyCodes = Set<UInt16>()
     private var pendingRecaptureAfterActivation = false
+    private var lastPointerLocationInView: CGPoint?
 
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { true }
@@ -247,18 +253,22 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        updatePointerCaptureLocation(from: event)
         emitPointerPosition(from: event)
     }
 
     override func mouseDragged(with event: NSEvent) {
+        updatePointerCaptureLocation(from: event)
         emitPointerPosition(from: event)
     }
 
     override func rightMouseDragged(with event: NSEvent) {
+        updatePointerCaptureLocation(from: event)
         emitPointerPosition(from: event)
     }
 
     override func otherMouseDragged(with event: NSEvent) {
+        updatePointerCaptureLocation(from: event)
         emitPointerPosition(from: event)
     }
 
@@ -328,6 +338,14 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         }
 
         activatePointerCaptureIfNeeded()
+    }
+
+    func refreshPointerCaptureForCurrentLocation() {
+        if let location = lastPointerLocationInView {
+            updatePointerCaptureVisibility(for: location)
+        } else {
+            updatePointerCaptureVisibility(for: nil)
+        }
     }
 
     @objc
@@ -413,6 +431,24 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
 
         pendingRecaptureAfterActivation = false
         requestInputFocusIfNeeded(forceRecapture: true, allowWindowActivation: !window.isKeyWindow)
+    }
+
+    private func updatePointerCaptureLocation(from event: NSEvent) {
+        let locationInView = convert(event.locationInWindow, from: nil)
+        lastPointerLocationInView = locationInView
+        updatePointerCaptureVisibility(for: locationInView)
+    }
+
+    private func updatePointerCaptureVisibility(for locationInView: CGPoint?) {
+        let shouldShowCursor = locationInView.map { location in
+            visiblePointerRegions.contains(where: { $0.contains(location) })
+        } ?? false
+
+        if shouldShowCursor {
+            deactivatePointerCaptureIfNeeded()
+        } else {
+            activatePointerCaptureIfNeeded()
+        }
     }
 
     private func handleLocalSessionTerminateShortcutIfNeeded(_ event: NSEvent) -> Bool {
@@ -530,7 +566,8 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     private func activatePointerCaptureIfNeeded() {
         guard !isCursorHidden,
               window?.isKeyWindow == true,
-              NSApp.isActive
+              NSApp.isActive,
+              !isPointerInsideVisibleRegion
         else {
             return
         }
@@ -546,6 +583,13 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
 
         NSCursor.unhide()
         isCursorHidden = false
+    }
+
+    private var isPointerInsideVisibleRegion: Bool {
+        guard let location = lastPointerLocationInView else {
+            return false
+        }
+        return visiblePointerRegions.contains(where: { $0.contains(location) })
     }
 }
 #endif
