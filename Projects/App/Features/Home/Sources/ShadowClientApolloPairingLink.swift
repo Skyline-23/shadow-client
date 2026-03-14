@@ -63,6 +63,6 @@ public struct ShadowClientApolloPairingLink: Equatable, Sendable {
     }
 }
 
-extension Notification.Name {
+public extension Notification.Name {
     static let shadowClientApolloPairingLinkReceived = Notification.Name("shadowClientApolloPairingLinkReceived")
 }
