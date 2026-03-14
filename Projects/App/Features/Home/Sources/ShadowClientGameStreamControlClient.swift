@@ -1201,9 +1201,9 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         text: String
     ) async throws {
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
-        let uniqueID = await identityStore.uniqueID()
         let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
-        let tlsClientCredential = try? await identityStore.tlsClientCertificateCredential()
+        let tlsClientCertificates = try await identityStore.tlsClientCertificates()
+        let tlsClientIdentity = try await identityStore.tlsClientIdentity()
 
         guard pinnedServerCertificate != nil else {
             throw ShadowClientGameStreamError.requestFailed(
@@ -1218,48 +1218,33 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         components.path = "/actions/clipboard"
         components.queryItems = [
             .init(name: "type", value: "text"),
-            .init(name: "uniqueid", value: "0123456789ABCDEF"),
             .init(name: "uuid", value: UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()),
         ]
         guard let url = components.url else {
             throw ShadowClientGameStreamError.invalidURL
         }
 
-        let delegate = ShadowClientServerTrustURLSessionDelegate(
-            pinnedServerCertificateDER: pinnedServerCertificate,
-            clientCertificateCredential: tlsClientCredential
+        let requestData = ShadowClientGameStreamHTTPTransport.makeHTTPRequestData(
+            url: url,
+            host: endpoint.host,
+            method: "POST",
+            headers: [
+                "Content-Type": "text/plain; charset=utf-8",
+            ],
+            body: Data(text.utf8)
         )
-        let session = URLSession(
-            configuration: .ephemeral,
-            delegate: delegate,
-            delegateQueue: nil
-        )
-        defer {
-            session.invalidateAndCancel()
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = defaultRequestTimeout
-        request.httpBody = Data(text.utf8)
-        request.setValue("text/plain; charset=utf-8", forHTTPHeaderField: "Content-Type")
 
         do {
-            let (_, response) = try await session.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw ShadowClientGameStreamError.invalidResponse
-            }
-            guard (200 ... 299).contains(httpResponse.statusCode) else {
-                throw ShadowClientGameStreamError.responseRejected(
-                    code: httpResponse.statusCode,
-                    message: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-                )
-            }
-        } catch {
-            throw ShadowClientGameStreamHTTPTransport.requestFailureError(
-                error,
-                tlsFailure: delegate.tlsFailure
+            _ = try await ShadowClientGameStreamHTTPTransport.requestPinnedHTTPSData(
+                url: url,
+                requestData: requestData,
+                pinnedServerCertificateDER: pinnedServerCertificate,
+                clientCertificates: tlsClientCertificates,
+                clientCertificateIdentity: tlsClientIdentity,
+                timeout: defaultRequestTimeout
             )
+        } catch {
+            throw ShadowClientGameStreamHTTPTransport.requestFailureError(error)
         }
     }
 
@@ -1269,7 +1254,8 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
     ) async throws -> String {
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
         let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
-        let tlsClientCredential = try? await identityStore.tlsClientCertificateCredential()
+        let tlsClientCertificates = try await identityStore.tlsClientCertificates()
+        let tlsClientIdentity = try await identityStore.tlsClientIdentity()
 
         guard pinnedServerCertificate != nil else {
             throw ShadowClientGameStreamError.requestFailed(
@@ -1289,43 +1275,27 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             throw ShadowClientGameStreamError.invalidURL
         }
 
-        let delegate = ShadowClientServerTrustURLSessionDelegate(
-            pinnedServerCertificateDER: pinnedServerCertificate,
-            clientCertificateCredential: tlsClientCredential
+        let requestData = ShadowClientGameStreamHTTPTransport.makeHTTPRequestData(
+            url: url,
+            host: endpoint.host,
+            method: "GET"
         )
-        let session = URLSession(
-            configuration: .ephemeral,
-            delegate: delegate,
-            delegateQueue: nil
-        )
-        defer {
-            session.invalidateAndCancel()
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.timeoutInterval = defaultRequestTimeout
 
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw ShadowClientGameStreamError.invalidResponse
-            }
-            guard (200 ... 299).contains(httpResponse.statusCode) else {
-                throw ShadowClientGameStreamError.responseRejected(
-                    code: httpResponse.statusCode,
-                    message: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-                )
-            }
+            let data = try await ShadowClientGameStreamHTTPTransport.requestPinnedHTTPSData(
+                url: url,
+                requestData: requestData,
+                pinnedServerCertificateDER: pinnedServerCertificate,
+                clientCertificates: tlsClientCertificates,
+                clientCertificateIdentity: tlsClientIdentity,
+                timeout: defaultRequestTimeout
+            )
             guard let text = String(data: data, encoding: .utf8) else {
                 throw ShadowClientGameStreamError.invalidResponse
             }
             return text
         } catch {
-            throw ShadowClientGameStreamHTTPTransport.requestFailureError(
-                error,
-                tlsFailure: delegate.tlsFailure
-            )
+            throw ShadowClientGameStreamHTTPTransport.requestFailureError(error)
         }
     }
 
@@ -1874,6 +1844,28 @@ enum ShadowClientGameStreamHTTPTransport {
         return xml
     }
 
+    static func requestPinnedHTTPSData(
+        url: URL,
+        requestData: Data,
+        pinnedServerCertificateDER: Data?,
+        clientCertificates: [SecCertificate]?,
+        clientCertificateIdentity: SecIdentity?,
+        timeout: TimeInterval
+    ) async throws -> Data {
+        guard let host = url.host else {
+            throw ShadowClientGameStreamError.invalidURL
+        }
+        return try await ShadowClientSecureHTTPStreamTransport.requestData(
+            url: url,
+            host: host,
+            requestData: requestData,
+            pinnedServerCertificateDER: pinnedServerCertificateDER,
+            clientCertificates: clientCertificates,
+            clientCertificateIdentity: clientCertificateIdentity,
+            timeout: timeout
+        )
+    }
+
     private static func requestPinnedHTTPSXML(
         url: URL,
         pinnedServerCertificateDER: Data?,
@@ -1887,6 +1879,7 @@ enum ShadowClientGameStreamHTTPTransport {
         return try await ShadowClientSecureHTTPStreamTransport.requestXML(
             url: url,
             host: host,
+            requestData: makeHTTPRequestData(url: url, host: host, method: "GET"),
             pinnedServerCertificateDER: pinnedServerCertificateDER,
             clientCertificates: clientCertificates,
             clientCertificateIdentity: clientCertificateIdentity,
@@ -1894,16 +1887,38 @@ enum ShadowClientGameStreamHTTPTransport {
         )
     }
 
-    fileprivate static func makePlainHTTPRequestData(url: URL, host: String) -> Data {
+    fileprivate static func makeHTTPRequestData(
+        url: URL,
+        host: String,
+        method: String,
+        headers: [String: String] = [:],
+        body: Data? = nil
+    ) -> Data {
         let path = (url.path.isEmpty ? "/" : url.path) + (url.query.map { "?\($0)" } ?? "")
-        let request = [
-            "GET \(path) HTTP/1.1",
+        var lines = [
+            "\(method) \(path) HTTP/1.1",
             "Host: \(host)\(url.port.map { ":\($0)" } ?? "")",
             "Connection: close",
-            "",
-            "",
-        ].joined(separator: "\r\n")
-        return Data(request.utf8)
+        ]
+        for key in headers.keys.sorted() {
+            if let value = headers[key] {
+                lines.append("\(key): \(value)")
+            }
+        }
+        if let body {
+            lines.append("Content-Length: \(body.count)")
+        }
+        lines.append("")
+        lines.append("")
+        var request = Data(lines.joined(separator: "\r\n").utf8)
+        if let body {
+            request.append(body)
+        }
+        return request
+    }
+
+    fileprivate static func makePlainHTTPRequestData(url: URL, host: String) -> Data {
+        makeHTTPRequestData(url: url, host: host, method: "GET")
     }
 
     fileprivate static func extractHTTPBody(from responseData: Data) throws -> Data {
@@ -2048,7 +2063,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
 
     private var readStream: CFReadStream?
     private var writeStream: CFWriteStream?
-    private var continuation: CheckedContinuation<String, Error>?
+    private var continuation: CheckedContinuation<Data, Error>?
     private var timeoutWorkItem: DispatchWorkItem?
     private var responseData = Data()
     private var expectedResponseBodyLength: Int?
@@ -2063,6 +2078,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
     private init(
         url: URL,
         host: String,
+        requestData: Data,
         pinnedServerCertificateDER: Data?,
         clientCertificates: [SecCertificate]?,
         clientCertificateIdentity: SecIdentity?,
@@ -2074,20 +2090,22 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         self.clientCertificates = clientCertificates
         self.clientCertificateIdentity = clientCertificateIdentity
         self.timeout = timeout
-        self.requestData = ShadowClientGameStreamHTTPTransport.makePlainHTTPRequestData(url: url, host: host)
+        self.requestData = requestData
     }
 
-    static func requestXML(
+    static func requestData(
         url: URL,
         host: String,
+        requestData: Data,
         pinnedServerCertificateDER: Data?,
         clientCertificates: [SecCertificate]?,
         clientCertificateIdentity: SecIdentity?,
         timeout: TimeInterval
-    ) async throws -> String {
+    ) async throws -> Data {
         let transport = ShadowClientSecureHTTPStreamTransport(
             url: url,
             host: host,
+            requestData: requestData,
             pinnedServerCertificateDER: pinnedServerCertificateDER,
             clientCertificates: clientCertificates,
             clientCertificateIdentity: clientCertificateIdentity,
@@ -2096,8 +2114,32 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         return try await transport.start()
     }
 
-    private func start() async throws -> String {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
+    static func requestXML(
+        url: URL,
+        host: String,
+        requestData: Data,
+        pinnedServerCertificateDER: Data?,
+        clientCertificates: [SecCertificate]?,
+        clientCertificateIdentity: SecIdentity?,
+        timeout: TimeInterval
+    ) async throws -> String {
+        let responseData = try await ShadowClientSecureHTTPStreamTransport.requestData(
+            url: url,
+            host: host,
+            requestData: requestData,
+            pinnedServerCertificateDER: pinnedServerCertificateDER,
+            clientCertificates: clientCertificates,
+            clientCertificateIdentity: clientCertificateIdentity,
+            timeout: timeout
+        )
+        guard let xml = String(data: responseData, encoding: .utf8), !xml.isEmpty else {
+            throw ShadowClientGameStreamError.malformedXML
+        }
+        return xml
+    }
+
+    private func start() async throws -> Data {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
             queue.async {
                 self.continuation = continuation
                 do {
@@ -2358,10 +2400,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
 
         do {
             let body = try ShadowClientGameStreamHTTPTransport.extractHTTPBody(from: responseData)
-            guard let xml = String(data: body, encoding: .utf8), !xml.isEmpty else {
-                throw ShadowClientGameStreamError.malformedXML
-            }
-            finish(.success(xml))
+            finish(.success(body))
         } catch {
             finish(.failure(error))
         }
@@ -2383,7 +2422,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         return nil
     }
 
-    private func finish(_ result: Result<String, Error>) {
+    private func finish(_ result: Result<Data, Error>) {
         guard !completed else { return }
         completed = true
 

@@ -56,6 +56,27 @@ func pairchallengeDoesNotPinServerCertificateDuringPairing() {
     )
 }
 
+@Test("HTTP request builder includes method headers and body length")
+func httpRequestBuilderIncludesMethodHeadersAndBodyLength() {
+    let url = URL(string: "https://skyline23-pc.local:47984/actions/clipboard?type=text")!
+    let requestData = ShadowClientGameStreamHTTPTransport.makeHTTPRequestData(
+        url: url,
+        host: "skyline23-pc.local",
+        method: "POST",
+        headers: [
+            "Content-Type": "text/plain; charset=utf-8",
+        ],
+        body: Data("hello".utf8)
+    )
+
+    let requestText = String(decoding: requestData, as: UTF8.self)
+    #expect(requestText.contains("POST /actions/clipboard?type=text HTTP/1.1"))
+    #expect(requestText.contains("Host: skyline23-pc.local:47984"))
+    #expect(requestText.contains("Content-Type: text/plain; charset=utf-8"))
+    #expect(requestText.contains("Content-Length: 5"))
+    #expect(requestText.hasSuffix("\r\n\r\nhello"))
+}
+
 @Test("Launch parameter builder includes Apollo virtual display request when enabled")
 func launchParameterBuilderIncludesApolloVirtualDisplayRequest() {
     let parameters = NativeGameStreamControlClient.makeLaunchParameters(
