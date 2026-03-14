@@ -2059,7 +2059,10 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
     private let clientCertificateIdentity: SecIdentity?
     private let timeout: TimeInterval
     private let requestData: Data
-    private let queue = DispatchQueue(label: "com.skyline23.shadow-client.pairing.secure-http")
+    private let queue = DispatchQueue(
+        label: "com.skyline23.shadow-client.pairing.secure-http",
+        qos: .userInitiated
+    )
 
     private var readStream: CFReadStream?
     private var writeStream: CFWriteStream?

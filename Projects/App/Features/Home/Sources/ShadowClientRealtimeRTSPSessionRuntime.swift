@@ -3990,7 +3990,10 @@ private actor ShadowClientRTSPInterleavedClient {
     private let audioSessionActivation: (@Sendable () async -> Void)?
     private let audioSessionDeactivation: (@Sendable () async -> Void)?
     private let defaultClientPortBase: UInt16 = ShadowClientRTSPProtocolProfile.clientPortBase
-    private let queue = DispatchQueue(label: "com.skyline23.shadowclient.rtsp.connection")
+    private let queue = DispatchQueue(
+        label: "com.skyline23.shadowclient.rtsp.connection",
+        qos: .userInitiated
+    )
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RTSP")
     private var connection: NWConnection?
     private var readBuffer = Data()

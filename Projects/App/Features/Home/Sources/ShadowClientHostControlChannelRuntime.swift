@@ -18,7 +18,10 @@ actor ShadowClientHostControlChannelRuntime {
     private let onRoundTripSample: (@Sendable (Double) async -> Void)?
     private let onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)?
     private let onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)?
-    private let queue = DispatchQueue(label: "com.skyline23.shadowclient.control.enet")
+    private let queue = DispatchQueue(
+        label: "com.skyline23.shadowclient.control.enet",
+        qos: .userInitiated
+    )
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "ControlChannel")
 
     private var connection: NWConnection?
