@@ -2662,7 +2662,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             "transport connection timed out",
             "connection reset by peer",
             "network.nwerror error 96",
-            "udp video timeout: prolonged datagram inactivity after startup",
         ]
         return reconnectSignatures.contains(where: normalized.contains)
     }

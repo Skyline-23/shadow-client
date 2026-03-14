@@ -1218,6 +1218,72 @@ func remoteDesktopRuntimeAutoReconnectsStreamAfterTransportInactivity() async {
     #expect(codecHistory == [.h265, .h265])
 }
 
+@Test("Remote desktop runtime downgrades codec instead of reconnecting on startup UDP video timeout")
+@MainActor
+func remoteDesktopRuntimeDowngradesCodecOnStartupUDPVideoTimeout() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.154": .init(
+                host: "192.168.0.154",
+                displayName: "AV1-Startup-Timeout-Host",
+                pairStatus: .paired,
+                currentGameID: 1,
+                serverState: "SUNSHINE_SERVER_BUSY",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-AV1-STARTUP-TIMEOUT"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.154": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let sessionURL = "rtsp://192.168.0.154:48010/session"
+    let control = FakeControlClient(
+        simulatedLaunchResults: [
+            .init(sessionURL: sessionURL, verb: "launch"),
+            .init(sessionURL: sessionURL, verb: "launch"),
+        ]
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.154"], preferredHost: "192.168.0.154")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(
+            preferredCodec: .av1,
+            enableHDR: true,
+            enableSurroundAudio: true,
+            lowLatencyMode: false
+        )
+    )
+    await waitForLaunchState(runtime)
+
+    runtime.handleSessionRenderStateTransition(
+        .failed("RTSP UDP video timeout: prolonged datagram inactivity after startup")
+    )
+
+    await waitForLaunchCalls(control, expectedCount: 2)
+    await waitForLaunchState(runtime, maxAttempts: 200)
+
+    let launchCalls = await control.launchCalls()
+    #expect(launchCalls.count == 2)
+    #expect(launchCalls[0].forceLaunch == false)
+    #expect(launchCalls[1].forceLaunch == true)
+    #expect(launchCalls[0].settings.preferredCodec == .av1)
+    #expect(launchCalls[1].settings.preferredCodec == .h265)
+}
+
 @Test("Remote desktop runtime persists runtime fallback codec for subsequent auto launches")
 @MainActor
 func remoteDesktopRuntimePersistsRuntimeFallbackCodecForSubsequentAutoLaunches() async {
