@@ -972,7 +972,9 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                 scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
                 parameters: stage5Parameters,
                 uniqueID: uniqueID,
-                pinnedServerCertificateDER: serverCertDER,
+                pinnedServerCertificateDER: Self.pairChallengePinnedServerCertificateDER(
+                    serverCertificateDER: serverCertDER
+                ),
                 clientCertificateCredential: tlsClientCredential,
                 clientCertificates: tlsClientCertificates,
                 clientCertificateIdentity: tlsClientIdentity,
@@ -1000,6 +1002,13 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
 
         await pinnedCertificateStore.setCertificateDER(serverCertDER, forHost: endpoint.host)
         return ShadowClientGameStreamPairingResult(host: endpoint.host)
+    }
+
+    static func pairChallengePinnedServerCertificateDER(serverCertificateDER: Data) -> Data? {
+        _ = serverCertificateDER
+        // Pairing no longer requires a prior certificate pin. We still persist the leaf after a
+        // successful pair so post-pair HTTPS requests can use TOFU-based pinning.
+        return nil
     }
 
     public func launch(

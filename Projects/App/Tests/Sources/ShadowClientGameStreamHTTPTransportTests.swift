@@ -45,6 +45,17 @@ func pairchallengeOnlyIgnoresCertificateRequiredFailure() {
     #expect(!NativeGameStreamControlClient.isNonFatalPairChallengeTransportFailure(rejectedError))
 }
 
+@Test("Pairchallenge does not pin the server certificate during pairing")
+func pairchallengeDoesNotPinServerCertificateDuringPairing() {
+    let serverCertificateDER = Data([0x01, 0x02, 0x03, 0x04])
+
+    #expect(
+        NativeGameStreamControlClient.pairChallengePinnedServerCertificateDER(
+            serverCertificateDER: serverCertificateDER
+        ) == nil
+    )
+}
+
 @Test("Launch parameter builder includes Apollo virtual display request when enabled")
 func launchParameterBuilderIncludesApolloVirtualDisplayRequest() {
     let parameters = NativeGameStreamControlClient.makeLaunchParameters(
