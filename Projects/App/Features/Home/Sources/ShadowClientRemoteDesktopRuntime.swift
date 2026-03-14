@@ -2077,7 +2077,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         self.launchState = .launched("Remote session transport connected (\(connectedLaunchResult.verb)): \(connectedSessionURL)")
                     }
                     self.startInputKeepAliveLoop()
-                    self.startClipboardSyncLoop()
                 }
             } catch {
                 if Task.isCancelled {
@@ -2111,7 +2110,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         )
                     )
                     self.stopInputKeepAliveLoop()
-                    self.stopClipboardSyncLoop()
                     self.activeSession = nil
                     self.lastKnownSessionURL = nil
                 }
@@ -2152,7 +2150,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         runtimeStreamReconnectInProgress = false
         runtimeCodecRecoveryInProgress = false
         stopInputKeepAliveLoop()
-        stopClipboardSyncLoop()
         launchState = .idle
         return previousLaunchTask
     }
