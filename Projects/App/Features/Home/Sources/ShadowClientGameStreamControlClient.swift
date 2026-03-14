@@ -227,6 +227,14 @@ public protocol ShadowClientGameStreamControlClient: Sendable {
         appVersion: String?,
         httpsPort: Int?
     ) async throws -> ShadowClientGameStreamPairingResult
+
+    func pair(
+        host: String,
+        pin: String,
+        otpPassphrase: String?,
+        appVersion: String?,
+        httpsPort: Int?
+    ) async throws -> ShadowClientGameStreamPairingResult
     func getClipboard(
         host: String,
         httpsPort: Int
@@ -244,6 +252,24 @@ public protocol ShadowClientGameStreamControlClient: Sendable {
         forceLaunch: Bool,
         settings: ShadowClientGameStreamLaunchSettings
     ) async throws -> ShadowClientGameStreamLaunchResult
+}
+
+public extension ShadowClientGameStreamControlClient {
+    func pair(
+        host: String,
+        pin: String,
+        otpPassphrase: String?,
+        appVersion: String?,
+        httpsPort: Int?
+    ) async throws -> ShadowClientGameStreamPairingResult {
+        _ = otpPassphrase
+        return try await pair(
+            host: host,
+            pin: pin,
+            appVersion: appVersion,
+            httpsPort: httpsPort
+        )
+    }
 }
 
 public extension ShadowClientGameStreamControlClient {
@@ -710,10 +736,27 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         appVersion: String?,
         httpsPort: Int?
     ) async throws -> ShadowClientGameStreamPairingResult {
+        try await pair(
+            host: host,
+            pin: pin,
+            otpPassphrase: nil,
+            appVersion: appVersion,
+            httpsPort: httpsPort
+        )
+    }
+
+    public func pair(
+        host: String,
+        pin: String,
+        otpPassphrase: String?,
+        appVersion: String?,
+        httpsPort: Int?
+    ) async throws -> ShadowClientGameStreamPairingResult {
         let trimmedPIN = pin.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedPIN.count >= 4 else {
             throw ShadowClientGameStreamControlError.invalidPIN
         }
+        let trimmedPassphrase = otpPassphrase?.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
         let uniqueID = await identityStore.uniqueID()
@@ -728,19 +771,28 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let salt = Self.randomBytes(length: 16)
         let saltedPin = Data(salt + Data(trimmedPIN.utf8))
         let aesKey = Data(hashAlgorithm.digest(saltedPin).prefix(16))
+        let saltHex = salt.hexString
+        var stage1Parameters: [String: String] = [
+            "devicename": "shadow-client",
+            "updateState": "1",
+            "phrase": "getservercert",
+            "salt": saltHex,
+            "clientcert": certPEMData.hexString,
+        ]
+        if let trimmedPassphrase, !trimmedPassphrase.isEmpty {
+            stage1Parameters["otpauth"] = ShadowClientApolloPairingLink.otpAuthToken(
+                pin: trimmedPIN,
+                saltHex: saltHex,
+                passphrase: trimmedPassphrase
+            )
+        }
 
         let stage1XML = try await requestPairXML(
             stage: "getservercert",
             host: endpoint.host,
             port: endpoint.port,
             scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
-            parameters: [
-                "devicename": "shadow-client",
-                "updateState": "1",
-                "phrase": "getservercert",
-                "salt": salt.hexString,
-                "clientcert": certPEMData.hexString,
-            ],
+            parameters: stage1Parameters,
             uniqueID: uniqueID,
             pinnedServerCertificateDER: nil,
             timeout: pairingPINEntryTimeout

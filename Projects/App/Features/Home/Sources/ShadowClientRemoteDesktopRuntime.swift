@@ -1111,6 +1111,7 @@ private enum ShadowClientRemoteDesktopCommand: Sendable {
     )
     case disconnectSelectedHostApolloAdmin(username: String, password: String)
     case unpairSelectedHostApolloAdmin(username: String, password: String)
+    case pairApolloOTPLink(ShadowClientApolloPairingLink)
 }
 
 private struct ShadowClientLaunchRequestContext: Sendable {
@@ -1433,6 +1434,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 username: username,
                 password: password
             )
+        case let .pairApolloOTPLink(link):
+            performPairApolloOTPLink(link)
         }
     }
 
@@ -1581,6 +1584,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
+    public func pairApolloOTPLink(_ link: ShadowClientApolloPairingLink) {
+        commandContinuation.yield(.pairApolloOTPLink(link))
+    }
+
+    @MainActor
     private func performPairSelectedHost() {
         guard let selectedHost else {
             pairingState = .failed("Select host first.")
@@ -1712,6 +1720,74 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     return
                 }
 
+                await MainActor.run { [weak self] in
+                    guard let self,
+                          self.pairGeneration == currentPairGeneration
+                    else {
+                        return
+                    }
+                    self.pairingState = .failed(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func performPairApolloOTPLink(_ link: ShadowClientApolloPairingLink) {
+        let hostAddress = link.hostAddress
+        let normalizedHostID = hostAddress.lowercased()
+        if !latestHostCandidates.contains(hostAddress) {
+            latestHostCandidates.append(hostAddress)
+        }
+        refreshHostsTask?.cancel()
+        hostState = .loading
+        let metadataClient = metadataClient
+        let controlClient = controlClient
+        let currentPairGeneration = pairGeneration &+ 1
+        pairGeneration = currentPairGeneration
+        pairingState = .pairing(host: hostAddress, pin: link.pin)
+        pairTask?.cancel()
+        pairTask = Task { [weak self] in
+            do {
+                let descriptor = try await Self.fetchDirectHostDescriptor(
+                    hostAddress: hostAddress,
+                    metadataClient: metadataClient
+                )
+                await MainActor.run { [weak self] in
+                    guard let self,
+                          self.pairGeneration == currentPairGeneration
+                    else {
+                        return
+                    }
+                    self.hosts = Self.mergeResolvedHosts(
+                        [descriptor],
+                        selectedHostID: normalizedHostID,
+                        preferredHost: hostAddress,
+                        preferredRoutesByKey: [:]
+                    )
+                    self.selectedHostID = normalizedHostID
+                }
+
+                let result = try await controlClient.pair(
+                    host: hostAddress,
+                    pin: link.pin,
+                    otpPassphrase: link.passphrase,
+                    appVersion: descriptor.appVersion,
+                    httpsPort: link.pairPort == nil ? descriptor.httpsPort : nil
+                )
+                await MainActor.run { [weak self] in
+                    guard let self,
+                          self.pairGeneration == currentPairGeneration
+                    else {
+                        return
+                    }
+                    self.pairingState = .paired("Paired")
+                    self.performRefreshHosts(
+                        candidates: self.latestHostCandidates,
+                        preferredHost: result.host
+                    )
+                }
+            } catch {
                 await MainActor.run { [weak self] in
                     guard let self,
                           self.pairGeneration == currentPairGeneration
@@ -3474,7 +3550,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let host = selectedHost.host
         let httpsPort = selectedHost.httpsPort
         let selectedHostID = selectedHost.id
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             do {
                 let profile = try await apolloAdminClient.fetchCurrentClientProfile(
                     host: host,
@@ -3482,17 +3558,21 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     username: trimmedUsername,
                     password: trimmedPassword
                 )
-                guard let self, self.selectedHostID == selectedHostID else {
-                    return
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedHostID == selectedHostID else {
+                        return
+                    }
+                    self.selectedHostApolloAdminProfile = profile
+                    self.selectedHostApolloAdminState = .loaded
                 }
-                self.selectedHostApolloAdminProfile = profile
-                self.selectedHostApolloAdminState = .loaded
             } catch {
-                guard let self, self.selectedHostID == selectedHostID else {
-                    return
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedHostID == selectedHostID else {
+                        return
+                    }
+                    self.selectedHostApolloAdminProfile = nil
+                    self.selectedHostApolloAdminState = .failed(error.localizedDescription)
                 }
-                self.selectedHostApolloAdminProfile = nil
-                self.selectedHostApolloAdminState = .failed(error.localizedDescription)
             }
         }
     }
@@ -3538,7 +3618,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             undoCommands: currentProfile.undoCommands
         )
 
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             do {
                 let savedProfile = try await apolloAdminClient.updateCurrentClientProfile(
                     host: host,
@@ -3547,16 +3627,20 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     password: trimmedPassword,
                     profile: updatedProfile
                 )
-                guard let self, self.selectedHostID == selectedHostID else {
-                    return
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedHostID == selectedHostID else {
+                        return
+                    }
+                    self.selectedHostApolloAdminProfile = savedProfile
+                    self.selectedHostApolloAdminState = .loaded
                 }
-                self.selectedHostApolloAdminProfile = savedProfile
-                self.selectedHostApolloAdminState = .loaded
             } catch {
-                guard let self, self.selectedHostID == selectedHostID else {
-                    return
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedHostID == selectedHostID else {
+                        return
+                    }
+                    self.selectedHostApolloAdminState = .failed(error.localizedDescription)
                 }
-                self.selectedHostApolloAdminState = .failed(error.localizedDescription)
             }
         }
     }
@@ -3593,7 +3677,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let selectedHostID = selectedHost.id
         let uuid = currentProfile.uuid
 
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             do {
                 try await apolloAdminClient.disconnectCurrentClient(
                     host: host,
@@ -3602,29 +3686,33 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     password: trimmedPassword,
                     uuid: uuid
                 )
-                guard let self, self.selectedHostID == selectedHostID else {
-                    return
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedHostID == selectedHostID else {
+                        return
+                    }
+                    if let profile = self.selectedHostApolloAdminProfile {
+                        self.selectedHostApolloAdminProfile = .init(
+                            name: profile.name,
+                            uuid: profile.uuid,
+                            displayModeOverride: profile.displayModeOverride,
+                            permissions: profile.permissions,
+                            enableLegacyOrdering: profile.enableLegacyOrdering,
+                            allowClientCommands: profile.allowClientCommands,
+                            alwaysUseVirtualDisplay: profile.alwaysUseVirtualDisplay,
+                            connected: false,
+                            doCommands: profile.doCommands,
+                            undoCommands: profile.undoCommands
+                        )
+                    }
+                    self.selectedHostApolloAdminState = .loaded
                 }
-                if let profile = self.selectedHostApolloAdminProfile {
-                    self.selectedHostApolloAdminProfile = .init(
-                        name: profile.name,
-                        uuid: profile.uuid,
-                        displayModeOverride: profile.displayModeOverride,
-                        permissions: profile.permissions,
-                        enableLegacyOrdering: profile.enableLegacyOrdering,
-                        allowClientCommands: profile.allowClientCommands,
-                        alwaysUseVirtualDisplay: profile.alwaysUseVirtualDisplay,
-                        connected: false,
-                        doCommands: profile.doCommands,
-                        undoCommands: profile.undoCommands
-                    )
-                }
-                self.selectedHostApolloAdminState = .loaded
             } catch {
-                guard let self, self.selectedHostID == selectedHostID else {
-                    return
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedHostID == selectedHostID else {
+                        return
+                    }
+                    self.selectedHostApolloAdminState = .failed(error.localizedDescription)
                 }
-                self.selectedHostApolloAdminState = .failed(error.localizedDescription)
             }
         }
     }
@@ -3655,7 +3743,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let selectedHostID = selectedHost.id
         let uuid = currentProfile.uuid
 
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             do {
                 try await apolloAdminClient.unpairCurrentClient(
                     host: host,
@@ -3664,19 +3752,23 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     password: trimmedPassword,
                     uuid: uuid
                 )
-                guard let self, self.selectedHostID == selectedHostID else {
-                    return
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedHostID == selectedHostID else {
+                        return
+                    }
+                    self.clearSelectedHostApolloAdminState()
+                    self.performRefreshHosts(
+                        candidates: self.latestHostCandidates,
+                        preferredHost: selectedHost.host
+                    )
                 }
-                self.clearSelectedHostApolloAdminState()
-                self.performRefreshHosts(
-                    candidates: self.latestHostCandidates,
-                    preferredHost: selectedHost.host
-                )
             } catch {
-                guard let self, self.selectedHostID == selectedHostID else {
-                    return
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedHostID == selectedHostID else {
+                        return
+                    }
+                    self.selectedHostApolloAdminState = .failed(error.localizedDescription)
                 }
-                self.selectedHostApolloAdminState = .failed(error.localizedDescription)
             }
         }
     }
@@ -3719,6 +3811,28 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 lastError: message
             )
         }
+    }
+
+    private static func fetchDirectHostDescriptor(
+        hostAddress: String,
+        metadataClient: any ShadowClientGameStreamMetadataClient
+    ) async throws -> ShadowClientRemoteHostDescriptor {
+        let info = try await metadataClient.fetchServerInfo(host: hostAddress)
+        return ShadowClientRemoteHostDescriptor(
+            host: info.host,
+            displayName: info.displayName,
+            pairStatus: info.pairStatus,
+            currentGameID: max(0, info.currentGameID),
+            serverState: info.serverState,
+            httpsPort: info.httpsPort,
+            appVersion: info.appVersion,
+            gfeVersion: info.gfeVersion,
+            uniqueID: info.uniqueID,
+            lastError: nil,
+            localHost: info.localHost,
+            remoteHost: info.remoteHost,
+            manualHost: info.manualHost
+        )
     }
 
     private static func shouldRetryPairing(error: Error, deadline: Date) -> Bool {

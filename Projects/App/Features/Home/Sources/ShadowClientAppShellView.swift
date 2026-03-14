@@ -118,6 +118,12 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
         )
         .tint(accentColor)
         .preferredColorScheme(.dark)
+        .onReceive(NotificationCenter.default.publisher(for: .shadowClientApolloPairingLinkReceived)) { notification in
+            guard let url = notification.object as? URL else {
+                return
+            }
+            handleApolloPairingURL(url)
+        }
         .task {
             await syncConnectionStateFromRuntime()
             startHostDiscovery()
@@ -527,6 +533,14 @@ func cancelManualHostEntry() {
 
     @MainActor
     func addManualHostToCatalog() {
+        let draft = manualHostDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = URL(string: draft),
+           let link = ShadowClientApolloPairingLink.parse(url)
+        {
+            handleApolloPairingLink(link)
+            return
+        }
+
         let host = normalizedManualHostDraft
         guard !host.isEmpty else {
             return
@@ -535,6 +549,31 @@ func cancelManualHostEntry() {
         connectionHost = host
         refreshRemoteDesktopCatalog()
         remoteDesktopRuntime.selectHost(host.lowercased())
+        isManualHostFieldFocused = false
+        manualHostDraft = ""
+        isShowingManualHostEntry = false
+    }
+
+    @MainActor
+    func handleApolloPairingURL(_ url: URL) {
+        guard let link = ShadowClientApolloPairingLink.parse(url) else {
+            return
+        }
+        handleApolloPairingLink(link)
+    }
+
+    @MainActor
+    func handleApolloPairingLink(_ link: ShadowClientApolloPairingLink) {
+        let hostAddress = link.hostAddress
+        connectionHost = hostAddress
+        refreshRemoteDesktopCatalog()
+        remoteDesktopRuntime.selectHost(hostAddress.lowercased())
+        if let hostName = link.hostName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !hostName.isEmpty
+        {
+            hostCustomizationStore.setAlias(hostName, forHostID: hostAddress.lowercased())
+        }
+        remoteDesktopRuntime.pairApolloOTPLink(link)
         isManualHostFieldFocused = false
         manualHostDraft = ""
         isShowingManualHostEntry = false
