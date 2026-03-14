@@ -483,7 +483,7 @@ var remoteDesktopHostCard: some View {
                 Text("Friendly Name")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.white.opacity(0.68))
-                TextField("Use the discovered name", text: hostFriendlyNameBinding(for: host))
+                TextField("Use the discovered name", text: hostFriendlyNameBinding(host))
                     .font(.body.weight(.semibold))
                     .textFieldStyle(.plain)
                     .foregroundStyle(.white)
@@ -496,7 +496,7 @@ var remoteDesktopHostCard: some View {
                 Text("Notes")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.white.opacity(0.68))
-                TextField("Add a note for this device", text: hostNotesBinding(for: host), axis: .vertical)
+                TextField("Add a note for this device", text: hostNotesBinding(host), axis: .vertical)
                     .font(.body)
                     .textFieldStyle(.plain)
                     .foregroundStyle(.white)
@@ -512,7 +512,7 @@ var remoteDesktopHostCard: some View {
                     .foregroundStyle(Color.white.opacity(0.68))
 
                 VStack(alignment: .leading, spacing: 10) {
-                    TextField("Admin username", text: hostApolloAdminUsernameBinding(for: host))
+                    TextField("Admin username", text: hostApolloAdminUsernameBinding(host))
                         .font(.body.weight(.semibold))
                         .textFieldStyle(.plain)
                         .foregroundStyle(.white)
@@ -520,7 +520,7 @@ var remoteDesktopHostCard: some View {
                         .padding(.vertical, 10)
                         .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-                    SecureField("Admin password", text: hostApolloAdminPasswordBinding(for: host))
+                    SecureField("Admin password", text: hostApolloAdminPasswordBinding(host))
                         .font(.body.weight(.semibold))
                         .textFieldStyle(.plain)
                         .foregroundStyle(.white)
@@ -532,8 +532,8 @@ var remoteDesktopHostCard: some View {
                         HStack(spacing: 10) {
                             Button("Sync Apollo Client") {
                                 remoteDesktopRuntime.refreshSelectedHostApolloAdmin(
-                                    username: hostApolloAdminUsername(for: host),
-                                    password: hostApolloAdminPassword(for: host)
+                                    username: hostApolloAdminUsername(host),
+                                    password: hostApolloAdminPassword(host)
                                 )
                             }
                             .buttonStyle(.bordered)
@@ -548,8 +548,8 @@ var remoteDesktopHostCard: some View {
                         VStack(alignment: .leading, spacing: 8) {
                             Button("Sync Apollo Client") {
                                 remoteDesktopRuntime.refreshSelectedHostApolloAdmin(
-                                    username: hostApolloAdminUsername(for: host),
-                                    password: hostApolloAdminPassword(for: host)
+                                    username: hostApolloAdminUsername(host),
+                                    password: hostApolloAdminPassword(host)
                                 )
                             }
                             .buttonStyle(.bordered)
@@ -598,8 +598,8 @@ var remoteDesktopHostCard: some View {
 
                         Button("Save Apollo Overrides") {
                             remoteDesktopRuntime.updateSelectedHostApolloAdmin(
-                                username: hostApolloAdminUsername(for: host),
-                                password: hostApolloAdminPassword(for: host),
+                                username: hostApolloAdminUsername(host),
+                                password: hostApolloAdminPassword(host),
                                 displayModeOverride: hostApolloDisplayModeDraft(for: host),
                                 alwaysUseVirtualDisplay: hostApolloAlwaysUseVirtualDisplayDraft(for: host),
                                 permissions: hostApolloPermissionDraft(for: host)
@@ -612,8 +612,8 @@ var remoteDesktopHostCard: some View {
                             HStack(spacing: 10) {
                                 Button("Disconnect Client") {
                                     remoteDesktopRuntime.disconnectSelectedHostApolloAdmin(
-                                        username: hostApolloAdminUsername(for: host),
-                                        password: hostApolloAdminPassword(for: host)
+                                        username: hostApolloAdminUsername(host),
+                                        password: hostApolloAdminPassword(host)
                                     )
                                 }
                                 .buttonStyle(.bordered)
@@ -621,8 +621,8 @@ var remoteDesktopHostCard: some View {
 
                                 Button("Unpair Client") {
                                     remoteDesktopRuntime.unpairSelectedHostApolloAdmin(
-                                        username: hostApolloAdminUsername(for: host),
-                                        password: hostApolloAdminPassword(for: host)
+                                        username: hostApolloAdminUsername(host),
+                                        password: hostApolloAdminPassword(host)
                                     )
                                 }
                                 .buttonStyle(.bordered)
@@ -632,8 +632,8 @@ var remoteDesktopHostCard: some View {
                             VStack(spacing: 8) {
                                 Button("Disconnect Client") {
                                     remoteDesktopRuntime.disconnectSelectedHostApolloAdmin(
-                                        username: hostApolloAdminUsername(for: host),
-                                        password: hostApolloAdminPassword(for: host)
+                                        username: hostApolloAdminUsername(host),
+                                        password: hostApolloAdminPassword(host)
                                     )
                                 }
                                 .buttonStyle(.bordered)
@@ -641,8 +641,8 @@ var remoteDesktopHostCard: some View {
 
                                 Button("Unpair Client") {
                                     remoteDesktopRuntime.unpairSelectedHostApolloAdmin(
-                                        username: hostApolloAdminUsername(for: host),
-                                        password: hostApolloAdminPassword(for: host)
+                                        username: hostApolloAdminUsername(host),
+                                        password: hostApolloAdminPassword(host)
                                     )
                                 }
                                 .buttonStyle(.bordered)
@@ -900,8 +900,8 @@ var remoteDesktopHostCard: some View {
         .init(
             host: host,
             issue: hostPresentationIssue(host),
-            alias: hostFriendlyName(for: host),
-            notes: hostNotes(for: host)
+            alias: hostFriendlyName(host),
+            notes: hostNotes(host)
         )
     }
 
@@ -1055,47 +1055,59 @@ var remoteDesktopHostCard: some View {
             )
     }
 
-    func hostFriendlyName(for host: ShadowClientRemoteHostDescriptor) -> String {
-        hostCustomizationStore.alias(forHostID: host.id)
-    }
-
-    func hostNotes(for host: ShadowClientRemoteHostDescriptor) -> String {
-        hostCustomizationStore.note(forHostID: host.id)
-    }
-
-    func hostFriendlyNameBinding(for host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
-        Binding(
-            get: { hostFriendlyName(for: host) },
-            set: { hostCustomizationStore.setAlias($0, forHostID: host.id) }
+    func hostFriendlyName(_ host: ShadowClientRemoteHostDescriptor) -> String {
+        ShadowClientHostCustomizationKit.friendlyName(
+            store: hostCustomizationStore,
+            host: host
         )
     }
 
-    func hostNotesBinding(for host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
-        Binding(
-            get: { hostNotes(for: host) },
-            set: { hostCustomizationStore.setNote($0, forHostID: host.id) }
+    func hostNotes(_ host: ShadowClientRemoteHostDescriptor) -> String {
+        ShadowClientHostCustomizationKit.notes(
+            store: hostCustomizationStore,
+            host: host
         )
     }
 
-    func hostApolloAdminUsername(for host: ShadowClientRemoteHostDescriptor) -> String {
-        hostCustomizationStore.apolloAdminUsername(forHostID: host.id)
-    }
-
-    func hostApolloAdminPassword(for host: ShadowClientRemoteHostDescriptor) -> String {
-        hostCustomizationStore.apolloAdminPassword(forHostID: host.id)
-    }
-
-    func hostApolloAdminUsernameBinding(for host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
-        Binding(
-            get: { hostApolloAdminUsername(for: host) },
-            set: { hostCustomizationStore.setApolloAdminUsername($0, forHostID: host.id) }
+    func hostFriendlyNameBinding(_ host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
+        ShadowClientHostCustomizationKit.friendlyNameBinding(
+            store: hostCustomizationStore,
+            host: host
         )
     }
 
-    func hostApolloAdminPasswordBinding(for host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
-        Binding(
-            get: { hostApolloAdminPassword(for: host) },
-            set: { hostCustomizationStore.setApolloAdminPassword($0, forHostID: host.id) }
+    func hostNotesBinding(_ host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
+        ShadowClientHostCustomizationKit.notesBinding(
+            store: hostCustomizationStore,
+            host: host
+        )
+    }
+
+    func hostApolloAdminUsername(_ host: ShadowClientRemoteHostDescriptor) -> String {
+        ShadowClientHostCustomizationKit.apolloAdminUsername(
+            store: hostCustomizationStore,
+            host: host
+        )
+    }
+
+    func hostApolloAdminPassword(_ host: ShadowClientRemoteHostDescriptor) -> String {
+        ShadowClientHostCustomizationKit.apolloAdminPassword(
+            store: hostCustomizationStore,
+            host: host
+        )
+    }
+
+    func hostApolloAdminUsernameBinding(_ host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
+        ShadowClientHostCustomizationKit.apolloAdminUsernameBinding(
+            store: hostCustomizationStore,
+            host: host
+        )
+    }
+
+    func hostApolloAdminPasswordBinding(_ host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
+        ShadowClientHostCustomizationKit.apolloAdminPasswordBinding(
+            store: hostCustomizationStore,
+            host: host
         )
     }
 
