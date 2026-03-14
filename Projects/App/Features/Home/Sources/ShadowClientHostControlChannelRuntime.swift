@@ -703,7 +703,8 @@ actor ShadowClientHostControlChannelRuntime {
         ) { group in
             group.addTask {
                 await withCheckedContinuation { continuation in
-                    actor ResumeGate {
+                    final class ResumeGate: @unchecked Sendable {
+                        private let lock = NSLock()
                         private var continuation: CheckedContinuation<Result<Void, Error>, Never>?
 
                         init(continuation: CheckedContinuation<Result<Void, Error>, Never>) {
@@ -711,6 +712,8 @@ actor ShadowClientHostControlChannelRuntime {
                         }
 
                         func finish(_ result: Result<Void, Error>) -> Bool {
+                            lock.lock()
+                            defer { lock.unlock() }
                             guard let continuation else {
                                 return false
                             }
@@ -724,22 +727,16 @@ actor ShadowClientHostControlChannelRuntime {
                     connection.stateUpdateHandler = { state in
                         switch state {
                         case .ready:
-                            Task {
-                                if await gate.finish(.success(())) {
-                                    connection.stateUpdateHandler = nil
-                                }
+                            if gate.finish(.success(())) {
+                                connection.stateUpdateHandler = nil
                             }
                         case let .failed(error):
-                            Task {
-                                if await gate.finish(.failure(error)) {
-                                    connection.stateUpdateHandler = nil
-                                }
+                            if gate.finish(.failure(error)) {
+                                connection.stateUpdateHandler = nil
                             }
                         case .cancelled:
-                            Task {
-                                if await gate.finish(.failure(ShadowClientHostControlChannelError.connectionClosed)) {
-                                    connection.stateUpdateHandler = nil
-                                }
+                            if gate.finish(.failure(ShadowClientHostControlChannelError.connectionClosed)) {
+                                connection.stateUpdateHandler = nil
                             }
                         default:
                             break

@@ -1863,10 +1863,13 @@ enum ShadowClientGameStreamHTTPTransport {
         _ connection: NWConnection,
         timeout: TimeInterval
     ) async throws {
-        actor ResumeGate {
+        final class ResumeGate: @unchecked Sendable {
+            private let lock = NSLock()
             private var resumed = false
 
             func markIfNeeded() -> Bool {
+                lock.lock()
+                defer { lock.unlock() }
                 guard !resumed else { return false }
                 resumed = true
                 return true
@@ -1878,11 +1881,9 @@ enum ShadowClientGameStreamHTTPTransport {
             let deadline = DispatchTime.now() + timeout
 
             @Sendable func resume(_ result: Result<Void, Error>) {
-                Task {
-                    guard await gate.markIfNeeded() else { return }
-                    connection.stateUpdateHandler = nil
-                    continuation.resume(with: result)
-                }
+                guard gate.markIfNeeded() else { return }
+                connection.stateUpdateHandler = nil
+                continuation.resume(with: result)
             }
 
             connection.stateUpdateHandler = { state in
@@ -1924,10 +1925,13 @@ enum ShadowClientGameStreamHTTPTransport {
         over connection: NWConnection,
         timeout: TimeInterval
     ) async throws -> Data {
-        actor ResumeGate {
+        final class ResumeGate: @unchecked Sendable {
+            private let lock = NSLock()
             private var resumed = false
 
             func markIfNeeded() -> Bool {
+                lock.lock()
+                defer { lock.unlock() }
                 guard !resumed else { return false }
                 resumed = true
                 return true
@@ -1940,10 +1944,8 @@ enum ShadowClientGameStreamHTTPTransport {
             var responseData = Data()
 
             @Sendable func resume(_ result: Result<Data, Error>) {
-                Task {
-                    guard await gate.markIfNeeded() else { return }
-                    continuation.resume(with: result)
-                }
+                guard gate.markIfNeeded() else { return }
+                continuation.resume(with: result)
             }
 
             func receiveNext() {

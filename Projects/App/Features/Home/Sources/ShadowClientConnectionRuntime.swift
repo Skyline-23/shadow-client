@@ -245,7 +245,8 @@ public enum NativeTCPHostProbe {
         queue: DispatchQueue
     ) async -> Bool {
         await withCheckedContinuation { continuation in
-            actor ResumeGate {
+            final class ResumeGate: @unchecked Sendable {
+                private let lock = NSLock()
                 private var continuation: CheckedContinuation<Bool, Never>?
 
                 init(continuation: CheckedContinuation<Bool, Never>) {
@@ -253,6 +254,8 @@ public enum NativeTCPHostProbe {
                 }
 
                 func finish(with result: Bool) -> Bool {
+                    lock.lock()
+                    defer { lock.unlock() }
                     guard let continuation else {
                         return false
                     }
@@ -266,17 +269,13 @@ public enum NativeTCPHostProbe {
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    Task {
-                        if await gate.finish(with: true) {
-                            connection.stateUpdateHandler = nil
-                            connection.cancel()
-                        }
+                    if gate.finish(with: true) {
+                        connection.stateUpdateHandler = nil
+                        connection.cancel()
                     }
                 case .failed, .cancelled:
-                    Task {
-                        if await gate.finish(with: false) {
-                            connection.stateUpdateHandler = nil
-                        }
+                    if gate.finish(with: false) {
+                        connection.stateUpdateHandler = nil
                     }
                 default:
                     break
