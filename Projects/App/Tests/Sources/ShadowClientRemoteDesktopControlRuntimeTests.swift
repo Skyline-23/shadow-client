@@ -260,6 +260,60 @@ func remoteDesktopRuntimeLaunchesSelectedApp() async {
     }
 }
 
+@Test("Remote desktop runtime loads Apollo admin profile for the selected host")
+@MainActor
+func remoteDesktopRuntimeLoadsApolloAdminProfileForSelectedHost() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
+                displayName: "LivingRoom-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-1"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.20": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let adminClient = FakeApolloAdminClient(
+        profile: .init(
+            uuid: "CURRENT-UUID",
+            displayModeOverride: "2560x1440x120",
+            alwaysUseVirtualDisplay: true,
+            connected: true
+        )
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: FakeControlClient(),
+        apolloAdminClient: adminClient
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.refreshSelectedHostApolloAdmin(username: "apollo", password: "secret")
+    await waitForApolloAdminState(runtime)
+
+    #expect(runtime.selectedHostApolloAdminState == .loaded)
+    #expect(
+        runtime.selectedHostApolloAdminProfile == .init(
+            uuid: "CURRENT-UUID",
+            displayModeOverride: "2560x1440x120",
+            alwaysUseVirtualDisplay: true,
+            connected: true
+        )
+    )
+}
+
 @Test("Remote desktop runtime surfaces Apollo launch permission denial")
 @MainActor
 func remoteDesktopRuntimeSurfacesApolloLaunchPermissionDenial() async {
@@ -2389,6 +2443,27 @@ private actor FakeClipboardClient: ShadowClientClipboardClient {
     }
 }
 
+private actor FakeApolloAdminClient: ShadowClientApolloAdminClient {
+    private let profile: ShadowClientApolloAdminClientProfile?
+
+    init(profile: ShadowClientApolloAdminClientProfile?) {
+        self.profile = profile
+    }
+
+    func fetchCurrentClientProfile(
+        host: String,
+        httpsPort: Int,
+        username: String,
+        password: String
+    ) async throws -> ShadowClientApolloAdminClientProfile? {
+        _ = host
+        _ = httpsPort
+        _ = username
+        _ = password
+        return profile
+    }
+}
+
 private actor FakeSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
     let presentationMode: ShadowClientRemoteSessionPresentationMode = .embeddedPlayer
     nonisolated let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init()
@@ -2668,6 +2743,20 @@ private func waitForClipboardText(
         if await clipboardClient.currentString() == expected {
             return
         }
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+@MainActor
+private func waitForApolloAdminState(
+    _ runtime: ShadowClientRemoteDesktopRuntime,
+    maxAttempts: Int = 50
+) async {
+    for _ in 0..<maxAttempts {
+        if runtime.selectedHostApolloAdminState != .loading {
+            return
+        }
+
         try? await Task.sleep(for: .milliseconds(20))
     }
 }

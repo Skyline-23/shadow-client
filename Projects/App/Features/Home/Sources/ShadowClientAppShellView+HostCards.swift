@@ -484,6 +484,45 @@ var remoteDesktopHostCard: some View {
                     .padding(.vertical, 10)
                     .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Apollo Admin")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.white.opacity(0.68))
+
+                TextField("Admin username", text: hostApolloAdminUsernameBinding(for: host))
+                    .font(.body.weight(.semibold))
+                    .textFieldStyle(.plain)
+                    .textInputAutocapitalization(.never)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                SecureField("Admin password", text: hostApolloAdminPasswordBinding(for: host))
+                    .font(.body.weight(.semibold))
+                    .textFieldStyle(.plain)
+                    .textInputAutocapitalization(.never)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                HStack(spacing: 10) {
+                    Button("Sync Apollo Client") {
+                        remoteDesktopRuntime.refreshSelectedHostApolloAdmin(
+                            username: hostApolloAdminUsername(for: host),
+                            password: hostApolloAdminPassword(for: host)
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(remoteDesktopRuntime.selectedHostID != host.id)
+
+                    Text(hostApolloAdminStateLabel(for: host))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.68))
+                }
+            }
         }
     }
 
@@ -507,6 +546,13 @@ var remoteDesktopHostCard: some View {
                 message: "This device is paired and ready to launch a remote desktop session.",
                 accent: .mint
             )
+            if let profile = hostApolloAdminProfile(host) {
+                remoteDesktopCalloutRow(
+                    title: "Apollo Device Overrides",
+                    message: hostApolloAdminSummary(profile),
+                    accent: .cyan
+                )
+            }
         } else {
             remoteDesktopCalloutRow(
                 title: "Pairing Required",
@@ -957,6 +1003,62 @@ var remoteDesktopHostCard: some View {
             get: { hostNotes(for: host) },
             set: { hostCustomizationStore.setNote($0, forHostID: host.id) }
         )
+    }
+
+    func hostApolloAdminUsername(for host: ShadowClientRemoteHostDescriptor) -> String {
+        hostCustomizationStore.apolloAdminUsername(forHostID: host.id)
+    }
+
+    func hostApolloAdminPassword(for host: ShadowClientRemoteHostDescriptor) -> String {
+        hostCustomizationStore.apolloAdminPassword(forHostID: host.id)
+    }
+
+    func hostApolloAdminUsernameBinding(for host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
+        Binding(
+            get: { hostApolloAdminUsername(for: host) },
+            set: { hostCustomizationStore.setApolloAdminUsername($0, forHostID: host.id) }
+        )
+    }
+
+    func hostApolloAdminPasswordBinding(for host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
+        Binding(
+            get: { hostApolloAdminPassword(for: host) },
+            set: { hostCustomizationStore.setApolloAdminPassword($0, forHostID: host.id) }
+        )
+    }
+
+    func hostApolloAdminProfile(_ host: ShadowClientRemoteHostDescriptor) -> ShadowClientApolloAdminClientProfile? {
+        guard remoteDesktopRuntime.selectedHostID == host.id else {
+            return nil
+        }
+        return remoteDesktopRuntime.selectedHostApolloAdminProfile
+    }
+
+    func hostApolloAdminStateLabel(for host: ShadowClientRemoteHostDescriptor) -> String {
+        guard remoteDesktopRuntime.selectedHostID == host.id else {
+            return "Select this host first"
+        }
+
+        switch remoteDesktopRuntime.selectedHostApolloAdminState {
+        case .idle:
+            return "Idle"
+        case .loading:
+            return "Loading…"
+        case .loaded:
+            return remoteDesktopRuntime.selectedHostApolloAdminProfile == nil ? "Client not found" : "Loaded"
+        case let .failed(message):
+            return message
+        }
+    }
+
+    func hostApolloAdminSummary(_ profile: ShadowClientApolloAdminClientProfile) -> String {
+        let displayMode = profile.displayModeOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayDescription = displayMode.isEmpty ? "Display mode override: automatic" : "Display mode override: \(displayMode)"
+        let virtualDisplayDescription = profile.alwaysUseVirtualDisplay
+            ? "Always use virtual display: ON"
+            : "Always use virtual display: OFF"
+        let connectedDescription = profile.connected ? "Connected" : "Not connected"
+        return [displayDescription, virtualDisplayDescription, connectedDescription].joined(separator: "\n")
     }
 
 var connectionStatusCard: some View {

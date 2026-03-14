@@ -4,6 +4,8 @@ import Foundation
 public struct ShadowClientHostCustomizationSnapshot: Sendable {
     public let aliases: [String: String]
     public let notes: [String: String]
+    public let apolloAdminUsernames: [String: String]
+    public let apolloAdminPasswords: [String: String]
 }
 
 public actor ShadowClientHostCustomizationPersistence {
@@ -16,7 +18,9 @@ public actor ShadowClientHostCustomizationPersistence {
     public func loadSnapshot() -> ShadowClientHostCustomizationSnapshot {
         ShadowClientHostCustomizationSnapshot(
             aliases: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.hostAliases),
-            notes: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.hostNotes)
+            notes: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.hostNotes),
+            apolloAdminUsernames: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.apolloAdminUsernames),
+            apolloAdminPasswords: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.apolloAdminPasswords)
         )
     }
 
@@ -38,6 +42,26 @@ public actor ShadowClientHostCustomizationPersistence {
             notes.removeValue(forKey: hostID)
         }
         persistMap(notes, forKey: ShadowClientAppSettings.StorageKeys.hostNotes)
+    }
+
+    public func saveApolloAdminUsername(_ value: String?, forHostID hostID: String) {
+        var usernames = decodeMap(forKey: ShadowClientAppSettings.StorageKeys.apolloAdminUsernames)
+        if let value, !value.isEmpty {
+            usernames[hostID] = value
+        } else {
+            usernames.removeValue(forKey: hostID)
+        }
+        persistMap(usernames, forKey: ShadowClientAppSettings.StorageKeys.apolloAdminUsernames)
+    }
+
+    public func saveApolloAdminPassword(_ value: String?, forHostID hostID: String) {
+        var passwords = decodeMap(forKey: ShadowClientAppSettings.StorageKeys.apolloAdminPasswords)
+        if let value, !value.isEmpty {
+            passwords[hostID] = value
+        } else {
+            passwords.removeValue(forKey: hostID)
+        }
+        persistMap(passwords, forKey: ShadowClientAppSettings.StorageKeys.apolloAdminPasswords)
     }
 
     private func decodeMap(forKey key: String) -> [String: String] {
@@ -67,6 +91,8 @@ public actor ShadowClientHostCustomizationPersistence {
 public final class ShadowClientHostCustomizationStore: ObservableObject {
     @Published private var aliases: [String: String] = [:]
     @Published private var notes: [String: String] = [:]
+    @Published private var apolloAdminUsernames: [String: String] = [:]
+    @Published private var apolloAdminPasswords: [String: String] = [:]
 
     private let persistence: ShadowClientHostCustomizationPersistence
 
@@ -81,6 +107,8 @@ public final class ShadowClientHostCustomizationStore: ObservableObject {
             let snapshot = await persistence.loadSnapshot()
             aliases = snapshot.aliases
             notes = snapshot.notes
+            apolloAdminUsernames = snapshot.apolloAdminUsernames
+            apolloAdminPasswords = snapshot.apolloAdminPasswords
         }
     }
 
@@ -90,6 +118,14 @@ public final class ShadowClientHostCustomizationStore: ObservableObject {
 
     public func note(forHostID hostID: String) -> String {
         notes[hostID] ?? ""
+    }
+
+    public func apolloAdminUsername(forHostID hostID: String) -> String {
+        apolloAdminUsernames[hostID] ?? ""
+    }
+
+    public func apolloAdminPassword(forHostID hostID: String) -> String {
+        apolloAdminPasswords[hostID] ?? ""
     }
 
     public func setAlias(_ value: String, forHostID hostID: String) {
@@ -115,6 +151,32 @@ public final class ShadowClientHostCustomizationStore: ObservableObject {
 
         Task {
             await persistence.saveNote(trimmed.isEmpty ? nil : value, forHostID: hostID)
+        }
+    }
+
+    public func setApolloAdminUsername(_ value: String, forHostID hostID: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            apolloAdminUsernames.removeValue(forKey: hostID)
+        } else {
+            apolloAdminUsernames[hostID] = value
+        }
+
+        Task {
+            await persistence.saveApolloAdminUsername(trimmed.isEmpty ? nil : value, forHostID: hostID)
+        }
+    }
+
+    public func setApolloAdminPassword(_ value: String, forHostID hostID: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            apolloAdminPasswords.removeValue(forKey: hostID)
+        } else {
+            apolloAdminPasswords[hostID] = value
+        }
+
+        Task {
+            await persistence.saveApolloAdminPassword(trimmed.isEmpty ? nil : value, forHostID: hostID)
         }
     }
 }

@@ -259,6 +259,13 @@ public struct ShadowClientRemoteSessionIssue: Equatable, Sendable {
     }
 }
 
+public enum ShadowClientApolloAdminClientState: Equatable, Sendable {
+    case idle
+    case loading
+    case loaded
+    case failed(String)
+}
+
 public protocol ShadowClientPairingPINProviding {
     func nextPIN() -> String
 }
@@ -1093,6 +1100,7 @@ private enum ShadowClientRemoteDesktopCommand: Sendable {
     case openSessionFlow(host: String, appTitle: String)
     case selectHost(String)
     case refreshSelectedHostApps
+    case refreshSelectedHostApolloAdmin(username: String, password: String)
 }
 
 private struct ShadowClientLaunchRequestContext: Sendable {
@@ -1228,11 +1236,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @Published public private(set) var launchState: ShadowClientRemoteLaunchState = .idle
     @Published public private(set) var activeSession: ShadowClientActiveRemoteSession?
     @Published public private(set) var sessionIssue: ShadowClientRemoteSessionIssue?
+    @Published public private(set) var selectedHostApolloAdminProfile: ShadowClientApolloAdminClientProfile?
+    @Published public private(set) var selectedHostApolloAdminState: ShadowClientApolloAdminClientState = .idle
     public let sessionPresentationMode: ShadowClientRemoteSessionPresentationMode
     public let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext
 
     private let metadataClient: any ShadowClientGameStreamMetadataClient
     private let controlClient: any ShadowClientGameStreamControlClient
+    private let apolloAdminClient: any ShadowClientApolloAdminClient
     private let clipboardClient: any ShadowClientClipboardClient
     private let sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient
     private let sessionInputClient: any ShadowClientRemoteSessionInputClient
@@ -1275,6 +1286,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
         controlClient: any ShadowClientGameStreamControlClient = NativeGameStreamControlClient(),
+        apolloAdminClient: any ShadowClientApolloAdminClient = NativeShadowClientApolloAdminClient(),
         clipboardClient: any ShadowClientClipboardClient = NativeShadowClientClipboardClient(),
         sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient = NoopShadowClientRemoteSessionConnectionClient(),
         sessionInputClient: any ShadowClientRemoteSessionInputClient = NoopShadowClientRemoteSessionInputClient(),
@@ -1291,6 +1303,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         self.metadataClient = metadataClient
         self.controlClient = controlClient
+        self.apolloAdminClient = apolloAdminClient
         self.clipboardClient = clipboardClient
         self.sessionConnectionClient = sessionConnectionClient
         self.sessionInputClient = sessionInputClient
@@ -1390,6 +1403,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             performSelectHost(hostID)
         case .refreshSelectedHostApps:
             performRefreshSelectedHostApps()
+        case let .refreshSelectedHostApolloAdmin(username, password):
+            performRefreshSelectedHostApolloAdmin(username: username, password: password)
         }
     }
 
@@ -1435,6 +1450,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             apps = []
             cachedAppsByHostID = [:]
             selectedHostID = nil
+            clearSelectedHostApolloAdminState()
             pendingSelectedHostID = nil
             hostState = .idle
             appState = .idle
@@ -3218,12 +3234,23 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         pendingSelectedHostID = nil
         selectedHostID = hostID
+        clearSelectedHostApolloAdminState()
         performRefreshSelectedHostApps()
     }
 
     @MainActor
     public func refreshSelectedHostApps() {
         commandContinuation.yield(.refreshSelectedHostApps)
+    }
+
+    @MainActor
+    public func refreshSelectedHostApolloAdmin(username: String, password: String) {
+        commandContinuation.yield(
+            .refreshSelectedHostApolloAdmin(
+                username: username,
+                password: password
+            )
+        )
     }
 
     @MainActor
@@ -3353,6 +3380,60 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
             }
         }
+    }
+
+    @MainActor
+    private func performRefreshSelectedHostApolloAdmin(
+        username: String,
+        password: String
+    ) {
+        guard let selectedHost else {
+            clearSelectedHostApolloAdminState()
+            return
+        }
+
+        let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
+            selectedHostApolloAdminProfile = nil
+            selectedHostApolloAdminState = .failed("Apollo admin credentials are required.")
+            return
+        }
+
+        selectedHostApolloAdminState = .loading
+        selectedHostApolloAdminProfile = nil
+
+        let apolloAdminClient = apolloAdminClient
+        let host = selectedHost.host
+        let httpsPort = selectedHost.httpsPort
+        let selectedHostID = selectedHost.id
+        Task { @MainActor [weak self] in
+            do {
+                let profile = try await apolloAdminClient.fetchCurrentClientProfile(
+                    host: host,
+                    httpsPort: httpsPort,
+                    username: trimmedUsername,
+                    password: trimmedPassword
+                )
+                guard let self, self.selectedHostID == selectedHostID else {
+                    return
+                }
+                self.selectedHostApolloAdminProfile = profile
+                self.selectedHostApolloAdminState = .loaded
+            } catch {
+                guard let self, self.selectedHostID == selectedHostID else {
+                    return
+                }
+                self.selectedHostApolloAdminProfile = nil
+                self.selectedHostApolloAdminState = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    @MainActor
+    private func clearSelectedHostApolloAdminState() {
+        selectedHostApolloAdminProfile = nil
+        selectedHostApolloAdminState = .idle
     }
 
     private static func fetchHostDescriptor(

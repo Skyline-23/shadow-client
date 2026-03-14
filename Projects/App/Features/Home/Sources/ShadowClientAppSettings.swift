@@ -186,6 +186,8 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         public static let autoFindHosts = "settings.autoFindHosts"
         public static let hostAliases = "settings.hostAliases"
         public static let hostNotes = "settings.hostNotes"
+        public static let apolloAdminUsernames = "settings.apolloAdminUsernames"
+        public static let apolloAdminPasswords = "settings.apolloAdminPasswords"
         public static let cachedRemoteHosts = "settings.cachedRemoteHosts"
         public static let lastRemoteSessionFingerprint = "settings.lastRemoteSessionFingerprint"
         public static let language = "settings.language"
