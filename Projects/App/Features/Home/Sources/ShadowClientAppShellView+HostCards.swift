@@ -658,37 +658,20 @@ var remoteDesktopHostCard: some View {
 
     @ViewBuilder
     func remoteDesktopHostStatusCallout(_ host: ShadowClientRemoteHostDescriptor) -> some View {
-        if let issue = hostPresentationIssue(host) {
-            remoteDesktopCalloutRow(
-                title: issue.title,
-                message: issue.message,
-                accent: .yellow
-            )
-        } else if let lastError = host.lastError, !lastError.isEmpty {
-            remoteDesktopCalloutRow(
-                title: "Connection Issue",
-                message: lastError,
-                accent: .red
-            )
-        } else if host.pairStatus == .paired {
-            remoteDesktopCalloutRow(
-                title: "Ready",
-                message: "This device is paired and ready to launch a remote desktop session.",
-                accent: .mint
-            )
-            if let profile = hostApolloAdminProfile(host) {
+        let apolloSummary = hostApolloAdminProfile(host).map(hostApolloAdminSummary)
+        let callouts = ShadowClientHostSpotlightPresentationKit.statusCallouts(
+            host: host,
+            issue: hostPresentationIssue(host),
+            apolloSummary: apolloSummary
+        )
+        if !callouts.isEmpty {
+            ForEach(Array(callouts.enumerated()), id: \.offset) { _, callout in
                 remoteDesktopCalloutRow(
-                    title: "Apollo Device Overrides",
-                    message: hostApolloAdminSummary(profile),
-                    accent: .cyan
+                    title: callout.title,
+                    message: callout.message,
+                    accent: ShadowClientHostSpotlightPresentationKit.accentColor(for: callout.tone)
                 )
             }
-        } else {
-            remoteDesktopCalloutRow(
-                title: "Pairing Required",
-                message: "This device is reachable, but you need to pair it before browsing apps or launching a session.",
-                accent: .yellow
-            )
         }
     }
 
