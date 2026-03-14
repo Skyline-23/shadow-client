@@ -228,7 +228,7 @@ var remoteDesktopHostCard: some View {
 
     func remoteDesktopHostTile(_ host: ShadowClientRemoteHostDescriptor) -> some View {
         let isSelected = remoteDesktopRuntime.selectedHostID == host.id
-        let hostIdentifier = sanitizedIdentifier(host.id)
+        let hostIdentifier = ShadowClientRemoteHostPresentationKit.sanitizedIdentifier(host.id)
         let spotlighted = spotlightedHostID == host.id
 
         return Button {
@@ -248,8 +248,8 @@ var remoteDesktopHostCard: some View {
         .allowsHitTesting(!spotlighted)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("shadow.home.host.\(hostIdentifier).row")
-        .accessibilityLabel(hostAccessibilityLabel(for: host, isSelected: isSelected))
-        .accessibilityHint("Opens \(hostDisplayTitle(host)) in a focused rotating card")
+        .accessibilityLabel(hostAccessibilityLabel(host, isSelected: isSelected))
+        .accessibilityHint(hostAccessibilityHint(host))
         .overlay(
             RoundedRectangle(cornerRadius: RemoteHostCardMetrics.tileCornerRadius, style: .continuous)
                 .stroke(isSelected ? accentColor.opacity(0.92) : Color.white.opacity(0.08), lineWidth: isSelected ? 2 : 1)
@@ -789,7 +789,7 @@ var remoteDesktopHostCard: some View {
                 )
             } else {
                 ForEach(remoteDesktopRuntime.apps.prefix(5)) { app in
-                    let appIdentifier = sanitizedIdentifier(String(app.id))
+                    let appIdentifier = ShadowClientRemoteHostPresentationKit.sanitizedIdentifier(String(app.id))
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(app.title)
@@ -967,20 +967,19 @@ var remoteDesktopHostCard: some View {
     }
 
     func hostAccessibilityLabel(
-        for host: ShadowClientRemoteHostDescriptor,
+        _ host: ShadowClientRemoteHostDescriptor,
         isSelected: Bool
     ) -> String {
-        let selectionDetail = isSelected ? " Currently selected." : ""
-        return "\(hostDisplayTitle(host)), \(host.statusLabel). Host: \(host.host).\(selectionDetail) \(hostSummaryText(host))"
+        ShadowClientRemoteHostPresentationKit.accessibilityLabel(
+            hostPresentationInput(for: host),
+            isSelected: isSelected
+        )
     }
 
-    func sanitizedIdentifier(_ raw: String) -> String {
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
-        let sanitized = raw.lowercased()
-            .components(separatedBy: allowed.inverted)
-            .filter { !$0.isEmpty }
-            .joined(separator: "-")
-        return sanitized.isEmpty ? "unknown" : sanitized
+    func hostAccessibilityHint(_ host: ShadowClientRemoteHostDescriptor) -> String {
+        ShadowClientRemoteHostPresentationKit.spotlightAccessibilityHint(
+            hostPresentationInput(for: host)
+        )
     }
 
     var remoteDesktopHostGridColumns: [GridItem] {
