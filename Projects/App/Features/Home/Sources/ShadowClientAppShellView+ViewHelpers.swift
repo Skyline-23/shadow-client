@@ -101,14 +101,7 @@ func discoveredHostRow(_ discoveredHost: ShadowClientDiscoveredHost) -> some Vie
     }
 
 func toneColor(for tone: HealthTone) -> Color {
-        switch tone {
-        case .healthy:
-            return .green
-        case .warning:
-            return .orange
-        case .critical:
-            return .red
-        }
+        ShadowClientSessionControlPresentationKit.toneColor(for: tone)
     }
 
 var activeSessionVideoCodecLabel: String {
@@ -119,33 +112,17 @@ var activeSessionVideoCodecLabel: String {
     }
 
 func videoCodecLabel(_ codec: ShadowClientVideoCodecPreference) -> String {
-        switch codec {
-        case .auto:
-            return "Auto"
-        case .av1:
-            return "AV1"
-        case .h265:
-            return "H.265"
-        case .h264:
-            return "H.264"
-        }
+        ShadowClientSessionControlPresentationKit.videoCodecLabel(codec)
     }
 
 func realtimeSessionVideoCodecLabel(_ codec: ShadowClientVideoCodec) -> String {
-        switch codec {
-        case .av1:
-            return "AV1"
-        case .h265:
-            return "H.265"
-        case .h264:
-            return "H.264"
-        }
+        ShadowClientSessionControlPresentationKit.realtimeSessionVideoCodecLabel(codec)
     }
 
 var maxBitrateKbps: Double {
-        unlockBitrateLimit
-            ? Double(ShadowClientAppSettingsDefaults.maximumBitrateWhenUnlocked)
-            : Double(ShadowClientAppSettingsDefaults.maximumBitrateWhenLocked)
+        ShadowClientSessionControlPresentationKit.maxBitrateKbps(
+            unlockBitrateLimit: unlockBitrateLimit
+        )
     }
 
 var effectiveBitrateKbps: Int {
@@ -153,19 +130,9 @@ var effectiveBitrateKbps: Int {
     }
 
 var launchBitrateNetworkSignal: StreamingNetworkSignal? {
-        guard autoBitrate, let settingsDiagnosticsModel else {
-            return nil
-        }
-
-        let nowMs = Int(Date().timeIntervalSince1970 * 1_000)
-        let sampleAgeMs = max(0, nowMs - settingsDiagnosticsModel.timestampMs)
-        guard sampleAgeMs <= ShadowClientUIRuntimeDefaults.bitrateSignalFreshnessWindowMs else {
-            return nil
-        }
-
-        return .init(
-            jitterMs: Double(settingsDiagnosticsModel.jitterMs),
-            packetLossPercent: settingsDiagnosticsModel.packetLossPercent
+        ShadowClientSessionControlPresentationKit.launchBitrateNetworkSignal(
+            autoBitrate: autoBitrate,
+            diagnosticsModel: settingsDiagnosticsModel
         )
     }
 
