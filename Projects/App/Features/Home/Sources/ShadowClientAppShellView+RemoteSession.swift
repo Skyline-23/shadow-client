@@ -78,25 +78,6 @@ var remoteSessionFlowView: some View {
                 VStack {
                     HStack {
                         Button {
-                            pasteLocalClipboardIntoRemoteSession()
-                        } label: {
-                            Label("Paste Clipboard", systemImage: "doc.on.clipboard")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(Color.white.opacity(0.95))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
-                                .background(.ultraThinMaterial)
-                                .clipShape(Capsule())
-                                .overlay(
-                                    Capsule()
-                                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("shadow.remote.session.pasteClipboard")
-                        .accessibilityLabel("Paste Clipboard Into Remote Session")
-
-                        Button {
                             remoteDesktopRuntime.clearActiveSession()
                         } label: {
                             Label("세션 종료", systemImage: "xmark.circle.fill")
