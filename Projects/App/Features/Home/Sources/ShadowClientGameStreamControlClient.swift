@@ -93,6 +93,7 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
     public let enableYUV444: Bool
     public let unlockBitrateLimit: Bool
     public let forceHardwareDecoding: Bool
+    public let resolutionScalePercent: Int
     public let preferVirtualDisplay: Bool
     public let optimizeGameSettingsForStreaming: Bool
     public let quitAppOnHostAfterStreamEnds: Bool
@@ -113,6 +114,7 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
         enableYUV444: Bool = false,
         unlockBitrateLimit: Bool = false,
         forceHardwareDecoding: Bool = true,
+        resolutionScalePercent: Int = 100,
         preferVirtualDisplay: Bool = false,
         optimizeGameSettingsForStreaming: Bool = true,
         quitAppOnHostAfterStreamEnds: Bool = false,
@@ -135,6 +137,7 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
         self.enableYUV444 = enableYUV444
         self.unlockBitrateLimit = unlockBitrateLimit
         self.forceHardwareDecoding = forceHardwareDecoding
+        self.resolutionScalePercent = max(20, min(200, resolutionScalePercent))
         self.preferVirtualDisplay = preferVirtualDisplay
         self.optimizeGameSettingsForStreaming = optimizeGameSettingsForStreaming
         self.quitAppOnHostAfterStreamEnds = quitAppOnHostAfterStreamEnds
@@ -1159,6 +1162,9 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
 
         if settings.preferVirtualDisplay {
             parameters["virtualDisplay"] = "1"
+        }
+        if settings.resolutionScalePercent != 100 {
+            parameters["scaleFactor"] = "\(settings.resolutionScalePercent)"
         }
 
         return parameters

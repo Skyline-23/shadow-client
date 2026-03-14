@@ -785,13 +785,13 @@ func launchDesktopFallbackIfNeeded() async {
             return base
         }
 
-        let pixelSize = ShadowClientAutoResolutionPolicy.resolvePixelSize(
+        let launchGeometry = ShadowClientAutoResolutionPolicy.resolveLaunchGeometry(
             logicalSize: launchViewportMetrics.logicalSize,
             safeAreaInsets: launchViewportMetrics.safeAreaInsets
         )
         return .init(
-            width: Int(pixelSize.width),
-            height: Int(pixelSize.height),
+            width: Int(launchGeometry.renderSize.width),
+            height: Int(launchGeometry.renderSize.height),
             fps: base.fps,
             bitrateKbps: base.bitrateKbps,
             preferredCodec: base.preferredCodec,
@@ -804,6 +804,7 @@ func launchDesktopFallbackIfNeeded() async {
             enableYUV444: base.enableYUV444,
             unlockBitrateLimit: base.unlockBitrateLimit,
             forceHardwareDecoding: base.forceHardwareDecoding,
+            resolutionScalePercent: launchGeometry.scalePercent,
             preferVirtualDisplay: base.preferVirtualDisplay,
             optimizeGameSettingsForStreaming: base.optimizeGameSettingsForStreaming,
             quitAppOnHostAfterStreamEnds: base.quitAppOnHostAfterStreamEnds,

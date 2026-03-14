@@ -35,3 +35,16 @@ func autoResolutionSupportsFullscreenViewportSizing() {
 
     #expect(resolved == CGSize(width: 2732, height: 2048))
 }
+
+@Test("Auto resolution launch geometry keeps logical render size and exposes scale factor")
+func autoResolutionLaunchGeometryPreservesLogicalSizeAndScaleFactor() {
+    let geometry = ShadowClientAutoResolutionPolicy.resolveLaunchGeometry(
+        displayLogicalSize: CGSize(width: 1194, height: 834),
+        safeAreaInsets: .init(top: 24, leading: 0, bottom: 20, trailing: 0),
+        scale: 2.0
+    )
+
+    #expect(geometry.renderSize == CGSize(width: 1194, height: 790))
+    #expect(geometry.pixelSize == CGSize(width: 2388, height: 1580))
+    #expect(geometry.scalePercent == 200)
+}

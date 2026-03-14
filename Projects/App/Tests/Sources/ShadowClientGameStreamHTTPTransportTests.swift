@@ -91,3 +91,27 @@ func launchParameterBuilderOmitsApolloVirtualDisplayRequestByDefault() {
 
     #expect(parameters["virtualDisplay"] == nil)
 }
+
+@Test("Launch parameter builder includes Apollo scale factor when requested")
+func launchParameterBuilderIncludesApolloScaleFactor() {
+    let parameters = NativeGameStreamControlClient.makeLaunchParameters(
+        appID: 1,
+        settings: .init(
+            width: 1194,
+            height: 790,
+            fps: 60,
+            bitrateKbps: 10_000,
+            preferredCodec: .auto,
+            enableHDR: false,
+            enableSurroundAudio: false,
+            lowLatencyMode: false,
+            resolutionScalePercent: 200
+        ),
+        remoteInputKey: Data([0xAA]),
+        remoteInputKeyID: 9,
+        surroundAudioInfo: 131_075,
+        localAudioPlayMode: "1"
+    )
+
+    #expect(parameters["scaleFactor"] == "200")
+}

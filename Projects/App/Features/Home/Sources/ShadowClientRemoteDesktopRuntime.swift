@@ -3041,6 +3041,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             enableYUV444: settings.enableYUV444,
             unlockBitrateLimit: settings.unlockBitrateLimit,
             forceHardwareDecoding: settings.forceHardwareDecoding,
+            resolutionScalePercent: settings.resolutionScalePercent,
             preferVirtualDisplay: settings.preferVirtualDisplay,
             optimizeGameSettingsForStreaming: settings.optimizeGameSettingsForStreaming,
             quitAppOnHostAfterStreamEnds: settings.quitAppOnHostAfterStreamEnds,

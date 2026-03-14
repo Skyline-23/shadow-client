@@ -8,6 +8,12 @@ import UIKit
 #endif
 
 enum ShadowClientAutoResolutionPolicy {
+    struct LaunchGeometry: Equatable {
+        let renderSize: CGSize
+        let pixelSize: CGSize
+        let scalePercent: Int
+    }
+
     @MainActor
     static func resolvePixelSize(
         logicalSize: CGSize,
@@ -42,6 +48,52 @@ enum ShadowClientAutoResolutionPolicy {
         return CGSize(
             width: alignedPixelDimension(safeAreaWidth * resolvedScale),
             height: alignedPixelDimension(safeAreaHeight * resolvedScale)
+        )
+    }
+
+    @MainActor
+    static func resolveLaunchGeometry(
+        logicalSize: CGSize,
+        safeAreaInsets: EdgeInsets
+    ) -> LaunchGeometry {
+        let metrics = effectiveDisplayMetrics(
+            fallbackLogicalSize: logicalSize,
+            fallbackSafeAreaInsets: safeAreaInsets
+        )
+        return resolveLaunchGeometry(
+            displayLogicalSize: metrics.logicalSize,
+            safeAreaInsets: metrics.safeAreaInsets,
+            scale: metrics.scale
+        )
+    }
+
+    static func resolveLaunchGeometry(
+        displayLogicalSize: CGSize,
+        safeAreaInsets: EdgeInsets,
+        scale: CGFloat
+    ) -> LaunchGeometry {
+        let safeAreaWidth = max(
+            1,
+            displayLogicalSize.width - safeAreaInsets.leading - safeAreaInsets.trailing
+        )
+        let safeAreaHeight = max(
+            1,
+            displayLogicalSize.height - safeAreaInsets.top - safeAreaInsets.bottom
+        )
+        let renderSize = CGSize(
+            width: alignedPixelDimension(safeAreaWidth),
+            height: alignedPixelDimension(safeAreaHeight)
+        )
+        let resolvedScale = max(1.0, scale)
+        let pixelSize = CGSize(
+            width: alignedPixelDimension(renderSize.width * resolvedScale),
+            height: alignedPixelDimension(renderSize.height * resolvedScale)
+        )
+
+        return .init(
+            renderSize: renderSize,
+            pixelSize: pixelSize,
+            scalePercent: max(100, Int((resolvedScale * 100).rounded()))
         )
     }
 
