@@ -43,19 +43,22 @@ public struct ShadowClientRemoteDesktopDependencies {
     public let sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient
     public let sessionInputClient: any ShadowClientRemoteSessionInputClient
     public let pinProvider: any ShadowClientPairingPINProviding
+    public let pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
 
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient,
         controlClient: any ShadowClientGameStreamControlClient,
         sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient,
         sessionInputClient: any ShadowClientRemoteSessionInputClient,
-        pinProvider: any ShadowClientPairingPINProviding
+        pinProvider: any ShadowClientPairingPINProviding,
+        pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
     ) {
         self.metadataClient = metadataClient
         self.controlClient = controlClient
         self.sessionConnectionClient = sessionConnectionClient
         self.sessionInputClient = sessionInputClient
         self.pinProvider = pinProvider
+        self.pinnedCertificateStore = pinnedCertificateStore
     }
 }
 
@@ -152,7 +155,8 @@ public extension ShadowClientRemoteDesktopDependencies {
             sessionInputClient: NativeShadowClientRemoteSessionInputClient(
                 sessionRuntime: sessionRuntime
             ),
-            pinProvider: ShadowClientRandomPairingPINProvider()
+            pinProvider: ShadowClientRandomPairingPINProvider(),
+            pinnedCertificateStore: pinnedCertificateStore
         )
     }
 }

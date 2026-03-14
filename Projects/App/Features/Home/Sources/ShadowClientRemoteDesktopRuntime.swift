@@ -1203,8 +1203,9 @@ private struct ShadowClientRemoteDesktopPersistence {
     }
 
     func saveCachedHosts(_ hosts: [ShadowClientRemoteHostDescriptor]) {
+        let persistableHosts = hosts.filter { $0.pairStatus == .paired }
         let catalog = ShadowClientPersistedRemoteHostCatalog(
-            hosts: hosts.map(ShadowClientPersistedRemoteHostRecord.init(descriptor:))
+            hosts: persistableHosts.map(ShadowClientPersistedRemoteHostRecord.init(descriptor:))
         )
         guard let data = try? encoder.encode(catalog) else {
             return

@@ -36,7 +36,8 @@ public final class ShadowClientFeatureHomeContainer {
             controlClient: remoteDesktopDependencies.controlClient,
             sessionConnectionClient: remoteDesktopDependencies.sessionConnectionClient,
             sessionInputClient: remoteDesktopDependencies.sessionInputClient,
-            pinProvider: remoteDesktopDependencies.pinProvider
+            pinProvider: remoteDesktopDependencies.pinProvider,
+            pinnedCertificateStore: remoteDesktopDependencies.pinnedCertificateStore
         )
 
         self.dependencies = .init(

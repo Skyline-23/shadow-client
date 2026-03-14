@@ -680,6 +680,56 @@ func remoteDesktopRuntimeSurfacesApolloAppListPermissionDenial() async {
     }
 }
 
+@Test("Remote desktop runtime does not persist unpaired scanned hosts")
+@MainActor
+func remoteDesktopRuntimeDoesNotPersistUnpairedScannedHosts() async {
+    let defaultsSuite = "shadow-client.runtime.unpaired-cache.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.40": .init(
+                host: "192.168.0.40",
+                displayName: "Scan-PC",
+                pairStatus: .notPaired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-40"
+            ),
+        ],
+        appListByHost: [:]
+    )
+
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient(),
+        defaults: defaults
+    )
+    runtime.refreshHosts(
+        candidates: ["192.168.0.40"],
+        preferredHost: "192.168.0.40"
+    )
+    await waitForHostCatalogReady(runtime)
+    #expect(runtime.hosts.count == 1)
+
+    let restoredRuntime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient(),
+        defaults: defaults
+    )
+
+    #expect(restoredRuntime.hosts.isEmpty)
+}
+
 @Test("Remote desktop runtime synthesizes current session fallback app when paired host app list is empty")
 @MainActor
 func remoteDesktopRuntimeSynthesizesFallbackAppsForEmptyCatalog() async {
