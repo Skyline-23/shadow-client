@@ -73,7 +73,11 @@ enum ShadowClientRTSPClientPortAllocator {
     }
 
     private static func parseIPv4Address(from host: NWEndpoint.Host) -> String? {
-        let raw = String(describing: host).trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = String(describing: host)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: "%", maxSplits: 1, omittingEmptySubsequences: false)
+            .first
+            .map(String.init) ?? ""
         guard !raw.isEmpty, !raw.contains(":") else {
             return nil
         }

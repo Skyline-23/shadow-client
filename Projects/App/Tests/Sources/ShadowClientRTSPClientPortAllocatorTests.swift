@@ -51,3 +51,15 @@ func rtspClientPortAllocatorFallsBackToPreferredBaseWhenNoCandidateIsAvailable()
 
     #expect(selected == 50_000)
 }
+
+@Test("RTSP client port allocator tolerates IPv4 hosts with interface scope suffixes")
+func rtspClientPortAllocatorToleratesScopedIPv4Hosts() {
+    let selected = ShadowClientRTSPClientPortAllocator.selectClientPortBase(
+        preferred: 50_000,
+        localHost: .init("192.168.0.62%en0"),
+        attemptCount: 1,
+        isPortAvailable: { _, _ in true }
+    )
+
+    #expect(selected == 50_000)
+}

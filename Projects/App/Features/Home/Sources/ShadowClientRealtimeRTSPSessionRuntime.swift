@@ -6676,7 +6676,11 @@ private actor ShadowClientUDPDatagramSocket {
     }
 
     private static func parseIPv4Host(_ host: NWEndpoint.Host) -> in_addr? {
-        let hostString = String(describing: host).trimmingCharacters(in: .whitespacesAndNewlines)
+        let hostString = String(describing: host)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: "%", maxSplits: 1, omittingEmptySubsequences: false)
+            .first
+            .map(String.init) ?? ""
         guard !hostString.isEmpty else {
             return nil
         }
