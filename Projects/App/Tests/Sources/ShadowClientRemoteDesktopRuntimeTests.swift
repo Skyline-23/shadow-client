@@ -184,6 +184,30 @@ func gameStreamParserMapsHostAppListWithoutStatusMessage() throws {
     #expect(apps[1] == .init(id: 1093255277, title: "Steam Big Picture", hdrSupported: true, isAppCollectorGame: false))
 }
 
+@Test("GameStream parser rejects Apollo applist permission sentinel")
+func gameStreamParserRejectsApolloAppListPermissionSentinel() {
+    let xml = """
+    <root status_code="200" status_message="OK">
+      <App>
+        <IsHdrSupported>0</IsHdrSupported>
+        <AppTitle>Permission Denied</AppTitle>
+        <UUID></UUID>
+        <IDX>0</IDX>
+        <ID>114514</ID>
+      </App>
+    </root>
+    """
+
+    do {
+        _ = try ShadowClientGameStreamXMLParsers.parseAppList(xml: xml)
+        Issue.record("Expected Apollo permission sentinel to be rejected")
+    } catch let error as ShadowClientGameStreamError {
+        #expect(error == .responseRejected(code: 403, message: "Permission denied"))
+    } catch {
+        Issue.record("Unexpected error: \(error)")
+    }
+}
+
 @Test("Metadata client uses HTTP first for unpinned hosts")
 func metadataClientUsesHTTPFirstForUnpinnedHosts() async throws {
     let defaultsSuite = "shadow-client.metadata.serverinfo.\(UUID().uuidString)"
@@ -617,6 +641,45 @@ func remoteDesktopRuntimeRefreshesHostsAndLoadsApps() async {
     }
 }
 
+@Test("Remote desktop runtime surfaces Apollo app list permission denial")
+@MainActor
+func remoteDesktopRuntimeSurfacesApolloAppListPermissionDenial() async {
+    let client = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.40": .init(
+                host: "192.168.0.40",
+                displayName: "Apollo-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-40"
+            ),
+        ],
+        appListByHost: [:],
+        appListFailureByHost: [
+            "192.168.0.40": .responseRejected(code: 403, message: "Permission denied"),
+        ]
+    )
+
+    let runtime = ShadowClientRemoteDesktopRuntime(metadataClient: client)
+    runtime.refreshHosts(
+        candidates: ["192.168.0.40"],
+        preferredHost: "192.168.0.40"
+    )
+
+    await waitForHostCatalogReady(runtime)
+    await waitForAppCatalogReady(runtime)
+
+    if case let .failed(message) = runtime.appState {
+        #expect(message == "Apollo denied List Apps permission for this paired client.")
+    } else {
+        Issue.record("Expected failed app state for Apollo permission denial, got \(runtime.appState)")
+    }
+}
+
 @Test("Remote desktop runtime synthesizes current session fallback app when paired host app list is empty")
 @MainActor
 func remoteDesktopRuntimeSynthesizesFallbackAppsForEmptyCatalog() async {
@@ -953,13 +1016,16 @@ private actor ScriptedRequestTransport: ShadowClientGameStreamRequestTransportin
 private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient {
     private let serverInfoByHost: [String: ShadowClientGameStreamServerInfo]
     private let appListByHost: [String: [ShadowClientRemoteAppDescriptor]]
+    private let appListFailureByHost: [String: ShadowClientGameStreamError]
 
     init(
         serverInfoByHost: [String: ShadowClientGameStreamServerInfo],
-        appListByHost: [String: [ShadowClientRemoteAppDescriptor]]
+        appListByHost: [String: [ShadowClientRemoteAppDescriptor]],
+        appListFailureByHost: [String: ShadowClientGameStreamError] = [:]
     ) {
         self.serverInfoByHost = serverInfoByHost
         self.appListByHost = appListByHost
+        self.appListFailureByHost = appListFailureByHost
     }
 
     func fetchServerInfo(host: String) async throws -> ShadowClientGameStreamServerInfo {
@@ -971,7 +1037,10 @@ private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient
     }
 
     func fetchAppList(host: String, httpsPort: Int?) async throws -> [ShadowClientRemoteAppDescriptor] {
-        appListByHost[host] ?? []
+        if let error = appListFailureByHost[host] {
+            throw error
+        }
+        return appListByHost[host] ?? []
     }
 }
 

@@ -2467,6 +2467,31 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         return trimmed
     }
 
+    private enum ApolloPermissionCapability {
+        case listApps
+        case launchApps
+    }
+
+    private static func apolloPermissionDeniedMessage(
+        _ error: any Error,
+        capability: ApolloPermissionCapability
+    ) -> String? {
+        guard case let ShadowClientGameStreamError.responseRejected(code, message) = error,
+              code == 403,
+              message.trimmingCharacters(in: .whitespacesAndNewlines)
+                  .localizedCaseInsensitiveContains("permission denied")
+        else {
+            return nil
+        }
+
+        switch capability {
+        case .listApps:
+            return "Apollo denied List Apps permission for this paired client."
+        case .launchApps:
+            return "Apollo denied Launch Apps permission for this paired client."
+        }
+    }
+
     private static func shouldSuppressInputSendError(_ error: Error) -> Bool {
         let nsError = error as NSError
         if (nsError.domain == "Network.NWError" && nsError.code == 89) ||
@@ -2909,6 +2934,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         _ error: any Error,
         settings: ShadowClientGameStreamLaunchSettings
     ) -> String {
+        if let permissionMessage = apolloPermissionDeniedMessage(
+            error,
+            capability: .launchApps
+        ) {
+            return permissionMessage
+        }
+
         let base = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = base.lowercased()
         var hints: [String] = []
@@ -3305,7 +3337,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     }
                     if fallbackApps.isEmpty {
                         self.apps = []
-                        self.appState = .failed(message)
+                        self.appState = .failed(
+                            Self.apolloPermissionDeniedMessage(
+                                error,
+                                capability: .listApps
+                            ) ?? message
+                        )
                     } else {
                         self.apps = fallbackApps
                         self.appState = .loaded
@@ -4144,10 +4181,28 @@ enum ShadowClientGameStreamXMLParsers {
     static func parseAppList(xml: String) throws -> [ShadowClientRemoteAppDescriptor] {
         let document = try ShadowClientXMLAppListParser.parse(xml: xml)
         try validateRoot(document.rootStatus)
+        if isApolloPermissionDeniedSentinel(document.apps) {
+            throw ShadowClientGameStreamError.responseRejected(
+                code: 403,
+                message: "Permission denied"
+            )
+        }
 
         return document.apps.sorted {
             $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
         }
+    }
+
+    private static func isApolloPermissionDeniedSentinel(
+        _ apps: [ShadowClientRemoteAppDescriptor]
+    ) -> Bool {
+        guard apps.count == 1, let app = apps.first else {
+            return false
+        }
+
+        return app.id == 114_514 &&
+            app.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare("Permission Denied") == .orderedSame
     }
 
     private static func parsePairStatus(_ rawValue: String?) -> ShadowClientRemoteHostPairStatus {

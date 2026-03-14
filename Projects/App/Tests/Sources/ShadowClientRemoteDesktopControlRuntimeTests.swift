@@ -260,6 +260,53 @@ func remoteDesktopRuntimeLaunchesSelectedApp() async {
     }
 }
 
+@Test("Remote desktop runtime surfaces Apollo launch permission denial")
+@MainActor
+func remoteDesktopRuntimeSurfacesApolloLaunchPermissionDenial() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
+                displayName: "LivingRoom-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-1"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.20": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchFailure: ShadowClientGameStreamError.responseRejected(
+            code: 403,
+            message: "Permission denied"
+        )
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(metadataClient: metadata, controlClient: control)
+
+    runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+
+    if case let .failed(message) = runtime.launchState {
+        #expect(message == "Apollo denied Launch Apps permission for this paired client.")
+    } else {
+        Issue.record("Expected failed launch state, got \(runtime.launchState)")
+    }
+}
+
 @Test("Remote desktop runtime forwards server app version into session video configuration")
 @MainActor
 func remoteDesktopRuntimeForwardsServerAppVersionToSessionConfiguration() async {
