@@ -1068,6 +1068,7 @@ private actor ShadowClientRemoteInputSendQueue {
 private enum ShadowClientRemoteDesktopCommand: Sendable {
     case refreshHosts(candidates: [String], preferredHost: String?)
     case pairSelectedHost
+    case pullClipboard
     case syncClipboard(String)
     case launchSelectedApp(
         appID: Int,
@@ -1341,6 +1342,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             performRefreshHosts(candidates: candidates, preferredHost: preferredHost)
         case .pairSelectedHost:
             performPairSelectedHost()
+        case .pullClipboard:
+            await performPullClipboard()
         case let .syncClipboard(text):
             await performSyncClipboard(text)
         case let .launchSelectedApp(appID, appTitle, forceLaunch, settings):
@@ -1650,6 +1653,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
             }
         }
+    }
+
+    @MainActor
+    public func pullClipboard() {
+        commandContinuation.yield(.pullClipboard)
     }
 
     @MainActor
@@ -2120,6 +2128,56 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 event: .text(normalized),
                 host: destination.host,
                 sessionURL: destination.sessionURL
+            )
+        }
+    }
+
+    @MainActor
+    private func performPullClipboard() async {
+        guard case .launched = launchState,
+              let destination = activeSessionInputDestination(),
+              let endpoint = activeSessionClipboardEndpoint()
+        else {
+            return
+        }
+
+        do {
+            // Trigger copy on the remote app first, then read the host clipboard.
+            await inputSendQueue.enqueue(
+                event: .keyDown(keyCode: 0x37, characters: nil),
+                host: destination.host,
+                sessionURL: destination.sessionURL
+            )
+            await inputSendQueue.enqueue(
+                event: .keyDown(keyCode: 0x08, characters: "c"),
+                host: destination.host,
+                sessionURL: destination.sessionURL
+            )
+            await inputSendQueue.enqueue(
+                event: .keyUp(keyCode: 0x08, characters: "c"),
+                host: destination.host,
+                sessionURL: destination.sessionURL
+            )
+            await inputSendQueue.enqueue(
+                event: .keyUp(keyCode: 0x37, characters: nil),
+                host: destination.host,
+                sessionURL: destination.sessionURL
+            )
+            try? await Task.sleep(for: .milliseconds(120))
+            let remoteClipboard = try await controlClient.getClipboard(
+                host: endpoint.host,
+                httpsPort: endpoint.httpsPort
+            )
+            let normalized = remoteClipboard.replacingOccurrences(of: "\r\n", with: "\n")
+            guard !normalized.isEmpty else {
+                return
+            }
+            await MainActor.run {
+                ShadowClientClipboardBridge.setString(normalized)
+            }
+        } catch {
+            logger.error(
+                "Apollo clipboard pull failed for host=\(endpoint.host, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
         }
     }

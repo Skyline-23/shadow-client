@@ -221,6 +221,10 @@ public protocol ShadowClientGameStreamControlClient: Sendable {
         appVersion: String?,
         httpsPort: Int?
     ) async throws -> ShadowClientGameStreamPairingResult
+    func getClipboard(
+        host: String,
+        httpsPort: Int
+    ) async throws -> String
     func setClipboard(
         host: String,
         httpsPort: Int,
@@ -237,6 +241,15 @@ public protocol ShadowClientGameStreamControlClient: Sendable {
 }
 
 public extension ShadowClientGameStreamControlClient {
+    func getClipboard(
+        host: String,
+        httpsPort: Int
+    ) async throws -> String {
+        _ = host
+        _ = httpsPort
+        throw ShadowClientGameStreamError.requestFailed("Clipboard sync is unsupported.")
+    }
+
     func setClipboard(
         host: String,
         httpsPort: Int,
@@ -1186,6 +1199,72 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
                     message: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
                 )
             }
+        } catch {
+            throw ShadowClientGameStreamHTTPTransport.requestFailureError(
+                error,
+                tlsFailure: delegate.tlsFailure
+            )
+        }
+    }
+
+    public func getClipboard(
+        host: String,
+        httpsPort: Int
+    ) async throws -> String {
+        let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
+        let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
+        let tlsClientCredential = try? await identityStore.tlsClientCertificateCredential()
+
+        guard pinnedServerCertificate != nil else {
+            throw ShadowClientGameStreamError.requestFailed(
+                "Host requires pairing before clipboard actions."
+            )
+        }
+
+        var components = URLComponents()
+        components.scheme = ShadowClientGameStreamNetworkDefaults.httpsScheme
+        components.host = endpoint.host
+        components.port = httpsPort
+        components.path = "/actions/clipboard"
+        components.queryItems = [
+            .init(name: "type", value: "text"),
+        ]
+        guard let url = components.url else {
+            throw ShadowClientGameStreamError.invalidURL
+        }
+
+        let delegate = ShadowClientServerTrustURLSessionDelegate(
+            pinnedServerCertificateDER: pinnedServerCertificate,
+            clientCertificateCredential: tlsClientCredential
+        )
+        let session = URLSession(
+            configuration: .ephemeral,
+            delegate: delegate,
+            delegateQueue: nil
+        )
+        defer {
+            session.invalidateAndCancel()
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = defaultRequestTimeout
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw ShadowClientGameStreamError.invalidResponse
+            }
+            guard (200 ... 299).contains(httpResponse.statusCode) else {
+                throw ShadowClientGameStreamError.responseRejected(
+                    code: httpResponse.statusCode,
+                    message: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+                )
+            }
+            guard let text = String(data: data, encoding: .utf8) else {
+                throw ShadowClientGameStreamError.invalidResponse
+            }
+            return text
         } catch {
             throw ShadowClientGameStreamHTTPTransport.requestFailureError(
                 error,

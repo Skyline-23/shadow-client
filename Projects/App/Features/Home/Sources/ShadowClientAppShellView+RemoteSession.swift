@@ -65,6 +65,8 @@ var remoteSessionFlowView: some View {
                         remoteDesktopRuntime.sendInput(event)
                     } onSessionTerminateCommand: {
                         remoteDesktopRuntime.clearActiveSession()
+                    } onCopyClipboardCommand: {
+                        copyRemoteClipboardIntoLocalClipboard()
                     } onPasteClipboardCommand: {
                         pasteLocalClipboardIntoRemoteSession()
                     }
@@ -250,6 +252,11 @@ func panelSurface(cornerRadius: CGFloat) -> some View {
             return
         }
         remoteDesktopRuntime.syncClipboard(clipboardText)
+    }
+
+    @MainActor
+    func copyRemoteClipboardIntoLocalClipboard() {
+        remoteDesktopRuntime.pullClipboard()
     }
 
 func rowSurface(cornerRadius: CGFloat) -> some View {

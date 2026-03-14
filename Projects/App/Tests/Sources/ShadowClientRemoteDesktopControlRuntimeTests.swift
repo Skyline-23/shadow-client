@@ -1722,6 +1722,62 @@ func remoteDesktopRuntimeFallsBackToTextInputWhenClipboardActionFails() async {
     #expect(inputCalls.first?.event == .text("fallback text"))
 }
 
+@Test("Remote desktop runtime copies Apollo host clipboard into the local clipboard")
+@MainActor
+func remoteDesktopRuntimePullsClipboardIntoLocalClipboard() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.28": .init(
+                host: "192.168.0.28",
+                displayName: "Loft-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-CLIPBOARD"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.28": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.28:48010/session", verb: "launch"),
+        simulatedClipboardText: "copied from host"
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let sessionInput = FakeSessionInputClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector,
+        sessionInputClient: sessionInput
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.28"], preferredHost: "192.168.0.28")
+    await waitForControlHostLoaded(runtime)
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+
+    await MainActor.run {
+        ShadowClientClipboardBridge.setString("")
+    }
+    runtime.pullClipboard()
+    await waitForSessionInputCalls(sessionInput, expectedCount: 4)
+
+    let clipboardText = await MainActor.run {
+        ShadowClientClipboardBridge.currentString()
+    }
+    #expect(clipboardText == "copied from host")
+}
+
 @Test("Remote desktop runtime sends keepalive when input stays idle during launched session")
 @MainActor
 func remoteDesktopRuntimeSendsInputKeepAliveWhenIdle() async {
@@ -1949,6 +2005,7 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
     private var simulatedPairFailures: [any Error & Sendable]
     private var simulatedLaunchResults: [ShadowClientGameStreamLaunchResult]
     private var simulatedLaunchFailures: [any Error & Sendable]
+    private let simulatedClipboardText: String?
     private let simulatedClipboardFailure: (any Error & Sendable)?
     private let defaultLaunchResult: ShadowClientGameStreamLaunchResult
     private let simulatedLaunchFailure: (any Error & Sendable)?
@@ -1958,12 +2015,14 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
         simulatedLaunchResult: ShadowClientGameStreamLaunchResult = .init(sessionURL: "rtsp://example/session", verb: "launch"),
         simulatedLaunchResults: [ShadowClientGameStreamLaunchResult] = [],
         simulatedLaunchFailures: [any Error & Sendable] = [],
+        simulatedClipboardText: String? = nil,
         simulatedClipboardFailure: (any Error & Sendable)? = nil,
         simulatedLaunchFailure: (any Error & Sendable)? = nil
     ) {
         self.simulatedPairFailures = simulatedPairFailures
         self.simulatedLaunchResults = simulatedLaunchResults
         self.simulatedLaunchFailures = simulatedLaunchFailures
+        self.simulatedClipboardText = simulatedClipboardText
         self.simulatedClipboardFailure = simulatedClipboardFailure
         self.defaultLaunchResult = simulatedLaunchResult
         self.simulatedLaunchFailure = simulatedLaunchFailure
@@ -2046,6 +2105,16 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
 
     func clipboardCalls() -> [ClipboardCall] {
         recordedClipboardCalls
+    }
+
+    func getClipboard(
+        host: String,
+        httpsPort: Int
+    ) async throws -> String {
+        if let simulatedClipboardFailure {
+            throw simulatedClipboardFailure
+        }
+        return simulatedClipboardText ?? ""
     }
 }
 

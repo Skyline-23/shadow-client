@@ -38,4 +38,14 @@ enum ShadowClientClipboardBridge {
         }
         return trimmed
     }
+
+    @MainActor
+    static func setString(_ value: String) {
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+        #elseif os(iOS) || os(tvOS)
+        UIPasteboard.general.string = value
+        #endif
+    }
 }
