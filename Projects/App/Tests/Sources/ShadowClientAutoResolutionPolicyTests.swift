@@ -48,3 +48,16 @@ func autoResolutionLaunchGeometryPreservesLogicalSizeAndScaleFactor() {
     #expect(geometry.pixelSize == CGSize(width: 2388, height: 1580))
     #expect(geometry.scalePercent == 200)
 }
+
+@Test("Auto resolution launch geometry exposes physical 4K mode with independent scale factor")
+func autoResolutionLaunchGeometryExposesPhysicalDisplayModeForRetina() {
+    let geometry = ShadowClientAutoResolutionPolicy.resolveLaunchGeometry(
+        displayLogicalSize: CGSize(width: 2560, height: 1440),
+        safeAreaInsets: .init(),
+        scale: 1.5
+    )
+
+    #expect(geometry.renderSize == CGSize(width: 2560, height: 1440))
+    #expect(geometry.pixelSize == CGSize(width: 3840, height: 2160))
+    #expect(geometry.scalePercent == 150)
+}

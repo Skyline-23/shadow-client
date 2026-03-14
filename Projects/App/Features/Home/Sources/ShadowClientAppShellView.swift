@@ -801,9 +801,14 @@ func launchDesktopFallbackIfNeeded() async {
             logicalSize: launchViewportMetrics.logicalSize,
             safeAreaInsets: launchViewportMetrics.safeAreaInsets
         )
+        #if os(macOS)
+        let launchSize = launchGeometry.pixelSize
+        #else
+        let launchSize = launchGeometry.renderSize
+        #endif
         return .init(
-            width: Int(launchGeometry.renderSize.width),
-            height: Int(launchGeometry.renderSize.height),
+            width: Int(launchSize.width),
+            height: Int(launchSize.height),
             fps: base.fps,
             bitrateKbps: base.bitrateKbps,
             preferredCodec: base.preferredCodec,
