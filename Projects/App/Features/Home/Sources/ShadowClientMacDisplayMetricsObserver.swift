@@ -22,6 +22,8 @@ final class ShadowClientMacDisplayMetricsNSView: NSView {
     var onMetricsChanged: (@MainActor (_ scale: CGFloat, _ pixelSize: CGSize?) -> Void)?
 
     private weak var observedWindow: NSWindow?
+    private var lastPublishedScale: CGFloat?
+    private var lastPublishedPixelSize: CGSize?
 
     deinit {
         NotificationCenter.default.removeObserver(self)
@@ -72,7 +74,6 @@ final class ShadowClientMacDisplayMetricsNSView: NSView {
 
     func publishMetricsIfNeeded() {
         guard let screen = window?.screen else {
-            onMetricsChanged?(2.0, nil)
             return
         }
 
@@ -85,7 +86,19 @@ final class ShadowClientMacDisplayMetricsNSView: NSView {
             pixelSize = nil
         }
 
-        onMetricsChanged?(scale, pixelSize)
+        guard lastPublishedScale != scale || lastPublishedPixelSize != pixelSize else {
+            return
+        }
+
+        lastPublishedScale = scale
+        lastPublishedPixelSize = pixelSize
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                return
+            }
+            self.onMetricsChanged?(scale, pixelSize)
+        }
     }
 }
 #endif
