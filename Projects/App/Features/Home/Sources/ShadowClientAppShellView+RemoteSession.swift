@@ -505,46 +505,27 @@ func diagnosticsBitrateValue() -> String {
     }
 
 func diagnosticsResolutionValue() -> String {
-        if let size = sessionSurfaceContext.videoPresentationSize,
-           size.width > 0,
-           size.height > 0
-        {
-            return "\(Int(size.width.rounded()))x\(Int(size.height.rounded()))"
-        }
-
-        if selectedResolution == .retinaAuto {
-            let pixelSize = ShadowClientDisplayMetricsKit.resolvePixelSize(
-                viewportMetrics: launchViewportMetrics,
-                displayMetrics: displayMetrics
-            )
-            return "\(Int(pixelSize.width.rounded()))x\(Int(pixelSize.height.rounded()))"
-        }
-
-        return "\(currentSettings.resolution.width)x\(currentSettings.resolution.height)"
+        ShadowClientSessionDiagnosticsPresentationKit.resolutionValue(
+            videoPresentationSize: sessionSurfaceContext.videoPresentationSize,
+            selectedResolution: selectedResolution,
+            currentSettings: currentSettings,
+            viewportMetrics: launchViewportMetrics,
+            displayMetrics: displayMetrics
+        )
     }
 
 func diagnosticsHDRValue(model: SettingsDiagnosticsHUDModel?) -> String {
-        if let model {
-            return model.hdrVideoMode == .hdr10 ? "ON" : "OFF"
-        }
-
-        switch sessionSurfaceContext.activeDynamicRangeMode {
-        case .hdr:
-            return "ON"
-        case .sdr:
-            return "OFF"
-        case .unknown:
-            return "AUTO"
-    }
+        ShadowClientSessionDiagnosticsPresentationKit.hdrValue(
+            diagnosticsModel: model,
+            activeDynamicRangeMode: sessionSurfaceContext.activeDynamicRangeMode
+        )
 }
 
 func diagnosticsAudioChannelValue() -> String {
-        switch sessionSurfaceContext.audioOutputState {
-        case let .playing(_, _, channels):
-            return "\(channels)ch"
-        case .idle, .starting, .deviceUnavailable, .decoderFailed, .disconnected:
-            return currentSettings.audioConfiguration.label
-        }
+        ShadowClientSessionDiagnosticsPresentationKit.audioChannelValue(
+            audioOutputState: sessionSurfaceContext.audioOutputState,
+            currentSettings: currentSettings
+        )
     }
 
 func diagnosticsSparklineRow(
