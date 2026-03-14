@@ -116,7 +116,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             maximumPacketSamples: maximumPacketSamples
         )
         let prefersSpatialHeadphoneRendering =
-            await ShadowClientRealtimeAudioOutputCapability.prefersSpatialHeadphoneRendering(
+            await ShadowClientAudioOutputCapabilityKit.prefersSpatialHeadphoneRendering(
                 channels: resolvedTrack.channelCount
             )
         let queuePressureProfile = Self.audioQueuePressureProfile(
@@ -1716,7 +1716,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         if let maximumOutputChannels {
             negotiatedMaximumOutputChannels = maximumOutputChannels
         } else {
-            negotiatedMaximumOutputChannels = await ShadowClientRealtimeAudioOutputCapability.maximumOutputChannels()
+            negotiatedMaximumOutputChannels = await ShadowClientAudioOutputCapabilityKit.maximumOutputChannels()
         }
         let resolvedMaximumOutputChannels = max(1, negotiatedMaximumOutputChannels)
         guard resolvedMaximumOutputChannels > 2 else {
@@ -1748,147 +1748,6 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     public static func canDecode(track: ShadowClientRTSPAudioTrackDescriptor) async -> Bool {
         await ShadowClientRealtimeAudioDecoderFactory.canDecode(track: track)
     }
-}
-
-private enum ShadowClientRealtimeAudioOutputCapability {
-    static func supportsHeadTrackedRoute() -> Bool {
-        #if os(iOS)
-        AVAudioSession.sharedInstance().currentRoute.outputs.contains { output in
-            guard output.isSpatialAudioEnabled else {
-                return false
-            }
-            switch output.portType {
-            case .headphones, .bluetoothA2DP, .bluetoothLE, .bluetoothHFP:
-                return true
-            default:
-                return false
-            }
-        }
-        #else
-        false
-        #endif
-    }
-
-    static func prefersSpatialHeadphoneRendering(channels: Int) async -> Bool {
-        guard channels > 2 else {
-            return false
-        }
-        #if os(iOS) || os(tvOS)
-        return await MainActor.run {
-            let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
-            return outputs.contains { output in
-                output.isSpatialAudioEnabled
-            }
-        }
-        #elseif os(macOS)
-        return false
-        #else
-        return false
-        #endif
-    }
-
-    static func maximumOutputChannels() async -> Int {
-        #if os(iOS) || os(tvOS)
-        return await MainActor.run {
-            let session = AVAudioSession.sharedInstance()
-            let headphoneSpatialRoute = session.currentRoute.outputs.contains { output in
-                output.isSpatialAudioEnabled
-            }
-            if headphoneSpatialRoute {
-                return 8
-            }
-            let routeMaximumChannels = Int(session.maximumOutputNumberOfChannels)
-            let currentRouteChannels = Int(session.outputNumberOfChannels)
-            return max(2, routeMaximumChannels, currentRouteChannels)
-        }
-        #else
-        if let outputChannels = macDefaultOutputChannelCount(), outputChannels > 0 {
-            return max(2, outputChannels)
-        }
-
-        let engine = AVAudioEngine()
-        let outputChannels = Int(engine.outputNode.inputFormat(forBus: 0).channelCount)
-        if outputChannels > 0 {
-            return outputChannels
-        }
-
-        let mixerChannels = Int(engine.mainMixerNode.outputFormat(forBus: 0).channelCount)
-        if mixerChannels > 0 {
-            return mixerChannels
-        }
-        return 2
-        #endif
-    }
-
-    #if os(macOS)
-    private static func macDefaultOutputChannelCount() -> Int? {
-        var defaultDeviceID = AudioDeviceID(0)
-        var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-
-        let deviceStatus = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &address,
-            0,
-            nil,
-            &propertySize,
-            &defaultDeviceID
-        )
-        guard deviceStatus == noErr, defaultDeviceID != 0 else {
-            return nil
-        }
-
-        address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyStreamConfiguration,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-
-        var configurationSize: UInt32 = 0
-        let sizeStatus = AudioObjectGetPropertyDataSize(
-            defaultDeviceID,
-            &address,
-            0,
-            nil,
-            &configurationSize
-        )
-        guard sizeStatus == noErr, configurationSize >= UInt32(MemoryLayout<AudioBufferList>.size) else {
-            return nil
-        }
-
-        let rawBuffer = UnsafeMutableRawPointer.allocate(
-            byteCount: Int(configurationSize),
-            alignment: MemoryLayout<AudioBufferList>.alignment
-        )
-        defer { rawBuffer.deallocate() }
-        let bufferListPointer = rawBuffer.bindMemory(
-            to: AudioBufferList.self,
-            capacity: 1
-        )
-
-        let configurationStatus = AudioObjectGetPropertyData(
-            defaultDeviceID,
-            &address,
-            0,
-            nil,
-            &configurationSize,
-            bufferListPointer
-        )
-        guard configurationStatus == noErr else {
-            return nil
-        }
-
-        let bufferList = UnsafeMutableAudioBufferListPointer(bufferListPointer)
-        let channelCount = bufferList.reduce(0) { partial, buffer in
-            partial + Int(buffer.mNumberChannels)
-        }
-        return channelCount > 0 ? channelCount : nil
-    }
-    #endif
 }
 
 private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
@@ -3395,17 +3254,7 @@ private final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Send
     }
 
     private static func currentRouteSummary() -> String {
-        #if os(iOS) || os(tvOS)
-        AVAudioSession.sharedInstance().currentRoute.outputs
-            .map { output in
-                "\(output.portType.rawValue){name=\(output.portName),channels=\(output.channels?.count ?? 0),spatial=\(output.isSpatialAudioEnabled)}"
-            }
-            .joined(separator: ",")
-        #else
-        let engine = AVAudioEngine()
-        let outputFormat = engine.outputNode.inputFormat(forBus: 0)
-        return "default-output{channels=\(outputFormat.channelCount),sampleRate=\(Int(outputFormat.sampleRate))}"
-        #endif
+        ShadowClientAudioOutputCapabilityKit.currentRouteSummary()
     }
 }
 #endif
@@ -3969,17 +3818,7 @@ private final class ShadowClientRealtimeAudioEngineOutput: @unchecked Sendable, 
     }
 
     static func currentRouteSummary() -> String {
-        #if os(iOS) || os(tvOS)
-        AVAudioSession.sharedInstance().currentRoute.outputs
-            .map { output in
-                "\(output.portType.rawValue){name=\(output.portName),channels=\(output.channels?.count ?? 0),spatial=\(output.isSpatialAudioEnabled)}"
-            }
-            .joined(separator: ",")
-        #else
-        let engine = AVAudioEngine()
-        let outputFormat = engine.outputNode.inputFormat(forBus: 0)
-        return "default-output{channels=\(outputFormat.channelCount),sampleRate=\(Int(outputFormat.sampleRate))}"
-        #endif
+        ShadowClientAudioOutputCapabilityKit.currentRouteSummary()
     }
 
     #if os(iOS)
