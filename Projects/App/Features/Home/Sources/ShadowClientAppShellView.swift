@@ -504,11 +504,25 @@ func startHostDiscovery() {
 
     @MainActor
 func refreshRemoteDesktopCatalog() {
-        var candidates: [String] = autoFindHosts ? hostDiscoveryRuntime.hosts.map(\.host) : []
-        candidates.append(contentsOf: remoteDesktopRuntime.hosts.map(\.host))
-        if !normalizedConnectionHost.isEmpty {
-            candidates.append(normalizedConnectionHost)
-        }
+        let selfHostNames: Set<String> = {
+            var values = Set<String>()
+            if let localizedName = Host.current().localizedName?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !localizedName.isEmpty
+            {
+                let normalizedName = localizedName.lowercased()
+                values.insert(normalizedName)
+                values.insert("\(normalizedName).local")
+            }
+            return values
+        }()
+
+        let discoveredHosts = (autoFindHosts ? hostDiscoveryRuntime.hosts.map(\.host) : []) +
+            remoteDesktopRuntime.hosts.map(\.host)
+        let candidates = ShadowClientRemoteHostCandidateFilter.filteredCandidates(
+            discoveredHosts: discoveredHosts,
+            manualHost: normalizedConnectionHost.isEmpty ? nil : normalizedConnectionHost,
+            selfHostNames: selfHostNames
+        )
 
         remoteDesktopRuntime.refreshHosts(
             candidates: candidates,
