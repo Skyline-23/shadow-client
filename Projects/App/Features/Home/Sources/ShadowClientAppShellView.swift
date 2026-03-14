@@ -355,7 +355,7 @@ var activeSessionEndpoint: String {
     }
 
 var sessionPresentationModel: ShadowClientRemoteSessionPresentationModel {
-        ShadowClientRemoteSessionPresentationMapper.make(
+        ShadowClientRemoteSessionPresentationKit.make(
             activeSessionEndpoint: activeSessionEndpoint,
             launchState: remoteDesktopRuntime.launchState,
             renderState: sessionSurfaceContext.renderState

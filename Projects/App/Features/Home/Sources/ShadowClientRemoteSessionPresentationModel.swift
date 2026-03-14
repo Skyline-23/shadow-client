@@ -33,7 +33,7 @@ public struct ShadowClientRemoteSessionPresentationModel: Equatable, Sendable {
     }
 }
 
-public enum ShadowClientRemoteSessionPresentationMapper {
+public enum ShadowClientRemoteSessionPresentationKit {
     public static func make(
         activeSessionEndpoint: String,
         launchState: ShadowClientRemoteLaunchState,
