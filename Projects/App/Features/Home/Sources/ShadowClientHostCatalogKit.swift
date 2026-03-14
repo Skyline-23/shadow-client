@@ -17,9 +17,9 @@ enum ShadowClientHostCatalogKit {
 
     private static func currentMachineHostNames() -> Set<String> {
         var values = Set<String>()
-        if let localizedName = Host.current().localizedName?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !localizedName.isEmpty
-        {
+        let localizedName = ProcessInfo.processInfo.hostName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !localizedName.isEmpty {
             let normalizedName = localizedName.lowercased()
             values.insert(normalizedName)
             values.insert("\(normalizedName).local")
