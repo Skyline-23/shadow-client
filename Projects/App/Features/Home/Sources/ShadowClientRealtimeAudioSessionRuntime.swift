@@ -2724,7 +2724,15 @@ private enum ShadowClientRealtimeAudioOutputFactory {
         maximumPendingDurationMs: Double,
         prefersSpatialHeadphoneRendering: Bool
     ) throws -> any ShadowClientRealtimeAudioOutput {
-        #if os(iOS) || os(tvOS) || os(macOS)
+        #if os(macOS)
+        return try ShadowClientRealtimeAudioEngineOutput(
+            format: format,
+            maximumQueuedBufferCount: maximumQueuedBufferCount,
+            nominalFramesPerBuffer: nominalFramesPerBuffer,
+            maximumPendingDurationMs: maximumPendingDurationMs,
+            prefersSpatialHeadphoneRendering: prefersSpatialHeadphoneRendering
+        )
+        #elseif os(iOS) || os(tvOS)
         return try ShadowClientRealtimeSampleBufferAudioOutput(
             format: format,
             maximumQueuedBufferCount: maximumQueuedBufferCount,
