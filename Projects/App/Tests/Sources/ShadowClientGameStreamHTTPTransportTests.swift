@@ -44,3 +44,50 @@ func pairchallengeOnlyIgnoresCertificateRequiredFailure() {
     #expect(!NativeGameStreamControlClient.isNonFatalPairChallengeTransportFailure(timeoutError))
     #expect(!NativeGameStreamControlClient.isNonFatalPairChallengeTransportFailure(rejectedError))
 }
+
+@Test("Launch parameter builder includes Apollo virtual display request when enabled")
+func launchParameterBuilderIncludesApolloVirtualDisplayRequest() {
+    let parameters = NativeGameStreamControlClient.makeLaunchParameters(
+        appID: 881_448_767,
+        settings: .init(
+            width: 1920,
+            height: 1080,
+            fps: 60,
+            bitrateKbps: 15_000,
+            preferredCodec: .auto,
+            enableHDR: false,
+            enableSurroundAudio: false,
+            lowLatencyMode: false,
+            preferVirtualDisplay: true
+        ),
+        remoteInputKey: Data([0x01, 0x02, 0x03, 0x04]),
+        remoteInputKeyID: 7,
+        surroundAudioInfo: 131_075,
+        localAudioPlayMode: "0"
+    )
+
+    #expect(parameters["virtualDisplay"] == "1")
+}
+
+@Test("Launch parameter builder omits Apollo virtual display request by default")
+func launchParameterBuilderOmitsApolloVirtualDisplayRequestByDefault() {
+    let parameters = NativeGameStreamControlClient.makeLaunchParameters(
+        appID: 1,
+        settings: .init(
+            width: 1280,
+            height: 720,
+            fps: 60,
+            bitrateKbps: 10_000,
+            preferredCodec: .auto,
+            enableHDR: false,
+            enableSurroundAudio: false,
+            lowLatencyMode: false
+        ),
+        remoteInputKey: Data([0xAA]),
+        remoteInputKeyID: 9,
+        surroundAudioInfo: 131_075,
+        localAudioPlayMode: "1"
+    )
+
+    #expect(parameters["virtualDisplay"] == nil)
+}

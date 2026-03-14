@@ -161,6 +161,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         public static let bitrateKbps = "settings.bitrateKbps"
         public static let autoBitrate = "settings.autoBitrate"
         public static let displayMode = "settings.displayMode"
+        public static let preferVirtualDisplay = "settings.preferVirtualDisplay"
         public static let audioConfiguration = "settings.audioConfiguration"
         public static let videoCodec = "settings.videoCodec"
         public static let videoDecoder = "settings.videoDecoder"
@@ -199,6 +200,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
     public let bitrateKbps: Int
     public let autoBitrate: Bool
     public let displayMode: ShadowClientDisplayMode
+    public let preferVirtualDisplay: Bool
     public let audioConfiguration: ShadowClientAudioConfiguration
     public let videoCodec: ShadowClientVideoCodecPreference
     public let videoDecoder: ShadowClientVideoDecoderPreference
@@ -233,6 +235,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         bitrateKbps: Int = ShadowClientAppSettingsDefaults.defaultBitrateKbps,
         autoBitrate: Bool = ShadowClientAppSettingsDefaults.defaultAutoBitrate,
         displayMode: ShadowClientDisplayMode = .borderlessFullscreen,
+        preferVirtualDisplay: Bool = false,
         audioConfiguration: ShadowClientAudioConfiguration = .surround71,
         videoCodec: ShadowClientVideoCodecPreference = .auto,
         videoDecoder: ShadowClientVideoDecoderPreference = .automatic,
@@ -269,6 +272,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         )
         self.autoBitrate = autoBitrate
         self.displayMode = displayMode
+        self.preferVirtualDisplay = preferVirtualDisplay
         self.audioConfiguration = audioConfiguration
         self.videoCodec = videoCodec
         self.videoDecoder = videoDecoder
@@ -331,6 +335,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             enableYUV444: enableYUV444,
             unlockBitrateLimit: unlockBitrateLimit,
             forceHardwareDecoding: videoDecoder != .software,
+            preferVirtualDisplay: preferVirtualDisplay,
             optimizeGameSettingsForStreaming: optimizeGameSettingsForStreaming,
             quitAppOnHostAfterStreamEnds: quitAppOnHostAfterStream,
             playAudioOnHost: resolvedPlayAudioOnHost
@@ -524,6 +529,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             "\(frameRate.fps)",
             "\(bitrateKbps)",
             "\(autoBitrate)",
+            "\(preferVirtualDisplay)",
             audioConfiguration.rawValue,
             videoCodec.rawValue,
             videoDecoder.rawValue,
@@ -539,6 +545,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         [
             "\(lowLatencyMode)",
             "\(preferHDR)",
+            "\(preferVirtualDisplay)",
             audioConfiguration.rawValue,
         ].joined(separator: "-")
     }

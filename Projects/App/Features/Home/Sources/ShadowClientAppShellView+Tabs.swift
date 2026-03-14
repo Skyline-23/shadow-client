@@ -158,6 +158,15 @@ var settingsTab: some View {
                         }
 
                         settingsRow {
+                            Toggle(isOn: $preferVirtualDisplay) {
+                                Label("Prefer Apollo virtual display", systemImage: "display.2")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+
+                        settingsRow {
                             Toggle(isOn: $enableVSync) {
                                 Label("V-Sync", systemImage: "arrow.triangle.2.circlepath")
                                     .font(.callout.weight(.semibold))

@@ -25,6 +25,7 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @AppStorage(ShadowClientAppSettings.StorageKeys.bitrateKbps) var bitrateKbps = ShadowClientAppSettingsDefaults.defaultBitrateKbps
     @AppStorage(ShadowClientAppSettings.StorageKeys.autoBitrate) var autoBitrate = ShadowClientAppSettingsDefaults.defaultAutoBitrate
     @AppStorage(ShadowClientAppSettings.StorageKeys.displayMode) var displayModeRawValue = ShadowClientDisplayMode.borderlessFullscreen.rawValue
+    @AppStorage(ShadowClientAppSettings.StorageKeys.preferVirtualDisplay) var preferVirtualDisplay = false
     @AppStorage(ShadowClientAppSettings.StorageKeys.audioConfiguration) var audioConfigurationRawValue = ShadowClientAudioConfiguration.surround71.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.videoCodec) var videoCodecRawValue = ShadowClientVideoCodecPreference.auto.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.videoDecoder) var videoDecoderRawValue = ShadowClientVideoDecoderPreference.automatic.rawValue
@@ -253,6 +254,7 @@ var currentSettings: ShadowClientAppSettings {
             bitrateKbps: bitrateKbps,
             autoBitrate: autoBitrate,
             displayMode: selectedDisplayMode,
+            preferVirtualDisplay: preferVirtualDisplay,
             audioConfiguration: selectedAudioConfiguration,
             videoCodec: selectedVideoCodec,
             videoDecoder: selectedVideoDecoder,

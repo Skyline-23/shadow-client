@@ -93,6 +93,7 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
     public let enableYUV444: Bool
     public let unlockBitrateLimit: Bool
     public let forceHardwareDecoding: Bool
+    public let preferVirtualDisplay: Bool
     public let optimizeGameSettingsForStreaming: Bool
     public let quitAppOnHostAfterStreamEnds: Bool
     public let playAudioOnHost: Bool
@@ -112,6 +113,7 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
         enableYUV444: Bool = false,
         unlockBitrateLimit: Bool = false,
         forceHardwareDecoding: Bool = true,
+        preferVirtualDisplay: Bool = false,
         optimizeGameSettingsForStreaming: Bool = true,
         quitAppOnHostAfterStreamEnds: Bool = false,
         playAudioOnHost: Bool = false
@@ -133,6 +135,7 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
         self.enableYUV444 = enableYUV444
         self.unlockBitrateLimit = unlockBitrateLimit
         self.forceHardwareDecoding = forceHardwareDecoding
+        self.preferVirtualDisplay = preferVirtualDisplay
         self.optimizeGameSettingsForStreaming = optimizeGameSettingsForStreaming
         self.quitAppOnHostAfterStreamEnds = quitAppOnHostAfterStreamEnds
         self.playAudioOnHost = playAudioOnHost
@@ -968,22 +971,14 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let isSurround = settings.enableSurroundAudio && !settings.lowLatencyMode
         let surroundAudioInfo = isSurround ? 393_279 : 131_075
         let localAudioPlayMode = settings.playAudioOnHost ? "1" : "0"
-
-        var parameters: [String: String] = [
-            "appid": "\(appID)",
-            "mode": "\(settings.width)x\(settings.height)x\(settings.fps)",
-            "additionalStates": "1",
-            "sops": "1",
-            "rikey": remoteInputKey.hexString,
-            "rikeyid": "\(keyID)",
-            "localAudioPlayMode": localAudioPlayMode,
-            "surroundAudioInfo": "\(surroundAudioInfo)",
-            "remoteControllersBitmap": "1",
-            "gcmap": "1",
-            "gcpersist": "0",
-        ]
-
-        parameters["bitrate"] = "\(settings.bitrateKbps)"
+        var parameters = Self.makeLaunchParameters(
+            appID: appID,
+            settings: settings,
+            remoteInputKey: remoteInputKey,
+            remoteInputKeyID: keyID,
+            surroundAudioInfo: surroundAudioInfo,
+            localAudioPlayMode: localAudioPlayMode
+        )
 
         let resolvedCodecPreference = Self.resolvedLaunchCodecPreference(
             from: settings.preferredCodec,
@@ -1137,6 +1132,36 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             }
             throw Self.remapLaunchError(error)
         }
+    }
+
+    static func makeLaunchParameters(
+        appID: Int,
+        settings: ShadowClientGameStreamLaunchSettings,
+        remoteInputKey: Data,
+        remoteInputKeyID: UInt32,
+        surroundAudioInfo: Int,
+        localAudioPlayMode: String
+    ) -> [String: String] {
+        var parameters: [String: String] = [
+            "appid": "\(appID)",
+            "mode": "\(settings.width)x\(settings.height)x\(settings.fps)",
+            "additionalStates": "1",
+            "sops": "1",
+            "rikey": remoteInputKey.hexString,
+            "rikeyid": "\(remoteInputKeyID)",
+            "localAudioPlayMode": localAudioPlayMode,
+            "surroundAudioInfo": "\(surroundAudioInfo)",
+            "remoteControllersBitmap": "1",
+            "gcmap": "1",
+            "gcpersist": "0",
+            "bitrate": "\(settings.bitrateKbps)",
+        ]
+
+        if settings.preferVirtualDisplay {
+            parameters["virtualDisplay"] = "1"
+        }
+
+        return parameters
     }
 
     public func setClipboard(

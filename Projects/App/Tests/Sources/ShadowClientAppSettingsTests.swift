@@ -25,6 +25,7 @@ func appSettingsDefaultsPreferAutomaticDecoderAndHiddenHUD() {
     #expect(settings.showDiagnosticsHUD == false)
     #expect(settings.videoDecoder == .automatic)
     #expect(settings.resolution == .retinaAuto)
+    #expect(settings.preferVirtualDisplay == false)
 }
 
 @Test("Dependencies applying settings override session preferences while preserving host capabilities")
@@ -101,6 +102,7 @@ func appSettingsMapToLaunchSettings() {
         bitrateKbps: 42_000,
         autoBitrate: false,
         audioConfiguration: .surround51,
+        preferVirtualDisplay: true,
         videoCodec: .av1,
         enableVSync: true,
         enableFramePacing: true,
@@ -130,6 +132,7 @@ func appSettingsMapToLaunchSettings() {
     #expect(launch.enableFramePacing == true)
     #expect(launch.enableYUV444 == true)
     #expect(launch.unlockBitrateLimit == true)
+    #expect(launch.preferVirtualDisplay == true)
     #expect(launch.optimizeGameSettingsForStreaming == true)
     #expect(launch.quitAppOnHostAfterStreamEnds == true)
     #expect(launch.playAudioOnHost == false)
