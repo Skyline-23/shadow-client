@@ -20,7 +20,7 @@ var remoteSessionFlowView: some View {
                     if let overlay = sessionPresentationModel.overlay {
                         ZStack {
                             Color.black
-                                .opacity(playbackOverlayDimOpacity(for: sessionPresentationModel.launchTone))
+                                .opacity(ShadowClientRemoteSessionOverlayPresentationKit.dimOpacity(for: sessionPresentationModel.launchTone))
                                 .ignoresSafeArea()
 
                             playbackOverlayLabel(
@@ -286,46 +286,19 @@ func playbackOverlayLabel(
         symbol: String,
         tone: ShadowClientRemoteSessionLaunchTone
     ) -> some View {
-        let backgroundOpacity: Double
-        let strokeOpacity: Double
-        let textColor: Color
-        switch tone {
-        case .failed:
-            backgroundOpacity = 0.66
-            strokeOpacity = 0.78
-            textColor = Color.red.opacity(0.95)
-        case .launching:
-            backgroundOpacity = 0.56
-            strokeOpacity = 0.42
-            textColor = Color.orange.opacity(0.95)
-        case .idle, .launched:
-            backgroundOpacity = 0.45
-            strokeOpacity = 0.18
-            textColor = Color.white.opacity(0.88)
-        }
+        let style = ShadowClientRemoteSessionOverlayPresentationKit.overlayStyle(for: tone)
 
         return RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(Color.black.opacity(backgroundOpacity))
+            .fill(Color.black.opacity(style.backgroundOpacity))
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(textColor.opacity(strokeOpacity), lineWidth: 1)
+                    .stroke(style.textColor.opacity(style.strokeOpacity), lineWidth: 1)
             )
             .overlay {
                 Label(title, systemImage: symbol)
                     .font(.callout.weight(.semibold))
-                    .foregroundStyle(textColor)
+                    .foregroundStyle(style.textColor)
             }
-    }
-
-func playbackOverlayDimOpacity(for tone: ShadowClientRemoteSessionLaunchTone) -> Double {
-        switch tone {
-        case .failed:
-            return 0.58
-        case .launching:
-            return 0.46
-        case .idle, .launched:
-            return 0.34
-        }
     }
 
 func realtimeSessionHUDCard<Content: View>(
@@ -349,7 +322,7 @@ func realtimeSessionDiagnosticsHUD(_ model: SettingsDiagnosticsHUDModel) -> some
                 HStack(spacing: 6) {
                     Image(systemName: "waveform.path.ecg.rectangle")
                         .foregroundStyle(toneColor(for: model.tone))
-                    Text("Realtime HUD")
+                    Text(ShadowClientRemoteSessionOverlayPresentationKit.hudTitle())
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.white.opacity(0.9))
                     Spacer(minLength: 8)
@@ -372,7 +345,13 @@ func realtimeSessionDiagnosticsHUD(_ model: SettingsDiagnosticsHUDModel) -> some
                     diagnosticsStatChip(label: "Drop", value: String(format: "%.1f%%", model.frameDropPercent))
                 }
 
-                Text("Codec \(activeSessionVideoCodecLabel) · Resolution \(diagnosticsResolutionValue()) · Audio \(diagnosticsAudioChannelValue())")
+                Text(
+                    ShadowClientRemoteSessionOverlayPresentationKit.diagnosticsSummary(
+                        codecLabel: activeSessionVideoCodecLabel,
+                        resolutionValue: diagnosticsResolutionValue(),
+                        audioChannelValue: diagnosticsAudioChannelValue()
+                    )
+                )
                     .font(.caption2.monospacedDigit().weight(.semibold))
                     .foregroundStyle(Color.mint.opacity(0.86))
 
@@ -410,20 +389,26 @@ func realtimeSessionBootstrapDiagnosticsHUD(controlRoundTripMs: Int?) -> some Vi
                 HStack(spacing: 6) {
                     Image(systemName: "waveform.path.ecg.rectangle")
                         .foregroundStyle(Color.white.opacity(0.82))
-                    Text("Realtime HUD")
+                    Text(ShadowClientRemoteSessionOverlayPresentationKit.hudTitle())
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.white.opacity(0.9))
                     Spacer(minLength: 8)
-                    Text("BOOTSTRAP")
+                    Text(ShadowClientRemoteSessionOverlayPresentationKit.bootstrapBadgeText())
                         .font(.caption2.monospaced().weight(.semibold))
                         .foregroundStyle(Color.white.opacity(0.72))
                 }
 
-                Text("Telemetry stream pending. Showing connection health baseline.")
+                Text(ShadowClientRemoteSessionOverlayPresentationKit.bootstrapDescription())
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(Color.white.opacity(0.74))
 
-                Text("Codec \(activeSessionVideoCodecLabel) · Resolution \(diagnosticsResolutionValue()) · Audio \(diagnosticsAudioChannelValue())")
+                Text(
+                    ShadowClientRemoteSessionOverlayPresentationKit.diagnosticsSummary(
+                        codecLabel: activeSessionVideoCodecLabel,
+                        resolutionValue: diagnosticsResolutionValue(),
+                        audioChannelValue: diagnosticsAudioChannelValue()
+                    )
+                )
                     .font(.caption2.monospacedDigit().weight(.semibold))
                     .foregroundStyle(Color.mint.opacity(0.86))
 
@@ -466,7 +451,7 @@ func realtimeSessionConnectionIssueHUD(
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.white.opacity(0.95))
                     Spacer(minLength: 8)
-                    Text("OFFLINE")
+                    Text(ShadowClientRemoteSessionOverlayPresentationKit.connectionIssueBadgeText())
                         .font(.caption2.monospaced().weight(.semibold))
                         .foregroundStyle(Color.red.opacity(0.95))
                 }
@@ -476,7 +461,7 @@ func realtimeSessionConnectionIssueHUD(
                     .foregroundStyle(Color.white.opacity(0.82))
                     .lineLimit(3)
 
-                Text("Remote input is paused until stream reconnects.")
+                Text(ShadowClientRemoteSessionOverlayPresentationKit.connectionIssueFootnote())
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(Color.red.opacity(0.90))
             }
