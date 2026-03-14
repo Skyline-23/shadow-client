@@ -694,7 +694,7 @@ func autoLaunchPreferredRemoteApp(preferredHostID: String?) async {
 
         for _ in 0..<ShadowClientUIRuntimeDefaults.appListPollingAttempts {
             if case .loaded = remoteDesktopRuntime.appState {
-                if let preferred = preferredLaunchApp(from: remoteDesktopRuntime.apps) {
+                if let preferred = ShadowClientLaunchPresentationKit.preferredLaunchApp(from: remoteDesktopRuntime.apps) {
                     launchRemoteApp(preferred)
                     return
                 }
@@ -710,19 +710,12 @@ func autoLaunchPreferredRemoteApp(preferredHostID: String?) async {
             try? await Task.sleep(for: ShadowClientUIRuntimeDefaults.pollingInterval)
         }
 
-        if let preferred = preferredLaunchApp(from: remoteDesktopRuntime.apps) {
+        if let preferred = ShadowClientLaunchPresentationKit.preferredLaunchApp(from: remoteDesktopRuntime.apps) {
             launchRemoteApp(preferred)
             return
         }
 
         await launchDesktopFallbackIfNeeded()
-    }
-
-func preferredLaunchApp(from apps: [ShadowClientRemoteAppDescriptor]) -> ShadowClientRemoteAppDescriptor? {
-        if let nonCollector = apps.first(where: { !$0.isAppCollectorGame }) {
-            return nonCollector
-        }
-        return apps.first
     }
 
     @MainActor
@@ -757,17 +750,10 @@ func launchDesktopFallbackIfNeeded() async {
             networkSignal: launchBitrateNetworkSignal,
             localHDRDisplayAvailable: isLocalHDRDisplayAvailable
         )
-        let fallbackApp = preferredLaunchApp(from: remoteDesktopRuntime.apps) ?? {
-            guard selectedHost.currentGameID > 0 else {
-                return nil
-            }
-            return ShadowClientRemoteAppDescriptor(
-                id: selectedHost.currentGameID,
-                title: ShadowClientRemoteAppLabels.currentSession(selectedHost.currentGameID),
-                hdrSupported: false,
-                isAppCollectorGame: false
-            )
-        }()
+        let fallbackApp = ShadowClientLaunchPresentationKit.fallbackDesktopApp(
+            selectedHost: selectedHost,
+            apps: remoteDesktopRuntime.apps
+        )
         guard let fallbackApp else {
             return
         }
