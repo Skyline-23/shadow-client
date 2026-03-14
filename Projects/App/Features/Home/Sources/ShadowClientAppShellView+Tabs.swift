@@ -111,7 +111,7 @@ var settingsTab: some View {
                                 .opacity(autoBitrate ? 0.45 : 1.0)
 
                                 if autoBitrate {
-                                    Text("Estimated from resolution, frame rate, codec, HDR, and YUV444.")
+                                    Text(ShadowClientSettingsCopyKit.autoBitrateFootnote())
                                         .font(.caption2.weight(.medium))
                                         .foregroundStyle(Color.white.opacity(0.7))
                                 }
@@ -151,7 +151,7 @@ var settingsTab: some View {
                         }
 
                         if !isLocalHDRDisplayAvailable {
-                            Text("HDR requires a real HDR/EDR display on this device.")
+                            Text(ShadowClientSettingsCopyKit.hdrUnavailableFootnote())
                                 .font(.caption2.weight(.medium))
                                 .foregroundStyle(Color.white.opacity(0.7))
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -200,7 +200,7 @@ var settingsTab: some View {
                         }
 
                         #if os(iOS) || os(tvOS)
-                        Text("On iPhone and iPad, your selection is the ceiling. The active audio route can still cap playback lower, and built-in speakers or most headphones stay stereo.")
+                        Text(ShadowClientSettingsCopyKit.mobileAudioRouteFootnote())
                             .font(.caption2.weight(.medium))
                             .foregroundStyle(Color.white.opacity(0.7))
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -229,7 +229,7 @@ var settingsTab: some View {
 
                         if !ShadowClientAudioPlaybackDefaults.supportsClientPlayback {
                             settingsRow {
-                                Text("Client audio playback is not available yet. Audio is currently routed to the host device.")
+                                Text(ShadowClientSettingsCopyKit.clientPlaybackUnavailableFootnote())
                                     .font(.caption2.weight(.medium))
                                     .foregroundStyle(Color.white.opacity(0.72))
                             }
