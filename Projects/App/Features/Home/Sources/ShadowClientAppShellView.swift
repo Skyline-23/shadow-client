@@ -371,70 +371,32 @@ var normalizedManualHostDraft: String {
     }
 
 var canConnect: Bool {
-        guard !normalizedConnectionHost.isEmpty else {
-            return false
-        }
-
-        return canInitiateSessionConnection
+        ShadowClientConnectionPresentationKit.canConnect(
+            normalizedHost: normalizedConnectionHost,
+            state: connectionState
+        )
     }
 
 var canInitiateSessionConnection: Bool {
-        switch connectionState {
-        case .connecting, .disconnecting:
-            return false
-        case .connected, .disconnected, .failed:
-            return true
-        }
+        ShadowClientConnectionPresentationKit.canInitiateSessionConnection(
+            state: connectionState
+        )
     }
 
 var canDisconnect: Bool {
-        switch connectionState {
-        case .connected, .connecting, .failed:
-            return true
-        case .disconnected, .disconnecting:
-            return false
-        }
+        ShadowClientConnectionPresentationKit.canDisconnect(state: connectionState)
     }
 
 var connectionStatusText: String {
-        switch connectionState {
-        case .disconnected:
-            return "Status: Disconnected"
-        case let .connecting(host):
-            return "Status: Connecting to \(host)..."
-        case let .connected(host):
-            return "Status: Connected to \(host)"
-        case .disconnecting:
-            return "Status: Disconnecting..."
-        case let .failed(_, message):
-            return "Status: Connection Failed - \(message)"
-        }
+        ShadowClientConnectionPresentationKit.statusText(state: connectionState)
     }
 
 var connectionStatusColor: Color {
-        switch connectionState {
-        case .connected:
-            return .green
-        case .failed:
-            return .red
-        case .connecting, .disconnecting:
-            return .orange
-        case .disconnected:
-            return .secondary
-        }
+        ShadowClientConnectionPresentationKit.statusColor(state: connectionState)
     }
 
 var connectionStatusSymbol: String {
-        switch connectionState {
-        case .connected:
-            return "checkmark.circle.fill"
-        case .failed:
-            return "exclamationmark.triangle.fill"
-        case .connecting, .disconnecting:
-            return "clock.fill"
-        case .disconnected:
-            return "bolt.slash.fill"
-        }
+        ShadowClientConnectionPresentationKit.statusSymbol(state: connectionState)
     }
 
     @MainActor
