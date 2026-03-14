@@ -189,7 +189,8 @@ var realtimeSessionHUDDisplayState: ShadowClientRealtimeSessionHUDDisplayState? 
             diagnosticsModel: settingsDiagnosticsModel,
             controlRoundTripMs: sessionSurfaceContext.controlRoundTripMs,
             renderState: sessionSurfaceContext.renderState,
-            audioOutputState: sessionSurfaceContext.audioOutputState
+            audioOutputState: sessionSurfaceContext.audioOutputState,
+            sessionIssue: remoteDesktopRuntime.sessionIssue
         )
     }
 

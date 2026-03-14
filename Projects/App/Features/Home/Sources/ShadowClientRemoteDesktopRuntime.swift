@@ -249,6 +249,16 @@ public extension ShadowClientRemoteAppCatalogState {
     }
 }
 
+public struct ShadowClientRemoteSessionIssue: Equatable, Sendable {
+    public let title: String
+    public let message: String
+
+    public init(title: String, message: String) {
+        self.title = title
+        self.message = message
+    }
+}
+
 public protocol ShadowClientPairingPINProviding {
     func nextPIN() -> String
 }
@@ -1217,6 +1227,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @Published public private(set) var pairingState: ShadowClientRemotePairingState = .idle
     @Published public private(set) var launchState: ShadowClientRemoteLaunchState = .idle
     @Published public private(set) var activeSession: ShadowClientActiveRemoteSession?
+    @Published public private(set) var sessionIssue: ShadowClientRemoteSessionIssue?
     public let sessionPresentationMode: ShadowClientRemoteSessionPresentationMode
     public let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext
 
@@ -1257,6 +1268,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var lastRuntimeStreamReconnectUptime: TimeInterval = 0
     private var renderStateFailureObservation: AnyCancellable?
     private var lastSynchronizedClipboardText: String?
+    private var clipboardReadPermissionDenied = false
+    private var clipboardWritePermissionDenied = false
+    private var clipboardActionRequiresActiveStream = false
 
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
@@ -1706,6 +1720,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         launchState = .launching
+        clearSessionIssueState()
         stopInputKeepAliveLoop()
         activeSession = nil
         lastKnownSessionURL = nil
@@ -1960,6 +1975,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         )
                     }
                     self.lastKnownSessionURL = Self.normalizedSessionURL(connectedSessionURL)
+                    self.clearSessionIssueState()
                     if self.sessionPresentationMode == .externalRuntime {
                         self.launchState = .launched(
                             "Remote desktop launched (\(connectedLaunchResult.verb)): \(resolvedTitle) on \(resolvedHostDescriptor.host)"
@@ -2039,6 +2055,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         activeSession = nil
         lastKnownSessionURL = nil
         lastLaunchRequestContext = nil
+        clearSessionIssueState()
         runtimeStreamReconnectInProgress = false
         runtimeCodecRecoveryInProgress = false
         stopInputKeepAliveLoop()
@@ -2132,7 +2149,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 text: normalized
             )
             lastSynchronizedClipboardText = normalized
+            clearClipboardWriteIssue()
         } catch {
+            setClipboardIssue(for: .write, error: error)
             logger.error(
                 "Apollo clipboard sync failed for host=\(endpoint.host, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
@@ -2195,11 +2214,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             )
             let normalized = remoteClipboard.replacingOccurrences(of: "\r\n", with: "\n")
             guard !normalized.isEmpty else {
+                clearClipboardReadIssue()
                 return
             }
             await clipboardClient.setString(normalized)
             lastSynchronizedClipboardText = normalized
+            clearClipboardReadIssue()
         } catch {
+            setClipboardIssue(for: .read, error: error)
             logger.error(
                 "Apollo clipboard pull failed for host=\(endpoint.host, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
@@ -2313,6 +2335,127 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private func stopClipboardSyncLoop() {
         clipboardSyncTask?.cancel()
         clipboardSyncTask = nil
+    }
+
+    @MainActor
+    private func clearSessionIssueState() {
+        clipboardReadPermissionDenied = false
+        clipboardWritePermissionDenied = false
+        clipboardActionRequiresActiveStream = false
+        sessionIssue = nil
+    }
+
+    @MainActor
+    private func clearClipboardWriteIssue() {
+        clipboardWritePermissionDenied = false
+        clipboardActionRequiresActiveStream = false
+        refreshSessionIssue()
+    }
+
+    @MainActor
+    private func clearClipboardReadIssue() {
+        clipboardReadPermissionDenied = false
+        clipboardActionRequiresActiveStream = false
+        refreshSessionIssue()
+    }
+
+    @MainActor
+    private func setClipboardIssue(
+        for operation: ClipboardOperation,
+        error: Error
+    ) {
+        guard let issue = Self.classifyClipboardIssue(error, operation: operation) else {
+            return
+        }
+
+        switch issue {
+        case .readPermissionDenied:
+            clipboardReadPermissionDenied = true
+        case .writePermissionDenied:
+            clipboardWritePermissionDenied = true
+        case .requiresActiveStream:
+            clipboardActionRequiresActiveStream = true
+        }
+        refreshSessionIssue()
+    }
+
+    @MainActor
+    private func refreshSessionIssue() {
+        sessionIssue = Self.sessionIssue(
+            clipboardReadPermissionDenied: clipboardReadPermissionDenied,
+            clipboardWritePermissionDenied: clipboardWritePermissionDenied,
+            clipboardActionRequiresActiveStream: clipboardActionRequiresActiveStream
+        )
+    }
+
+    private enum ClipboardOperation {
+        case read
+        case write
+    }
+
+    private enum ClipboardIssueKind {
+        case readPermissionDenied
+        case writePermissionDenied
+        case requiresActiveStream
+    }
+
+    private static func classifyClipboardIssue(
+        _ error: Error,
+        operation: ClipboardOperation
+    ) -> ClipboardIssueKind? {
+        guard let streamError = error as? ShadowClientGameStreamError else {
+            return nil
+        }
+
+        switch streamError {
+        case let .responseRejected(code, _):
+            switch code {
+            case 401:
+                return operation == .read ? .readPermissionDenied : .writePermissionDenied
+            case 403:
+                return .requiresActiveStream
+            default:
+                return nil
+            }
+        default:
+            return nil
+        }
+    }
+
+    private static func sessionIssue(
+        clipboardReadPermissionDenied: Bool,
+        clipboardWritePermissionDenied: Bool,
+        clipboardActionRequiresActiveStream: Bool
+    ) -> ShadowClientRemoteSessionIssue? {
+        if clipboardReadPermissionDenied && clipboardWritePermissionDenied {
+            return .init(
+                title: "Clipboard Permission Required",
+                message: "Grant Clipboard Read and Clipboard Set permissions for this paired Apollo client."
+            )
+        }
+
+        if clipboardWritePermissionDenied {
+            return .init(
+                title: "Clipboard Permission Required",
+                message: "Grant Clipboard Set permission for this paired Apollo client."
+            )
+        }
+
+        if clipboardReadPermissionDenied {
+            return .init(
+                title: "Clipboard Permission Required",
+                message: "Grant Clipboard Read permission for this paired Apollo client."
+            )
+        }
+
+        if clipboardActionRequiresActiveStream {
+            return .init(
+                title: "Clipboard Sync Unavailable",
+                message: "Apollo clipboard actions require an active stream for this client."
+            )
+        }
+
+        return nil
     }
 
     private static func normalizedSessionURL(_ value: String?) -> String? {

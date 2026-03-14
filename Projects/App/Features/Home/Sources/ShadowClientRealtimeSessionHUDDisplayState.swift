@@ -10,7 +10,8 @@ public enum ShadowClientRealtimeSessionHUDDisplayStateMapper {
         diagnosticsModel: SettingsDiagnosticsHUDModel?,
         controlRoundTripMs: Int?,
         renderState: ShadowClientRealtimeSessionSurfaceContext.RenderState,
-        audioOutputState: ShadowClientRealtimeAudioOutputState = .idle
+        audioOutputState: ShadowClientRealtimeAudioOutputState = .idle,
+        sessionIssue: ShadowClientRemoteSessionIssue? = nil
     ) -> ShadowClientRealtimeSessionHUDDisplayState? {
         guard showDiagnosticsHUD else {
             return nil
@@ -66,6 +67,13 @@ public enum ShadowClientRealtimeSessionHUDDisplayStateMapper {
             )
         case .idle, .starting, .playing:
             break
+        }
+
+        if let sessionIssue {
+            return .connectionIssue(
+                title: sessionIssue.title,
+                message: sessionIssue.message
+            )
         }
 
         if let diagnosticsModel {

@@ -1721,6 +1721,62 @@ func remoteDesktopRuntimeDoesNotFallbackToTextInputWhenClipboardActionFails() as
     #expect(inputCalls.isEmpty)
 }
 
+@Test("Remote desktop runtime surfaces clipboard write permission denial")
+@MainActor
+func remoteDesktopRuntimeSurfacesClipboardWritePermissionDenial() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.28": .init(
+                host: "192.168.0.28",
+                displayName: "Loft-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-CLIPBOARD"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.28": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.28:48010/session", verb: "launch"),
+        simulatedClipboardFailure: ShadowClientGameStreamError.responseRejected(
+            code: 401,
+            message: "forbidden"
+        )
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.28"], preferredHost: "192.168.0.28")
+    await waitForControlHostLoaded(runtime)
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+
+    runtime.syncClipboard("denied")
+    await waitForClipboardCalls(control, expectedCount: 1)
+
+    #expect(
+        runtime.sessionIssue == .init(
+            title: "Clipboard Permission Required",
+            message: "Grant Clipboard Set permission for this paired Apollo client."
+        )
+    )
+}
+
 @Test("Remote desktop runtime copies Apollo host clipboard into the local clipboard")
 @MainActor
 func remoteDesktopRuntimePullsClipboardIntoLocalClipboard() async {
@@ -1775,6 +1831,64 @@ func remoteDesktopRuntimePullsClipboardIntoLocalClipboard() async {
         ShadowClientClipboardBridge.currentString()
     }
     #expect(clipboardText == "copied from host")
+}
+
+@Test("Remote desktop runtime surfaces clipboard read permission denial")
+@MainActor
+func remoteDesktopRuntimeSurfacesClipboardReadPermissionDenial() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.28": .init(
+                host: "192.168.0.28",
+                displayName: "Loft-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-CLIPBOARD"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.28": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.28:48010/session", verb: "launch"),
+        simulatedClipboardFailure: ShadowClientGameStreamError.responseRejected(
+            code: 401,
+            message: "forbidden"
+        )
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let sessionInput = FakeSessionInputClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector,
+        sessionInputClient: sessionInput
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.28"], preferredHost: "192.168.0.28")
+    await waitForControlHostLoaded(runtime)
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+
+    runtime.pullClipboard()
+    await waitForSessionInputCalls(sessionInput, expectedCount: 4)
+
+    #expect(
+        runtime.sessionIssue == .init(
+            title: "Clipboard Permission Required",
+            message: "Grant Clipboard Read permission for this paired Apollo client."
+        )
+    )
 }
 
 @Test("Remote desktop runtime automatically pushes local clipboard changes during an active session")

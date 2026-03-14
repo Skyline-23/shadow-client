@@ -110,6 +110,27 @@ func realtimeSessionHUDMapperSurfacesAudioDisconnect() {
     )
 }
 
+@Test("Realtime session HUD mapper surfaces session permission issues ahead of telemetry")
+func realtimeSessionHUDMapperSurfacesSessionPermissionIssue() {
+    let model = ShadowClientRealtimeSessionHUDDisplayStateMapper.make(
+        showDiagnosticsHUD: true,
+        diagnosticsModel: makeDiagnosticsModel(),
+        controlRoundTripMs: 8,
+        renderState: .rendering,
+        sessionIssue: .init(
+            title: "Clipboard Permission Required",
+            message: "Grant Clipboard Read permission for this paired Apollo client."
+        )
+    )
+
+    #expect(
+        model == .connectionIssue(
+            title: "Clipboard Permission Required",
+            message: "Grant Clipboard Read permission for this paired Apollo client."
+        )
+    )
+}
+
 private func makeDiagnosticsModel() -> SettingsDiagnosticsHUDModel {
     let tick = HomeDiagnosticsTick(
         model: .init(
