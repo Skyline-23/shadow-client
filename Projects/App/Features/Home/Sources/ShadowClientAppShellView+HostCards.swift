@@ -843,117 +843,66 @@ var remoteDesktopHostCard: some View {
     }
 
     func hostDisplayTitle(_ host: ShadowClientRemoteHostDescriptor) -> String {
-        let alias = hostFriendlyName(for: host).trimmingCharacters(in: .whitespacesAndNewlines)
-        return alias.isEmpty ? host.displayName : alias
+        ShadowClientRemoteHostPresentationKit.displayTitle(
+            hostPresentationInput(for: host)
+        )
     }
 
     func hostSummaryText(_ host: ShadowClientRemoteHostDescriptor) -> String {
-        if let issue = hostPresentationIssue(host) {
-            return issue.message
-        }
-        let notes = hostNotes(for: host).trimmingCharacters(in: .whitespacesAndNewlines)
-        if !notes.isEmpty {
-            return notes
-        }
-        if let lastError = host.lastError, !lastError.isEmpty {
-            return lastError
-        }
-        return host.detailLabel
+        ShadowClientRemoteHostPresentationKit.summaryText(
+            hostPresentationInput(for: host)
+        )
     }
 
     func hostTileActionLabel(_ host: ShadowClientRemoteHostDescriptor) -> String {
-        if hostPresentationIssue(host) != nil {
-            return "Permissions"
-        }
-        if !host.isReachable {
-            return "Needs Attention"
-        }
-        switch host.pairStatus {
-        case .paired:
-            return "Ready to Go"
-        case .notPaired:
-            return "Pair First"
-        case .unknown:
-            return "Inspect"
-        }
+        ShadowClientRemoteHostPresentationKit.tileActionLabel(
+            hostPresentationInput(for: host)
+        )
     }
 
     func hostFrontHint(_ host: ShadowClientRemoteHostDescriptor) -> String {
-        if hostPresentationIssue(host) != nil {
-            return "Permissions"
-        }
-        if !host.isReachable {
-            return "Connection issue"
-        }
-        if host.pairStatus == .paired {
-            return "Ready"
-        }
-        return "Pair first"
+        ShadowClientRemoteHostPresentationKit.frontHint(
+            hostPresentationInput(for: host)
+        )
     }
 
     func hostFrontHintSymbol(_ host: ShadowClientRemoteHostDescriptor) -> String {
-        if hostPresentationIssue(host) != nil {
-            return "lock.trianglebadge.exclamationmark"
-        }
-        if !host.isReachable {
-            return "exclamationmark.shield"
-        }
-        if host.pairStatus == .paired {
-            return "play.circle"
-        }
-        return "lock.shield"
+        ShadowClientRemoteHostPresentationKit.frontHintSymbol(
+            hostPresentationInput(for: host)
+        )
     }
 
     func hostFrontHintColor(_ host: ShadowClientRemoteHostDescriptor) -> Color {
-        if hostPresentationIssue(host) != nil {
-            return .yellow
-        }
-        if !host.isReachable {
-            return .red.opacity(0.9)
-        }
-        if host.pairStatus == .paired {
-            return .mint
-        }
-        return .yellow
+        ShadowClientRemoteHostPresentationKit.frontHintColor(
+            hostPresentationInput(for: host)
+        )
     }
 
     func hostFrontMessage(_ host: ShadowClientRemoteHostDescriptor) -> String {
-        if let issue = hostPresentationIssue(host) {
-            return issue.message
-        }
-        if let lastError = host.lastError, !lastError.isEmpty {
-            return lastError
-        }
-        if host.pairStatus == .paired {
-            return "Flip the card for launch controls and a quick app library."
-        }
-        return "Flip the card to pair this host before browsing or launching apps."
+        ShadowClientRemoteHostPresentationKit.frontMessage(
+            hostPresentationInput(for: host)
+        )
     }
 
     func hostGlyphSymbol(_ host: ShadowClientRemoteHostDescriptor) -> String {
-        if hostPresentationIssue(host) != nil {
-            return "lock.trianglebadge.exclamationmark.fill"
-        }
-        if !host.isReachable {
-            return "wifi.exclamationmark"
-        }
-        if host.pairStatus == .paired {
-            return "checkmark.circle.fill"
-        }
-        return "lock.fill"
+        ShadowClientRemoteHostPresentationKit.glyphSymbol(
+            hostPresentationInput(for: host)
+        )
     }
 
     func hostGlyphColor(_ host: ShadowClientRemoteHostDescriptor) -> Color {
-        if hostPresentationIssue(host) != nil {
-            return .yellow
-        }
-        if !host.isReachable {
-            return .red.opacity(0.92)
-        }
-        if host.pairStatus == .paired {
-            return .mint
-        }
-        return .yellow
+        ShadowClientRemoteHostPresentationKit.glyphColor(
+            hostPresentationInput(for: host)
+        )
+    }
+
+    private func hostPresentationInput(for host: ShadowClientRemoteHostDescriptor) -> ShadowClientRemoteHostPresentationInput {
+        .init(
+            host: host,
+            issue: hostPresentationIssue(host),
+            alias: hostFriendlyName(for: host),
+            notes: hostNotes(for: host)
+        )
     }
 
     var hostSpotlightSurface: some View {
