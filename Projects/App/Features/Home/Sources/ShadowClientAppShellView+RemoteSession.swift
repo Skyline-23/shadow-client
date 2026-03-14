@@ -469,24 +469,21 @@ func realtimeSessionConnectionIssueHUD(
     }
 
 func diagnosticsRoundTripValue(_ roundTripMs: Int?) -> String {
-        guard let roundTripMs else {
-            return "--"
-        }
-        return "\(max(roundTripMs, 0)) ms"
+        ShadowClientSessionDiagnosticsPresentationKit.roundTripValue(roundTripMs)
     }
 
 func diagnosticsFPSValue() -> String {
-        if let estimatedFPS = sessionSurfaceContext.estimatedVideoFPS, estimatedFPS.isFinite {
-            return "\(Int(estimatedFPS.rounded())) fps"
-        }
-        return "\(currentSettings.frameRate.fps) fps"
+        ShadowClientSessionDiagnosticsPresentationKit.fpsValue(
+            estimatedVideoFPS: sessionSurfaceContext.estimatedVideoFPS,
+            defaultFPS: currentSettings.frameRate.fps
+        )
     }
 
 func diagnosticsBitrateValue() -> String {
-        if let bitrate = sessionSurfaceContext.estimatedVideoBitrateKbps {
-            return "\(max(0, bitrate)) / \(effectiveBitrateKbps) kbps"
-        }
-        return "\(effectiveBitrateKbps) kbps"
+        ShadowClientSessionDiagnosticsPresentationKit.bitrateValue(
+            estimatedVideoBitrateKbps: sessionSurfaceContext.estimatedVideoBitrateKbps,
+            effectiveBitrateKbps: effectiveBitrateKbps
+        )
     }
 
 func diagnosticsResolutionValue() -> String {
@@ -536,14 +533,7 @@ func diagnosticsSparklineRow(
     }
 
 func diagnosticsLatestValue(samples: [Double], unit: String) -> String {
-        guard let latest = samples.last else {
-            return "--"
-        }
-
-        if unit == "ms" {
-            return "\(Int(latest.rounded())) \(unit)"
-        }
-        return "\(String(format: "%.1f", latest))\(unit)"
+        ShadowClientSessionDiagnosticsPresentationKit.latestValue(samples: samples, unit: unit)
     }
 
 func diagnosticsStatChip(label: String, value: String) -> some View {
