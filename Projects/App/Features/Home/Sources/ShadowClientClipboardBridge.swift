@@ -49,3 +49,24 @@ enum ShadowClientClipboardBridge {
         #endif
     }
 }
+
+public protocol ShadowClientClipboardClient: Sendable {
+    func currentString() async -> String?
+    func setString(_ value: String) async
+}
+
+public struct NativeShadowClientClipboardClient: ShadowClientClipboardClient {
+    public init() {}
+
+    public func currentString() async -> String? {
+        await MainActor.run {
+            ShadowClientClipboardBridge.currentString()
+        }
+    }
+
+    public func setString(_ value: String) async {
+        await MainActor.run {
+            ShadowClientClipboardBridge.setString(value)
+        }
+    }
+}

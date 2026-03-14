@@ -1068,6 +1068,7 @@ private actor ShadowClientRemoteInputSendQueue {
 private enum ShadowClientRemoteDesktopCommand: Sendable {
     case refreshHosts(candidates: [String], preferredHost: String?)
     case pairSelectedHost
+    case syncClipboardIfNeeded
     case pullClipboard
     case syncClipboard(String)
     case launchSelectedApp(
@@ -1221,6 +1222,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     private let metadataClient: any ShadowClientGameStreamMetadataClient
     private let controlClient: any ShadowClientGameStreamControlClient
+    private let clipboardClient: any ShadowClientClipboardClient
     private let sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient
     private let sessionInputClient: any ShadowClientRemoteSessionInputClient
     private let inputSendQueue: ShadowClientRemoteInputSendQueue
@@ -1228,6 +1230,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private let pairingRouteStore: ShadowClientPairingRouteStore
     private let persistence: ShadowClientRemoteDesktopPersistence
     private let inputKeepAliveInterval: Duration
+    private let clipboardSyncInterval: Duration
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RemoteDesktopRuntime")
     private let commandContinuation: AsyncStream<ShadowClientRemoteDesktopCommand>.Continuation
     private var commandLoopTask: Task<Void, Never>?
@@ -1236,6 +1239,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var pairTask: Task<Void, Never>?
     private var launchTask: Task<Void, Never>?
     private var inputKeepAliveTask: Task<Void, Never>?
+    private var clipboardSyncTask: Task<Void, Never>?
     private var latestHostCandidates: [String] = []
     private var latestResolvedHostDescriptors: [ShadowClientRemoteHostDescriptor] = []
     private var cachedAppsByHostID: [String: [ShadowClientRemoteAppDescriptor]] = [:]
@@ -1252,15 +1256,18 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var runtimeStreamReconnectInProgress = false
     private var lastRuntimeStreamReconnectUptime: TimeInterval = 0
     private var renderStateFailureObservation: AnyCancellable?
+    private var lastSynchronizedClipboardText: String?
 
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
         controlClient: any ShadowClientGameStreamControlClient = NativeGameStreamControlClient(),
+        clipboardClient: any ShadowClientClipboardClient = NativeShadowClientClipboardClient(),
         sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient = NoopShadowClientRemoteSessionConnectionClient(),
         sessionInputClient: any ShadowClientRemoteSessionInputClient = NoopShadowClientRemoteSessionInputClient(),
         pinProvider: any ShadowClientPairingPINProviding = ShadowClientRandomPairingPINProvider(),
         pairingRouteStore: ShadowClientPairingRouteStore = .shared,
         inputKeepAliveInterval: Duration = .seconds(3),
+        clipboardSyncInterval: Duration = .milliseconds(750),
         defaults: UserDefaults = .standard
     ) {
         let (commandStream, commandContinuation) = AsyncStream.makeStream(of: ShadowClientRemoteDesktopCommand.self)
@@ -1270,6 +1277,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         self.metadataClient = metadataClient
         self.controlClient = controlClient
+        self.clipboardClient = clipboardClient
         self.sessionConnectionClient = sessionConnectionClient
         self.sessionInputClient = sessionInputClient
         self.commandContinuation = commandContinuation
@@ -1295,6 +1303,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         self.pinProvider = pinProvider
         self.pairingRouteStore = pairingRouteStore
         self.inputKeepAliveInterval = inputKeepAliveInterval
+        self.clipboardSyncInterval = clipboardSyncInterval
         self.sessionPresentationMode = sessionConnectionClient.presentationMode
         self.sessionSurfaceContext = sessionConnectionClient.sessionSurfaceContext
         self.hosts = persistedHosts
@@ -1342,6 +1351,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             performRefreshHosts(candidates: candidates, preferredHost: preferredHost)
         case .pairSelectedHost:
             performPairSelectedHost()
+        case .syncClipboardIfNeeded:
+            await performSyncClipboardIfNeeded()
         case .pullClipboard:
             await performPullClipboard()
         case let .syncClipboard(text):
@@ -1957,6 +1968,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         self.launchState = .launched("Remote session transport connected (\(connectedLaunchResult.verb)): \(connectedSessionURL)")
                     }
                     self.startInputKeepAliveLoop()
+                    self.startClipboardSyncLoop()
                 }
             } catch {
                 if Task.isCancelled {
@@ -1990,6 +2002,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         )
                     )
                     self.stopInputKeepAliveLoop()
+                    self.stopClipboardSyncLoop()
                     self.activeSession = nil
                     self.lastKnownSessionURL = nil
                 }
@@ -2029,6 +2042,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         runtimeStreamReconnectInProgress = false
         runtimeCodecRecoveryInProgress = false
         stopInputKeepAliveLoop()
+        stopClipboardSyncLoop()
         launchState = .idle
         return previousLaunchTask
     }
@@ -2117,11 +2131,30 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 httpsPort: endpoint.httpsPort,
                 text: normalized
             )
+            lastSynchronizedClipboardText = normalized
         } catch {
             logger.error(
                 "Apollo clipboard sync failed for host=\(endpoint.host, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
         }
+    }
+
+    @MainActor
+    private func performSyncClipboardIfNeeded() async {
+        guard case .launched = launchState,
+              let localClipboard = await clipboardClient.currentString()
+        else {
+            return
+        }
+
+        let normalized = localClipboard.replacingOccurrences(of: "\r\n", with: "\n")
+        guard !normalized.isEmpty,
+              normalized != lastSynchronizedClipboardText
+        else {
+            return
+        }
+
+        await performSyncClipboard(normalized)
     }
 
     @MainActor
@@ -2164,9 +2197,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             guard !normalized.isEmpty else {
                 return
             }
-            await MainActor.run {
-                ShadowClientClipboardBridge.setString(normalized)
-            }
+            await clipboardClient.setString(normalized)
+            lastSynchronizedClipboardText = normalized
         } catch {
             logger.error(
                 "Apollo clipboard pull failed for host=\(endpoint.host, privacy: .public): \(error.localizedDescription, privacy: .public)"
@@ -2244,6 +2276,43 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private func stopInputKeepAliveLoop() {
         inputKeepAliveTask?.cancel()
         inputKeepAliveTask = nil
+    }
+
+    @MainActor
+    private func startClipboardSyncLoop() {
+        stopClipboardSyncLoop()
+        guard clipboardSyncInterval > .zero else {
+            return
+        }
+
+        clipboardSyncTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: self.clipboardSyncInterval)
+                } catch {
+                    break
+                }
+
+                guard !Task.isCancelled else {
+                    break
+                }
+
+                await MainActor.run { [weak self] in
+                    _ = self?.commandContinuation.yield(.syncClipboardIfNeeded)
+                    _ = self?.commandContinuation.yield(.pullClipboard)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func stopClipboardSyncLoop() {
+        clipboardSyncTask?.cancel()
+        clipboardSyncTask = nil
     }
 
     private static func normalizedSessionURL(_ value: String?) -> String? {
