@@ -148,7 +148,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 for: resolvedDecoder
             )
             decoder = resolvedDecoder
-            output = try ShadowClientRealtimeAudioOutputFactory.make(
+            output = try ShadowClientAudioOutputBackendKit.make(
                 format: resolvedDecoder.outputFormat,
                 maximumQueuedBufferCount: queuePressureProfile.maximumQueuedBuffers,
                 nominalFramesPerBuffer: AVAudioFrameCount(max(1, nominalPacketFrameCount)),
@@ -2575,38 +2575,10 @@ private final class ShadowClientRealtimeG711AudioDecoder: ShadowClientRealtimeAu
     }
 }
 
-private enum ShadowClientRealtimeAudioOutputFactory {
-    static func make(
-        format: AVAudioFormat,
-        maximumQueuedBufferCount: Int,
-        nominalFramesPerBuffer: AVAudioFrameCount,
-        maximumPendingDurationMs: Double,
-        prefersSpatialHeadphoneRendering: Bool
-    ) throws -> any ShadowClientRealtimeAudioOutput {
-        #if os(macOS)
-        return try ShadowClientRealtimeAudioEngineOutput(
-            format: format,
-            maximumQueuedBufferCount: maximumQueuedBufferCount,
-            nominalFramesPerBuffer: nominalFramesPerBuffer,
-            maximumPendingDurationMs: maximumPendingDurationMs,
-            prefersSpatialHeadphoneRendering: prefersSpatialHeadphoneRendering
-        )
-        #elseif os(iOS) || os(tvOS)
-        return try ShadowClientRealtimeSampleBufferAudioOutput(
-            format: format,
-            maximumQueuedBufferCount: maximumQueuedBufferCount,
-            nominalFramesPerBuffer: nominalFramesPerBuffer,
-            maximumPendingDurationMs: maximumPendingDurationMs,
-            prefersSpatialHeadphoneRendering: prefersSpatialHeadphoneRendering
-        )
-        #endif
-    }
-}
-
 #if os(iOS) || os(tvOS) || os(macOS)
 // Safety invariant: sample-buffer rendering state is confined to `rendererQueue`,
 // while backpressure accounting is actor-isolated in `BudgetState`.
-private final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, ShadowClientRealtimeAudioOutput {
+final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, ShadowClientRealtimeAudioOutput {
     private static let logger = Logger(
         subsystem: "com.skyline23.shadow-client",
         category: "RealtimeSampleBufferAudio"
@@ -3261,7 +3233,7 @@ private final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Send
 
 // Safety invariant: mutable audio engine graph state is confined to `engineQueue`,
 // while queued-buffer accounting is actor-isolated in `QueuedBufferState`.
-private final class ShadowClientRealtimeAudioEngineOutput: @unchecked Sendable, ShadowClientRealtimeAudioOutput {
+final class ShadowClientRealtimeAudioEngineOutput: @unchecked Sendable, ShadowClientRealtimeAudioOutput {
     private static let minimumQueuedBufferCount = 4
     private static let logger = Logger(
         subsystem: "com.skyline23.shadow-client",
