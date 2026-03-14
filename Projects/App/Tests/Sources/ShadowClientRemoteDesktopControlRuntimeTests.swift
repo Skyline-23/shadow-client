@@ -391,6 +391,109 @@ func remoteDesktopRuntimeUpdatesApolloAdminProfileForSelectedHost() async {
     )
 }
 
+@Test("Remote desktop runtime disconnects the selected Apollo client")
+@MainActor
+func remoteDesktopRuntimeDisconnectsSelectedApolloClient() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
+                displayName: "LivingRoom-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-1"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.20": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let initialProfile = ShadowClientApolloAdminClientProfile(
+        name: "Current Device",
+        uuid: "CURRENT-UUID",
+        displayModeOverride: "",
+        permissions: 65535,
+        enableLegacyOrdering: true,
+        allowClientCommands: true,
+        alwaysUseVirtualDisplay: false,
+        connected: true
+    )
+    let adminClient = FakeApolloAdminClient(profile: initialProfile)
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: FakeControlClient(),
+        apolloAdminClient: adminClient
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
+    await waitForControlHostLoaded(runtime)
+    runtime.refreshSelectedHostApolloAdmin(username: "apollo", password: "secret")
+    await waitForApolloAdminState(runtime)
+
+    runtime.disconnectSelectedHostApolloAdmin(username: "apollo", password: "secret")
+    await waitForApolloAdminState(runtime)
+
+    #expect(runtime.selectedHostApolloAdminState == .loaded)
+    #expect(runtime.selectedHostApolloAdminProfile?.connected == false)
+}
+
+@Test("Remote desktop runtime unpairs the selected Apollo client")
+@MainActor
+func remoteDesktopRuntimeUnpairsSelectedApolloClient() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
+                displayName: "LivingRoom-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-1"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.20": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let initialProfile = ShadowClientApolloAdminClientProfile(
+        name: "Current Device",
+        uuid: "CURRENT-UUID",
+        displayModeOverride: "",
+        permissions: 65535,
+        enableLegacyOrdering: true,
+        allowClientCommands: true,
+        alwaysUseVirtualDisplay: false,
+        connected: true
+    )
+    let adminClient = FakeApolloAdminClient(profile: initialProfile)
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: FakeControlClient(),
+        apolloAdminClient: adminClient
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
+    await waitForControlHostLoaded(runtime)
+    runtime.refreshSelectedHostApolloAdmin(username: "apollo", password: "secret")
+    await waitForApolloAdminState(runtime)
+
+    runtime.unpairSelectedHostApolloAdmin(username: "apollo", password: "secret")
+    await waitForHostCatalogReadyAfterUnpair(runtime)
+
+    #expect(runtime.selectedHostApolloAdminProfile == nil)
+}
+
 @Test("Remote desktop runtime surfaces Apollo launch permission denial")
 @MainActor
 func remoteDesktopRuntimeSurfacesApolloLaunchPermissionDenial() async {
@@ -2554,6 +2657,50 @@ private actor FakeApolloAdminClient: ShadowClientApolloAdminClient {
         self.profile = profile
         return profile
     }
+
+    func disconnectCurrentClient(
+        host: String,
+        httpsPort: Int,
+        username: String,
+        password: String,
+        uuid: String
+    ) async throws {
+        _ = host
+        _ = httpsPort
+        _ = username
+        _ = password
+        guard let profile, profile.uuid == uuid else {
+            return
+        }
+        self.profile = .init(
+            name: profile.name,
+            uuid: profile.uuid,
+            displayModeOverride: profile.displayModeOverride,
+            permissions: profile.permissions,
+            enableLegacyOrdering: profile.enableLegacyOrdering,
+            allowClientCommands: profile.allowClientCommands,
+            alwaysUseVirtualDisplay: profile.alwaysUseVirtualDisplay,
+            connected: false,
+            doCommands: profile.doCommands,
+            undoCommands: profile.undoCommands
+        )
+    }
+
+    func unpairCurrentClient(
+        host: String,
+        httpsPort: Int,
+        username: String,
+        password: String,
+        uuid: String
+    ) async throws {
+        _ = host
+        _ = httpsPort
+        _ = username
+        _ = password
+        if profile?.uuid == uuid {
+            profile = nil
+        }
+    }
 }
 
 private actor FakeSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
@@ -2845,7 +2992,24 @@ private func waitForApolloAdminState(
     maxAttempts: Int = 50
 ) async {
     for _ in 0..<maxAttempts {
-        if runtime.selectedHostApolloAdminState != .loading {
+        switch runtime.selectedHostApolloAdminState {
+        case .loading, .saving:
+            break
+        case .idle, .loaded, .failed:
+            return
+        }
+
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+@MainActor
+private func waitForHostCatalogReadyAfterUnpair(
+    _ runtime: ShadowClientRemoteDesktopRuntime,
+    maxAttempts: Int = 50
+) async {
+    for _ in 0..<maxAttempts {
+        if runtime.hostState == .loaded {
             return
         }
 

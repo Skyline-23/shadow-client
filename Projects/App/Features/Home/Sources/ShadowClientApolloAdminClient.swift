@@ -63,6 +63,22 @@ public protocol ShadowClientApolloAdminClient: Sendable {
         password: String,
         profile: ShadowClientApolloAdminClientProfile
     ) async throws -> ShadowClientApolloAdminClientProfile
+
+    func disconnectCurrentClient(
+        host: String,
+        httpsPort: Int,
+        username: String,
+        password: String,
+        uuid: String
+    ) async throws
+
+    func unpairCurrentClient(
+        host: String,
+        httpsPort: Int,
+        username: String,
+        password: String,
+        uuid: String
+    ) async throws
 }
 
 public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient {
@@ -223,6 +239,40 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
         }
     }
 
+    public func disconnectCurrentClient(
+        host: String,
+        httpsPort: Int,
+        username: String,
+        password: String,
+        uuid: String
+    ) async throws {
+        try await postSimpleClientAction(
+            host: host,
+            httpsPort: httpsPort,
+            username: username,
+            password: password,
+            path: "/api/clients/disconnect",
+            body: ApolloUUIDPayload(uuid: uuid)
+        )
+    }
+
+    public func unpairCurrentClient(
+        host: String,
+        httpsPort: Int,
+        username: String,
+        password: String,
+        uuid: String
+    ) async throws {
+        try await postSimpleClientAction(
+            host: host,
+            httpsPort: httpsPort,
+            username: username,
+            password: password,
+            path: "/api/clients/unpair",
+            body: ApolloUUIDPayload(uuid: uuid)
+        )
+    }
+
     static func parseCurrentClientProfile(
         data: Data,
         currentClientUUID: String
@@ -255,6 +305,72 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
         }
 
         return (trimmed, fallbackPort)
+    }
+
+    private func postSimpleClientAction<Body: Encodable>(
+        host: String,
+        httpsPort: Int,
+        username: String,
+        password: String,
+        path: String,
+        body: Body
+    ) async throws {
+        let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
+            throw ShadowClientGameStreamError.requestFailed("Apollo admin credentials are required.")
+        }
+
+        let endpoint = try parseHostEndpoint(
+            host: host,
+            fallbackPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPPort
+        )
+        guard let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: endpoint.host) else {
+            throw ShadowClientGameStreamError.requestFailed("Pair the host before using Apollo admin APIs.")
+        }
+
+        let delegate = ShadowClientApolloAdminURLSessionDelegate(
+            pinnedServerCertificateDER: pinnedCertificateDER
+        )
+        let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        defer {
+            session.invalidateAndCancel()
+        }
+
+        var components = URLComponents()
+        components.scheme = ShadowClientGameStreamNetworkDefaults.httpsScheme
+        components.host = endpoint.host
+        components.port = httpsPort
+        components.path = path
+        guard let url = components.url else {
+            throw ShadowClientGameStreamError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let credentialData = Data("\(trimmedUsername):\(trimmedPassword)".utf8).base64EncodedString()
+        request.setValue("Basic \(credentialData)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(body)
+
+        do {
+            let (_, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw ShadowClientGameStreamError.invalidResponse
+            }
+            guard (200 ... 299).contains(httpResponse.statusCode) else {
+                throw ShadowClientGameStreamError.responseRejected(
+                    code: httpResponse.statusCode,
+                    message: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+                )
+            }
+        } catch {
+            throw ShadowClientGameStreamHTTPTransport.requestFailureError(
+                error,
+                tlsFailure: delegate.tlsFailure
+            )
+        }
     }
 }
 
@@ -338,6 +454,10 @@ private struct ApolloUpdateClientPayload: Encodable {
         case doCommands = "do"
         case undoCommands = "undo"
     }
+}
+
+private struct ApolloUUIDPayload: Encodable {
+    let uuid: String
 }
 
 private final class ShadowClientApolloAdminURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {

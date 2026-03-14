@@ -547,6 +547,26 @@ var remoteDesktopHostCard: some View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(remoteDesktopRuntime.selectedHostID != host.id)
+
+                    HStack(spacing: 10) {
+                        Button("Disconnect Client") {
+                            remoteDesktopRuntime.disconnectSelectedHostApolloAdmin(
+                                username: hostApolloAdminUsername(for: host),
+                                password: hostApolloAdminPassword(for: host)
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(remoteDesktopRuntime.selectedHostID != host.id)
+
+                        Button("Unpair Client") {
+                            remoteDesktopRuntime.unpairSelectedHostApolloAdmin(
+                                username: hostApolloAdminUsername(for: host),
+                                password: hostApolloAdminPassword(for: host)
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(remoteDesktopRuntime.selectedHostID != host.id)
+                    }
                 }
             }
         }

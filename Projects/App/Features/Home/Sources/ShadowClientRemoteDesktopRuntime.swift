@@ -1108,6 +1108,8 @@ private enum ShadowClientRemoteDesktopCommand: Sendable {
         displayModeOverride: String,
         alwaysUseVirtualDisplay: Bool
     )
+    case disconnectSelectedHostApolloAdmin(username: String, password: String)
+    case unpairSelectedHostApolloAdmin(username: String, password: String)
 }
 
 private struct ShadowClientLaunchRequestContext: Sendable {
@@ -1418,6 +1420,16 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 password: password,
                 displayModeOverride: displayModeOverride,
                 alwaysUseVirtualDisplay: alwaysUseVirtualDisplay
+            )
+        case let .disconnectSelectedHostApolloAdmin(username, password):
+            performDisconnectSelectedHostApolloAdmin(
+                username: username,
+                password: password
+            )
+        case let .unpairSelectedHostApolloAdmin(username, password):
+            performUnpairSelectedHostApolloAdmin(
+                username: username,
+                password: password
             )
         }
     }
@@ -3285,6 +3297,26 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
+    public func disconnectSelectedHostApolloAdmin(username: String, password: String) {
+        commandContinuation.yield(
+            .disconnectSelectedHostApolloAdmin(
+                username: username,
+                password: password
+            )
+        )
+    }
+
+    @MainActor
+    public func unpairSelectedHostApolloAdmin(username: String, password: String) {
+        commandContinuation.yield(
+            .unpairSelectedHostApolloAdmin(
+                username: username,
+                password: password
+            )
+        )
+    }
+
+    @MainActor
     private func performRefreshSelectedHostApps() {
         appRefreshGeneration &+= 1
         let refreshGeneration = appRefreshGeneration
@@ -3528,6 +3560,120 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private func clearSelectedHostApolloAdminState() {
         selectedHostApolloAdminProfile = nil
         selectedHostApolloAdminState = .idle
+    }
+
+    @MainActor
+    private func performDisconnectSelectedHostApolloAdmin(
+        username: String,
+        password: String
+    ) {
+        guard let selectedHost,
+              let currentProfile = selectedHostApolloAdminProfile
+        else {
+            selectedHostApolloAdminState = .failed("Sync Apollo client metadata first.")
+            return
+        }
+
+        let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
+            selectedHostApolloAdminState = .failed("Apollo admin credentials are required.")
+            return
+        }
+
+        selectedHostApolloAdminState = .saving
+        let apolloAdminClient = apolloAdminClient
+        let host = selectedHost.host
+        let httpsPort = selectedHost.httpsPort
+        let selectedHostID = selectedHost.id
+        let uuid = currentProfile.uuid
+
+        Task { @MainActor [weak self] in
+            do {
+                try await apolloAdminClient.disconnectCurrentClient(
+                    host: host,
+                    httpsPort: httpsPort,
+                    username: trimmedUsername,
+                    password: trimmedPassword,
+                    uuid: uuid
+                )
+                guard let self, self.selectedHostID == selectedHostID else {
+                    return
+                }
+                if let profile = self.selectedHostApolloAdminProfile {
+                    self.selectedHostApolloAdminProfile = .init(
+                        name: profile.name,
+                        uuid: profile.uuid,
+                        displayModeOverride: profile.displayModeOverride,
+                        permissions: profile.permissions,
+                        enableLegacyOrdering: profile.enableLegacyOrdering,
+                        allowClientCommands: profile.allowClientCommands,
+                        alwaysUseVirtualDisplay: profile.alwaysUseVirtualDisplay,
+                        connected: false,
+                        doCommands: profile.doCommands,
+                        undoCommands: profile.undoCommands
+                    )
+                }
+                self.selectedHostApolloAdminState = .loaded
+            } catch {
+                guard let self, self.selectedHostID == selectedHostID else {
+                    return
+                }
+                self.selectedHostApolloAdminState = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    @MainActor
+    private func performUnpairSelectedHostApolloAdmin(
+        username: String,
+        password: String
+    ) {
+        guard let selectedHost,
+              let currentProfile = selectedHostApolloAdminProfile
+        else {
+            selectedHostApolloAdminState = .failed("Sync Apollo client metadata first.")
+            return
+        }
+
+        let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
+            selectedHostApolloAdminState = .failed("Apollo admin credentials are required.")
+            return
+        }
+
+        selectedHostApolloAdminState = .saving
+        let apolloAdminClient = apolloAdminClient
+        let host = selectedHost.host
+        let httpsPort = selectedHost.httpsPort
+        let selectedHostID = selectedHost.id
+        let uuid = currentProfile.uuid
+
+        Task { @MainActor [weak self] in
+            do {
+                try await apolloAdminClient.unpairCurrentClient(
+                    host: host,
+                    httpsPort: httpsPort,
+                    username: trimmedUsername,
+                    password: trimmedPassword,
+                    uuid: uuid
+                )
+                guard let self, self.selectedHostID == selectedHostID else {
+                    return
+                }
+                self.clearSelectedHostApolloAdminState()
+                self.performRefreshHosts(
+                    candidates: self.latestHostCandidates,
+                    preferredHost: selectedHost.host
+                )
+            } catch {
+                guard let self, self.selectedHostID == selectedHostID else {
+                    return
+                }
+                self.selectedHostApolloAdminState = .failed(error.localizedDescription)
+            }
+        }
     }
 
     private static func fetchHostDescriptor(
