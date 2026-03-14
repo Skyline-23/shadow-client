@@ -2,21 +2,49 @@ import Foundation
 import Security
 
 public struct ShadowClientApolloAdminClientProfile: Equatable, Sendable {
+    public struct Command: Equatable, Sendable, Codable {
+        public let cmd: String
+        public let elevated: Bool
+
+        public init(cmd: String, elevated: Bool) {
+            self.cmd = cmd
+            self.elevated = elevated
+        }
+    }
+
+    public let name: String
     public let uuid: String
     public let displayModeOverride: String
+    public let permissions: UInt32
+    public let enableLegacyOrdering: Bool
+    public let allowClientCommands: Bool
     public let alwaysUseVirtualDisplay: Bool
     public let connected: Bool
+    public let doCommands: [Command]
+    public let undoCommands: [Command]
 
     public init(
+        name: String = "",
         uuid: String,
         displayModeOverride: String,
+        permissions: UInt32 = 0,
+        enableLegacyOrdering: Bool = true,
+        allowClientCommands: Bool = true,
         alwaysUseVirtualDisplay: Bool,
-        connected: Bool
+        connected: Bool,
+        doCommands: [Command] = [],
+        undoCommands: [Command] = []
     ) {
+        self.name = name
         self.uuid = uuid
         self.displayModeOverride = displayModeOverride
+        self.permissions = permissions
+        self.enableLegacyOrdering = enableLegacyOrdering
+        self.allowClientCommands = allowClientCommands
         self.alwaysUseVirtualDisplay = alwaysUseVirtualDisplay
         self.connected = connected
+        self.doCommands = doCommands
+        self.undoCommands = undoCommands
     }
 }
 
@@ -27,6 +55,14 @@ public protocol ShadowClientApolloAdminClient: Sendable {
         username: String,
         password: String
     ) async throws -> ShadowClientApolloAdminClientProfile?
+
+    func updateCurrentClientProfile(
+        host: String,
+        httpsPort: Int,
+        username: String,
+        password: String,
+        profile: ShadowClientApolloAdminClientProfile
+    ) async throws -> ShadowClientApolloAdminClientProfile
 }
 
 public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient {
@@ -109,6 +145,84 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
         }
     }
 
+    public func updateCurrentClientProfile(
+        host: String,
+        httpsPort: Int,
+        username: String,
+        password: String,
+        profile: ShadowClientApolloAdminClientProfile
+    ) async throws -> ShadowClientApolloAdminClientProfile {
+        let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
+            throw ShadowClientGameStreamError.requestFailed("Apollo admin credentials are required.")
+        }
+
+        let endpoint = try parseHostEndpoint(
+            host: host,
+            fallbackPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPPort
+        )
+        guard let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: endpoint.host) else {
+            throw ShadowClientGameStreamError.requestFailed("Pair the host before using Apollo admin APIs.")
+        }
+
+        let delegate = ShadowClientApolloAdminURLSessionDelegate(
+            pinnedServerCertificateDER: pinnedCertificateDER
+        )
+        let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        defer {
+            session.invalidateAndCancel()
+        }
+
+        var components = URLComponents()
+        components.scheme = ShadowClientGameStreamNetworkDefaults.httpsScheme
+        components.host = endpoint.host
+        components.port = httpsPort
+        components.path = "/api/clients/update"
+        guard let url = components.url else {
+            throw ShadowClientGameStreamError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let credentialData = Data("\(trimmedUsername):\(trimmedPassword)".utf8).base64EncodedString()
+        request.setValue("Basic \(credentialData)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(
+            ApolloUpdateClientPayload(
+                uuid: profile.uuid,
+                name: profile.name,
+                displayMode: profile.displayModeOverride,
+                permissions: profile.permissions,
+                enableLegacyOrdering: profile.enableLegacyOrdering,
+                allowClientCommands: profile.allowClientCommands,
+                alwaysUseVirtualDisplay: profile.alwaysUseVirtualDisplay,
+                doCommands: profile.doCommands,
+                undoCommands: profile.undoCommands
+            )
+        )
+
+        do {
+            let (_, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw ShadowClientGameStreamError.invalidResponse
+            }
+            guard (200 ... 299).contains(httpResponse.statusCode) else {
+                throw ShadowClientGameStreamError.responseRejected(
+                    code: httpResponse.statusCode,
+                    message: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+                )
+            }
+            return profile
+        } catch {
+            throw ShadowClientGameStreamHTTPTransport.requestFailureError(
+                error,
+                tlsFailure: delegate.tlsFailure
+            )
+        }
+    }
+
     static func parseCurrentClientProfile(
         data: Data,
         currentClientUUID: String
@@ -153,25 +267,76 @@ private struct ApolloClientsListPayload: Decodable {
 }
 
 private struct ApolloNamedCert: Decodable {
+    let name: String
     let uuid: String
     let displayMode: String
+    let permissions: UInt32
+    let enableLegacyOrdering: Bool
+    let allowClientCommands: Bool
     let alwaysUseVirtualDisplay: Bool
     let connected: Bool
+    let doCommands: [ApolloCommand]
+    let undoCommands: [ApolloCommand]
 
     enum CodingKeys: String, CodingKey {
+        case name
         case uuid
         case displayMode = "display_mode"
+        case permissions = "perm"
+        case enableLegacyOrdering = "enable_legacy_ordering"
+        case allowClientCommands = "allow_client_commands"
         case alwaysUseVirtualDisplay = "always_use_virtual_display"
         case connected
+        case doCommands = "do"
+        case undoCommands = "undo"
     }
 
     var profile: ShadowClientApolloAdminClientProfile {
         .init(
+            name: name,
             uuid: uuid,
             displayModeOverride: displayMode,
+            permissions: permissions,
+            enableLegacyOrdering: enableLegacyOrdering,
+            allowClientCommands: allowClientCommands,
             alwaysUseVirtualDisplay: alwaysUseVirtualDisplay,
-            connected: connected
+            connected: connected,
+            doCommands: doCommands.map(\.profileCommand),
+            undoCommands: undoCommands.map(\.profileCommand)
         )
+    }
+}
+
+private struct ApolloCommand: Codable {
+    let cmd: String
+    let elevated: Bool
+
+    var profileCommand: ShadowClientApolloAdminClientProfile.Command {
+        .init(cmd: cmd, elevated: elevated)
+    }
+}
+
+private struct ApolloUpdateClientPayload: Encodable {
+    let uuid: String
+    let name: String
+    let displayMode: String
+    let permissions: UInt32
+    let enableLegacyOrdering: Bool
+    let allowClientCommands: Bool
+    let alwaysUseVirtualDisplay: Bool
+    let doCommands: [ShadowClientApolloAdminClientProfile.Command]
+    let undoCommands: [ShadowClientApolloAdminClientProfile.Command]
+
+    enum CodingKeys: String, CodingKey {
+        case uuid
+        case name
+        case displayMode = "display_mode"
+        case permissions = "perm"
+        case enableLegacyOrdering = "enable_legacy_ordering"
+        case allowClientCommands = "allow_client_commands"
+        case alwaysUseVirtualDisplay = "always_use_virtual_display"
+        case doCommands = "do"
+        case undoCommands = "undo"
     }
 }
 

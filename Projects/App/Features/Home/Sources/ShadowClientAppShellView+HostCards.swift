@@ -493,7 +493,6 @@ var remoteDesktopHostCard: some View {
                 TextField("Admin username", text: hostApolloAdminUsernameBinding(for: host))
                     .font(.body.weight(.semibold))
                     .textFieldStyle(.plain)
-                    .textInputAutocapitalization(.never)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
@@ -502,7 +501,6 @@ var remoteDesktopHostCard: some View {
                 SecureField("Admin password", text: hostApolloAdminPasswordBinding(for: host))
                     .font(.body.weight(.semibold))
                     .textFieldStyle(.plain)
-                    .textInputAutocapitalization(.never)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
@@ -521,6 +519,35 @@ var remoteDesktopHostCard: some View {
                     Text(hostApolloAdminStateLabel(for: host))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.white.opacity(0.68))
+                }
+
+                if hostApolloAdminProfile(host) != nil {
+                    TextField("Display mode override", text: hostApolloDisplayModeBinding(for: host))
+                        .font(.body.weight(.semibold))
+                        .textFieldStyle(.plain)
+                        .textInputAutocapitalization(.never)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                    Toggle(isOn: hostApolloAlwaysUseVirtualDisplayBinding(for: host)) {
+                        Text("Always use virtual display")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.white)
+                    }
+                    .tint(.mint)
+
+                    Button("Save Apollo Overrides") {
+                        remoteDesktopRuntime.updateSelectedHostApolloAdmin(
+                            username: hostApolloAdminUsername(for: host),
+                            password: hostApolloAdminPassword(for: host),
+                            displayModeOverride: hostApolloDisplayModeDraft(for: host),
+                            alwaysUseVirtualDisplay: hostApolloAlwaysUseVirtualDisplayDraft(for: host)
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(remoteDesktopRuntime.selectedHostID != host.id)
                 }
             }
         }
@@ -1044,6 +1071,8 @@ var remoteDesktopHostCard: some View {
             return "Idle"
         case .loading:
             return "Loading…"
+        case .saving:
+            return "Saving…"
         case .loaded:
             return remoteDesktopRuntime.selectedHostApolloAdminProfile == nil ? "Client not found" : "Loaded"
         case let .failed(message):
@@ -1059,6 +1088,34 @@ var remoteDesktopHostCard: some View {
             : "Always use virtual display: OFF"
         let connectedDescription = profile.connected ? "Connected" : "Not connected"
         return [displayDescription, virtualDisplayDescription, connectedDescription].joined(separator: "\n")
+    }
+
+    func hostApolloDisplayModeDraft(for host: ShadowClientRemoteHostDescriptor) -> String {
+        if let draft = apolloDisplayModeDrafts[host.id] {
+            return draft
+        }
+        return hostApolloAdminProfile(host)?.displayModeOverride ?? ""
+    }
+
+    func hostApolloAlwaysUseVirtualDisplayDraft(for host: ShadowClientRemoteHostDescriptor) -> Bool {
+        if let draft = apolloAlwaysUseVirtualDisplayDrafts[host.id] {
+            return draft
+        }
+        return hostApolloAdminProfile(host)?.alwaysUseVirtualDisplay ?? false
+    }
+
+    func hostApolloDisplayModeBinding(for host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
+        Binding(
+            get: { hostApolloDisplayModeDraft(for: host) },
+            set: { apolloDisplayModeDrafts[host.id] = $0 }
+        )
+    }
+
+    func hostApolloAlwaysUseVirtualDisplayBinding(for host: ShadowClientRemoteHostDescriptor) -> Binding<Bool> {
+        Binding(
+            get: { hostApolloAlwaysUseVirtualDisplayDraft(for: host) },
+            set: { apolloAlwaysUseVirtualDisplayDrafts[host.id] = $0 }
+        )
     }
 
 var connectionStatusCard: some View {

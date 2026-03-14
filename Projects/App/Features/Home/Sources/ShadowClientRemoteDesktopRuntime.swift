@@ -262,6 +262,7 @@ public struct ShadowClientRemoteSessionIssue: Equatable, Sendable {
 public enum ShadowClientApolloAdminClientState: Equatable, Sendable {
     case idle
     case loading
+    case saving
     case loaded
     case failed(String)
 }
@@ -1101,6 +1102,12 @@ private enum ShadowClientRemoteDesktopCommand: Sendable {
     case selectHost(String)
     case refreshSelectedHostApps
     case refreshSelectedHostApolloAdmin(username: String, password: String)
+    case updateSelectedHostApolloAdmin(
+        username: String,
+        password: String,
+        displayModeOverride: String,
+        alwaysUseVirtualDisplay: Bool
+    )
 }
 
 private struct ShadowClientLaunchRequestContext: Sendable {
@@ -1405,6 +1412,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             performRefreshSelectedHostApps()
         case let .refreshSelectedHostApolloAdmin(username, password):
             performRefreshSelectedHostApolloAdmin(username: username, password: password)
+        case let .updateSelectedHostApolloAdmin(username, password, displayModeOverride, alwaysUseVirtualDisplay):
+            performUpdateSelectedHostApolloAdmin(
+                username: username,
+                password: password,
+                displayModeOverride: displayModeOverride,
+                alwaysUseVirtualDisplay: alwaysUseVirtualDisplay
+            )
         }
     }
 
@@ -3254,6 +3268,23 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
+    public func updateSelectedHostApolloAdmin(
+        username: String,
+        password: String,
+        displayModeOverride: String,
+        alwaysUseVirtualDisplay: Bool
+    ) {
+        commandContinuation.yield(
+            .updateSelectedHostApolloAdmin(
+                username: username,
+                password: password,
+                displayModeOverride: displayModeOverride,
+                alwaysUseVirtualDisplay: alwaysUseVirtualDisplay
+            )
+        )
+    }
+
+    @MainActor
     private func performRefreshSelectedHostApps() {
         appRefreshGeneration &+= 1
         let refreshGeneration = appRefreshGeneration
@@ -3425,6 +3456,69 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     return
                 }
                 self.selectedHostApolloAdminProfile = nil
+                self.selectedHostApolloAdminState = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    @MainActor
+    private func performUpdateSelectedHostApolloAdmin(
+        username: String,
+        password: String,
+        displayModeOverride: String,
+        alwaysUseVirtualDisplay: Bool
+    ) {
+        guard let selectedHost,
+              let currentProfile = selectedHostApolloAdminProfile
+        else {
+            selectedHostApolloAdminState = .failed("Sync Apollo client metadata first.")
+            return
+        }
+
+        let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
+            selectedHostApolloAdminState = .failed("Apollo admin credentials are required.")
+            return
+        }
+
+        selectedHostApolloAdminState = .saving
+
+        let apolloAdminClient = apolloAdminClient
+        let host = selectedHost.host
+        let httpsPort = selectedHost.httpsPort
+        let selectedHostID = selectedHost.id
+        let updatedProfile = ShadowClientApolloAdminClientProfile(
+            name: currentProfile.name,
+            uuid: currentProfile.uuid,
+            displayModeOverride: displayModeOverride.trimmingCharacters(in: .whitespacesAndNewlines),
+            permissions: currentProfile.permissions,
+            enableLegacyOrdering: currentProfile.enableLegacyOrdering,
+            allowClientCommands: currentProfile.allowClientCommands,
+            alwaysUseVirtualDisplay: alwaysUseVirtualDisplay,
+            connected: currentProfile.connected,
+            doCommands: currentProfile.doCommands,
+            undoCommands: currentProfile.undoCommands
+        )
+
+        Task { @MainActor [weak self] in
+            do {
+                let savedProfile = try await apolloAdminClient.updateCurrentClientProfile(
+                    host: host,
+                    httpsPort: httpsPort,
+                    username: trimmedUsername,
+                    password: trimmedPassword,
+                    profile: updatedProfile
+                )
+                guard let self, self.selectedHostID == selectedHostID else {
+                    return
+                }
+                self.selectedHostApolloAdminProfile = savedProfile
+                self.selectedHostApolloAdminState = .loaded
+            } catch {
+                guard let self, self.selectedHostID == selectedHostID else {
+                    return
+                }
                 self.selectedHostApolloAdminState = .failed(error.localizedDescription)
             }
         }

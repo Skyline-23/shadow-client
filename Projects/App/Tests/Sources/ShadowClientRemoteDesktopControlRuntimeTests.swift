@@ -285,8 +285,12 @@ func remoteDesktopRuntimeLoadsApolloAdminProfileForSelectedHost() async {
     )
     let adminClient = FakeApolloAdminClient(
         profile: .init(
+            name: "Current Device",
             uuid: "CURRENT-UUID",
             displayModeOverride: "2560x1440x120",
+            permissions: 65535,
+            enableLegacyOrdering: true,
+            allowClientCommands: true,
             alwaysUseVirtualDisplay: true,
             connected: true
         )
@@ -306,8 +310,81 @@ func remoteDesktopRuntimeLoadsApolloAdminProfileForSelectedHost() async {
     #expect(runtime.selectedHostApolloAdminState == .loaded)
     #expect(
         runtime.selectedHostApolloAdminProfile == .init(
+            name: "Current Device",
             uuid: "CURRENT-UUID",
             displayModeOverride: "2560x1440x120",
+            permissions: 65535,
+            enableLegacyOrdering: true,
+            allowClientCommands: true,
+            alwaysUseVirtualDisplay: true,
+            connected: true
+        )
+    )
+}
+
+@Test("Remote desktop runtime updates Apollo admin profile for the selected host")
+@MainActor
+func remoteDesktopRuntimeUpdatesApolloAdminProfileForSelectedHost() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
+                displayName: "LivingRoom-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-1"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.20": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let initialProfile = ShadowClientApolloAdminClientProfile(
+        name: "Current Device",
+        uuid: "CURRENT-UUID",
+        displayModeOverride: "",
+        permissions: 65535,
+        enableLegacyOrdering: true,
+        allowClientCommands: true,
+        alwaysUseVirtualDisplay: false,
+        connected: true
+    )
+    let adminClient = FakeApolloAdminClient(profile: initialProfile)
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: FakeControlClient(),
+        apolloAdminClient: adminClient
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.refreshSelectedHostApolloAdmin(username: "apollo", password: "secret")
+    await waitForApolloAdminState(runtime)
+
+    runtime.updateSelectedHostApolloAdmin(
+        username: "apollo",
+        password: "secret",
+        displayModeOverride: "2560x1440x120",
+        alwaysUseVirtualDisplay: true
+    )
+    await waitForApolloAdminState(runtime)
+
+    #expect(runtime.selectedHostApolloAdminState == .loaded)
+    #expect(
+        runtime.selectedHostApolloAdminProfile == .init(
+            name: "Current Device",
+            uuid: "CURRENT-UUID",
+            displayModeOverride: "2560x1440x120",
+            permissions: 65535,
+            enableLegacyOrdering: true,
+            allowClientCommands: true,
             alwaysUseVirtualDisplay: true,
             connected: true
         )
@@ -2444,7 +2521,7 @@ private actor FakeClipboardClient: ShadowClientClipboardClient {
 }
 
 private actor FakeApolloAdminClient: ShadowClientApolloAdminClient {
-    private let profile: ShadowClientApolloAdminClientProfile?
+    private var profile: ShadowClientApolloAdminClientProfile?
 
     init(profile: ShadowClientApolloAdminClientProfile?) {
         self.profile = profile
@@ -2460,6 +2537,21 @@ private actor FakeApolloAdminClient: ShadowClientApolloAdminClient {
         _ = httpsPort
         _ = username
         _ = password
+        return profile
+    }
+
+    func updateCurrentClientProfile(
+        host: String,
+        httpsPort: Int,
+        username: String,
+        password: String,
+        profile: ShadowClientApolloAdminClientProfile
+    ) async throws -> ShadowClientApolloAdminClientProfile {
+        _ = host
+        _ = httpsPort
+        _ = username
+        _ = password
+        self.profile = profile
         return profile
     }
 }
