@@ -3,6 +3,9 @@ import CommonCrypto
 import Foundation
 import Network
 import os
+#if os(macOS)
+import CoreAudio
+#endif
 
 public enum ShadowClientRealtimeAudioOutputState: Equatable, Sendable {
     case idle
@@ -1778,7 +1781,7 @@ private enum ShadowClientRealtimeAudioOutputCapability {
             }
         }
         #elseif os(macOS)
-        return true
+        return false
         #else
         return false
         #endif
@@ -1799,6 +1802,10 @@ private enum ShadowClientRealtimeAudioOutputCapability {
             return max(2, routeMaximumChannels, currentRouteChannels)
         }
         #else
+        if let outputChannels = macDefaultOutputChannelCount(), outputChannels > 0 {
+            return max(2, outputChannels)
+        }
+
         let engine = AVAudioEngine()
         let outputChannels = Int(engine.outputNode.inputFormat(forBus: 0).channelCount)
         if outputChannels > 0 {
@@ -1812,6 +1819,76 @@ private enum ShadowClientRealtimeAudioOutputCapability {
         return 2
         #endif
     }
+
+    #if os(macOS)
+    private static func macDefaultOutputChannelCount() -> Int? {
+        var defaultDeviceID = AudioDeviceID(0)
+        var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        let deviceStatus = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            &propertySize,
+            &defaultDeviceID
+        )
+        guard deviceStatus == noErr, defaultDeviceID != 0 else {
+            return nil
+        }
+
+        address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        var configurationSize: UInt32 = 0
+        let sizeStatus = AudioObjectGetPropertyDataSize(
+            defaultDeviceID,
+            &address,
+            0,
+            nil,
+            &configurationSize
+        )
+        guard sizeStatus == noErr, configurationSize >= UInt32(MemoryLayout<AudioBufferList>.size) else {
+            return nil
+        }
+
+        let rawBuffer = UnsafeMutableRawPointer.allocate(
+            byteCount: Int(configurationSize),
+            alignment: MemoryLayout<AudioBufferList>.alignment
+        )
+        defer { rawBuffer.deallocate() }
+        let bufferListPointer = rawBuffer.bindMemory(
+            to: AudioBufferList.self,
+            capacity: 1
+        )
+
+        let configurationStatus = AudioObjectGetPropertyData(
+            defaultDeviceID,
+            &address,
+            0,
+            nil,
+            &configurationSize,
+            bufferListPointer
+        )
+        guard configurationStatus == noErr else {
+            return nil
+        }
+
+        let bufferList = UnsafeMutableAudioBufferListPointer(bufferListPointer)
+        let channelCount = bufferList.reduce(0) { partial, buffer in
+            partial + Int(buffer.mNumberChannels)
+        }
+        return channelCount > 0 ? channelCount : nil
+    }
+    #endif
 }
 
 private struct ShadowClientRealtimeAudioRTPJitterBuffer: Sendable {
@@ -3317,7 +3394,9 @@ private final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Send
             }
             .joined(separator: ",")
         #else
-        "n/a"
+        let engine = AVAudioEngine()
+        let outputFormat = engine.outputNode.inputFormat(forBus: 0)
+        return "default-output{channels=\(outputFormat.channelCount),sampleRate=\(Int(outputFormat.sampleRate))}"
         #endif
     }
 }
@@ -3889,7 +3968,9 @@ private final class ShadowClientRealtimeAudioEngineOutput: @unchecked Sendable, 
             }
             .joined(separator: ",")
         #else
-        "n/a"
+        let engine = AVAudioEngine()
+        let outputFormat = engine.outputNode.inputFormat(forBus: 0)
+        return "default-output{channels=\(outputFormat.channelCount),sampleRate=\(Int(outputFormat.sampleRate))}"
         #endif
     }
 
