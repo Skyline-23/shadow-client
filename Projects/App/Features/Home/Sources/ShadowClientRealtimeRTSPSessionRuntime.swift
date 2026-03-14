@@ -6208,7 +6208,8 @@ private actor ShadowClientRTSPInterleavedClient {
         _ connection: NWConnection,
         timeout: Duration
     ) async throws {
-        actor ReadyWaitGate {
+        final class ReadyWaitGate: @unchecked Sendable {
+            private let lock = NSLock()
             private var continuation: CheckedContinuation<Void, Error>?
             private var timeoutTask: Task<Void, Never>?
 
@@ -6218,7 +6219,9 @@ private actor ShadowClientRTSPInterleavedClient {
                 timeoutError: @escaping @Sendable () -> Error,
                 onTimeout: @escaping @Sendable () -> Void
             ) {
+                lock.lock()
                 self.continuation = continuation
+                lock.unlock()
                 timeoutTask = Task {
                     do {
                         try await Task.sleep(for: timeout)
@@ -6232,12 +6235,15 @@ private actor ShadowClientRTSPInterleavedClient {
             }
 
             func finish(_ result: Result<Void, Error>) -> Bool {
+                lock.lock()
                 guard let continuation else {
+                    lock.unlock()
                     return false
                 }
                 self.continuation = nil
                 let timeoutTask = self.timeoutTask
                 self.timeoutTask = nil
+                lock.unlock()
                 timeoutTask?.cancel()
                 continuation.resume(with: result)
                 return true
@@ -6247,36 +6253,28 @@ private actor ShadowClientRTSPInterleavedClient {
         let gate = ReadyWaitGate()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                Task {
-                    await gate.install(
-                        continuation: continuation,
-                        timeout: timeout,
-                        timeoutError: { ShadowClientRTSPInterleavedClientError.connectionFailed },
-                        onTimeout: {
-                            connection.stateUpdateHandler = nil
-                            connection.cancel()
-                        }
-                    )
-                }
+                gate.install(
+                    continuation: continuation,
+                    timeout: timeout,
+                    timeoutError: { ShadowClientRTSPInterleavedClientError.connectionFailed },
+                    onTimeout: {
+                        connection.stateUpdateHandler = nil
+                        connection.cancel()
+                    }
+                )
                 connection.stateUpdateHandler = { state in
                     switch state {
                     case .ready:
-                        Task {
-                            if await gate.finish(.success(())) {
-                                connection.stateUpdateHandler = nil
-                            }
+                        if gate.finish(.success(())) {
+                            connection.stateUpdateHandler = nil
                         }
                     case let .failed(error):
-                        Task {
-                            if await gate.finish(.failure(error)) {
-                                connection.stateUpdateHandler = nil
-                            }
+                        if gate.finish(.failure(error)) {
+                            connection.stateUpdateHandler = nil
                         }
                     case .cancelled:
-                        Task {
-                            if await gate.finish(.failure(ShadowClientRTSPInterleavedClientError.connectionClosed)) {
-                                connection.stateUpdateHandler = nil
-                            }
+                        if gate.finish(.failure(ShadowClientRTSPInterleavedClientError.connectionClosed)) {
+                            connection.stateUpdateHandler = nil
                         }
                     default:
                         break
@@ -6285,11 +6283,9 @@ private actor ShadowClientRTSPInterleavedClient {
                 connection.start(queue: self.queue)
             }
         } onCancel: {
-            Task {
-                if await gate.finish(.failure(CancellationError())) {
-                    connection.stateUpdateHandler = nil
-                    connection.cancel()
-                }
+            if gate.finish(.failure(CancellationError())) {
+                connection.stateUpdateHandler = nil
+                connection.cancel()
             }
         }
     }

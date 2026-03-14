@@ -525,7 +525,6 @@ var remoteDesktopHostCard: some View {
                     TextField("Display mode override", text: hostApolloDisplayModeBinding(for: host))
                         .font(.body.weight(.semibold))
                         .textFieldStyle(.plain)
-                        .textInputAutocapitalization(.never)
                         .foregroundStyle(.white)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
