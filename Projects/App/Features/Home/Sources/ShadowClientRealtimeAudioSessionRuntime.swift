@@ -3653,7 +3653,7 @@ final class ShadowClientRealtimeAudioEngineOutput: @unchecked Sendable, ShadowCl
         }
         #if os(iOS)
         if #available(iOS 18.0, *) {
-            let headTrackingSupported = ShadowClientRealtimeAudioOutputCapability
+            let headTrackingSupported = ShadowClientAudioOutputCapabilityKit
                 .supportsHeadTrackedRoute()
             environmentNode.isListenerHeadTrackingEnabled = headTrackingSupported
             Self.logger.notice(
@@ -3793,21 +3793,6 @@ final class ShadowClientRealtimeAudioEngineOutput: @unchecked Sendable, ShadowCl
         ShadowClientAudioOutputCapabilityKit.currentRouteSummary()
     }
 
-    #if os(iOS)
-    private static func supportsHeadTrackedRoute() -> Bool {
-        AVAudioSession.sharedInstance().currentRoute.outputs.contains { output in
-            guard output.isSpatialAudioEnabled else {
-                return false
-            }
-            switch output.portType {
-            case .headphones, .bluetoothA2DP, .bluetoothLE, .bluetoothHFP:
-                return true
-            default:
-                return false
-            }
-        }
-    }
-    #endif
 }
 
 private enum ShadowClientRealtimeAudioPayloadDecryptorError: Error {
