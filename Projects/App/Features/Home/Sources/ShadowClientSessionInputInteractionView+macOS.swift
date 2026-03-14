@@ -6,6 +6,7 @@ struct ShadowClientSessionInputInteractionPlatformView: View {
     let visiblePointerRegions: [CGRect]
     let onInputEvent: @MainActor (ShadowClientRemoteInputEvent) -> Void
     let onSessionTerminateCommand: @MainActor () -> Void
+    let onCopyClipboardCommand: @MainActor () -> Void
     let onPasteClipboardCommand: @MainActor () -> Void
 
     var body: some View {
@@ -14,6 +15,7 @@ struct ShadowClientSessionInputInteractionPlatformView: View {
             referenceVideoSize: referenceVideoSize,
             onInputEvent: onInputEvent,
             onSessionTerminateCommand: onSessionTerminateCommand,
+            onCopyClipboardCommand: onCopyClipboardCommand,
             onPasteClipboardCommand: onPasteClipboardCommand
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)

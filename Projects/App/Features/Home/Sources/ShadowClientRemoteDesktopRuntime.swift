@@ -2121,14 +2121,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             logger.error(
                 "Apollo clipboard sync failed for host=\(endpoint.host, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
-            guard let destination = activeSessionInputDestination() else {
-                return
-            }
-            await inputSendQueue.enqueue(
-                event: .text(normalized),
-                host: destination.host,
-                sessionURL: destination.sessionURL
-            )
         }
     }
 

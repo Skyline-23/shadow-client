@@ -1668,9 +1668,9 @@ func remoteDesktopRuntimeUsesClipboardActionForActiveSession() async {
     #expect(await sessionInput.inputCalls().isEmpty)
 }
 
-@Test("Remote desktop runtime falls back to text input when Apollo clipboard action fails")
+@Test("Remote desktop runtime does not fall back to text input when Apollo clipboard action fails")
 @MainActor
-func remoteDesktopRuntimeFallsBackToTextInputWhenClipboardActionFails() async {
+func remoteDesktopRuntimeDoesNotFallbackToTextInputWhenClipboardActionFails() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
             "192.168.0.28": .init(
@@ -1713,13 +1713,12 @@ func remoteDesktopRuntimeFallsBackToTextInputWhenClipboardActionFails() async {
     await waitForLaunchState(runtime)
 
     runtime.syncClipboard("fallback text")
-    await waitForSessionInputCalls(sessionInput, expectedCount: 1)
+    await waitForClipboardCalls(control, expectedCount: 1)
 
     let clipboardCalls = await control.clipboardCalls()
     #expect(clipboardCalls.count == 1)
     let inputCalls = await sessionInput.inputCalls()
-    #expect(inputCalls.count == 1)
-    #expect(inputCalls.first?.event == .text("fallback text"))
+    #expect(inputCalls.isEmpty)
 }
 
 @Test("Remote desktop runtime copies Apollo host clipboard into the local clipboard")
