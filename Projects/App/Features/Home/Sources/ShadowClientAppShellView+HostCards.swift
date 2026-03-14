@@ -537,12 +537,28 @@ var remoteDesktopHostCard: some View {
                     }
                     .tint(.mint)
 
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Apollo Permissions")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Color.white.opacity(0.68))
+
+                        ForEach(ShadowClientApolloPermission.allCases, id: \.self) { permission in
+                            Toggle(isOn: hostApolloPermissionBinding(for: host, permission: permission)) {
+                                Text(permission.label)
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+                    }
+
                     Button("Save Apollo Overrides") {
                         remoteDesktopRuntime.updateSelectedHostApolloAdmin(
                             username: hostApolloAdminUsername(for: host),
                             password: hostApolloAdminPassword(for: host),
                             displayModeOverride: hostApolloDisplayModeDraft(for: host),
-                            alwaysUseVirtualDisplay: hostApolloAlwaysUseVirtualDisplayDraft(for: host)
+                            alwaysUseVirtualDisplay: hostApolloAlwaysUseVirtualDisplayDraft(for: host),
+                            permissions: hostApolloPermissionDraft(for: host)
                         )
                     }
                     .buttonStyle(.borderedProminent)
@@ -1106,7 +1122,8 @@ var remoteDesktopHostCard: some View {
             ? "Always use virtual display: ON"
             : "Always use virtual display: OFF"
         let connectedDescription = profile.connected ? "Connected" : "Not connected"
-        return [displayDescription, virtualDisplayDescription, connectedDescription].joined(separator: "\n")
+        let permissionsDescription = ShadowClientApolloPermission.summary(for: profile.permissions)
+        return [displayDescription, virtualDisplayDescription, permissionsDescription, connectedDescription].joined(separator: "\n")
     }
 
     func hostApolloDisplayModeDraft(for host: ShadowClientRemoteHostDescriptor) -> String {
@@ -1123,6 +1140,13 @@ var remoteDesktopHostCard: some View {
         return hostApolloAdminProfile(host)?.alwaysUseVirtualDisplay ?? false
     }
 
+    func hostApolloPermissionDraft(for host: ShadowClientRemoteHostDescriptor) -> UInt32 {
+        if let draft = apolloPermissionDrafts[host.id] {
+            return draft
+        }
+        return hostApolloAdminProfile(host)?.permissions ?? 0
+    }
+
     func hostApolloDisplayModeBinding(for host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
         Binding(
             get: { hostApolloDisplayModeDraft(for: host) },
@@ -1134,6 +1158,27 @@ var remoteDesktopHostCard: some View {
         Binding(
             get: { hostApolloAlwaysUseVirtualDisplayDraft(for: host) },
             set: { apolloAlwaysUseVirtualDisplayDrafts[host.id] = $0 }
+        )
+    }
+
+    func hostApolloPermissionBinding(
+        for host: ShadowClientRemoteHostDescriptor,
+        permission: ShadowClientApolloPermission
+    ) -> Binding<Bool> {
+        Binding(
+            get: {
+                ShadowClientApolloPermission.contains(
+                    permission,
+                    in: hostApolloPermissionDraft(for: host)
+                )
+            },
+            set: { enabled in
+                apolloPermissionDrafts[host.id] = ShadowClientApolloPermission.updating(
+                    permission,
+                    enabled: enabled,
+                    in: hostApolloPermissionDraft(for: host)
+                )
+            }
         )
     }
 

@@ -372,7 +372,8 @@ func remoteDesktopRuntimeUpdatesApolloAdminProfileForSelectedHost() async {
         username: "apollo",
         password: "secret",
         displayModeOverride: "2560x1440x120",
-        alwaysUseVirtualDisplay: true
+        alwaysUseVirtualDisplay: true,
+        permissions: 65535
     )
     await waitForApolloAdminState(runtime)
 

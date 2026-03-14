@@ -57,6 +57,7 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @State var connectionState: ShadowClientConnectionState = .disconnected
     @State var apolloDisplayModeDrafts: [String: String] = [:]
     @State var apolloAlwaysUseVirtualDisplayDrafts: [String: Bool] = [:]
+    @State var apolloPermissionDrafts: [String: UInt32] = [:]
     @State var remoteDesktopHostFrames: [String: CGRect] = [:]
     @State var spotlightedHostID: String?
     @State var spotlightedHostSourceFrame: CGRect = .zero

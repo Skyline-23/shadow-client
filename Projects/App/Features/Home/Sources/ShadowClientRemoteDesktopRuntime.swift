@@ -1106,7 +1106,8 @@ private enum ShadowClientRemoteDesktopCommand: Sendable {
         username: String,
         password: String,
         displayModeOverride: String,
-        alwaysUseVirtualDisplay: Bool
+        alwaysUseVirtualDisplay: Bool,
+        permissions: UInt32
     )
     case disconnectSelectedHostApolloAdmin(username: String, password: String)
     case unpairSelectedHostApolloAdmin(username: String, password: String)
@@ -1414,12 +1415,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             performRefreshSelectedHostApps()
         case let .refreshSelectedHostApolloAdmin(username, password):
             performRefreshSelectedHostApolloAdmin(username: username, password: password)
-        case let .updateSelectedHostApolloAdmin(username, password, displayModeOverride, alwaysUseVirtualDisplay):
+        case let .updateSelectedHostApolloAdmin(username, password, displayModeOverride, alwaysUseVirtualDisplay, permissions):
             performUpdateSelectedHostApolloAdmin(
                 username: username,
                 password: password,
                 displayModeOverride: displayModeOverride,
-                alwaysUseVirtualDisplay: alwaysUseVirtualDisplay
+                alwaysUseVirtualDisplay: alwaysUseVirtualDisplay,
+                permissions: permissions
             )
         case let .disconnectSelectedHostApolloAdmin(username, password):
             performDisconnectSelectedHostApolloAdmin(
@@ -3284,14 +3286,16 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         username: String,
         password: String,
         displayModeOverride: String,
-        alwaysUseVirtualDisplay: Bool
+        alwaysUseVirtualDisplay: Bool,
+        permissions: UInt32
     ) {
         commandContinuation.yield(
             .updateSelectedHostApolloAdmin(
                 username: username,
                 password: password,
                 displayModeOverride: displayModeOverride,
-                alwaysUseVirtualDisplay: alwaysUseVirtualDisplay
+                alwaysUseVirtualDisplay: alwaysUseVirtualDisplay,
+                permissions: permissions
             )
         )
     }
@@ -3498,7 +3502,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         username: String,
         password: String,
         displayModeOverride: String,
-        alwaysUseVirtualDisplay: Bool
+        alwaysUseVirtualDisplay: Bool,
+        permissions: UInt32
     ) {
         guard let selectedHost,
               let currentProfile = selectedHostApolloAdminProfile
@@ -3524,7 +3529,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             name: currentProfile.name,
             uuid: currentProfile.uuid,
             displayModeOverride: displayModeOverride.trimmingCharacters(in: .whitespacesAndNewlines),
-            permissions: currentProfile.permissions,
+            permissions: permissions,
             enableLegacyOrdering: currentProfile.enableLegacyOrdering,
             allowClientCommands: currentProfile.allowClientCommands,
             alwaysUseVirtualDisplay: alwaysUseVirtualDisplay,
