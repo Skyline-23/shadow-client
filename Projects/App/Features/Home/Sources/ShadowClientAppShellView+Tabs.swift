@@ -461,71 +461,27 @@ var settingsTab: some View {
 
                     settingsSection(title: "Session Launch Plan") {
                         if let settingsDiagnosticsModel {
-                            diagnosticsRow(
-                                label: "Tone",
-                                value: settingsDiagnosticsModel.tone.rawValue.uppercased(),
-                                valueColor: toneColor(for: settingsDiagnosticsModel.tone)
-                            )
-                            diagnosticsRow(
-                                label: "Target Buffer",
-                                value: "\(settingsDiagnosticsModel.targetBufferMs) ms"
-                            )
-                            diagnosticsRow(
-                                label: "Jitter / Packet Loss",
-                                value: "\(settingsDiagnosticsModel.jitterMs) ms / \(String(format: "%.1f", settingsDiagnosticsModel.packetLossPercent))%"
-                            )
-                            diagnosticsRow(
-                                label: "Frame Drop / AV Sync",
-                                value: "\(String(format: "%.1f", settingsDiagnosticsModel.frameDropPercent))% / \(settingsDiagnosticsModel.avSyncOffsetMs) ms"
-                            )
-                            diagnosticsRow(
-                                label: "Drop Origin",
-                                value: "NET \(settingsDiagnosticsModel.networkDroppedFrames) / PACER \(settingsDiagnosticsModel.pacerDroppedFrames)"
-                            )
-                            diagnosticsRow(
-                                label: "Telemetry Timestamp",
-                                value: "\(settingsDiagnosticsModel.timestampMs) ms",
-                                valueColor: Color.white.opacity(0.78)
-                            )
-                            if let sampleIntervalMs = settingsDiagnosticsModel.sampleIntervalMs {
+                            ForEach(
+                                ShadowClientSettingsDiagnosticsPresentationKit.telemetryRows(
+                                    settingsDiagnosticsModel
+                                ),
+                                id: \.label
+                            ) { row in
                                 diagnosticsRow(
-                                    label: "Sample Interval",
-                                    value: "\(sampleIntervalMs) ms",
-                                    valueColor: Color.white.opacity(0.78)
-                                )
-                            } else {
-                                diagnosticsRow(
-                                    label: "Sample Interval",
-                                    value: "--",
-                                    valueColor: Color.white.opacity(0.78)
-                                )
-                            }
-                            if settingsDiagnosticsModel.receivedOutOfOrderSample {
-                                diagnosticsRow(
-                                    label: "Sample Order",
-                                    value: "Out-of-order telemetry sample ignored",
-                                    valueColor: .orange
-                                )
-                            }
-                            diagnosticsRow(
-                                label: "Session Video / Audio",
-                                value: "\(settingsDiagnosticsModel.hdrVideoMode.rawValue.uppercased()) / \(settingsDiagnosticsModel.audioMode.rawValue.uppercased())"
-                            )
-                            diagnosticsRow(
-                                label: "Reconfigure",
-                                value: "V:\(settingsDiagnosticsModel.shouldRenegotiateVideoPipeline ? "Y" : "N") A:\(settingsDiagnosticsModel.shouldRenegotiateAudioPipeline ? "Y" : "N") QDrop:\(settingsDiagnosticsModel.shouldApplyQualityDropImmediately ? "Y" : "N")",
-                                valueColor: Color.white.opacity(0.78)
-                            )
-                            if settingsDiagnosticsModel.recoveryStableSamplesRemaining > 0 {
-                                diagnosticsRow(
-                                    label: "Recovery Hold",
-                                    value: "\(settingsDiagnosticsModel.recoveryStableSamplesRemaining) stable sample(s) remaining",
-                                    valueColor: .orange
+                                    label: row.label,
+                                    value: row.value,
+                                    valueColor: ShadowClientSettingsDiagnosticsPresentationKit.valueColor(
+                                        for: row,
+                                        tone: settingsDiagnosticsModel.tone
+                                    )
                                 )
                             }
                         } else {
                             settingsRow {
-                                Label("Awaiting telemetry samples from active session.", systemImage: "antenna.radiowaves.left.and.right")
+                                Label(
+                                    ShadowClientSettingsDiagnosticsPresentationKit.emptyTelemetryMessage(),
+                                    systemImage: "antenna.radiowaves.left.and.right"
+                                )
                                     .font(.callout.weight(.semibold))
                                     .foregroundStyle(Color.white.opacity(0.82))
                                 Spacer(minLength: 0)
@@ -535,7 +491,10 @@ var settingsTab: some View {
 
                     settingsSection(title: "Controller") {
                         settingsRow {
-                            Label("DualSense feedback contract follows Apple Game Controller capabilities.", systemImage: "gamecontroller.fill")
+                            Label(
+                                ShadowClientSettingsDiagnosticsPresentationKit.controllerContractMessage(),
+                                systemImage: "gamecontroller.fill"
+                            )
                                 .font(.callout.weight(.semibold))
                                 .foregroundStyle(Color.white.opacity(0.82))
                             Spacer(minLength: 0)
