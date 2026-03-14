@@ -714,9 +714,12 @@ var remoteDesktopHostCard: some View {
         }
         .accessibilityIdentifier("shadow.home.hosts.go-selected")
         .accessibilityLabel("Go to selected host")
-        .accessibilityHint(hostCanConnect(host)
-            ? "Connects to \(hostDisplayTitle(host)) and opens the preferred remote session"
-            : "Disabled until \(hostDisplayTitle(host)) is ready")
+        .accessibilityHint(
+            ShadowClientHostAppLibraryPresentationKit.primaryActionHint(
+                hostTitle: hostDisplayTitle(host),
+                canConnect: hostCanConnect(host)
+            )
+        )
         .buttonStyle(.borderedProminent)
         .disabled(!hostCanConnect(host))
     }
@@ -740,7 +743,7 @@ var remoteDesktopHostCard: some View {
     func remoteDesktopAppLibrarySection(for host: ShadowClientRemoteHostDescriptor) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                Text("App Library")
+                Text(ShadowClientHostAppLibraryPresentationKit.sectionTitle())
                     .font(.headline)
                     .foregroundStyle(.white)
                 Spacer(minLength: 8)
@@ -759,16 +762,18 @@ var remoteDesktopHostCard: some View {
             }
 
             if host.pairStatus != .paired {
+                let callout = ShadowClientHostAppLibraryPresentationKit.lockedCallout()
                 remoteDesktopCalloutRow(
-                    title: "Locked",
-                    message: "Pair this device first to load desktop or game apps.",
-                    accent: .yellow
+                    title: callout.title,
+                    message: callout.message,
+                    accent: ShadowClientHostSpotlightPresentationKit.accentColor(for: callout.tone)
                 )
             } else if remoteDesktopRuntime.apps.isEmpty {
+                let callout = ShadowClientHostAppLibraryPresentationKit.emptyCallout()
                 remoteDesktopCalloutRow(
-                    title: "No Apps Yet",
-                    message: "Refresh after the host session becomes ready.",
-                    accent: Color.white.opacity(0.65)
+                    title: callout.title,
+                    message: callout.message,
+                    accent: ShadowClientHostSpotlightPresentationKit.accentColor(for: callout.tone)
                 )
             } else {
                 ForEach(remoteDesktopRuntime.apps.prefix(5)) { app in
@@ -778,7 +783,12 @@ var remoteDesktopHostCard: some View {
                             Text(app.title)
                                 .font(.callout.weight(.bold))
                                 .foregroundStyle(.white)
-                            Text("App ID: \(app.id) · HDR: \(app.hdrSupported ? "Y" : "N")")
+                            Text(
+                                ShadowClientHostAppLibraryPresentationKit.metadata(
+                                    appID: app.id,
+                                    hdrSupported: app.hdrSupported
+                                )
+                            )
                                 .font(.footnote.monospacedDigit())
                                 .foregroundStyle(Color.white.opacity(0.68))
                         }
@@ -790,7 +800,7 @@ var remoteDesktopHostCard: some View {
                         }
                         .accessibilityIdentifier("shadow.home.applist.launch.\(appIdentifier)")
                         .accessibilityLabel("Launch \(app.title)")
-                        .accessibilityHint("Launches the selected remote app and enters remote session view")
+                        .accessibilityHint(ShadowClientHostAppLibraryPresentationKit.launchAccessibilityHint())
                         .buttonStyle(.borderedProminent)
                         .disabled(remoteDesktopRuntime.launchState == .launching)
                     }
