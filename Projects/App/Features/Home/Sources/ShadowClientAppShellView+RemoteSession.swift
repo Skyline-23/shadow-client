@@ -513,19 +513,10 @@ func diagnosticsResolutionValue() -> String {
         }
 
         if selectedResolution == .retinaAuto {
-            #if os(macOS)
-            let pixelSize = ShadowClientAutoResolutionPolicy.resolveLaunchGeometry(
-                displayLogicalSize: launchViewportMetrics.logicalSize,
-                safeAreaInsets: launchViewportMetrics.safeAreaInsets,
-                scale: macDisplayScale,
-                displayPixelSize: macDisplayPixelSize
-            ).pixelSize
-            #else
-            let pixelSize = ShadowClientAutoResolutionPolicy.resolvePixelSize(
-                logicalSize: launchViewportMetrics.logicalSize,
-                safeAreaInsets: launchViewportMetrics.safeAreaInsets
+            let pixelSize = ShadowClientDisplayMetricsKit.resolvePixelSize(
+                viewportMetrics: launchViewportMetrics,
+                displayMetrics: displayMetrics
             )
-            #endif
             return "\(Int(pixelSize.width.rounded()))x\(Int(pixelSize.height.rounded()))"
         }
 

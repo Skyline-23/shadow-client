@@ -83,8 +83,7 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
         logicalSize: .zero,
         safeAreaInsets: .init()
     )
-    @State var macDisplayScale: CGFloat = 2.0
-    @State var macDisplayPixelSize: CGSize?
+    @State var displayMetrics = ShadowClientDisplayMetricsState.default
 #if os(macOS)
     @State var activeSessionProcessActivity: NSObjectProtocol?
 #endif
@@ -118,14 +117,11 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
                 )
             }
         )
-#if os(macOS)
         .background(
-            ShadowClientMacDisplayMetricsObserver { scale, pixelSize in
-                macDisplayScale = scale
-                macDisplayPixelSize = pixelSize
+            ShadowClientDisplayMetricsObserver { metrics in
+                displayMetrics = metrics
             }
         )
-#endif
         .tint(accentColor)
         .preferredColorScheme(.dark)
         .task {
@@ -821,24 +817,13 @@ func launchDesktopFallbackIfNeeded() async {
             return base
         }
 
-        #if os(macOS)
-        let launchGeometry = ShadowClientAutoResolutionPolicy.resolveLaunchGeometry(
-            displayLogicalSize: launchViewportMetrics.logicalSize,
-            safeAreaInsets: launchViewportMetrics.safeAreaInsets,
-            scale: macDisplayScale,
-            displayPixelSize: macDisplayPixelSize
+        let launchGeometry = ShadowClientDisplayMetricsKit.resolveLaunchGeometry(
+            viewportMetrics: launchViewportMetrics,
+            displayMetrics: displayMetrics
         )
-        #else
-        let launchGeometry = ShadowClientAutoResolutionPolicy.resolveLaunchGeometry(
-            logicalSize: launchViewportMetrics.logicalSize,
-            safeAreaInsets: launchViewportMetrics.safeAreaInsets
+        let launchSize = ShadowClientDisplayMetricsPlatformKit.launchRequestSize(
+            from: launchGeometry
         )
-        #endif
-        #if os(macOS)
-        let launchSize = launchGeometry.pixelSize
-        #else
-        let launchSize = launchGeometry.renderSize
-        #endif
         return .init(
             width: Int(launchSize.width),
             height: Int(launchSize.height),

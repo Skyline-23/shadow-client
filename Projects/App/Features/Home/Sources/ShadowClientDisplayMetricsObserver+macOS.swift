@@ -2,28 +2,27 @@
 import AppKit
 import SwiftUI
 
-struct ShadowClientMacDisplayMetricsObserver: NSViewRepresentable {
-    let onMetricsChanged: @MainActor (_ scale: CGFloat, _ pixelSize: CGSize?) -> Void
+struct ShadowClientDisplayMetricsObserver: NSViewRepresentable {
+    let onMetricsChanged: @MainActor (ShadowClientDisplayMetricsState) -> Void
 
-    func makeNSView(context: Context) -> ShadowClientMacDisplayMetricsNSView {
-        let view = ShadowClientMacDisplayMetricsNSView()
+    func makeNSView(context: Context) -> ShadowClientDisplayMetricsNSView {
+        let view = ShadowClientDisplayMetricsNSView()
         view.onMetricsChanged = onMetricsChanged
         return view
     }
 
-    func updateNSView(_ nsView: ShadowClientMacDisplayMetricsNSView, context: Context) {
+    func updateNSView(_ nsView: ShadowClientDisplayMetricsNSView, context: Context) {
         nsView.onMetricsChanged = onMetricsChanged
         nsView.publishMetricsIfNeeded()
     }
 }
 
 @MainActor
-final class ShadowClientMacDisplayMetricsNSView: NSView {
-    var onMetricsChanged: (@MainActor (_ scale: CGFloat, _ pixelSize: CGSize?) -> Void)?
+final class ShadowClientDisplayMetricsNSView: NSView {
+    var onMetricsChanged: (@MainActor (ShadowClientDisplayMetricsState) -> Void)?
 
     private weak var observedWindow: NSWindow?
-    private var lastPublishedScale: CGFloat?
-    private var lastPublishedPixelSize: CGSize?
+    private var lastPublishedState: ShadowClientDisplayMetricsState?
 
     deinit {
         NotificationCenter.default.removeObserver(self)
@@ -77,7 +76,6 @@ final class ShadowClientMacDisplayMetricsNSView: NSView {
             return
         }
 
-        let scale = screen.backingScaleFactor
         let pixelSize: CGSize?
         if let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
            let mode = CGDisplayCopyDisplayMode(CGDirectDisplayID(screenNumber.uint32Value)) {
@@ -86,18 +84,20 @@ final class ShadowClientMacDisplayMetricsNSView: NSView {
             pixelSize = nil
         }
 
-        guard lastPublishedScale != scale || lastPublishedPixelSize != pixelSize else {
+        let nextState = ShadowClientDisplayMetricsState(
+            scale: screen.backingScaleFactor,
+            pixelSize: pixelSize
+        )
+        guard lastPublishedState != nextState else {
             return
         }
-
-        lastPublishedScale = scale
-        lastPublishedPixelSize = pixelSize
+        lastPublishedState = nextState
 
         DispatchQueue.main.async { [weak self] in
             guard let self else {
                 return
             }
-            self.onMetricsChanged?(scale, pixelSize)
+            self.onMetricsChanged?(nextState)
         }
     }
 }
