@@ -2115,6 +2115,16 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     }
                     self.lastKnownSessionURL = Self.normalizedSessionURL(connectedSessionURL)
                     self.clearSessionIssueState()
+                    Task {
+                        await self.pairingRouteStore.setPreferredHost(
+                            resolvedHostDescriptor.host,
+                            for: selectedHostKey
+                        )
+                        await self.pairingRouteStore.setPreferredHost(
+                            resolvedHostDescriptor.host,
+                            for: Self.mergeKey(for: selectedHost)
+                        )
+                    }
                     if self.sessionPresentationMode == .externalRuntime {
                         self.launchState = .launched(
                             "Remote desktop launched (\(connectedLaunchResult.verb)): \(resolvedTitle) on \(resolvedHostDescriptor.host)"
@@ -3634,6 +3644,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     guard let self else {
                         return
                     }
+                    Task {
+                        await pairingRouteStore.setPreferredHost(
+                            resolvedHostDescriptor.host,
+                            for: Self.mergeKey(for: hostDescriptor)
+                        )
+                    }
                     if !sorted.isEmpty {
                         self.cachedAppsByHostID[hostDescriptor.id] = sorted
                     }
@@ -4176,10 +4192,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         if normalized == selectedHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
             return 1
         }
-        if isLocalPairHost(normalized) {
+        if !isLinkLocalRouteHost(normalized) {
             return 2
         }
-        return 3
+        if isLocalPairHost(normalized) {
+            return 3
+        }
+        return 4
     }
 
     private static func pairRouteStoreKey(for selectedHost: ShadowClientRemoteHostDescriptor) -> String {
@@ -4198,6 +4217,23 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     private static func isIPAddressCandidate(_ host: String) -> Bool {
         host.allSatisfy { $0.isNumber || $0 == "." || $0 == ":" }
+    }
+
+    private static func isLinkLocalRouteHost(_ host: String) -> Bool {
+        ShadowClientRemoteHostCandidateFilter.isLinkLocalHost(
+            host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        )
+    }
+
+    private static func runtimeRouteRank(_ host: String) -> Int {
+        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else {
+            return 100
+        }
+        if isLinkLocalRouteHost(normalized) {
+            return 10
+        }
+        return isLocalPairHost(normalized) ? 1 : 0
     }
 
     private static func normalizedHostCandidates(_ candidates: [String]) -> [String] {
@@ -4542,21 +4578,29 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let activeRouteCandidates = candidateRoutes.filter {
             reachableHostNames.isEmpty || reachableHostNames.contains($0.host.lowercased())
         }
+        let rankedActiveRouteCandidates = activeRouteCandidates.sorted {
+            let lhsRank = runtimeRouteRank($0.host)
+            let rhsRank = runtimeRouteRank($1.host)
+            if lhsRank == rhsRank {
+                return $0.host.localizedCaseInsensitiveCompare($1.host) == .orderedAscending
+            }
+            return lhsRank < rhsRank
+        }
         let selectedReachableHost = group.first(where: {
             $0.id == selectedHostID && $0.isReachable
         })?.host.lowercased()
 
-        let active = activeRouteCandidates.first(where: {
-            $0.host.lowercased() == reachableLocalHost
-        }) ?? activeRouteCandidates.first(where: {
+        let active = rankedActiveRouteCandidates.first(where: {
             $0.host.lowercased() == preferredHost
-        }) ?? activeRouteCandidates.first(where: {
+        }) ?? rankedActiveRouteCandidates.first(where: {
             $0.host.lowercased() == preferredRoute
-        }) ?? activeRouteCandidates.first(where: {
+        }) ?? rankedActiveRouteCandidates.first(where: {
             $0.host.lowercased() == selectedReachableHost
-        }) ?? activeRouteCandidates.first(where: {
+        }) ?? rankedActiveRouteCandidates.first(where: {
+            $0.host.lowercased() == reachableLocalHost && !isLinkLocalRouteHost($0.host)
+        }) ?? rankedActiveRouteCandidates.first(where: {
             isLocalPairHost($0.host)
-        }) ?? activeRouteCandidates.first ?? fallbackPrimary.routes.active
+        }) ?? rankedActiveRouteCandidates.first ?? fallbackPrimary.routes.active
 
         return ShadowClientRemoteHostRoutes(
             active: active,
@@ -4594,14 +4638,32 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let currentActiveHost = selectedHost.routes.active.host.lowercased()
         if let activeDescriptor = candidateDescriptors.first(where: {
             $0.host.lowercased() == currentActiveHost
-        }) {
+        }), !isLinkLocalRouteHost(activeDescriptor.host) {
             return activeDescriptor
+        }
+
+        if let exactDescriptor = candidateDescriptors.first(where: {
+            $0.host.lowercased() == selectedHost.host.lowercased()
+        }), !isLinkLocalRouteHost(exactDescriptor.host) {
+            return exactDescriptor
+        }
+
+        if let nonLinkLocalDescriptor = candidateDescriptors.first(where: {
+            !isLinkLocalRouteHost($0.host)
+        }) {
+            return nonLinkLocalDescriptor
         }
 
         if let localDescriptor = candidateDescriptors.first(where: {
             isLocalPairHost($0.host)
         }) {
             return localDescriptor
+        }
+
+        if let activeDescriptor = candidateDescriptors.first(where: {
+            $0.host.lowercased() == currentActiveHost
+        }) {
+            return activeDescriptor
         }
 
         if let exactDescriptor = candidateDescriptors.first(where: {
@@ -4646,9 +4708,18 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
         let reachableCandidates = candidates.filter(\.isReachable)
 
+        if let nonLinkLocalCandidate = reachableCandidates.first(where: {
+            $0.host.lowercased() != currentDescriptor.host.lowercased() &&
+                !isLinkLocalRouteHost($0.host)
+        }) {
+            return nonLinkLocalCandidate
+        }
+
         if !isLocalPairHost(currentDescriptor.host),
            let localDescriptor = reachableCandidates.first(where: {
-               isLocalPairHost($0.host) && $0.host.lowercased() != currentDescriptor.host.lowercased()
+               isLocalPairHost($0.host) &&
+                   $0.host.lowercased() != currentDescriptor.host.lowercased() &&
+                   !isLinkLocalRouteHost($0.host)
            }) {
             return localDescriptor
         }

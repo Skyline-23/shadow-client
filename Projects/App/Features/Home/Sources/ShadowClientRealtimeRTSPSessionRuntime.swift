@@ -4814,34 +4814,149 @@ private actor ShadowClientRTSPInterleavedClient {
         port: NWEndpoint.Port
     ) async throws -> NWConnection {
         var connectRetries = 0
+        let candidateHosts = Self.resolvedConnectionHostCandidates(for: host)
 
         while true {
-            let candidateConnection = NWConnection(
-                host: .init(host),
-                port: port,
-                using: .tcp
-            )
-            do {
-                try await waitForReady(
-                    candidateConnection,
-                    timeout: ShadowClientRealtimeSessionDefaults.rtspConnectTimeout
+            for candidateHost in candidateHosts {
+                let candidateConnection = NWConnection(
+                    host: candidateHost,
+                    port: port,
+                    using: .tcp
                 )
-                return candidateConnection
-            } catch {
-                candidateConnection.cancel()
+                do {
+                    try await waitForReady(
+                        candidateConnection,
+                        timeout: ShadowClientRealtimeSessionDefaults.rtspConnectTimeout
+                    )
+                    return candidateConnection
+                } catch {
+                    candidateConnection.cancel()
 
-                let canRetry =
-                    (Self.isConnectionRefusedError(error) ||
-                        Self.isLikelyRTSPTransportTerminationError(error)) &&
-                    connectRetries < 20
-                guard canRetry else {
-                    throw error
+                    let canRetry =
+                        (Self.isConnectionRefusedError(error) ||
+                            Self.isLikelyRTSPTransportTerminationError(error)) &&
+                        connectRetries < 20
+                    guard canRetry else {
+                        throw error
+                    }
                 }
-
-                connectRetries += 1
-                try? await Task.sleep(for: ShadowClientRealtimeSessionDefaults.rtspConnectRetryDelay)
             }
+
+            connectRetries += 1
+            try? await Task.sleep(for: ShadowClientRealtimeSessionDefaults.rtspConnectRetryDelay)
         }
+    }
+
+    private static func resolvedConnectionHostCandidates(for host: String) -> [NWEndpoint.Host] {
+        let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedHost.isEmpty else {
+            return [NWEndpoint.Host(host)]
+        }
+
+        if parseIPv4Literal(trimmedHost) != nil || parseIPv6Literal(trimmedHost) != nil {
+            return [NWEndpoint.Host(trimmedHost)]
+        }
+
+        var hints = addrinfo(
+            ai_flags: AI_ADDRCONFIG,
+            ai_family: AF_UNSPEC,
+            ai_socktype: SOCK_STREAM,
+            ai_protocol: IPPROTO_TCP,
+            ai_addrlen: 0,
+            ai_canonname: nil,
+            ai_addr: nil,
+            ai_next: nil
+        )
+        var resultPointer: UnsafeMutablePointer<addrinfo>?
+        let status = getaddrinfo(trimmedHost, nil, &hints, &resultPointer)
+        guard status == 0, let resultPointer else {
+            return [NWEndpoint.Host(trimmedHost)]
+        }
+        defer { freeaddrinfo(resultPointer) }
+
+        var seen = Set<String>()
+        var candidates: [(host: String, rank: Int)] = []
+
+        for pointer in sequence(first: resultPointer, next: { $0.pointee.ai_next }) {
+            guard let sockaddrPointer = pointer.pointee.ai_addr else {
+                continue
+            }
+            let hostString = numericHostString(from: sockaddrPointer, length: pointer.pointee.ai_addrlen)
+            guard let hostString else {
+                continue
+            }
+            let normalized = hostString.lowercased()
+            guard seen.insert(normalized).inserted else {
+                continue
+            }
+            candidates.append((host: hostString, rank: connectionHostRank(hostString)))
+        }
+
+        if candidates.isEmpty {
+            return [NWEndpoint.Host(trimmedHost)]
+        }
+
+        return candidates
+            .sorted {
+                if $0.rank == $1.rank {
+                    return $0.host.localizedCaseInsensitiveCompare($1.host) == .orderedAscending
+                }
+                return $0.rank < $1.rank
+            }
+            .map { NWEndpoint.Host($0.host) }
+    }
+
+    private static func parseIPv4Literal(_ host: String) -> in_addr? {
+        var parsed = in_addr()
+        let result = host.withCString { cString in
+            inet_pton(AF_INET, cString, &parsed)
+        }
+        guard result == 1 else {
+            return nil
+        }
+        return parsed
+    }
+
+    private static func parseIPv6Literal(_ host: String) -> in6_addr? {
+        var parsed = in6_addr()
+        let result = host.withCString { cString in
+            inet_pton(AF_INET6, cString, &parsed)
+        }
+        guard result == 1 else {
+            return nil
+        }
+        return parsed
+    }
+
+    private static func numericHostString(
+        from address: UnsafeMutablePointer<sockaddr>,
+        length: socklen_t
+    ) -> String? {
+        var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        let status = getnameinfo(
+            address,
+            length,
+            &buffer,
+            socklen_t(buffer.count),
+            nil,
+            0,
+            NI_NUMERICHOST
+        )
+        guard status == 0 else {
+            return nil
+        }
+        return String(cString: buffer)
+    }
+
+    private static func connectionHostRank(_ host: String) -> Int {
+        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.hasPrefix("169.254.") || normalized.hasPrefix("fe80:") {
+            return 10
+        }
+        if normalized.contains(":") {
+            return 1
+        }
+        return 0
     }
 
     private static func isConnectionRefusedError(_ error: Error) -> Bool {
@@ -6726,6 +6841,96 @@ private actor ShadowClientUDPDatagramSocket {
             return nil
         }
         return parsed
+    }
+
+    private static func resolvedConnectionHostCandidates(for host: String) -> [NWEndpoint.Host] {
+        let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedHost.isEmpty else {
+            return [.init(host)]
+        }
+
+        if parseIPv4Host(.init(trimmedHost)) != nil || parseIPv6Host(.init(trimmedHost)) != nil {
+            return [.init(trimmedHost)]
+        }
+
+        var hints = addrinfo(
+            ai_flags: AI_ADDRCONFIG,
+            ai_family: AF_UNSPEC,
+            ai_socktype: SOCK_STREAM,
+            ai_protocol: IPPROTO_TCP,
+            ai_addrlen: 0,
+            ai_canonname: nil,
+            ai_addr: nil,
+            ai_next: nil
+        )
+        var resultPointer: UnsafeMutablePointer<addrinfo>?
+        let status = getaddrinfo(trimmedHost, nil, &hints, &resultPointer)
+        guard status == 0, let resultPointer else {
+            return [.init(trimmedHost)]
+        }
+        defer { freeaddrinfo(resultPointer) }
+
+        var seen = Set<String>()
+        var candidates: [(host: String, rank: Int)] = []
+
+        for pointer in sequence(first: resultPointer, next: { $0.pointee.ai_next }) {
+            guard let sockaddrPointer = pointer.pointee.ai_addr else {
+                continue
+            }
+            let hostString = numericHostString(from: sockaddrPointer, length: pointer.pointee.ai_addrlen)
+            guard let hostString else {
+                continue
+            }
+            let normalized = hostString.lowercased()
+            guard seen.insert(normalized).inserted else {
+                continue
+            }
+            candidates.append((host: hostString, rank: connectionHostRank(hostString)))
+        }
+
+        if candidates.isEmpty {
+            return [.init(trimmedHost)]
+        }
+
+        return candidates
+            .sorted {
+                if $0.rank == $1.rank {
+                    return $0.host.localizedCaseInsensitiveCompare($1.host) == .orderedAscending
+                }
+                return $0.rank < $1.rank
+            }
+            .map { .init($0.host) }
+    }
+
+    private static func numericHostString(
+        from address: UnsafeMutablePointer<sockaddr>,
+        length: socklen_t
+    ) -> String? {
+        var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        let status = getnameinfo(
+            address,
+            length,
+            &buffer,
+            socklen_t(buffer.count),
+            nil,
+            0,
+            NI_NUMERICHOST
+        )
+        guard status == 0 else {
+            return nil
+        }
+        return String(cString: buffer)
+    }
+
+    private static func connectionHostRank(_ host: String) -> Int {
+        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.hasPrefix("169.254.") || normalized.hasPrefix("fe80:") {
+            return 10
+        }
+        if normalized.contains(":") {
+            return 1
+        }
+        return 0
     }
 
     private static func withSockaddrPointer<T>(
