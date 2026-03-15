@@ -558,26 +558,16 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 guard let batchResult = await packetQueue.nextBatch(maxCount: drainLimit) else {
                     return
                 }
-                let pendingPacketCountAfterFirstDequeue = max(
-                    0,
-                    batchResult.pendingPacketCountAfterDequeue + max(0, batchResult.packets.count - 1)
-                )
-                for (batchIndex, queuedPacket) in batchResult.packets.enumerated() {
+                for queuedPacket in batchResult.packets {
                     if Task.isCancelled {
                         return
                     }
                     let packet = queuedPacket.packet
                     let isStartupPressureGraceActive = await audioOutput.shouldDeferPressureShedding()
-                    let pendingPacketCountAfterCurrentDequeue = max(
-                        0,
-                        pendingPacketCountAfterFirstDequeue - batchIndex
-                    )
-                    let pendingQueueDurationMs = Double(
-                        pendingPacketCountAfterCurrentDequeue * max(1, packetDurationMs)
-                    )
+                    let outputPendingDurationMs = await audioOutput.pendingDurationMs()
                     let shouldDropDueToPendingPressure = !audioOutput.usesSystemManagedBuffering && Self
                         .shouldRequeueReadyPacketsForPendingOutputPressure(
-                            pendingOutputDurationMs: pendingQueueDurationMs,
+                            pendingOutputDurationMs: outputPendingDurationMs,
                             realtimePendingDurationCapMs: realtimePendingDurationCapMs,
                             isStartupPressureGraceActive: isStartupPressureGraceActive
                         )
