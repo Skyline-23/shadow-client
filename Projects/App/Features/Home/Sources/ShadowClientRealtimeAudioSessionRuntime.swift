@@ -2583,7 +2583,6 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         subsystem: "com.skyline23.shadow-client",
         category: "RealtimeSampleBufferAudio"
     )
-    private static let startupLeadTime = CMTime(value: 1, timescale: 20)
 
     private actor BudgetState {
         private let sampleRate: Double
@@ -2973,12 +2972,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             }
             return
         }
-        let hostTime = CMClockGetTime(CMClockGetHostTimeClock())
-        synchronizer.setRate(
-            1,
-            time: currentTime,
-            atHostTime: CMTimeAdd(hostTime, Self.startupLeadTime)
-        )
+        synchronizer.setRate(1, time: currentTime)
         Self.logger.notice(
             "Sample buffer audio timeline started rate=\(self.synchronizer.rate, privacy: .public) time=\(CMTimeGetSeconds(currentTime), privacy: .public)s pending=\(self.pendingSampleBuffers.count, privacy: .public) renderer-preroll=\(self.renderer.hasSufficientMediaDataForReliablePlaybackStart, privacy: .public) queued-preroll-ms=\(CMTimeGetSeconds(queuedDuration) * 1000, privacy: .public)"
         )
