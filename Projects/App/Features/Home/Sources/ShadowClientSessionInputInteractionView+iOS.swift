@@ -101,6 +101,8 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
     private let softwareKeyboardInputView = ShadowClientIOSSoftwareKeyboardInputView(frame: .zero)
     private var directPanGestureRecognizer: UIPanGestureRecognizer?
     private var indirectPointerPanGestureRecognizer: UIPanGestureRecognizer?
+    private var indirectPrimaryTapGestureRecognizer: UITapGestureRecognizer?
+    private var indirectSecondaryTapGestureRecognizer: UITapGestureRecognizer?
     private var pointerInteractionRef: UIPointerInteraction?
     private var isPrimaryButtonHeld = false
     private var lastPrimaryDragLocation: CGPoint?
@@ -213,6 +215,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         )
         pan.minimumNumberOfTouches = 1
         pan.maximumNumberOfTouches = 1
+        pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         pan.delegate = self
         addGestureRecognizer(pan)
         directPanGestureRecognizer = pan
@@ -224,6 +227,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         indirectPan.minimumNumberOfTouches = 1
         indirectPan.maximumNumberOfTouches = 1
         indirectPan.allowedScrollTypesMask = .all
+        indirectPan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
         indirectPan.delegate = self
         addGestureRecognizer(indirectPan)
         indirectPointerPanGestureRecognizer = indirectPan
@@ -234,6 +238,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         )
         singleTap.numberOfTouchesRequired = 1
         singleTap.numberOfTapsRequired = 1
+        singleTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         singleTap.delegate = self
         addGestureRecognizer(singleTap)
 
@@ -244,8 +249,10 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         indirectPrimaryTap.numberOfTouchesRequired = 1
         indirectPrimaryTap.numberOfTapsRequired = 1
         indirectPrimaryTap.buttonMaskRequired = .primary
+        indirectPrimaryTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
         indirectPrimaryTap.delegate = self
         addGestureRecognizer(indirectPrimaryTap)
+        indirectPrimaryTapGestureRecognizer = indirectPrimaryTap
 
         let secondaryTap = UITapGestureRecognizer(
             target: self,
@@ -253,6 +260,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         )
         secondaryTap.numberOfTouchesRequired = 2
         secondaryTap.numberOfTapsRequired = 1
+        secondaryTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         secondaryTap.delegate = self
         addGestureRecognizer(secondaryTap)
 
@@ -263,8 +271,10 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         indirectSecondaryTap.numberOfTouchesRequired = 1
         indirectSecondaryTap.numberOfTapsRequired = 1
         indirectSecondaryTap.buttonMaskRequired = .secondary
+        indirectSecondaryTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
         indirectSecondaryTap.delegate = self
         addGestureRecognizer(indirectSecondaryTap)
+        indirectSecondaryTapGestureRecognizer = indirectSecondaryTap
 
         let longPress = UILongPressGestureRecognizer(
             target: self,
@@ -272,6 +282,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         )
         longPress.minimumPressDuration = 0.25
         longPress.allowableMovement = 32
+        longPress.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         longPress.delegate = self
         addGestureRecognizer(longPress)
 
@@ -281,6 +292,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         )
         threeFingerTap.numberOfTouchesRequired = 3
         threeFingerTap.numberOfTapsRequired = 1
+        threeFingerTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         threeFingerTap.delegate = self
         addGestureRecognizer(threeFingerTap)
 
@@ -362,6 +374,16 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
             return
         }
         emitAbsolutePointerPosition(at: recognizer.location(in: self))
+        if recognizer === indirectPrimaryTapGestureRecognizer {
+            if isPrimaryButtonHeld {
+                isPrimaryButtonHeld = false
+                emit(.pointerButton(button: .left, isPressed: false))
+            } else {
+                emit(.pointerButton(button: .left, isPressed: true))
+                emit(.pointerButton(button: .left, isPressed: false))
+            }
+            return
+        }
         emit(.pointerButton(button: .left, isPressed: true))
         emit(.pointerButton(button: .left, isPressed: false))
     }
@@ -662,11 +684,6 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         _ recognizer: UIGestureRecognizer,
         shouldReceive touch: UITouch
     ) -> Bool {
-        if touch.type == .indirectPointer {
-            if recognizer === directPanGestureRecognizer {
-                return false
-            }
-        }
         return ShadowClientIOSIndirectPointerInputPolicy.shouldAllowGestureRecognition(
             for: touch.type,
             recognizer: recognizer
@@ -698,10 +715,6 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
                 lastPrimaryDragLocation = location
             case .ended:
                 emitAbsolutePointerPosition(at: location)
-                if isPrimaryButtonHeld {
-                    isPrimaryButtonHeld = false
-                    emit(.pointerButton(button: .left, isPressed: false))
-                }
                 lastPrimaryDragLocation = nil
             case .cancelled:
                 if isPrimaryButtonHeld {
