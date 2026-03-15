@@ -35,8 +35,8 @@ public struct ShadowClientHDRMetadata: Equatable, Sendable {
         }
         Self.appendUInt16BE(whitePoint.x, to: &data)
         Self.appendUInt16BE(whitePoint.y, to: &data)
-        Self.appendUInt16BE(maxDisplayLuminance, to: &data)
-        Self.appendUInt16BE(minDisplayLuminance, to: &data)
+        Self.appendUInt32BE(UInt32(maxDisplayLuminance), to: &data)
+        Self.appendUInt32BE(UInt32(minDisplayLuminance), to: &data)
         return data
     }
 
@@ -49,6 +49,13 @@ public struct ShadowClientHDRMetadata: Equatable, Sendable {
     }
 
     private static func appendUInt16BE(_ value: UInt16, to data: inout Data) {
+        data.append(UInt8(truncatingIfNeeded: value >> 8))
+        data.append(UInt8(truncatingIfNeeded: value))
+    }
+
+    private static func appendUInt32BE(_ value: UInt32, to data: inout Data) {
+        data.append(UInt8(truncatingIfNeeded: value >> 24))
+        data.append(UInt8(truncatingIfNeeded: value >> 16))
         data.append(UInt8(truncatingIfNeeded: value >> 8))
         data.append(UInt8(truncatingIfNeeded: value))
     }
@@ -119,7 +126,7 @@ enum ShadowClientHostControlFeedbackCodec {
         }
 
         let isEnabled = payload[0] != 0
-        guard payload.count >= 25 else {
+        guard payload.count >= 27 else {
             return .init(isEnabled: isEnabled, metadata: nil)
         }
 
