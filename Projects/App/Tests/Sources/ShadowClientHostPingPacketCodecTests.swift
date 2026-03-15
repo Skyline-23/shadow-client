@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import ShadowClientFeatureHome
 
-@Test("Host ping codec appends big-endian sequence after negotiated payload")
+@Test("Host ping codec emits strict v2 packet when negotiated payload exists")
 func hostPingCodecAppendsSequenceAfterPayload() {
     let payload = Data("3727B184C4E23026".utf8)
     let packets = ShadowClientHostPingPacketCodec.makePingPackets(
@@ -10,9 +10,8 @@ func hostPingCodecAppendsSequenceAfterPayload() {
         negotiatedPayload: payload
     )
 
-    #expect(packets.count == 2)
+    #expect(packets.count == 1)
     #expect(packets[0] == payload + Data([0x01, 0x02, 0x03, 0x04]))
-    #expect(packets[1] == Data("PING".utf8))
 }
 
 @Test("Host ping codec falls back to legacy ASCII ping when payload is absent")
