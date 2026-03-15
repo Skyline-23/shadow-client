@@ -438,28 +438,12 @@ func realtimeSessionConnectionIssueHUD(
         message: String
     ) -> some View {
         realtimeSessionHUDCard {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "wifi.slash")
-                        .foregroundStyle(Color.red.opacity(0.95))
-                    Text(title)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.white.opacity(0.95))
-                    Spacer(minLength: 8)
-                    Text(ShadowClientRemoteSessionOverlayPresentationKit.connectionIssueBadgeText())
-                        .font(.caption2.monospaced().weight(.semibold))
-                        .foregroundStyle(Color.red.opacity(0.95))
-                }
-
-                Text(message)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(Color.white.opacity(0.82))
-                    .lineLimit(3)
-
-                Text(ShadowClientRemoteSessionOverlayPresentationKit.connectionIssueFootnote())
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Color.red.opacity(0.90))
-            }
+            ShadowUIRemoteSessionConnectionIssueHUD(
+                title: title,
+                message: message,
+                badgeText: ShadowClientRemoteSessionOverlayPresentationKit.connectionIssueBadgeText(),
+                footnote: ShadowClientRemoteSessionOverlayPresentationKit.connectionIssueFootnote()
+            )
         }
     }
 
