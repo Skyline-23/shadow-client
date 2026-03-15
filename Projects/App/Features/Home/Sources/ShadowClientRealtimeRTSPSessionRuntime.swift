@@ -1802,6 +1802,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             preferredCodec: resolvedCodecPreference,
             enableHDR: configuration.enableHDR,
             enableSurroundAudio: configuration.enableSurroundAudio,
+            preferredSurroundChannelCount: configuration.preferredSurroundChannelCount,
+            audioSynchronizationPolicy: configuration.audioSynchronizationPolicy,
             enableYUV444: configuration.enableYUV444,
             remoteInputKey: configuration.remoteInputKey,
             remoteInputKeyID: configuration.remoteInputKeyID,

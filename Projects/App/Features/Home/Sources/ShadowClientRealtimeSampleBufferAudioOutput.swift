@@ -1,6 +1,7 @@
 @preconcurrency import AVFoundation
 import Foundation
 import os
+import ShadowClientFeatureSession
 #if os(macOS)
 import CoreAudio
 #endif
@@ -116,6 +117,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     private let formatConverter: AVAudioConverter?
     private let budgetState: BudgetState
     private let nominalFramesPerBufferEstimate: Double
+    private let synchronizationPolicy: ShadowClientAudioSynchronizationPolicy
     private var pendingSampleBuffers: [PendingSampleBuffer] = []
     private var nextPresentationTime: CMTime = .zero
     private var queuedDurationAnchorTime: CMTime = .zero
@@ -129,6 +131,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     private var hasLoggedFirstConverterOutputStats = false
     private var flushTask: Task<Void, Never>?
     private var outputConfigurationTask: Task<Void, Never>?
+    private var isVideoRenderingReady = false
 
     private enum TimelineStartupState {
         case idle
@@ -137,21 +140,24 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     }
 
     private enum TimelineStartupReason: String {
-        case rendererPreroll = "renderer-preroll"
-        case rendererStatusRendering = "renderer-status-rendering"
+        case playbackClockProgress = "playback-clock-progress"
     }
 
     private var timelineStartupState: TimelineStartupState = .idle
+    private var timelineStartRequestTime: CMTime?
+    private var pressureSheddingGraceUntilTime: CMTime?
 
     init(
         format: AVAudioFormat,
         maximumQueuedBufferCount: Int,
         nominalFramesPerBuffer: AVAudioFrameCount,
         maximumPendingDurationMs: Double,
+        synchronizationPolicy: ShadowClientAudioSynchronizationPolicy,
         prefersSpatialHeadphoneRendering _: Bool
     ) throws {
         inputFormat = format
         renderFormat = try Self.makeRendererFormat(from: format)
+        self.synchronizationPolicy = synchronizationPolicy
         let nominalFrames = max(1, Double(nominalFramesPerBuffer))
         let boundedMaximumPendingDurationMs = max(1, maximumPendingDurationMs)
         let maximumPendingFramesFromDuration = max(
@@ -184,6 +190,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             logRendererDiagnosticsLocked(reason: "configured")
         }
         startRendererNotificationMonitoring()
+        isVideoRenderingReady = !synchronizationPolicy.requiresVideoRenderingGate
         Self.logger.notice(
             "Sample buffer audio backend configured routes=[\(Self.currentRouteSummary(), privacy: .public)] spatial-formats=\(String(describing: self.renderer.allowedAudioSpatializationFormats), privacy: .public)"
         )
@@ -256,13 +263,42 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     }
 
     func pendingDurationMs() async -> Double {
-        let currentTime = rendererQueue.sync { budgetReferenceTimeLocked() }
-        return await budgetState.pendingDurationMs(currentTime: currentTime)
+        rendererQueue.sync {
+            let currentTime = budgetReferenceTimeLocked()
+            let queuedDuration = CMTimeSubtract(nextPresentationTime, currentTime)
+            guard queuedDuration.isValid, queuedDuration.isNumeric else {
+                return 0
+            }
+            return max(0, CMTimeGetSeconds(queuedDuration) * Self.millisecondsPerSecond)
+        }
     }
 
     func availableEnqueueSlots() async -> Int {
         let currentTime = rendererQueue.sync { budgetReferenceTimeLocked() }
         return await budgetState.availableEnqueueSlots(currentTime: currentTime)
+    }
+
+    func shouldDeferPressureShedding() async -> Bool {
+        rendererQueue.sync {
+            guard !isTerminated else {
+                return false
+            }
+            guard timelineStartupState == .started else {
+                return true
+            }
+            guard let pressureSheddingGraceUntilTime else {
+                return false
+            }
+            let currentTime = currentSynchronizerTimeLocked()
+            guard currentTime.isValid, currentTime.isNumeric else {
+                return true
+            }
+            if CMTimeCompare(currentTime, pressureSheddingGraceUntilTime) < 0 {
+                return true
+            }
+            self.pressureSheddingGraceUntilTime = nil
+            return false
+        }
     }
 
     func stop() {
@@ -284,6 +320,9 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             hasRequestedTimelineStart = false
             hasStartedTimeline = false
             timelineStartupState = .idle
+            timelineStartRequestTime = nil
+            pressureSheddingGraceUntilTime = nil
+            isVideoRenderingReady = false
         }
 
         let budgetState = self.budgetState
@@ -300,16 +339,12 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             renderer.stopRequestingMediaData()
             renderer.flush()
             pendingSampleBuffers.removeAll(keepingCapacity: true)
-            nextPresentationTime = currentSynchronizerTimeLocked()
-            queuedDurationAnchorTime = nextPresentationTime
-            hasStartedTimeline = synchronizer.rate != 0
-            hasRequestedTimelineStart = hasStartedTimeline
-            timelineStartupState = hasStartedTimeline ? .started : .idle
+            let resetTime = currentSynchronizerTimeLocked()
+            resetTimelineAfterFlushLocked(resetTime: resetTime)
             startFeedingLocked()
             let budgetState = self.budgetState
-            let currentTime = nextPresentationTime
             Task {
-                await budgetState.reset(currentTime: currentTime)
+                await budgetState.reset(currentTime: resetTime)
             }
             return true
         }
@@ -321,7 +356,34 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     }
 
     var usesSystemManagedBuffering: Bool {
-        true
+        false
+    }
+
+    func updateVideoRenderingState(isRendering: Bool) {
+        rendererQueue.async { [weak self] in
+            guard let self, !self.isTerminated else {
+                return
+            }
+            guard self.synchronizationPolicy.requiresVideoRenderingGate else {
+                return
+            }
+            guard self.isVideoRenderingReady != isRendering else {
+                return
+            }
+            self.isVideoRenderingReady = isRendering
+            if isRendering {
+                Self.logger.notice("Sample buffer audio video-render gate opened")
+                self.startTimelineIfNeededLocked()
+            } else {
+                if self.timelineStartupState != .started {
+                    self.synchronizer.rate = 0
+                    self.hasRequestedTimelineStart = false
+                    self.timelineStartupState = .idle
+                    self.timelineStartRequestTime = nil
+                }
+                Self.logger.notice("Sample buffer audio video-render gate closed")
+            }
+        }
     }
 
     private func startRendererNotificationMonitoring() {
@@ -370,11 +432,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         renderer.flush()
         pendingSampleBuffers.removeAll(keepingCapacity: true)
         let resetTime = flushTime.isValid && flushTime.isNumeric ? flushTime : currentSynchronizerTimeLocked()
-        nextPresentationTime = resetTime
-        queuedDurationAnchorTime = resetTime
-        hasStartedTimeline = synchronizer.rate != 0
-        hasRequestedTimelineStart = hasStartedTimeline
-        timelineStartupState = hasStartedTimeline ? .started : .idle
+        resetTimelineAfterFlushLocked(resetTime: resetTime)
         startFeedingLocked()
         let budgetState = self.budgetState
         Task {
@@ -394,11 +452,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         renderer.flush()
         pendingSampleBuffers.removeAll(keepingCapacity: true)
         let currentTime = currentSynchronizerTimeLocked()
-        nextPresentationTime = currentTime
-        queuedDurationAnchorTime = currentTime
-        hasStartedTimeline = synchronizer.rate != 0
-        hasRequestedTimelineStart = hasStartedTimeline
-        timelineStartupState = hasStartedTimeline ? .started : .idle
+        resetTimelineAfterFlushLocked(resetTime: currentTime)
         startFeedingLocked()
         let budgetState = self.budgetState
         Task {
@@ -414,6 +468,17 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         renderer.requestMediaDataWhenReady(on: rendererQueue) { [weak self] in
             self?.drainPendingSampleBuffersLocked()
         }
+    }
+
+    private func resetTimelineAfterFlushLocked(resetTime: CMTime) {
+        synchronizer.rate = 0
+        nextPresentationTime = resetTime
+        queuedDurationAnchorTime = resetTime
+        hasStartedTimeline = false
+        hasRequestedTimelineStart = false
+        timelineStartupState = .idle
+        timelineStartRequestTime = nil
+        pressureSheddingGraceUntilTime = nil
     }
 
     private func drainPendingSampleBuffersLocked() {
@@ -447,6 +512,9 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     }
 
     private func startTimelineIfNeededLocked() {
+        guard isVideoRenderingReady || !synchronizationPolicy.requiresVideoRenderingGate else {
+            return
+        }
         let currentTime = budgetReferenceTimeLocked()
         let queuedDuration = CMTimeSubtract(nextPresentationTime, currentTime)
         let startupThreshold = Self.startupThresholdDuration(
@@ -475,6 +543,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         if timelineStartupState == .idle {
             hasRequestedTimelineStart = true
             timelineStartupState = .requested
+            timelineStartRequestTime = currentRendererClockTimeLocked() ?? currentTime
             synchronizer.setRate(1, time: currentTime)
             Self.logger.notice(
                 "Sample buffer audio timeline start requested rate=\(self.synchronizer.rate, privacy: .public) time=\(CMTimeGetSeconds(currentTime), privacy: .public)s pending=\(self.pendingSampleBuffers.count, privacy: .public) renderer-preroll=\(self.renderer.hasSufficientMediaDataForReliablePlaybackStart, privacy: .public) renderer-backpressured=\(rendererBackpressured, privacy: .public) queued-threshold-met=\(queuedDurationMeetsStartupThreshold, privacy: .public) queued-preroll-ms=\(CMTimeGetSeconds(queuedDuration) * Self.millisecondsPerSecond, privacy: .public) startup-threshold-ms=\(CMTimeGetSeconds(startupThreshold) * Self.millisecondsPerSecond, privacy: .public)"
@@ -482,7 +551,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             logRendererDiagnosticsLocked(reason: "timeline-start-requested")
         }
         guard let startupReason = timelineStartupReasonLocked(
-            rendererReadyForStartup: rendererReadyForStartup
+            currentTime: currentTime
         ) else {
             return
         }
@@ -495,16 +564,24 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     }
 
     private func timelineStartupReasonLocked(
-        rendererReadyForStartup: Bool
+        currentTime: CMTime
     ) -> TimelineStartupReason? {
-        if rendererReadyForStartup {
-            return .rendererPreroll
-        }
         if timelineStartupState == .requested,
-           synchronizer.rate != 0,
-           renderer.status == .rendering
+           let timelineStartRequestTime,
+           currentTime.isValid,
+           currentTime.isNumeric
         {
-            return .rendererStatusRendering
+            let progressed = CMTimeSubtract(currentTime, timelineStartRequestTime)
+            let requiredProgress = Self.playbackClockStartThresholdDuration(
+                outputFormat: renderFormat,
+                nominalFramesPerBuffer: nominalFramesPerBufferEstimate
+            )
+            if progressed.isValid,
+               progressed.isNumeric,
+               CMTimeCompare(progressed, requiredProgress) >= 0
+            {
+                return .playbackClockProgress
+            }
         }
         return nil
     }
@@ -522,6 +599,15 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         hasStartedTimeline = true
         hasRequestedTimelineStart = true
         timelineStartupState = .started
+        timelineStartRequestTime = nil
+        if queuedDuration.isValid,
+           queuedDuration.isNumeric,
+           CMTimeCompare(queuedDuration, .zero) > 0
+        {
+            pressureSheddingGraceUntilTime = CMTimeAdd(currentTime, queuedDuration)
+        } else {
+            pressureSheddingGraceUntilTime = nil
+        }
         Self.logger.notice(
             "Sample buffer audio timeline started reason=\(reason.rawValue, privacy: .public) rate=\(self.synchronizer.rate, privacy: .public) time=\(CMTimeGetSeconds(currentTime), privacy: .public)s pending=\(self.pendingSampleBuffers.count, privacy: .public) renderer-preroll=\(self.renderer.hasSufficientMediaDataForReliablePlaybackStart, privacy: .public) renderer-status=\(String(describing: self.renderer.status), privacy: .public) queued-preroll-ms=\(CMTimeGetSeconds(queuedDuration) * Self.millisecondsPerSecond, privacy: .public) startup-threshold-ms=\(CMTimeGetSeconds(startupThreshold) * Self.millisecondsPerSecond, privacy: .public)"
         )
@@ -548,9 +634,22 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         return nextPresentationTime
     }
 
+    private func currentRendererClockTimeLocked() -> CMTime? {
+        let currentTime = synchronizer.currentTime()
+        guard currentTime.isValid, currentTime.isNumeric else {
+            return nil
+        }
+        return currentTime
+    }
+
     private func budgetReferenceTimeLocked() -> CMTime {
         if hasStartedTimeline {
             return currentSynchronizerTimeLocked()
+        }
+        if timelineStartupState == .requested,
+           let rendererClockTime = currentRendererClockTimeLocked()
+        {
+            return rendererClockTime
         }
         return queuedDurationAnchorTime
     }
@@ -966,20 +1065,30 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         nominalFramesPerBuffer: Double
     ) -> CMTime {
         let packetDurationSeconds = nominalFramesPerBuffer / max(1, outputFormat.sampleRate)
-        #if os(iOS) || os(tvOS)
-        let session = AVAudioSession.sharedInstance()
-        let thresholdSeconds = max(
-            packetDurationSeconds,
-            session.outputLatency + session.ioBufferDuration + packetDurationSeconds
+        let timingBudget = ShadowClientAudioOutputCapabilityKit.currentTimingBudget()
+        let thresholdSeconds = timingBudget.startupPrerollDurationSeconds(
+            packetDurationSeconds: packetDurationSeconds
         )
-        #else
-        let thresholdSeconds = packetDurationSeconds
-        #endif
         let timescale = CMTimeScale(max(1, Int32(Self.millisecondsPerSecond.rounded())))
         return CMTime(
             seconds: thresholdSeconds,
             preferredTimescale: timescale
         )
     }
+
+    private static func playbackClockStartThresholdDuration(
+        outputFormat: AVAudioFormat,
+        nominalFramesPerBuffer: Double
+    ) -> CMTime {
+        let packetDurationSeconds = nominalFramesPerBuffer / max(1, outputFormat.sampleRate)
+        let timingBudget = ShadowClientAudioOutputCapabilityKit.currentTimingBudget()
+        let thresholdSeconds = max(packetDurationSeconds, timingBudget.ioBufferDurationSeconds)
+        let timescale = CMTimeScale(max(1, Int32(Self.millisecondsPerSecond.rounded())))
+        return CMTime(
+            seconds: thresholdSeconds,
+            preferredTimescale: timescale
+        )
+    }
+
 }
 #endif

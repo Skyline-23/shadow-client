@@ -1,5 +1,6 @@
 @preconcurrency import AVFoundation
 import Foundation
+import ShadowClientFeatureSession
 
 enum ShadowClientAudioOutputBackendKit {
     static func make(
@@ -7,6 +8,7 @@ enum ShadowClientAudioOutputBackendKit {
         maximumQueuedBufferCount: Int,
         nominalFramesPerBuffer: AVAudioFrameCount,
         maximumPendingDurationMs: Double,
+        synchronizationPolicy: ShadowClientAudioSynchronizationPolicy,
         prefersSpatialHeadphoneRendering: Bool
     ) throws -> any ShadowClientRealtimeAudioOutput {
         try ShadowClientAudioOutputBackendPlatformKit.make(
@@ -14,6 +16,7 @@ enum ShadowClientAudioOutputBackendKit {
             maximumQueuedBufferCount: maximumQueuedBufferCount,
             nominalFramesPerBuffer: nominalFramesPerBuffer,
             maximumPendingDurationMs: maximumPendingDurationMs,
+            synchronizationPolicy: synchronizationPolicy,
             prefersSpatialHeadphoneRendering: prefersSpatialHeadphoneRendering
         )
     }

@@ -39,6 +39,24 @@ func audioPCMGuardNormalizesLikelyInt16ScaledFloatBuffer() {
     }
 }
 
+@Test("Audio PCM guard prepareForPlayback normalizes likely int16-scaled stereo float buffers")
+func audioPCMGuardPrepareForPlaybackNormalizesLikelyInt16ScaledStereoFloatBuffer() {
+    let frames: [Float] = (0 ..< 512).map { index in
+        index.isMultiple(of: 2) ? 12_000.0 : -9_000.0
+    }
+    let buffer = makeInterleavedPCMBuffer(samples: frames, channels: 2)
+
+    ShadowClientRealtimeAudioPCMBufferGuard.prepareForPlayback(buffer)
+
+    let audioBufferList = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
+    let baseAddress = audioBufferList.first?.mData?.assumingMemoryBound(to: Float.self)
+    #expect(baseAddress != nil)
+    if let baseAddress {
+        #expect(abs(baseAddress[0]) <= 1.0)
+        #expect(abs(baseAddress[1]) <= 1.0)
+    }
+}
+
 @Test("Audio PCM guard normalizes low-amplitude int16-scaled float buffers")
 func audioPCMGuardNormalizesLowAmplitudeInt16ScaledFloatBuffer() {
     let frames: [Float] = (0 ..< 512).map { index in

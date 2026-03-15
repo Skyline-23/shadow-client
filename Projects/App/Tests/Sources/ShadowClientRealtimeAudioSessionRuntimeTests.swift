@@ -635,12 +635,14 @@ func audioReadyPacketsAreRequeuedForPendingOutputPressure() {
     let shouldRequeue = ShadowClientRealtimeAudioSessionRuntime
         .shouldRequeueReadyPacketsForPendingOutputPressure(
             pendingOutputDurationMs: 121,
-            realtimePendingDurationCapMs: 120
+            realtimePendingDurationCapMs: 120,
+            isStartupPressureGraceActive: false
         )
     let shouldNotRequeue = ShadowClientRealtimeAudioSessionRuntime
         .shouldRequeueReadyPacketsForPendingOutputPressure(
             pendingOutputDurationMs: 120,
-            realtimePendingDurationCapMs: 120
+            realtimePendingDurationCapMs: 120,
+            isStartupPressureGraceActive: false
         )
 
     #expect(shouldRequeue)
@@ -651,11 +653,13 @@ func audioReadyPacketsAreRequeuedForPendingOutputPressure() {
 func audioReadyPacketsAreRequeuedWhenOutputSlotsUnavailable() {
     let shouldRequeue = ShadowClientRealtimeAudioSessionRuntime
         .shouldRequeueReadyPacketsForUnavailableOutputSlots(
-            availableOutputSlots: 0
+            availableOutputSlots: 0,
+            isStartupPressureGraceActive: false
         )
     let shouldNotRequeue = ShadowClientRealtimeAudioSessionRuntime
         .shouldRequeueReadyPacketsForUnavailableOutputSlots(
-            availableOutputSlots: 1
+            availableOutputSlots: 1,
+            isStartupPressureGraceActive: false
         )
 
     #expect(shouldRequeue)
@@ -670,7 +674,8 @@ func audioDecodeCooldownGateRequiresBurstThresholdInsideWindow() {
             firstOutputQueuePressureDropUptime: 9.4,
             outputQueuePressureDropCount: 8,
             dropWindowSeconds: 1.0,
-            burstThreshold: 8
+            burstThreshold: 8,
+            isStartupPressureGraceActive: false
         )
     )
     #expect(
@@ -679,7 +684,8 @@ func audioDecodeCooldownGateRequiresBurstThresholdInsideWindow() {
             firstOutputQueuePressureDropUptime: 9.4,
             outputQueuePressureDropCount: 7,
             dropWindowSeconds: 1.0,
-            burstThreshold: 8
+            burstThreshold: 8,
+            isStartupPressureGraceActive: false
         )
     )
 }
@@ -692,7 +698,35 @@ func audioDecodeCooldownGateSuppressesStaleBursts() {
             firstOutputQueuePressureDropUptime: 8.5,
             outputQueuePressureDropCount: 12,
             dropWindowSeconds: 1.0,
-            burstThreshold: 8
+            burstThreshold: 8,
+            isStartupPressureGraceActive: false
+        )
+    )
+}
+
+@Test("Audio startup pressure grace suppresses drop and cooldown gates")
+func audioStartupPressureGraceSuppressesDropAndCooldownGates() {
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldRequeueReadyPacketsForPendingOutputPressure(
+            pendingOutputDurationMs: 240,
+            realtimePendingDurationCapMs: 30,
+            isStartupPressureGraceActive: true
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldRequeueReadyPacketsForUnavailableOutputSlots(
+            availableOutputSlots: 0,
+            isStartupPressureGraceActive: true
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldActivateAudioDecodeCooldown(
+            now: 10.0,
+            firstOutputQueuePressureDropUptime: 9.4,
+            outputQueuePressureDropCount: 12,
+            dropWindowSeconds: 1.0,
+            burstThreshold: 8,
+            isStartupPressureGraceActive: true
         )
     )
 }
@@ -740,7 +774,7 @@ func audioQueueProfileKeepsLowLatencyWindowForStereo() {
             channels: 2
         )
 
-    #expect(maximumQueuedBuffers == 30)
+    #expect(maximumQueuedBuffers == 10)
     #expect(pressureTrimToRecentPackets <= 12)
     #expect(pressureTrimToRecentPackets >= 1)
 }
@@ -785,7 +819,7 @@ func audioQueueProfileScalesChannelSlackWithoutUnboundedGrowth() {
         )
 
     #expect(surroundQueuedBuffers == stereoQueuedBuffers)
-    #expect(surroundQueuedBuffers == 30)
+    #expect(surroundQueuedBuffers == 10)
 }
 
 @Test("Audio queue profile expands queued buffer budget for shorter packet durations")
@@ -804,7 +838,7 @@ func audioQueueProfileExpandsQueuedBufferBudgetForShortPacketDurations() {
         )
 
     #expect(fiveMsQueuedBuffers == tenMsQueuedBuffers)
-    #expect(fiveMsQueuedBuffers == 30)
+    #expect(fiveMsQueuedBuffers == 10)
 }
 
 @Test("Audio recovered-packet burst budget follows available output slots")

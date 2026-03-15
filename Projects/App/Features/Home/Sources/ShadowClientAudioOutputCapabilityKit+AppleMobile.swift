@@ -58,6 +58,14 @@ enum ShadowClientAudioOutputCapabilityPlatformKit {
         return "multichannel=\(session.supportsMultichannelContent),rendering-mode=\(renderingModeDescription),max-output-channels=\(session.maximumOutputNumberOfChannels),output-channels=\(session.outputNumberOfChannels),output-latency-ms=\(session.outputLatency * 1_000),io-buffer-ms=\(session.ioBufferDuration * 1_000)"
     }
 
+    static func currentTimingBudget() -> ShadowClientAudioOutputTimingBudget {
+        let session = AVAudioSession.sharedInstance()
+        return .init(
+            outputLatencySeconds: max(0, session.outputLatency),
+            ioBufferDurationSeconds: max(0, session.ioBufferDuration)
+        )
+    }
+
     private static func isHeadphoneSpatialRoute(_ output: AVAudioSessionPortDescription) -> Bool {
         guard output.isSpatialAudioEnabled else {
             return false

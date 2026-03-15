@@ -249,6 +249,7 @@ actor ShadowClientRTSPInterleavedClient {
     private var rtspSessionPort: NWEndpoint.Port?
     private var playRecoveryTargets: [String] = ["/"]
     private var currentServerAppVersion: String?
+    private var audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy = .videoSynchronized
     private var audioRuntime: ShadowClientRealtimeAudioSessionRuntime?
     private let videoFECUnrecoverableRecoveryRequestCooldownSeconds: TimeInterval = 0.35
     private let videoFECUnrecoverableRecoveryBurstWindowSeconds: TimeInterval = 2.0
@@ -319,6 +320,7 @@ actor ShadowClientRTSPInterleavedClient {
         rtspSessionPort = nil
         playRecoveryTargets = ["/"]
         currentServerAppVersion = nil
+        audioSynchronizationPolicy = .videoSynchronized
 
         self.remoteInputKey = remoteInputKey
         self.remoteInputKeyID = remoteInputKeyID
@@ -330,6 +332,7 @@ actor ShadowClientRTSPInterleavedClient {
         }
         remoteHost = .init(host)
         currentServerAppVersion = videoConfiguration.serverAppVersion
+        audioSynchronizationPolicy = videoConfiguration.audioSynchronizationPolicy
         let portValue = normalizedURL.port ?? ShadowClientRTSPProtocolProfile.defaultPort
         rtspHostHeaderValue = ShadowClientRTSPProtocolProfile.hostHeaderValue(
             forRTSPURLString: normalizedURL.absoluteString
@@ -1575,6 +1578,7 @@ actor ShadowClientRTSPInterleavedClient {
         rtspHostHeaderValue = nil
         rtspClientVersionHeaderValue = ShadowClientRTSPRequestDefaults.clientVersionHeaderValue
         currentServerAppVersion = nil
+        audioSynchronizationPolicy = .videoSynchronized
         lastInteractiveInputEventUptime = 0
     }
 
@@ -1845,6 +1849,7 @@ actor ShadowClientRTSPInterleavedClient {
                     preferredLocalPort: negotiatedClientPortBase &+ 1,
                     track: audioTrack,
                     pingPayload: audioPingPayload,
+                    synchronizationPolicy: audioSynchronizationPolicy,
                     encryption: audioEncryptionConfiguration,
                     existingConnection: prePlayAudioConnection
                 )

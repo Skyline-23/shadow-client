@@ -59,7 +59,17 @@ enum ShadowClientAudioOutputCapabilityPlatformKit {
     static func currentRenderingSummary() -> String {
         let engine = AVAudioEngine()
         let outputFormat = engine.outputNode.inputFormat(forBus: 0)
-        return "engine-output{channels=\(outputFormat.channelCount),sampleRate=\(Int(outputFormat.sampleRate))}"
+        let timingBudget = currentTimingBudget()
+        return "engine-output{channels=\(outputFormat.channelCount),sampleRate=\(Int(outputFormat.sampleRate)),output-latency-ms=\(timingBudget.outputLatencySeconds * 1_000),io-buffer-ms=\(timingBudget.ioBufferDurationSeconds * 1_000)}"
+    }
+
+    static func currentTimingBudget() -> ShadowClientAudioOutputTimingBudget {
+        let engine = AVAudioEngine()
+        let outputNode = engine.outputNode
+        return .init(
+            outputLatencySeconds: max(0, outputNode.presentationLatency),
+            ioBufferDurationSeconds: max(0, outputNode.auAudioUnit.latency)
+        )
     }
 
     private static func macDefaultOutputChannelCount() -> Int? {

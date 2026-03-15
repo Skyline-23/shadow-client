@@ -22,6 +22,17 @@ enum ShadowClientRealtimeAudioPCMBufferGuard {
         }
     }
 
+    static func prepareForPlayback(_ pcmBuffer: AVAudioPCMBuffer) {
+        switch pcmBuffer.format.commonFormat {
+        case .pcmFormatFloat32:
+            normalizeLikelyInt16ScaledFloat32BufferIfNeeded(pcmBuffer)
+        case .pcmFormatInt16:
+            break
+        default:
+            break
+        }
+    }
+
     static func replaceWithSilence(_ pcmBuffer: AVAudioPCMBuffer) {
         let frameLength = Int(pcmBuffer.frameLength)
         let channelCount = Int(pcmBuffer.format.channelCount)

@@ -22,6 +22,7 @@ enum ShadowClientMoonlightProtocolPolicy {
         static let defaultPacketDurationMs = 5
         static let startupResyncWindowMs = 500
         static let packetQueueBound = 30
+        static let rendererQueueBound = 10
         // Moonlight renderer policy uses a fixed 30ms pending-audio cap.
         static let outputRealtimePendingDurationCapMs: Double = 30
         static let outputRealtimePendingDurationHardCapMs: Double = 30
