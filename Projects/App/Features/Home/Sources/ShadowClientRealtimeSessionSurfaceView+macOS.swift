@@ -318,15 +318,12 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         sdrSourceColorSpace: CGColorSpace,
         hdrDisplayColorSpace: CGColorSpace
     ) -> CGColorSpace {
-        guard let screen = view.window?.screen ?? NSScreen.main else {
-            return prefersExtendedDynamicRange ? hdrDisplayColorSpace : sdrSourceColorSpace
-        }
-
-        if prefersExtendedDynamicRange {
-            return screen.colorSpace?.cgColorSpace ?? hdrDisplayColorSpace
-        }
-
-        return sdrSourceColorSpace
+        ShadowClientSurfaceColorSpaceKit.resolvedOutputColorSpace(
+            prefersExtendedDynamicRange: prefersExtendedDynamicRange,
+            sdrSourceColorSpace: sdrSourceColorSpace,
+            hdrDisplayColorSpace: hdrDisplayColorSpace,
+            screenColorSpace: (view.window?.screen ?? NSScreen.main)?.colorSpace?.cgColorSpace
+        )
     }
 
     private func ciSourceOptions(

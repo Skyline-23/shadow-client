@@ -156,10 +156,13 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             return
         }
 
+        let shouldBypassYUVMetalForHDR = colorConfiguration?.prefersExtendedDynamicRange == true
+
         if let pixelBuffer,
            let renderPass = view.currentRenderPassDescriptor,
            let yuvPipeline,
-           yuvPipeline.canRender(pixelBuffer)
+           yuvPipeline.canRender(pixelBuffer),
+           !shouldBypassYUVMetalForHDR
         {
             if !hasLoggedRenderPathForCurrentSession {
                 logger.notice("Surface render path=metal-yuv pixel-format=0x\(String(CVPixelBufferGetPixelFormatType(pixelBuffer), radix: 16), privacy: .public)")
@@ -332,18 +335,11 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         sdrSourceColorSpace: CGColorSpace,
         hdrDisplayColorSpace: CGColorSpace
     ) -> CGColorSpace {
-        let screen = view.window?.screen ?? UIScreen.main
-
-        if prefersExtendedDynamicRange {
-            if screen.traitCollection.displayGamut == .P3,
-               let p3 = CGColorSpace(name: CGColorSpace.displayP3)
-            {
-                return p3
-            }
-            return hdrDisplayColorSpace
-        }
-
-        return sdrSourceColorSpace
+        ShadowClientSurfaceColorSpaceKit.resolvedOutputColorSpace(
+            prefersExtendedDynamicRange: prefersExtendedDynamicRange,
+            sdrSourceColorSpace: sdrSourceColorSpace,
+            hdrDisplayColorSpace: hdrDisplayColorSpace
+        )
     }
 
     private func ciSourceOptions(

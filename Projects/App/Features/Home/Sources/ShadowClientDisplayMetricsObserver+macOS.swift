@@ -86,7 +86,8 @@ final class ShadowClientDisplayMetricsNSView: NSView {
 
         let nextState = ShadowClientDisplayMetricsState(
             scale: screen.backingScaleFactor,
-            pixelSize: pixelSize
+            pixelSize: pixelSize,
+            logicalSize: window?.contentLayoutRect.size ?? screen.frame.size
         )
         guard lastPublishedState != nextState else {
             return

@@ -5,10 +5,12 @@ import SwiftUI
 struct ShadowClientDisplayMetricsState: Equatable {
     let scale: CGFloat
     let pixelSize: CGSize?
+    let logicalSize: CGSize?
 
     static let `default` = ShadowClientDisplayMetricsState(
         scale: 1.0,
-        pixelSize: nil
+        pixelSize: nil,
+        logicalSize: nil
     )
 }
 
@@ -17,9 +19,23 @@ enum ShadowClientDisplayMetricsKit {
         viewportMetrics: ShadowClientLaunchViewportMetrics,
         displayMetrics: ShadowClientDisplayMetricsState
     ) -> ShadowClientAutoResolutionPolicy.LaunchGeometry {
-        ShadowClientAutoResolutionPolicy.resolveLaunchGeometry(
-            displayLogicalSize: viewportMetrics.logicalSize,
-            safeAreaInsets: viewportMetrics.safeAreaInsets,
+        let resolvedLogicalSize: CGSize
+        if viewportMetrics.logicalSize.width > 1, viewportMetrics.logicalSize.height > 1 {
+            resolvedLogicalSize = viewportMetrics.logicalSize
+        } else {
+            resolvedLogicalSize = displayMetrics.logicalSize ?? viewportMetrics.logicalSize
+        }
+
+        let resolvedSafeAreaInsets: EdgeInsets
+        if resolvedLogicalSize == viewportMetrics.logicalSize {
+            resolvedSafeAreaInsets = viewportMetrics.safeAreaInsets
+        } else {
+            resolvedSafeAreaInsets = EdgeInsets()
+        }
+
+        return ShadowClientAutoResolutionPolicy.resolveLaunchGeometry(
+            displayLogicalSize: resolvedLogicalSize,
+            safeAreaInsets: resolvedSafeAreaInsets,
             scale: max(1.0, displayMetrics.scale),
             displayPixelSize: displayMetrics.pixelSize
         )
