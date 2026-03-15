@@ -238,6 +238,49 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
                 await scheduleActiveSessionAudioReconfigurationIfNeeded()
             }
         }
+        .task(id: remoteDesktopRuntime.activeSession != nil) {
+            guard remoteDesktopRuntime.activeSession != nil else {
+                return
+            }
+            if #available(iOS 17.2, tvOS 17.2, *) {
+                for await _ in NotificationCenter.default.notifications(
+                    named: AVAudioSession.renderingModeChangeNotification
+                ) {
+                    guard remoteDesktopRuntime.activeSession != nil else {
+                        break
+                    }
+                    await scheduleActiveSessionAudioReconfigurationIfNeeded()
+                }
+            }
+        }
+        .task(id: remoteDesktopRuntime.activeSession != nil) {
+            guard remoteDesktopRuntime.activeSession != nil else {
+                return
+            }
+            if #available(iOS 17.2, tvOS 17.2, *) {
+                for await _ in NotificationCenter.default.notifications(
+                    named: AVAudioSession.renderingCapabilitiesChangeNotification
+                ) {
+                    guard remoteDesktopRuntime.activeSession != nil else {
+                        break
+                    }
+                    await scheduleActiveSessionAudioReconfigurationIfNeeded()
+                }
+            }
+        }
+        .task(id: remoteDesktopRuntime.activeSession != nil) {
+            guard remoteDesktopRuntime.activeSession != nil else {
+                return
+            }
+            for await _ in NotificationCenter.default.notifications(
+                named: AVAudioSession.spatialPlaybackCapabilitiesChangedNotification
+            ) {
+                guard remoteDesktopRuntime.activeSession != nil else {
+                    break
+                }
+                await scheduleActiveSessionAudioReconfigurationIfNeeded()
+            }
+        }
         #endif
         .onAppear {
             ShadowClientRemoteSessionOrientationCoordinator.updateSessionState(

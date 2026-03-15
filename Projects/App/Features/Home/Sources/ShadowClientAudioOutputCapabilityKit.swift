@@ -23,4 +23,8 @@ enum ShadowClientAudioOutputCapabilityKit {
     static func currentRouteSummary() -> String {
         ShadowClientAudioOutputCapabilityPlatformKit.currentRouteSummary()
     }
+
+    static func currentRenderingSummary() -> String {
+        ShadowClientAudioOutputCapabilityPlatformKit.currentRenderingSummary()
+    }
 }

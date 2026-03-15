@@ -56,6 +56,12 @@ enum ShadowClientAudioOutputCapabilityPlatformKit {
         return "default-output{channels=\(outputFormat.channelCount),sampleRate=\(Int(outputFormat.sampleRate))}"
     }
 
+    static func currentRenderingSummary() -> String {
+        let engine = AVAudioEngine()
+        let outputFormat = engine.outputNode.inputFormat(forBus: 0)
+        return "engine-output{channels=\(outputFormat.channelCount),sampleRate=\(Int(outputFormat.sampleRate))}"
+    }
+
     private static func macDefaultOutputChannelCount() -> Int? {
         var defaultDeviceID = AudioDeviceID(0)
         var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)

@@ -49,6 +49,17 @@ enum ShadowClientAudioOutputCapabilityPlatformKit {
             .joined(separator: ",")
     }
 
+    static func currentRenderingSummary() -> String {
+        let session = AVAudioSession.sharedInstance()
+        let renderingModeDescription: String
+        if #available(iOS 17.2, tvOS 17.2, *) {
+            renderingModeDescription = String(describing: session.renderingMode)
+        } else {
+            renderingModeDescription = "unavailable"
+        }
+        return "multichannel=\(session.supportsMultichannelContent),rendering-mode=\(renderingModeDescription),max-output-channels=\(session.maximumOutputNumberOfChannels),output-channels=\(session.outputNumberOfChannels)"
+    }
+
     private static func isHeadphoneSpatialRoute(_ output: AVAudioSessionPortDescription) -> Bool {
         guard output.isSpatialAudioEnabled else {
             return false
