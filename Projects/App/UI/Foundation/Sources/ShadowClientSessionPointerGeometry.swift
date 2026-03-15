@@ -29,13 +29,32 @@ public enum ShadowClientSessionPointerGeometry {
         let clampedY = min(max(location.y, fittedRect.minY), fittedRect.maxY)
         let relativeX = max(0, min(clampedX - fittedRect.minX, fittedRect.width - 1))
         let relativeY = max(0, min(clampedY - fittedRect.minY, fittedRect.height - 1))
+        let referenceSize = normalizedReferenceVideoSize(videoSize, fallback: fittedRect.size)
+        let widthScale = referenceSize.width / max(fittedRect.width, 1)
+        let heightScale = referenceSize.height / max(fittedRect.height, 1)
+        let normalizedX = min(max(relativeX * widthScale, 0), max(referenceSize.width - 1, 0))
+        let normalizedY = min(max(relativeY * heightScale, 0), max(referenceSize.height - 1, 0))
 
         return ShadowClientSessionAbsolutePointerState(
-            x: relativeX,
-            y: relativeY,
-            referenceWidth: fittedRect.width,
-            referenceHeight: fittedRect.height
+            x: normalizedX,
+            y: normalizedY,
+            referenceWidth: referenceSize.width,
+            referenceHeight: referenceSize.height
         )
+    }
+
+    private static func normalizedReferenceVideoSize(
+        _ videoSize: CGSize?,
+        fallback: CGSize
+    ) -> CGSize {
+        guard let videoSize,
+              videoSize.width > 0,
+              videoSize.height > 0
+        else {
+            return fallback
+        }
+
+        return videoSize
     }
 
     private static func fittedVideoRect(
