@@ -141,6 +141,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var videoReceiveQueueDropRecoveryThreshold = ShadowClientRealtimeSessionDefaults.videoReceiveQueueDropRecoveryThreshold
     private var videoReceiveQueueIngressSheddingMaximumBurstPackets = ShadowClientRealtimeSessionDefaults.videoReceiveQueueIngressSheddingMaximumBurstPackets
     private var videoDepacketizerDecodeQueueProbeIntervalPackets = ShadowClientRealtimeSessionDefaults.videoDepacketizerDecodeQueueProbeIntervalPackets
+    private lazy var videoPresentationDelayCoordinator =
+        ShadowClientRealtimeVideoPresentationDelayCoordinator { [weak self] pixelBuffer in
+            guard let self else {
+                return
+            }
+            await self.publishDecodedFrame(pixelBuffer)
+        }
 
     public init(
         surfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init(),
@@ -246,6 +253,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastObservedVideoFrameIndex = nil
         lastAV1DecodeSubmissionContext = nil
         configureQueuePressureProfile(for: resolvedVideoConfiguration)
+        await videoPresentationDelayCoordinator.reset()
 
         await sessionSurfaceContext.resetAwaitingFrameClear()
         await MainActor.run {
@@ -378,6 +386,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         stallMonitorTask = nil
         await closeVideoPacketQueue()
         await closeVideoDecodeQueue()
+        await videoPresentationDelayCoordinator.reset()
 
         if let rtspClient {
             await rtspClient.stop()
@@ -1717,8 +1726,23 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             codec: codec,
             pixelBuffer: pixelBuffer
         )
+        let presentationDelaySeconds = Self.videoPresentationDelaySeconds(
+            audioSynchronizationPolicy: activeVideoConfiguration?.audioSynchronizationPolicy ?? .videoSynchronized,
+            timingBudget: ShadowClientAudioOutputCapabilityKit.currentTimingBudget()
+        )
+        if presentationDelaySeconds > 0 {
+            await videoPresentationDelayCoordinator.enqueue(
+                pixelBuffer: pixelBuffer,
+                delaySeconds: presentationDelaySeconds
+            )
+            return
+        }
+        await publishDecodedFrame(pixelBuffer)
+    }
+
+    private func publishDecodedFrame(_ pixelBuffer: CVPixelBuffer) async {
         await surfaceContext.frameStore.update(pixelBuffer: pixelBuffer)
-        lastRenderedFramePublishUptime = now
+        lastRenderedFramePublishUptime = ProcessInfo.processInfo.systemUptime
         if !hasPublishedRenderingState {
             hasPublishedRenderingState = true
             await transitionSurfaceState(.rendering)
@@ -2371,6 +2395,16 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             return false
         }
         return secondsSinceDecodedFrameOutput >= max(0, stallThresholdSeconds)
+    }
+
+    static func videoPresentationDelaySeconds(
+        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy,
+        timingBudget: ShadowClientAudioOutputTimingBudget
+    ) -> TimeInterval {
+        guard audioSynchronizationPolicy == .videoSynchronized else {
+            return 0
+        }
+        return max(0, timingBudget.drainDurationSeconds)
     }
 
     static func shouldKeepDecoderOutputStallRecoveryNonFatal(

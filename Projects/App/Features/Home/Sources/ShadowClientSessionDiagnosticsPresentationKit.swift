@@ -1,8 +1,64 @@
 import Foundation
+import ShadowClientFeatureSession
 import ShadowUIFoundation
 
 enum ShadowClientSessionDiagnosticsPresentationKit {
+    static func estimatedInputLatencyMs(
+        controlRoundTripMs: Int?,
+        targetBufferMs: Int,
+        estimatedVideoFPS: Double?,
+        defaultFPS: Int,
+        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy,
+        timingBudget: ShadowClientAudioOutputTimingBudget
+    ) -> Int? {
+        guard let controlRoundTripMs else {
+            return nil
+        }
 
+        let resolvedFPS: Double
+        if let estimatedVideoFPS, estimatedVideoFPS.isFinite, estimatedVideoFPS > 0 {
+            resolvedFPS = estimatedVideoFPS
+        } else {
+            resolvedFPS = Double(max(defaultFPS, 1))
+        }
+
+        let frameIntervalMs = 1_000.0 / max(resolvedFPS, 1)
+        let presentationDelayMs: Double
+        if audioSynchronizationPolicy == .videoSynchronized {
+            presentationDelayMs = timingBudget.drainDurationSeconds * 1_000.0
+        } else {
+            presentationDelayMs = 0
+        }
+
+        let estimate =
+            Double(max(controlRoundTripMs, 0)) +
+            Double(max(targetBufferMs, 0)) +
+            frameIntervalMs +
+            presentationDelayMs
+
+        return Int(estimate.rounded())
+    }
+
+    static func estimatedInputLatencyValue(
+        controlRoundTripMs: Int?,
+        targetBufferMs: Int,
+        estimatedVideoFPS: Double?,
+        defaultFPS: Int,
+        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy,
+        timingBudget: ShadowClientAudioOutputTimingBudget
+    ) -> String {
+        guard let estimatedInputLatencyMs = estimatedInputLatencyMs(
+            controlRoundTripMs: controlRoundTripMs,
+            targetBufferMs: targetBufferMs,
+            estimatedVideoFPS: estimatedVideoFPS,
+            defaultFPS: defaultFPS,
+            audioSynchronizationPolicy: audioSynchronizationPolicy,
+            timingBudget: timingBudget
+        ) else {
+            return "--"
+        }
+        return "\(estimatedInputLatencyMs) ms"
+    }
 
     static func roundTripValue(_ roundTripMs: Int?) -> String {
         guard let roundTripMs else {
@@ -26,7 +82,7 @@ enum ShadowClientSessionDiagnosticsPresentationKit {
         effectiveBitrateKbps: Int
     ) -> String {
         if let estimatedVideoBitrateKbps {
-            return "\(max(0, estimatedVideoBitrateKbps)) / \(effectiveBitrateKbps) kbps"
+            return "\(max(0, estimatedVideoBitrateKbps))\n/ \(effectiveBitrateKbps) kbps"
         }
         return "\(effectiveBitrateKbps) kbps"
     }

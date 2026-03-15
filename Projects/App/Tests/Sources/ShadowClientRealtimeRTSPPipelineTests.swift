@@ -2879,6 +2879,26 @@ func realtimeRuntimeTransientDecoderErrorsDoNotAbortRecovery() {
     )
 }
 
+@Test("Realtime runtime video presentation delay uses current audio route drain budget")
+func realtimeRuntimeVideoPresentationDelayUsesCurrentAudioRouteDrainBudget() {
+    let timingBudget = ShadowClientAudioOutputTimingBudget(
+        outputLatencySeconds: 0.163,
+        ioBufferDurationSeconds: 0.005
+    )
+
+    let synchronizedDelay = ShadowClientRealtimeRTSPSessionRuntime.videoPresentationDelaySeconds(
+        audioSynchronizationPolicy: .videoSynchronized,
+        timingBudget: timingBudget
+    )
+    let lowLatencyDelay = ShadowClientRealtimeRTSPSessionRuntime.videoPresentationDelaySeconds(
+        audioSynchronizationPolicy: .lowLatency,
+        timingBudget: timingBudget
+    )
+
+    #expect(abs(synchronizedDelay - 0.168) < 0.000_001)
+    #expect(lowLatencyDelay == 0)
+}
+
 private let nvVideoPacketFlagContainsPicData: UInt8 = 0x01
 private let nvVideoPacketFlagEOF: UInt8 = 0x02
 private let nvVideoPacketFlagSOF: UInt8 = 0x04

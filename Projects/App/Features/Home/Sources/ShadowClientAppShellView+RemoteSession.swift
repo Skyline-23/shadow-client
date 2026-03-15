@@ -328,18 +328,14 @@ func realtimeSessionDiagnosticsHUD(_ model: SettingsDiagnosticsHUDModel) -> some
                         .foregroundStyle(toneColor(for: model.tone))
                 }
 
-                HStack(spacing: 10) {
+                diagnosticsStatGrid {
                     diagnosticsStatChip(label: "HDR", value: diagnosticsHDRValue(model: model))
+                    diagnosticsStatChip(
+                        label: "Latency Est.",
+                        value: diagnosticsEstimatedInputLatencyValue(model: model)
+                    )
                     diagnosticsStatChip(label: "FPS", value: diagnosticsFPSValue())
                     diagnosticsStatChip(label: "Bitrate", value: diagnosticsBitrateValue())
-                    diagnosticsStatChip(
-                        label: "Ping",
-                        value: diagnosticsLatestValue(
-                            samples: sessionDiagnosticsHistory.controlRoundTripMsSamples,
-                            unit: "ms"
-                        )
-                    )
-                    diagnosticsStatChip(label: "Drop", value: String(format: "%.1f%%", model.frameDropPercent))
                 }
 
                 Text(
@@ -409,14 +405,14 @@ func realtimeSessionBootstrapDiagnosticsHUD(controlRoundTripMs: Int?) -> some Vi
                     .font(.caption2.monospacedDigit().weight(.semibold))
                     .foregroundStyle(Color.mint.opacity(0.86))
 
-                HStack(spacing: 10) {
+                diagnosticsStatGrid {
                     diagnosticsStatChip(
                         label: "HDR",
                         value: diagnosticsHDRValue(model: nil)
                     )
                     diagnosticsStatChip(
-                        label: "Ping",
-                        value: diagnosticsRoundTripValue(controlRoundTripMs)
+                        label: "Latency Est.",
+                        value: diagnosticsBootstrapEstimatedInputLatencyValue(controlRoundTripMs)
                     )
                     diagnosticsStatChip(
                         label: "FPS",
@@ -451,6 +447,32 @@ func realtimeSessionConnectionIssueHUD(
 
 func diagnosticsRoundTripValue(_ roundTripMs: Int?) -> String {
         ShadowClientSessionDiagnosticsPresentationKit.roundTripValue(roundTripMs)
+    }
+
+func diagnosticsEstimatedInputLatencyValue(model: SettingsDiagnosticsHUDModel) -> String {
+        ShadowClientSessionDiagnosticsPresentationKit.estimatedInputLatencyValue(
+            controlRoundTripMs: sessionSurfaceContext.controlRoundTripMs,
+            targetBufferMs: model.targetBufferMs,
+            estimatedVideoFPS: sessionSurfaceContext.estimatedVideoFPS,
+            defaultFPS: currentSettings.frameRate.fps,
+            audioSynchronizationPolicy: currentSettings.audioSynchronizationPolicy,
+            timingBudget: ShadowClientAudioOutputCapabilityKit.currentTimingBudget()
+        )
+    }
+
+func diagnosticsBootstrapEstimatedInputLatencyValue(_ controlRoundTripMs: Int?) -> String {
+        guard controlRoundTripMs != nil else {
+            return "--"
+        }
+
+        return ShadowClientSessionDiagnosticsPresentationKit.estimatedInputLatencyValue(
+            controlRoundTripMs: controlRoundTripMs,
+            targetBufferMs: 0,
+            estimatedVideoFPS: sessionSurfaceContext.estimatedVideoFPS,
+            defaultFPS: currentSettings.frameRate.fps,
+            audioSynchronizationPolicy: currentSettings.audioSynchronizationPolicy,
+            timingBudget: ShadowClientAudioOutputCapabilityKit.currentTimingBudget()
+        )
     }
 
 func diagnosticsFPSValue() -> String {
@@ -521,5 +543,21 @@ func diagnosticsLatestValue(samples: [Double], unit: String) -> String {
 
 func diagnosticsStatChip(label: String, value: String) -> some View {
         ShadowUIRemoteSessionStatChip(label: label, value: value)
+    }
+
+func diagnosticsStatGrid<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        LazyVGrid(
+            columns: Array(
+                repeating: GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 10),
+                count: 4
+            ),
+            alignment: .leading,
+            spacing: 10
+        ) {
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
