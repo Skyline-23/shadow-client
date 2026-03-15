@@ -214,6 +214,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             guard !isTerminated else {
                 return false
             }
+            recoverFromStarvationIfNeededLocked()
             guard let sampleBuffer = makeSampleBuffer(
                 from: pcmBuffer,
                 formatDescription: formatDescription,
@@ -469,6 +470,33 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         logRendererDiagnosticsLocked(reason: "output-configuration-changed")
     }
 
+    private func recoverFromStarvationIfNeededLocked() {
+        guard hasStartedTimeline, pendingSampleBuffers.isEmpty else {
+            return
+        }
+        let currentTime = currentSynchronizerTimeLocked()
+        let startupThreshold = Self.startupThresholdDuration(
+            outputFormat: renderFormat,
+            nominalFramesPerBuffer: nominalFramesPerBufferEstimate
+        )
+        guard Self.shouldResetTimelineForStarvation(
+            nextPresentationTime: nextPresentationTime,
+            currentTime: currentTime,
+            startupThreshold: startupThreshold
+        ) else {
+            return
+        }
+        let lateness = CMTimeSubtract(currentTime, nextPresentationTime)
+        renderer.stopRequestingMediaData()
+        renderer.flush()
+        resetTimelineAfterFlushLocked(resetTime: currentTime)
+        startFeedingLocked()
+        Self.logger.notice(
+            "Sample buffer audio starvation detected; resetting timeline at \(CMTimeGetSeconds(currentTime), privacy: .public)s lateness-ms=\(CMTimeGetSeconds(lateness) * Self.millisecondsPerSecond, privacy: .public)"
+        )
+        logRendererDiagnosticsLocked(reason: "starvation-reset")
+    }
+
     private func startFeedingLocked() {
         renderer.requestMediaDataWhenReady(on: rendererQueue) { [weak self] in
             self?.drainPendingSampleBuffersLocked()
@@ -694,6 +722,31 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         rendererPendingDurationMs _: Double
     ) -> Double {
         max(0, moonlightQueuePendingDurationMs)
+    }
+
+    static func shouldResetTimelineForStarvation(
+        nextPresentationTime: CMTime,
+        currentTime: CMTime,
+        startupThreshold: CMTime
+    ) -> Bool {
+        guard nextPresentationTime.isValid, nextPresentationTime.isNumeric,
+              currentTime.isValid, currentTime.isNumeric,
+              startupThreshold.isValid, startupThreshold.isNumeric
+        else {
+            return false
+        }
+        let lateness = CMTimeSubtract(currentTime, nextPresentationTime)
+        guard lateness.isValid, lateness.isNumeric,
+              CMTimeCompare(lateness, .zero) > 0
+        else {
+            return false
+        }
+        let starvationThreshold = CMTimeMultiplyByRatio(
+            startupThreshold,
+            multiplier: 4,
+            divisor: 1
+        )
+        return CMTimeCompare(lateness, starvationThreshold) >= 0
     }
 
     private static func makeRendererFormat(
