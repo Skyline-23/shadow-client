@@ -12,12 +12,20 @@ func indirectPointerTouchesBypassGestureRecognizers() {
     )
     #expect(
         !ShadowClientIOSIndirectPointerInputPolicy.shouldAllowGestureRecognition(
-            for: .indirectPointer
+            for: .indirectPointer,
+            recognizer: UIPanGestureRecognizer()
         )
     )
     #expect(
         ShadowClientIOSIndirectPointerInputPolicy.shouldAllowGestureRecognition(
-            for: .direct
+            for: .indirectPointer,
+            recognizer: UIHoverGestureRecognizer()
+        )
+    )
+    #expect(
+        ShadowClientIOSIndirectPointerInputPolicy.shouldAllowGestureRecognition(
+            for: .direct,
+            recognizer: UIPanGestureRecognizer()
         )
     )
 }

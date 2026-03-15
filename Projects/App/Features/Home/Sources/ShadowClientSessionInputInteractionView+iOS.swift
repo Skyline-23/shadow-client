@@ -8,8 +8,15 @@ enum ShadowClientIOSIndirectPointerInputPolicy {
         touchType == .indirectPointer
     }
 
-    static func shouldAllowGestureRecognition(for touchType: UITouch.TouchType) -> Bool {
-        !shouldHandleDirectly(touchType)
+    static func shouldAllowGestureRecognition(
+        for touchType: UITouch.TouchType,
+        recognizer: UIGestureRecognizer
+    ) -> Bool {
+        guard shouldHandleDirectly(touchType) else {
+            return true
+        }
+
+        return recognizer is UIHoverGestureRecognizer
     }
 }
 
@@ -562,11 +569,12 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
     }
 
     func gestureRecognizer(
-        _: UIGestureRecognizer,
+        recognizer: UIGestureRecognizer,
         shouldReceive touch: UITouch
     ) -> Bool {
         ShadowClientIOSIndirectPointerInputPolicy.shouldAllowGestureRecognition(
-            for: touch.type
+            for: touch.type,
+            recognizer: recognizer
         )
     }
 
