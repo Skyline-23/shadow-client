@@ -1830,7 +1830,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let runtimeLogger = logger
         let selectedHostKey = Self.mergeKey(for: selectedHost)
         let launchedAppTitle = appTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let launchSettingsToUse = launchSettingsApplyingPersistentFallback(settings)
+        let launchSettingsToUse = Self.normalizeAudioLaunchSettings(
+            launchSettingsApplyingPersistentFallback(settings),
+            maximumOutputChannels: ShadowClientAudioOutputCapabilityKit.currentMaximumOutputChannels()
+        )
         let currentFingerprint = Self.sessionFingerprint(
             hostKey: selectedHostKey,
             appID: appID,
@@ -3098,6 +3101,101 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             enableHDR: settings.enableHDR,
             enableSurroundAudio: settings.enableSurroundAudio,
             preferredSurroundChannelCount: settings.preferredSurroundChannelCount,
+            lowLatencyMode: settings.lowLatencyMode,
+            enableVSync: settings.enableVSync,
+            enableFramePacing: settings.enableFramePacing,
+            enableYUV444: settings.enableYUV444,
+            unlockBitrateLimit: settings.unlockBitrateLimit,
+            forceHardwareDecoding: settings.forceHardwareDecoding,
+            resolutionScalePercent: settings.resolutionScalePercent,
+            preferVirtualDisplay: settings.preferVirtualDisplay,
+            optimizeGameSettingsForStreaming: settings.optimizeGameSettingsForStreaming,
+            quitAppOnHostAfterStreamEnds: settings.quitAppOnHostAfterStreamEnds,
+            playAudioOnHost: settings.playAudioOnHost
+        )
+    }
+
+    private static func normalizeAudioLaunchSettings(
+        _ settings: ShadowClientGameStreamLaunchSettings
+    ) async -> ShadowClientGameStreamLaunchSettings {
+        guard settings.enableSurroundAudio else {
+            return settings
+        }
+
+        let preferredChannelCount =
+            await ShadowClientRealtimeAudioSessionRuntime.preferredOpusChannelCountForNegotiation(
+                surroundRequested: settings.enableSurroundAudio,
+                preferredSurroundChannelCount: settings.preferredSurroundChannelCount
+            )
+
+        return normalizeAudioLaunchSettings(
+            settings,
+            preferredOpusChannelCount: preferredChannelCount
+        )
+    }
+
+    static func normalizeAudioLaunchSettings(
+        _ settings: ShadowClientGameStreamLaunchSettings,
+        maximumOutputChannels: Int
+    ) -> ShadowClientGameStreamLaunchSettings {
+        guard settings.enableSurroundAudio else {
+            return settings
+        }
+        let preferredOpusChannelCount = max(
+            2,
+            min(settings.preferredSurroundChannelCount, max(1, maximumOutputChannels))
+        )
+        return normalizeAudioLaunchSettings(
+            settings,
+            preferredOpusChannelCount: preferredOpusChannelCount
+        )
+    }
+
+    private static func normalizeAudioLaunchSettings(
+        _ settings: ShadowClientGameStreamLaunchSettings,
+        preferredOpusChannelCount: Int
+    ) -> ShadowClientGameStreamLaunchSettings {
+        guard settings.enableSurroundAudio else {
+            return settings
+        }
+
+        guard preferredOpusChannelCount <= 2 else {
+            if preferredOpusChannelCount == settings.preferredSurroundChannelCount {
+                return settings
+            }
+
+            return .init(
+                width: settings.width,
+                height: settings.height,
+                fps: settings.fps,
+                bitrateKbps: settings.bitrateKbps,
+                preferredCodec: settings.preferredCodec,
+                enableHDR: settings.enableHDR,
+                enableSurroundAudio: true,
+                preferredSurroundChannelCount: preferredOpusChannelCount,
+                lowLatencyMode: settings.lowLatencyMode,
+                enableVSync: settings.enableVSync,
+                enableFramePacing: settings.enableFramePacing,
+                enableYUV444: settings.enableYUV444,
+                unlockBitrateLimit: settings.unlockBitrateLimit,
+                forceHardwareDecoding: settings.forceHardwareDecoding,
+                resolutionScalePercent: settings.resolutionScalePercent,
+                preferVirtualDisplay: settings.preferVirtualDisplay,
+                optimizeGameSettingsForStreaming: settings.optimizeGameSettingsForStreaming,
+                quitAppOnHostAfterStreamEnds: settings.quitAppOnHostAfterStreamEnds,
+                playAudioOnHost: settings.playAudioOnHost
+            )
+        }
+
+        return .init(
+            width: settings.width,
+            height: settings.height,
+            fps: settings.fps,
+            bitrateKbps: settings.bitrateKbps,
+            preferredCodec: settings.preferredCodec,
+            enableHDR: settings.enableHDR,
+            enableSurroundAudio: false,
+            preferredSurroundChannelCount: 2,
             lowLatencyMode: settings.lowLatencyMode,
             enableVSync: settings.enableVSync,
             enableFramePacing: settings.enableFramePacing,

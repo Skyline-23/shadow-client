@@ -23,23 +23,28 @@ enum ShadowClientAudioOutputCapabilityPlatformKit {
 
     static func maximumOutputChannels() async -> Int {
         await MainActor.run {
-            let session = AVAudioSession.sharedInstance()
-            let outputs = session.currentRoute.outputs
-            let headphoneSpatialRoute = outputs.contains { output in
-                isHeadphoneSpatialRoute(output)
-            }
-            if headphoneSpatialRoute {
-                return 8
-            }
-            let routeChannelCount = outputs
-                .compactMap { output in
-                    let count = output.channels?.count ?? 0
-                    return count > 0 ? count : nil
-                }
-                .max() ?? 0
-            let currentRouteChannels = Int(session.outputNumberOfChannels)
-            return max(2, routeChannelCount, currentRouteChannels)
+            currentMaximumOutputChannels()
         }
+    }
+
+    @MainActor
+    static func currentMaximumOutputChannels() -> Int {
+        let session = AVAudioSession.sharedInstance()
+        let outputs = session.currentRoute.outputs
+        let headphoneSpatialRoute = outputs.contains { output in
+            isHeadphoneSpatialRoute(output)
+        }
+        if headphoneSpatialRoute {
+            return 8
+        }
+        let routeChannelCount = outputs
+            .compactMap { output in
+                let count = output.channels?.count ?? 0
+                return count > 0 ? count : nil
+            }
+            .max() ?? 0
+        let currentRouteChannels = Int(session.outputNumberOfChannels)
+        return max(2, routeChannelCount, currentRouteChannels)
     }
 
     static func currentRouteSummary() -> String {

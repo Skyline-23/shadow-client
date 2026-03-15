@@ -15,6 +15,11 @@ enum ShadowClientAudioOutputCapabilityKit {
         await ShadowClientAudioOutputCapabilityPlatformKit.maximumOutputChannels()
     }
 
+    @MainActor
+    static func currentMaximumOutputChannels() -> Int {
+        ShadowClientAudioOutputCapabilityPlatformKit.currentMaximumOutputChannels()
+    }
+
     static func currentRouteSummary() -> String {
         ShadowClientAudioOutputCapabilityPlatformKit.currentRouteSummary()
     }

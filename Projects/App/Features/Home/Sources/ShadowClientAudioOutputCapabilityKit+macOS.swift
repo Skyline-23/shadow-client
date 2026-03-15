@@ -31,6 +31,25 @@ enum ShadowClientAudioOutputCapabilityPlatformKit {
         return 2
     }
 
+    @MainActor
+    static func currentMaximumOutputChannels() -> Int {
+        if let outputChannels = macDefaultOutputChannelCount(), outputChannels > 0 {
+            return max(2, outputChannels)
+        }
+
+        let engine = AVAudioEngine()
+        let outputChannels = Int(engine.outputNode.inputFormat(forBus: 0).channelCount)
+        if outputChannels > 0 {
+            return outputChannels
+        }
+
+        let mixerChannels = Int(engine.mainMixerNode.outputFormat(forBus: 0).channelCount)
+        if mixerChannels > 0 {
+            return mixerChannels
+        }
+        return 2
+    }
+
     static func currentRouteSummary() -> String {
         let engine = AVAudioEngine()
         let outputFormat = engine.outputNode.inputFormat(forBus: 0)
