@@ -3039,14 +3039,16 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             )
         }
 
+        let isFloat = format.commonFormat == .pcmFormatFloat32
+        let bitDepth = isFloat ? 32 : 16
         guard let rendererFormat = AVAudioFormat(settings: [
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVSampleRateKey: format.sampleRate,
             AVNumberOfChannelsKey: Int(format.channelCount),
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMBitDepthKey: bitDepth,
+            AVLinearPCMIsFloatKey: isFloat,
             AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsNonInterleaved: false,
+            AVLinearPCMIsNonInterleaved: !format.isInterleaved,
             AVChannelLayoutKey: channelLayoutData,
         ]) else {
             throw NSError(
@@ -3067,13 +3069,13 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         guard let renderBuffer = makeRenderPCMBuffer(pcmBuffer) else {
             return nil
         }
-        guard let dataBuffer = Self.makeAudioDataBlockBuffer(from: renderBuffer) else {
-            return nil
-        }
         var sampleBuffer: CMSampleBuffer?
-        let createStatus = CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+        let createStatus = CMAudioSampleBufferCreateWithPacketDescriptions(
             allocator: kCFAllocatorDefault,
-            dataBuffer: dataBuffer,
+            dataBuffer: nil,
+            dataReady: false,
+            makeDataReadyCallback: nil,
+            refcon: nil,
             formatDescription: formatDescription,
             sampleCount: CMItemCount(renderBuffer.frameLength),
             presentationTimeStamp: presentationTimeStamp,
@@ -3081,6 +3083,16 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             sampleBufferOut: &sampleBuffer
         )
         guard createStatus == noErr, let sampleBuffer else {
+            return nil
+        }
+        let dataStatus = CMSampleBufferSetDataBufferFromAudioBufferList(
+            sampleBuffer,
+            blockBufferAllocator: kCFAllocatorDefault,
+            blockBufferMemoryAllocator: kCFAllocatorDefault,
+            flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
+            bufferList: renderBuffer.audioBufferList
+        )
+        guard dataStatus == noErr else {
             return nil
         }
         return sampleBuffer
@@ -3144,55 +3156,6 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         }
 
         return convertedBuffer
-    }
-
-    private static func makeAudioDataBlockBuffer(
-        from pcmBuffer: AVAudioPCMBuffer
-    ) -> CMBlockBuffer? {
-        let audioBuffer = pcmBuffer.audioBufferList.pointee.mBuffers
-        guard let sourceBytes = audioBuffer.mData,
-              audioBuffer.mDataByteSize > 0
-        else {
-            return nil
-        }
-
-        var blockBuffer: CMBlockBuffer?
-        let createStatus = CMBlockBufferCreateEmpty(
-            allocator: kCFAllocatorDefault,
-            capacity: 0,
-            flags: 0,
-            blockBufferOut: &blockBuffer
-        )
-        guard createStatus == kCMBlockBufferNoErr, let blockBuffer else {
-            return nil
-        }
-
-        let byteCount = Int(audioBuffer.mDataByteSize)
-        let appendStatus = CMBlockBufferAppendMemoryBlock(
-            blockBuffer,
-            memoryBlock: nil,
-            length: byteCount,
-            blockAllocator: kCFAllocatorDefault,
-            customBlockSource: nil,
-            offsetToData: 0,
-            dataLength: byteCount,
-            flags: 0
-        )
-        guard appendStatus == kCMBlockBufferNoErr else {
-            return nil
-        }
-
-        let replaceStatus = CMBlockBufferReplaceDataBytes(
-            with: sourceBytes,
-            blockBuffer: blockBuffer,
-            offsetIntoDestination: 0,
-            dataLength: byteCount
-        )
-        guard replaceStatus == kCMBlockBufferNoErr else {
-            return nil
-        }
-
-        return blockBuffer
     }
 
     private static func audioChannelLayoutSize(for channelLayout: AVAudioChannelLayout) -> Int {
