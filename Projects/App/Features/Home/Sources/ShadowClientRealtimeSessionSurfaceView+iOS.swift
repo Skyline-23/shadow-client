@@ -658,10 +658,14 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     }
 
     private func summarizePlanes(_ pixelBuffer: CVPixelBuffer) -> String {
-        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        let lockResult = CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        guard lockResult == kCVReturnSuccess else {
+            return "lock-failed(\(lockResult))"
+        }
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
 
-        let planeCount = max(CVPixelBufferGetPlaneCount(pixelBuffer), 1)
+        let nativePlaneCount = CVPixelBufferGetPlaneCount(pixelBuffer)
+        let planeCount = max(nativePlaneCount, 1)
         var parts: [String] = []
 
         for planeIndex in 0..<planeCount {
@@ -670,7 +674,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             let height: Int
             let bytesPerRow: Int
 
-            if CVPixelBufferGetPlaneCount(pixelBuffer) > 0 {
+            if nativePlaneCount > 0 {
                 baseAddress = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, planeIndex)
                 width = CVPixelBufferGetWidthOfPlane(pixelBuffer, planeIndex)
                 height = CVPixelBufferGetHeightOfPlane(pixelBuffer, planeIndex)
@@ -687,14 +691,26 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 continue
             }
 
+            guard width > 0, height > 0, bytesPerRow > 0 else {
+                parts.append("plane\(planeIndex)=invalid")
+                continue
+            }
+
             let bytesPerSample = bytesPerRow / max(width, 1)
             if bytesPerSample >= 2 {
-                let pointer = baseAddress.bindMemory(to: UInt16.self, capacity: (bytesPerRow * height) / 2)
+                let rowStride = bytesPerRow / 2
+                let columnCount = min(width, rowStride)
+                guard columnCount > 0 else {
+                    parts.append("plane\(planeIndex)=invalid")
+                    continue
+                }
+
+                let pointer = baseAddress.bindMemory(to: UInt16.self, capacity: rowStride * height)
                 var minValue = UInt16.max
                 var maxValue = UInt16.min
                 for row in 0..<height {
-                    let rowPointer = pointer.advanced(by: (bytesPerRow / 2) * row)
-                    for column in 0..<width {
+                    let rowPointer = pointer.advanced(by: rowStride * row)
+                    for column in 0..<columnCount {
                         let value = rowPointer[column]
                         minValue = min(minValue, value)
                         maxValue = max(maxValue, value)
@@ -702,12 +718,18 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 }
                 parts.append("plane\(planeIndex)=\(minValue)-\(maxValue)")
             } else {
+                let columnCount = min(width, bytesPerRow)
+                guard columnCount > 0 else {
+                    parts.append("plane\(planeIndex)=invalid")
+                    continue
+                }
+
                 let pointer = baseAddress.bindMemory(to: UInt8.self, capacity: bytesPerRow * height)
                 var minValue = UInt8.max
                 var maxValue = UInt8.min
                 for row in 0..<height {
                     let rowPointer = pointer.advanced(by: bytesPerRow * row)
-                    for column in 0..<width {
+                    for column in 0..<columnCount {
                         let value = rowPointer[column]
                         minValue = min(minValue, value)
                         maxValue = max(maxValue, value)
