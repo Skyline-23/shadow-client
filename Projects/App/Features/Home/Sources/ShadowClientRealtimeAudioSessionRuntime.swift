@@ -3095,6 +3095,10 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         guard dataStatus == noErr else {
             return nil
         }
+        let readyStatus = CMSampleBufferSetDataReady(sampleBuffer)
+        guard readyStatus == noErr else {
+            return nil
+        }
         return sampleBuffer
     }
 
