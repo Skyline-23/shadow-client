@@ -1,3 +1,4 @@
+import CoreVideo
 @testable import ShadowClientFeatureHome
 import ShadowClientFeatureSession
 import Testing
@@ -160,4 +161,47 @@ func realtimeSessionSurfaceContextBumpsColorConfigurationRevisionForHDRMetadataT
 
     context.reset()
     #expect(context.colorConfigurationRevision == 0)
+}
+
+@Test("Realtime session surface context awaited reset clears frame store before returning")
+func realtimeSessionSurfaceContextAwaitedResetClearsFrameStoreBeforeReturning() async throws {
+    let context = ShadowClientRealtimeSessionSurfaceContext()
+    let stream = await context.frameStore.snapshotStream()
+    var iterator = stream.makeAsyncIterator()
+
+    let initialSnapshot = await iterator.next()
+    #expect(initialSnapshot?.pixelBuffer == nil)
+
+    let pixelBuffer = try makeTestPixelBuffer()
+    await context.frameStore.update(pixelBuffer: pixelBuffer)
+
+    let populatedSnapshot = await iterator.next()
+    #expect(populatedSnapshot?.pixelBuffer != nil)
+
+    await context.resetAwaitingFrameClear()
+
+    let clearedSnapshot = await iterator.next()
+    #expect(clearedSnapshot?.pixelBuffer == nil)
+    #expect(context.renderState == .idle)
+}
+
+private func makeTestPixelBuffer() throws -> CVPixelBuffer {
+    var pixelBuffer: CVPixelBuffer?
+    let status = CVPixelBufferCreate(
+        kCFAllocatorDefault,
+        2,
+        2,
+        kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        nil,
+        &pixelBuffer
+    )
+
+    #expect(status == kCVReturnSuccess)
+
+    guard let pixelBuffer else {
+        struct PixelBufferCreationError: Error {}
+        throw PixelBufferCreationError()
+    }
+
+    return pixelBuffer
 }

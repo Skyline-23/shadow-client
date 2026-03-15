@@ -247,8 +247,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastAV1DecodeSubmissionContext = nil
         configureQueuePressureProfile(for: resolvedVideoConfiguration)
 
+        await sessionSurfaceContext.resetAwaitingFrameClear()
         await MainActor.run {
-            sessionSurfaceContext.reset()
             sessionSurfaceContext.updatePreferredRenderFPS(resolvedVideoConfiguration.fps)
             sessionSurfaceContext.updateActiveDynamicRangeMode(
                 resolvedVideoConfiguration.enableHDR ? .hdr : .sdr
@@ -436,9 +436,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastObservedVideoFrameIndex = nil
         lastAV1DecodeSubmissionContext = nil
         resetQueuePressureProfile()
-        await MainActor.run {
-            surfaceContext.reset()
-        }
+        await surfaceContext.resetAwaitingFrameClear()
     }
 
     public func sendInput(_ event: ShadowClientRemoteInputEvent) async throws {

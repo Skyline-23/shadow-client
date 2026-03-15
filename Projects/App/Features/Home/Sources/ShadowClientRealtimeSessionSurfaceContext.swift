@@ -149,10 +149,24 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     }
 
     public func reset() {
+        scheduleFrameClear()
+        resetPublishedState()
+    }
+
+    @MainActor
+    public func resetAwaitingFrameClear() async {
+        await frameStore.update(pixelBuffer: nil)
+        resetPublishedState()
+    }
+
+    private func scheduleFrameClear() {
         let frameStore = self.frameStore
         Task {
             await frameStore.update(pixelBuffer: nil)
         }
+    }
+
+    private func resetPublishedState() {
         renderState = .idle
         controlRoundTripMs = nil
         publishControlRoundTripSample(nil)
