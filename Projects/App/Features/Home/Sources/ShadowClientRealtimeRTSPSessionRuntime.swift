@@ -2332,6 +2332,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             enableHDR: configuration.enableHDR,
             enableYUV444: configuration.enableYUV444
         )
+        if resolvedCodecPreference != configuration.preferredCodec {
+            logger.notice(
+                "RTSP runtime codec auto-resolution requested=\(configuration.preferredCodec.rawValue, privacy: .public) resolved=\(resolvedCodecPreference.rawValue, privacy: .public) hdr=\(configuration.enableHDR, privacy: .public) yuv444=\(configuration.enableYUV444, privacy: .public) reason=local-decoder-capability"
+            )
+        }
         return .init(
             width: configuration.width,
             height: configuration.height,
@@ -4534,6 +4539,19 @@ private actor ShadowClientRTSPInterleavedClient {
         controlServerPort = parsedControlServerPort
 
         let hostFeatureFlags = parseHostFeatureFlags(from: sdp)
+        if videoConfiguration.preferredCodec == .auto,
+           parsedTrack.codec != .av1,
+           !sdp.localizedCaseInsensitiveContains(ShadowClientRTSPProtocolProfile.av1ClockRateMarker)
+        {
+            logger.notice(
+                "RTSP auto codec staying on \(parsedTrack.codec.rawValue, privacy: .public) because SDP did not advertise an AV1 video track"
+            )
+        }
+        if videoConfiguration.enableHDR, hostFeatureFlags == 0 {
+            logger.notice(
+                "RTSP host SDP reported zero session feature flags while HDR was requested; treating HDR capability as unsupported for this host advertisement"
+            )
+        }
         let encryptionSupportedFlags = parseHostEncryptionSupportedFlags(from: sdp)
         let encryptionRequestedFlags = parseHostEncryptionRequestedFlags(from: sdp)
         let effectiveEncryptionRequestedFlags = encryptionSupportedFlags == 0 ?

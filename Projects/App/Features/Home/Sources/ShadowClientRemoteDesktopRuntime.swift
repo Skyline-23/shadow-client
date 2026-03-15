@@ -734,6 +734,12 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             )
         } catch let httpsError as ShadowClientGameStreamError {
             if Self.isUnauthorizedCertificateError(httpsError) {
+                if Self.shouldSkipPlainHTTPFallback(host: endpoint.host, httpsError: httpsError) {
+                    return Self.makeUnauthorizedServerInfo(
+                        host: endpoint.host,
+                        fallbackHTTPSPort: defaultHTTPSPort
+                    )
+                }
                 do {
                     let httpXML = try await requestXML(
                         host: endpoint.host,
@@ -762,6 +768,9 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                 )
             }
 
+            if Self.shouldSkipPlainHTTPFallback(host: endpoint.host, httpsError: httpsError) {
+                throw httpsError
+            }
             do {
                 let httpXML = try await requestXML(
                     host: endpoint.host,
@@ -835,6 +844,49 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return normalized.contains("app transport security") ||
             normalized.contains("insecure http is blocked")
+    }
+
+    private static func shouldSkipPlainHTTPFallback(
+        host: String,
+        httpsError: ShadowClientGameStreamError
+    ) -> Bool {
+        guard isLikelyLocalNetworkHost(host) else {
+            return false
+        }
+
+        if isUnauthorizedCertificateError(httpsError) {
+            return true
+        }
+
+        if case let .requestFailed(message) = httpsError {
+            let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return normalized.contains("connection refused") ||
+                normalized.contains("could not connect") ||
+                normalized.contains("timed out")
+        }
+
+        return false
+    }
+
+    private static func isLikelyLocalNetworkHost(_ host: String) -> Bool {
+        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.hasSuffix(".local") {
+            return true
+        }
+        if normalized.hasPrefix("10.") || normalized.hasPrefix("192.168.") || normalized.hasPrefix("169.254.") {
+            return true
+        }
+        if normalized.hasPrefix("fe80:") || normalized.hasPrefix("fd") || normalized.hasPrefix("fc") {
+            return true
+        }
+        if normalized.hasPrefix("172."),
+           let secondOctet = normalized.split(separator: ".").dropFirst().first,
+           let secondOctetValue = Int(secondOctet),
+           (16...31).contains(secondOctetValue)
+        {
+            return true
+        }
+        return false
     }
 
     private static func makeUnauthorizedServerInfo(

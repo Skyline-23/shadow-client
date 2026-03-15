@@ -401,6 +401,45 @@ func metadataClientReturnsUnpairedHostWhenHTTPSCertificateMismatches() async thr
     )
 }
 
+@Test("Metadata client skips plain HTTP fallback for local .local hosts after HTTPS certificate mismatch")
+func metadataClientSkipsPlainHTTPFallbackForLocalHostCertificateMismatch() async throws {
+    let defaultsSuite = "shadow-client.metadata.serverinfo.local-mismatch.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let transport = ScriptedRequestTransport(
+        script: [
+            .init(
+                scheme: "https",
+                command: "serverinfo",
+                result: .failure(.responseRejected(code: 401, message: "Server certificate mismatch"))
+            ),
+        ]
+    )
+
+    let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "buseongs-macbook-pro-14.local")
+    let client = NativeGameStreamMetadataClient(
+        identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: pinnedStore,
+        transport: transport
+    )
+
+    let info = try await client.fetchServerInfo(host: "buseongs-macbook-pro-14.local")
+    #expect(info.host == "buseongs-macbook-pro-14.local")
+    #expect(info.pairStatus == .notPaired)
+    #expect(
+        await transport.calls() == [
+            .init(scheme: "https", command: "serverinfo"),
+        ]
+    )
+}
+
 @Test("Metadata client synthesizes unpaired host when HTTPS fails with self-signed TLS trust error and HTTP fallback is ATS blocked")
 func metadataClientReturnsUnpairedHostWhenHTTPSSelfSignedTrustFails() async throws {
     let defaultsSuite = "shadow-client.metadata.serverinfo.self-signed.\(UUID().uuidString)"
