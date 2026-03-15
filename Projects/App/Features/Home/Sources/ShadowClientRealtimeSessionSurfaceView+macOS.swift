@@ -146,10 +146,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             let renderTargetConfiguration = ShadowClientSurfaceColorSpaceKit.renderTargetConfiguration(
                 colorConfiguration: colorConfiguration,
                 supportsExtendedDynamicRange: supportsExtendedDynamicRange,
-                renderBackend: ShadowClientSurfaceColorSpaceKit.renderBackend(
-                    hasPixelBuffer: true,
-                    canRenderWithMetalYUV: yuvPipeline?.canRender(pixelBuffer) == true
-                ),
+                renderBackend: .metalYUV,
                 screenColorSpace: (view.window?.screen ?? NSScreen.main)?.colorSpace?.cgColorSpace
             )
             applyColorConfiguration(
@@ -189,65 +186,12 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 lastRenderedDrawableSize = drawableSize
                 return
             }
-            logger.error("Surface render path=metal-yuv failed; falling back to CI")
-            if let colorConfiguration {
-                let fallbackRenderTargetConfiguration = ShadowClientSurfaceColorSpaceKit.renderTargetConfiguration(
-                    colorConfiguration: colorConfiguration,
-                    supportsExtendedDynamicRange: supportsExtendedDynamicRangeDisplay(for: view),
-                    renderBackend: ShadowClientSurfaceColorSpaceKit.fallbackRenderBackend(from: .metalYUV),
-                    screenColorSpace: (view.window?.screen ?? NSScreen.main)?.colorSpace?.cgColorSpace
-                )
-                applyColorConfiguration(
-                    fallbackRenderTargetConfiguration,
-                    to: view,
-                    supportsExtendedDynamicRange: supportsExtendedDynamicRangeDisplay(for: view)
-                )
-            }
+            logger.error("Surface render path=metal-yuv failed; preserving clear frame without Core Image fallback")
+        } else if let unsupportedPixelBuffer = pixelBuffer {
+            logger.error("Surface render path=metal-yuv unavailable for pixel-format=0x\(String(CVPixelBufferGetPixelFormatType(unsupportedPixelBuffer), radix: 16), privacy: .public); preserving clear frame without Core Image fallback")
         }
 
-        if let pixelBuffer, let colorConfiguration {
-            if !hasLoggedRenderPathForCurrentSession {
-                logger.notice("Surface render path=core-image pixel-format=0x\(String(CVPixelBufferGetPixelFormatType(pixelBuffer), radix: 16), privacy: .public)")
-                hasLoggedRenderPathForCurrentSession = true
-            }
-            let supportsExtendedDynamicRange = supportsExtendedDynamicRangeDisplay(for: view)
-            let shouldToneMapHDRToSDR =
-                colorConfiguration.prefersExtendedDynamicRange && !supportsExtendedDynamicRange
-
-            let sourceOptions = ciSourceOptions(
-                for: pixelBuffer,
-                renderColorSpace: colorConfiguration.renderColorSpace
-            )
-            var sourceImage = CIImage(
-                cvPixelBuffer: pixelBuffer,
-                options: sourceOptions
-            )
-            if shouldToneMapHDRToSDR {
-                sourceImage = toneMapHDRToSDRSoftwareFallback(sourceImage)
-            }
-            let outputColorSpace = resolvedDisplayColorSpace(
-                for: view,
-                prefersExtendedDynamicRange: colorConfiguration.prefersExtendedDynamicRange && !shouldToneMapHDRToSDR,
-                sdrSourceColorSpace: colorConfiguration.renderColorSpace,
-                hdrDisplayColorSpace: colorConfiguration.displayColorSpace
-            )
-            let drawableRect = CGRect(origin: .zero, size: drawableSize)
-            let sourceRect = sourceImage.extent
-            let transformed = sourceImage.transformed(
-                by: transformForRendering(
-                    sourceRect: sourceRect,
-                    drawableRect: drawableRect
-                )
-            )
-
-            ciContext.render(
-                transformed,
-                to: drawable.texture,
-                commandBuffer: commandBuffer,
-                bounds: drawableRect,
-                colorSpace: outputColorSpace
-            )
-        } else if let renderPass = view.currentRenderPassDescriptor,
+        if let renderPass = view.currentRenderPassDescriptor,
                   let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPass)
         {
             encoder.endEncoding()
