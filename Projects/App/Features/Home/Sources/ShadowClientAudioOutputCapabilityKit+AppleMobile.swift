@@ -55,7 +55,7 @@ enum ShadowClientAudioOutputCapabilityPlatformKit {
         } else {
             renderingModeDescription = "unavailable"
         }
-        return "multichannel=\(session.supportsMultichannelContent),rendering-mode=\(renderingModeDescription),max-output-channels=\(session.maximumOutputNumberOfChannels),output-channels=\(session.outputNumberOfChannels)"
+        return "multichannel=\(session.supportsMultichannelContent),rendering-mode=\(renderingModeDescription),max-output-channels=\(session.maximumOutputNumberOfChannels),output-channels=\(session.outputNumberOfChannels),output-latency-ms=\(session.outputLatency * 1_000),io-buffer-ms=\(session.ioBufferDuration * 1_000)"
     }
 
     private static func isHeadphoneSpatialRoute(_ output: AVAudioSessionPortDescription) -> Bool {

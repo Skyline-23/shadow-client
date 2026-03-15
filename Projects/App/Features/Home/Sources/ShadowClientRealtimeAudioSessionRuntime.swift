@@ -2583,6 +2583,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         subsystem: "com.skyline23.shadow-client",
         category: "RealtimeSampleBufferAudio"
     )
+    private static let millisecondsPerSecond = 1_000.0
 
     private actor BudgetState {
         private let sampleRate: Double
@@ -2677,6 +2678,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     private let synchronizer = AVSampleBufferRenderSynchronizer()
     private let formatDescription: CMAudioFormatDescription
     private let budgetState: BudgetState
+    private let nominalFramesPerBufferEstimate: Double
     private var pendingSampleBuffers: [PendingSampleBuffer] = []
     private var nextPresentationTime: CMTime = .zero
     private var hasStartedTimeline = false
@@ -2706,6 +2708,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             maximumPendingFramesFromCount,
             max(nominalFrames, maximumPendingFramesFromDuration)
         )
+        nominalFramesPerBufferEstimate = nominalFrames
         budgetState = BudgetState(
             sampleRate: renderFormat.sampleRate,
             nominalFramesPerBuffer: nominalFrames,
@@ -2961,13 +2964,21 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     }
 
     private func startTimelineIfNeededLocked() {
+        let currentTime = currentSynchronizerTimeLocked()
+        let queuedDuration = CMTimeSubtract(nextPresentationTime, currentTime)
+        let startupThreshold = Self.startupThresholdDuration(
+            outputFormat: renderFormat,
+            nominalFramesPerBuffer: nominalFramesPerBufferEstimate
+        )
+        let queuedDurationMeetsStartupThreshold =
+            queuedDuration.isValid &&
+            queuedDuration.isNumeric &&
+            CMTimeCompare(queuedDuration, startupThreshold) >= 0
         let rendererReadyForStartup = renderer.hasSufficientMediaDataForReliablePlaybackStart ||
-            renderer.status == .rendering
+            queuedDurationMeetsStartupThreshold
         guard rendererReadyForStartup else {
             return
         }
-        let currentTime = currentSynchronizerTimeLocked()
-        let queuedDuration = CMTimeSubtract(nextPresentationTime, currentTime)
         guard !hasStartedTimeline else {
             if synchronizer.rate == 0 {
                 synchronizer.setRate(1, time: currentTime)
@@ -2976,7 +2987,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         }
         synchronizer.setRate(1, time: currentTime)
         Self.logger.notice(
-            "Sample buffer audio timeline started rate=\(self.synchronizer.rate, privacy: .public) time=\(CMTimeGetSeconds(currentTime), privacy: .public)s pending=\(self.pendingSampleBuffers.count, privacy: .public) renderer-preroll=\(self.renderer.hasSufficientMediaDataForReliablePlaybackStart, privacy: .public) queued-preroll-ms=\(CMTimeGetSeconds(queuedDuration) * 1000, privacy: .public)"
+            "Sample buffer audio timeline started rate=\(self.synchronizer.rate, privacy: .public) time=\(CMTimeGetSeconds(currentTime), privacy: .public)s pending=\(self.pendingSampleBuffers.count, privacy: .public) renderer-preroll=\(self.renderer.hasSufficientMediaDataForReliablePlaybackStart, privacy: .public) queued-preroll-ms=\(CMTimeGetSeconds(queuedDuration) * Self.millisecondsPerSecond, privacy: .public) startup-threshold-ms=\(CMTimeGetSeconds(startupThreshold) * Self.millisecondsPerSecond, privacy: .public)"
         )
         logRendererDiagnosticsLocked(reason: "timeline-started")
         hasStartedTimeline = true
@@ -3210,6 +3221,27 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
 
     private static func currentRenderingSummary() -> String {
         ShadowClientAudioOutputCapabilityKit.currentRenderingSummary()
+    }
+
+    private static func startupThresholdDuration(
+        outputFormat: AVAudioFormat,
+        nominalFramesPerBuffer: Double
+    ) -> CMTime {
+        let packetDurationSeconds = nominalFramesPerBuffer / max(1, outputFormat.sampleRate)
+        #if os(iOS) || os(tvOS)
+        let session = AVAudioSession.sharedInstance()
+        let thresholdSeconds = max(
+            packetDurationSeconds,
+            session.outputLatency + session.ioBufferDuration + packetDurationSeconds
+        )
+        #else
+        let thresholdSeconds = packetDurationSeconds
+        #endif
+        let timescale = CMTimeScale(max(1, Int32(Self.millisecondsPerSecond.rounded())))
+        return CMTime(
+            seconds: thresholdSeconds,
+            preferredTimescale: timescale
+        )
     }
 }
 #endif
