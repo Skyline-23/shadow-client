@@ -263,14 +263,19 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     }
 
     func pendingDurationMs() async -> Double {
-        rendererQueue.sync {
-            let currentTime = budgetReferenceTimeLocked()
+        let currentTime = rendererQueue.sync { budgetReferenceTimeLocked() }
+        let queuePendingDurationMs = await budgetState.pendingDurationMs(currentTime: currentTime)
+        let rendererPendingDurationMs: Double = rendererQueue.sync {
             let queuedDuration = CMTimeSubtract(nextPresentationTime, currentTime)
             guard queuedDuration.isValid, queuedDuration.isNumeric else {
                 return 0
             }
             return max(0, CMTimeGetSeconds(queuedDuration) * Self.millisecondsPerSecond)
         }
+        return Self.pressureSheddingPendingDurationMs(
+            moonlightQueuePendingDurationMs: queuePendingDurationMs,
+            rendererPendingDurationMs: rendererPendingDurationMs
+        )
     }
 
     func availableEnqueueSlots() async -> Int {
@@ -680,6 +685,15 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             )
         }
         return formatDescription
+    }
+
+    // Moonlight's LiGetPendingAudioDuration() measures the client-side ready queue,
+    // not the downstream device renderer backlog.
+    static func pressureSheddingPendingDurationMs(
+        moonlightQueuePendingDurationMs: Double,
+        rendererPendingDurationMs _: Double
+    ) -> Double {
+        max(0, moonlightQueuePendingDurationMs)
     }
 
     private static func makeRendererFormat(
