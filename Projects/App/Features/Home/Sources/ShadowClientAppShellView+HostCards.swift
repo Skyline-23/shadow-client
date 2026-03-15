@@ -483,27 +483,25 @@ var remoteDesktopHostCard: some View {
                 Text("Friendly Name")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.white.opacity(0.68))
-                TextField("Use the discovered name", text: hostFriendlyNameBinding(host))
-                    .font(.body.weight(.semibold))
-                    .textFieldStyle(.plain)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                ShadowUIHostInsetField {
+                    TextField("Use the discovered name", text: hostFriendlyNameBinding(host))
+                        .font(.body.weight(.semibold))
+                        .textFieldStyle(.plain)
+                        .foregroundStyle(.white)
+                }
             }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Notes")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.white.opacity(0.68))
-                TextField("Add a note for this device", text: hostNotesBinding(host), axis: .vertical)
-                    .font(.body)
-                    .textFieldStyle(.plain)
-                    .foregroundStyle(.white)
-                    .lineLimit(2...4)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                ShadowUIHostInsetField {
+                    TextField("Add a note for this device", text: hostNotesBinding(host), axis: .vertical)
+                        .font(.body)
+                        .textFieldStyle(.plain)
+                        .foregroundStyle(.white)
+                        .lineLimit(2...4)
+                }
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -511,107 +509,26 @@ var remoteDesktopHostCard: some View {
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.white.opacity(0.68))
 
-                VStack(alignment: .leading, spacing: 10) {
-                    TextField("Admin username", text: hostApolloAdminUsernameBinding(host))
-                        .font(.body.weight(.semibold))
-                        .textFieldStyle(.plain)
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                    SecureField("Admin password", text: hostApolloAdminPasswordBinding(host))
-                        .font(.body.weight(.semibold))
-                        .textFieldStyle(.plain)
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 10) {
-                            Button("Sync Apollo Client") {
-                                remoteDesktopRuntime.refreshSelectedHostApolloAdmin(
-                                    username: hostApolloAdminUsername(host),
-                                    password: hostApolloAdminPassword(host)
-                                )
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(remoteDesktopRuntime.selectedHostID != host.id)
-
-                            Text(hostApolloAdminStateLabel(for: host))
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(Color.white.opacity(0.68))
-                                .lineLimit(1)
-                        }
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            Button("Sync Apollo Client") {
-                                remoteDesktopRuntime.refreshSelectedHostApolloAdmin(
-                                    username: hostApolloAdminUsername(host),
-                                    password: hostApolloAdminPassword(host)
-                                )
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(remoteDesktopRuntime.selectedHostID != host.id)
-
-                            Text(hostApolloAdminStateLabel(for: host))
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(Color.white.opacity(0.68))
-                        }
-                    }
-                }
-                .padding(12)
-                .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                if hostApolloAdminProfile(host) != nil {
+                ShadowUIHostInsetCard {
                     VStack(alignment: .leading, spacing: 10) {
-                        TextField("Display mode override", text: hostApolloDisplayModeBinding(for: host))
-                            .font(.body.weight(.semibold))
-                            .textFieldStyle(.plain)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                        Toggle(isOn: hostApolloAlwaysUseVirtualDisplayBinding(for: host)) {
-                            Text("Always use virtual display")
-                                .font(.callout.weight(.semibold))
+                        ShadowUIHostInsetField {
+                            TextField("Admin username", text: hostApolloAdminUsernameBinding(host))
+                                .font(.body.weight(.semibold))
+                                .textFieldStyle(.plain)
                                 .foregroundStyle(.white)
                         }
-                        .tint(.mint)
 
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Apollo Permissions")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(Color.white.opacity(0.68))
-
-                            ForEach(ShadowClientApolloPermission.allCases, id: \.self) { permission in
-                                Toggle(isOn: hostApolloPermissionBinding(for: host, permission: permission)) {
-                                    Text(permission.label)
-                                        .font(.callout.weight(.semibold))
-                                        .foregroundStyle(.white)
-                                }
-                                .tint(.mint)
-                            }
+                        ShadowUIHostInsetField {
+                            SecureField("Admin password", text: hostApolloAdminPasswordBinding(host))
+                                .font(.body.weight(.semibold))
+                                .textFieldStyle(.plain)
+                                .foregroundStyle(.white)
                         }
-
-                        Button("Save Apollo Overrides") {
-                            remoteDesktopRuntime.updateSelectedHostApolloAdmin(
-                                username: hostApolloAdminUsername(host),
-                                password: hostApolloAdminPassword(host),
-                                displayModeOverride: hostApolloDisplayModeDraft(for: host),
-                                alwaysUseVirtualDisplay: hostApolloAlwaysUseVirtualDisplayDraft(for: host),
-                                permissions: hostApolloPermissionDraft(for: host)
-                            )
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(remoteDesktopRuntime.selectedHostID != host.id)
 
                         ViewThatFits(in: .horizontal) {
                             HStack(spacing: 10) {
-                                Button("Disconnect Client") {
-                                    remoteDesktopRuntime.disconnectSelectedHostApolloAdmin(
+                                Button("Sync Apollo Client") {
+                                    remoteDesktopRuntime.refreshSelectedHostApolloAdmin(
                                         username: hostApolloAdminUsername(host),
                                         password: hostApolloAdminPassword(host)
                                     )
@@ -619,19 +536,15 @@ var remoteDesktopHostCard: some View {
                                 .buttonStyle(.bordered)
                                 .disabled(remoteDesktopRuntime.selectedHostID != host.id)
 
-                                Button("Unpair Client") {
-                                    remoteDesktopRuntime.unpairSelectedHostApolloAdmin(
-                                        username: hostApolloAdminUsername(host),
-                                        password: hostApolloAdminPassword(host)
-                                    )
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(remoteDesktopRuntime.selectedHostID != host.id)
+                                Text(hostApolloAdminStateLabel(for: host))
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(Color.white.opacity(0.68))
+                                    .lineLimit(1)
                             }
 
-                            VStack(spacing: 8) {
-                                Button("Disconnect Client") {
-                                    remoteDesktopRuntime.disconnectSelectedHostApolloAdmin(
+                            VStack(alignment: .leading, spacing: 8) {
+                                Button("Sync Apollo Client") {
+                                    remoteDesktopRuntime.refreshSelectedHostApolloAdmin(
                                         username: hostApolloAdminUsername(host),
                                         password: hostApolloAdminPassword(host)
                                     )
@@ -639,19 +552,101 @@ var remoteDesktopHostCard: some View {
                                 .buttonStyle(.bordered)
                                 .disabled(remoteDesktopRuntime.selectedHostID != host.id)
 
-                                Button("Unpair Client") {
-                                    remoteDesktopRuntime.unpairSelectedHostApolloAdmin(
-                                        username: hostApolloAdminUsername(host),
-                                        password: hostApolloAdminPassword(host)
-                                    )
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(remoteDesktopRuntime.selectedHostID != host.id)
+                                Text(hostApolloAdminStateLabel(for: host))
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(Color.white.opacity(0.68))
                             }
                         }
                     }
-                    .padding(12)
-                    .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+
+                if hostApolloAdminProfile(host) != nil {
+                    ShadowUIHostInsetCard {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ShadowUIHostInsetField {
+                                TextField("Display mode override", text: hostApolloDisplayModeBinding(for: host))
+                                    .font(.body.weight(.semibold))
+                                    .textFieldStyle(.plain)
+                                    .foregroundStyle(.white)
+                            }
+
+                            Toggle(isOn: hostApolloAlwaysUseVirtualDisplayBinding(for: host)) {
+                                Text("Always use virtual display")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Apollo Permissions")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(Color.white.opacity(0.68))
+
+                                ForEach(ShadowClientApolloPermission.allCases, id: \.self) { permission in
+                                    Toggle(isOn: hostApolloPermissionBinding(for: host, permission: permission)) {
+                                        Text(permission.label)
+                                            .font(.callout.weight(.semibold))
+                                            .foregroundStyle(.white)
+                                    }
+                                    .tint(.mint)
+                                }
+                            }
+
+                            Button("Save Apollo Overrides") {
+                                remoteDesktopRuntime.updateSelectedHostApolloAdmin(
+                                    username: hostApolloAdminUsername(host),
+                                    password: hostApolloAdminPassword(host),
+                                    displayModeOverride: hostApolloDisplayModeDraft(for: host),
+                                    alwaysUseVirtualDisplay: hostApolloAlwaysUseVirtualDisplayDraft(for: host),
+                                    permissions: hostApolloPermissionDraft(for: host)
+                                )
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(remoteDesktopRuntime.selectedHostID != host.id)
+
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 10) {
+                                    Button("Disconnect Client") {
+                                        remoteDesktopRuntime.disconnectSelectedHostApolloAdmin(
+                                            username: hostApolloAdminUsername(host),
+                                            password: hostApolloAdminPassword(host)
+                                        )
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .disabled(remoteDesktopRuntime.selectedHostID != host.id)
+
+                                    Button("Unpair Client") {
+                                        remoteDesktopRuntime.unpairSelectedHostApolloAdmin(
+                                            username: hostApolloAdminUsername(host),
+                                            password: hostApolloAdminPassword(host)
+                                        )
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .disabled(remoteDesktopRuntime.selectedHostID != host.id)
+                                }
+
+                                VStack(spacing: 8) {
+                                    Button("Disconnect Client") {
+                                        remoteDesktopRuntime.disconnectSelectedHostApolloAdmin(
+                                            username: hostApolloAdminUsername(host),
+                                            password: hostApolloAdminPassword(host)
+                                        )
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .disabled(remoteDesktopRuntime.selectedHostID != host.id)
+
+                                    Button("Unpair Client") {
+                                        remoteDesktopRuntime.unpairSelectedHostApolloAdmin(
+                                            username: hostApolloAdminUsername(host),
+                                            password: hostApolloAdminPassword(host)
+                                        )
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .disabled(remoteDesktopRuntime.selectedHostID != host.id)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
