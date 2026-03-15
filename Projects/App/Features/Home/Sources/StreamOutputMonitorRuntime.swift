@@ -1,4 +1,5 @@
 import Foundation
+import ShadowClientFeatureConnection
 import ShadowClientStreaming
 
 enum StreamOutputMonitorState: Equatable, Sendable {

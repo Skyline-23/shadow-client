@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import ShadowClientFeatureConnection
 
 public struct ShadowClientApolloAdminClientProfile: Equatable, Sendable {
     public struct Command: Equatable, Sendable, Codable {

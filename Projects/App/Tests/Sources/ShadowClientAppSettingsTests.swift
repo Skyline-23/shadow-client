@@ -1,4 +1,5 @@
 import ShadowClientFeatureHome
+@testable import ShadowClientFeatureConnection
 import ShadowClientStreaming
 import Testing
 

@@ -4,6 +4,7 @@ import Foundation
 import Network
 import os
 import Security
+import ShadowClientFeatureConnection
 
 public enum ShadowClientRemotePairingState: Equatable, Sendable {
     case idle

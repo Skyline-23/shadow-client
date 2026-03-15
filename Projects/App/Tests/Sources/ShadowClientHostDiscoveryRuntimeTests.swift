@@ -1,5 +1,5 @@
 import Testing
-@testable import ShadowClientFeatureHome
+@testable import ShadowClientFeatureConnection
 
 @Test("Host discovery catalog deduplicates same host discovered from multiple services")
 func hostDiscoveryCatalogDeduplicatesHosts() {

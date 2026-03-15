@@ -320,9 +320,9 @@ public actor SimulatedShadowClientConnectionClient: ShadowClientConnectionClient
                     ? ShadowClientTelemetrySimulationDefaults.unstableNetworkDroppedFrames
                     : ShadowClientTelemetrySimulationDefaults.stableNetworkDroppedFrames
                 let pacerDroppedFrames = droppedFrames - networkDroppedFrames
-                let jitterMs = isUnstable
-                    ? ShadowClientTelemetrySimulationDefaults.unstableJitterMs
-                    : ShadowClientTelemetrySimulationDefaults.stableJitterBaseMs +
+                let jitterMs: Double = isUnstable
+                    ? Double(ShadowClientTelemetrySimulationDefaults.unstableJitterMs)
+                    : Double(ShadowClientTelemetrySimulationDefaults.stableJitterBaseMs) +
                         Double(
                             sampleIndex % ShadowClientTelemetrySimulationDefaults.stableJitterVarianceCycle
                         )
@@ -337,7 +337,7 @@ public actor SimulatedShadowClientConnectionClient: ShadowClientConnectionClient
                     stats: .init(
                         renderedFrames: renderedFrames,
                         droppedFrames: droppedFrames,
-                        avSyncOffsetMilliseconds: avSyncOffsetMs
+                        avSyncOffsetMilliseconds: Double(avSyncOffsetMs)
                     ),
                     signal: .init(
                         jitterMs: jitterMs,

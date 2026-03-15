@@ -1,5 +1,5 @@
 import Testing
-@testable import ShadowClientFeatureHome
+@testable import ShadowClientFeatureConnection
 
 @Test("Discovered host presentation formats detail line and button copy")
 func discoveredHostPresentationFormatting() {

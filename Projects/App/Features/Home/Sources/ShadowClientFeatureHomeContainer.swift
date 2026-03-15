@@ -1,4 +1,5 @@
 import ShadowClientStreaming
+import ShadowClientFeatureConnection
 
 public final class ShadowClientFeatureHomeContainer {
     public let bridge: MoonlightSessionTelemetryBridge

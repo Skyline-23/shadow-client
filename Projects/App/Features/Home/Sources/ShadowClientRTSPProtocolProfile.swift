@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import ShadowClientFeatureConnection
 
 enum ShadowClientRTSPProtocolProfile {
     static let rtspSchemePrefix = "rtsp://"

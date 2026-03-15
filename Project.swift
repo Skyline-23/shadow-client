@@ -12,6 +12,20 @@ let project = Project(
     name: "shadow-client",
     targets: [
         .target(
+            name: "ShadowClientFeatureConnection",
+            destinations: [.iPhone, .iPad, .mac, .appleTv],
+            product: .framework,
+            bundleId: "com.skyline23.shadowClient.feature.connection",
+            deploymentTargets: .multiplatform(iOS: "17.0", macOS: "14.0", tvOS: "17.0"),
+            infoPlist: .default,
+            buildableFolders: [
+                "Projects/App/Features/Connection/Sources",
+            ],
+            dependencies: [
+                .external(name: "ShadowClientStreaming"),
+            ]
+        ),
+        .target(
             name: "ShadowUIFoundation",
             destinations: [.iPhone, .iPad, .mac, .appleTv],
             product: .framework,
@@ -46,6 +60,7 @@ let project = Project(
                 "Projects/App/Features/Home/Sources",
             ],
             dependencies: [
+                .target(name: "ShadowClientFeatureConnection"),
                 .target(name: "ShadowUIFoundation"),
                 .external(name: "ShadowClientInput"),
                 .external(name: "ShadowClientStreaming"),
@@ -198,6 +213,7 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
+                .target(name: "ShadowClientFeatureConnection"),
                 .target(name: "ShadowClientNativeAudioDecoding"),
                 .target(name: "ShadowUIFoundation"),
                 .external(name: "Testing"),
@@ -216,6 +232,7 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
+                .target(name: "ShadowClientFeatureConnection"),
                 .target(name: "ShadowClientNativeAudioDecoding"),
                 .target(name: "ShadowUIFoundation"),
                 .external(name: "Testing"),

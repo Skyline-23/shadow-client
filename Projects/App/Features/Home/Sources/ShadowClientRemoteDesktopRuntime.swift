@@ -2,6 +2,7 @@ import Combine
 import Foundation
 import Network
 import os
+import ShadowClientFeatureConnection
 
 public enum ShadowClientRemoteHostPairStatus: String, Equatable, Sendable {
     case paired

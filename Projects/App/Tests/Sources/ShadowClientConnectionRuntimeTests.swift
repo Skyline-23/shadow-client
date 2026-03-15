@@ -1,6 +1,6 @@
 import ShadowClientStreaming
 import Testing
-@testable import ShadowClientFeatureHome
+@testable import ShadowClientFeatureConnection
 
 @Test("Connection runtime connects with trimmed host and forwards connect call")
 func connectionRuntimeConnectsWithTrimmedHost() async {

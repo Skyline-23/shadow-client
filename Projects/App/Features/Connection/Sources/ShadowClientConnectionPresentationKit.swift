@@ -1,7 +1,7 @@
 import SwiftUI
 
-struct ShadowClientConnectionPresentationKit {
-    static func canInitiateSessionConnection(state: ShadowClientConnectionState) -> Bool {
+public struct ShadowClientConnectionPresentationKit {
+    public static func canInitiateSessionConnection(state: ShadowClientConnectionState) -> Bool {
         switch state {
         case .connecting, .disconnecting:
             return false
@@ -10,7 +10,7 @@ struct ShadowClientConnectionPresentationKit {
         }
     }
 
-    static func canConnect(
+    public static func canConnect(
         normalizedHost: String,
         state: ShadowClientConnectionState
     ) -> Bool {
@@ -20,7 +20,7 @@ struct ShadowClientConnectionPresentationKit {
         return canInitiateSessionConnection(state: state)
     }
 
-    static func canDisconnect(state: ShadowClientConnectionState) -> Bool {
+    public static func canDisconnect(state: ShadowClientConnectionState) -> Bool {
         switch state {
         case .connected, .connecting, .failed:
             return true
@@ -29,7 +29,7 @@ struct ShadowClientConnectionPresentationKit {
         }
     }
 
-    static func statusText(state: ShadowClientConnectionState) -> String {
+    public static func statusText(state: ShadowClientConnectionState) -> String {
         switch state {
         case .disconnected:
             return "Status: Disconnected"
@@ -44,7 +44,7 @@ struct ShadowClientConnectionPresentationKit {
         }
     }
 
-    static func statusColor(state: ShadowClientConnectionState) -> Color {
+    public static func statusColor(state: ShadowClientConnectionState) -> Color {
         switch state {
         case .connected:
             return .green
@@ -57,7 +57,7 @@ struct ShadowClientConnectionPresentationKit {
         }
     }
 
-    static func statusSymbol(state: ShadowClientConnectionState) -> String {
+    public static func statusSymbol(state: ShadowClientConnectionState) -> String {
         switch state {
         case .connected:
             return "checkmark.circle.fill"

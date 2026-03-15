@@ -1,5 +1,6 @@
 import ShadowClientStreaming
 import SwiftUI
+import ShadowClientFeatureConnection
 
 public struct ShadowClientFeatureHomeDependencies {
     public typealias TelemetryStreamFactory = @Sendable () async -> AsyncStream<StreamingTelemetrySnapshot>

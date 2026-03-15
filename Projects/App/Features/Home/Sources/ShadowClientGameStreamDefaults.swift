@@ -8,28 +8,6 @@ public enum ShadowClientGameStreamCommand: String, Sendable {
     case unpair
 }
 
-public enum ShadowClientGameStreamNetworkDefaults {
-    public static let httpScheme = "http"
-    public static let httpsScheme = "https"
-    public static let httpSchemePrefix = "\(httpScheme)://"
-
-    public static let defaultHTTPPort = 47_989
-    public static let defaultHTTPSPort = 47_984
-    public static let defaultServicePorts: [Int] = [
-        defaultHTTPSPort,
-        defaultHTTPPort,
-        48_010,
-    ]
-
-    public static let defaultRequestTimeout: TimeInterval = 8
-    public static let pairingPINEntryTimeout: TimeInterval = 45
-    public static let pairingStageTimeout: TimeInterval = 15
-    public static let defaultSessionConnectTimeout: Duration = .seconds(10)
-
-    public static let minimumPort = 1
-    public static let maximumPort = Int(UInt16.max)
-}
-
 public enum ShadowClientGameStreamLaunchDefaults {
     public static let hdrCapabilityPlaceholder = "0x0x0x0x0x0x0x0x0x0x0"
 }
@@ -231,10 +209,6 @@ public enum ShadowClientPairingDefaults {
     public static let retryDeadlineSeconds: TimeInterval = 70
     public static let maximumAttempts = 4
     public static let retryBackoff: Duration = .milliseconds(900)
-}
-
-public enum ShadowClientHostProbeDefaults {
-    public static let tcpPortTimeout: Duration = .seconds(1)
 }
 
 public enum ShadowClientTelemetrySimulationDefaults {
