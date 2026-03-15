@@ -78,14 +78,24 @@ final class ShadowClientDisplayMetricsUIView: UIView {
 
     func publishMetricsIfNeeded() {
         let activeWindow = window
-        let screen = activeWindow?.screen ?? UIApplication.shared.connectedScenes
+        let keyWindow = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows)
-            .first(where: \.isKeyWindow)?
-            .screen ?? UIScreen.main
+            .first(where: \.isKeyWindow)
+        let screen = activeWindow?.screen ?? keyWindow?.screen ?? UIScreen.main
+        let sourceWindow = activeWindow ?? keyWindow
 
-        let logicalSize = activeWindow?.bounds.size ?? screen.bounds.size
-        let scale = max(1.0, screen.scale)
+        let logicalSize = sourceWindow?.bounds.size ?? screen.bounds.size
+        let safeAreaInsets = sourceWindow.map { EdgeInsets($0.safeAreaInsets) } ?? .init()
+        let nativeWidth = max(screen.nativeBounds.width, 1)
+        let nativeHeight = max(screen.nativeBounds.height, 1)
+        let boundsWidth = max(screen.bounds.width, 1)
+        let boundsHeight = max(screen.bounds.height, 1)
+        let effectiveScale = max(
+            screen.scale,
+            max(nativeWidth / boundsWidth, nativeHeight / boundsHeight)
+        )
+        let scale = max(1.0, effectiveScale)
         let pixelSize = CGSize(
             width: logicalSize.width * scale,
             height: logicalSize.height * scale
@@ -93,7 +103,8 @@ final class ShadowClientDisplayMetricsUIView: UIView {
         let nextState = ShadowClientDisplayMetricsState(
             scale: scale,
             pixelSize: pixelSize,
-            logicalSize: logicalSize
+            logicalSize: logicalSize,
+            safeAreaInsets: safeAreaInsets
         )
 
         guard lastPublishedState != nextState else {
@@ -107,6 +118,17 @@ final class ShadowClientDisplayMetricsUIView: UIView {
             }
             self.onMetricsChanged?(nextState)
         }
+    }
+}
+
+private extension EdgeInsets {
+    init(_ insets: UIEdgeInsets) {
+        self.init(
+            top: insets.top,
+            leading: insets.left,
+            bottom: insets.bottom,
+            trailing: insets.right
+        )
     }
 }
 #endif

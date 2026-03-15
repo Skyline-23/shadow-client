@@ -10,7 +10,8 @@ func displayMetricsKitFallsBackToDisplayLogicalSizeForZeroViewport() {
         displayMetrics: .init(
             scale: 2.0,
             pixelSize: CGSize(width: 2388, height: 1668),
-            logicalSize: CGSize(width: 1194, height: 834)
+            logicalSize: CGSize(width: 1194, height: 834),
+            safeAreaInsets: .init()
         )
     )
 
@@ -29,7 +30,8 @@ func displayMetricsKitPrefersViewportMetricsWhenAvailable() {
         displayMetrics: .init(
             scale: 2.0,
             pixelSize: CGSize(width: 1640, height: 2360),
-            logicalSize: CGSize(width: 1194, height: 834)
+            logicalSize: CGSize(width: 1194, height: 834),
+            safeAreaInsets: .init()
         )
     )
 
@@ -54,11 +56,28 @@ func retinaAutoLaunchSettingsUsePixelSizeWithoutExtraScaleFactor() {
         displayMetrics: .init(
             scale: 2.0,
             pixelSize: CGSize(width: 2096, height: 1940),
-            logicalSize: CGSize(width: 1048, height: 970)
+            logicalSize: CGSize(width: 1048, height: 970),
+            safeAreaInsets: .init(top: 24, leading: 0, bottom: 20, trailing: 0)
         )
     )
 
     #expect(settings.width == 2096)
     #expect(settings.height == 1940)
     #expect(settings.resolutionScalePercent == 100)
+}
+
+@Test("Display metrics kit preserves fallback safe area insets when the viewport has not been laid out yet")
+func displayMetricsKitPreservesFallbackSafeAreaInsets() {
+    let geometry = ShadowClientDisplayMetricsKit.resolveLaunchGeometry(
+        viewportMetrics: .init(logicalSize: .zero, safeAreaInsets: .init()),
+        displayMetrics: .init(
+            scale: 2.0,
+            pixelSize: CGSize(width: 2388, height: 1668),
+            logicalSize: CGSize(width: 1194, height: 834),
+            safeAreaInsets: .init(top: 24, leading: 0, bottom: 20, trailing: 0)
+        )
+    )
+
+    #expect(geometry.renderSize == CGSize(width: 1194, height: 790))
+    #expect(geometry.pixelSize == CGSize(width: 2388, height: 1668))
 }

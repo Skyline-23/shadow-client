@@ -14,7 +14,7 @@ var remoteSessionFlowView: some View {
                     ShadowClientRealtimeSessionSurfaceView(
                         context: sessionSurfaceContext
                     )
-                    .ignoresSafeArea()
+                    .padding(remoteSessionSafeAreaInsets)
                     .accessibilityIdentifier("shadow.remote.session.surface")
                     .accessibilityLabel("Remote Session Surface")
 
@@ -71,7 +71,7 @@ var remoteSessionFlowView: some View {
                     } onPasteClipboardCommand: {
                         pasteLocalClipboardIntoRemoteSession()
                     }
-                    .ignoresSafeArea()
+                    .padding(remoteSessionSafeAreaInsets)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.clear)
                 }
@@ -486,6 +486,16 @@ func diagnosticsAudioChannelValue() -> String {
         ShadowClientSessionDiagnosticsPresentationKit.audioChannelValue(
             audioOutputState: sessionSurfaceContext.audioOutputState,
             currentSettings: currentSettings
+        )
+    }
+
+var remoteSessionSafeAreaInsets: EdgeInsets {
+        let insets = displayMetrics.safeAreaInsets
+        return EdgeInsets(
+            top: max(insets.top, launchViewportMetrics.safeAreaInsets.top),
+            leading: max(insets.leading, launchViewportMetrics.safeAreaInsets.leading),
+            bottom: max(insets.bottom, launchViewportMetrics.safeAreaInsets.bottom),
+            trailing: max(insets.trailing, launchViewportMetrics.safeAreaInsets.trailing)
         )
     }
 

@@ -83,11 +83,18 @@ final class ShadowClientDisplayMetricsNSView: NSView {
         } else {
             pixelSize = nil
         }
+        let safeAreaInsets = self.safeAreaInsets
 
         let nextState = ShadowClientDisplayMetricsState(
             scale: screen.backingScaleFactor,
             pixelSize: pixelSize,
-            logicalSize: window?.contentLayoutRect.size ?? screen.frame.size
+            logicalSize: window?.contentLayoutRect.size ?? screen.frame.size,
+            safeAreaInsets: EdgeInsets(
+                top: safeAreaInsets.top,
+                leading: safeAreaInsets.left,
+                bottom: safeAreaInsets.bottom,
+                trailing: safeAreaInsets.right
+            )
         )
         guard lastPublishedState != nextState else {
             return

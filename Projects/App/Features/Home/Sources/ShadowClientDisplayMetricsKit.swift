@@ -6,11 +6,13 @@ struct ShadowClientDisplayMetricsState: Equatable {
     let scale: CGFloat
     let pixelSize: CGSize?
     let logicalSize: CGSize?
+    let safeAreaInsets: EdgeInsets
 
     static let `default` = ShadowClientDisplayMetricsState(
         scale: 1.0,
         pixelSize: nil,
-        logicalSize: nil
+        logicalSize: nil,
+        safeAreaInsets: .init()
     )
 }
 
@@ -30,7 +32,7 @@ enum ShadowClientDisplayMetricsKit {
         if resolvedLogicalSize == viewportMetrics.logicalSize {
             resolvedSafeAreaInsets = viewportMetrics.safeAreaInsets
         } else {
-            resolvedSafeAreaInsets = EdgeInsets()
+            resolvedSafeAreaInsets = displayMetrics.safeAreaInsets
         }
 
         return ShadowClientAutoResolutionPolicy.resolveLaunchGeometry(
