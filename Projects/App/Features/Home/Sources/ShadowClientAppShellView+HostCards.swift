@@ -815,24 +815,7 @@ var remoteDesktopHostCard: some View {
     }
 
     func remoteDesktopCalloutRow(title: String, message: String, accent: Color) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(accent)
-            Text(message)
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(Color.white.opacity(0.78))
-                .lineLimit(3)
-                .truncationMode(.tail)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(accent.opacity(0.22), lineWidth: 1)
-        )
+        ShadowUIHostCalloutRow(title: title, message: message, accent: accent)
     }
 
     func hostDisplayTitle(_ host: ShadowClientRemoteHostDescriptor) -> String {
@@ -913,19 +896,19 @@ var remoteDesktopHostCard: some View {
     }
 
     var hostPanelInsetSurface: some ShapeStyle {
-        Color(red: 0.17, green: 0.20, blue: 0.26)
+        ShadowUIHostPanelPalette.panelInsetSurface
     }
 
     var hostHeaderBadgeSurface: some ShapeStyle {
-        Color(red: 0.20, green: 0.24, blue: 0.30)
+        ShadowUIHostPanelPalette.headerBadgeSurface
     }
 
     var hostSpotlightInsetSurface: some ShapeStyle {
-        Color(red: 0.12, green: 0.15, blue: 0.21)
+        ShadowUIHostPanelPalette.spotlightInsetSurface
     }
 
     var hostSpotlightBadgeSurface: some ShapeStyle {
-        Color(red: 0.16, green: 0.11, blue: 0.14)
+        ShadowUIHostPanelPalette.spotlightBadgeSurface
     }
 
     func spotlightTransform(in containerSize: CGSize) -> (
