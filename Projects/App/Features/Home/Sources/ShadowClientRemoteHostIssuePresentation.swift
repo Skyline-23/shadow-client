@@ -1,4 +1,5 @@
 import SwiftUI
+import ShadowClientFeatureSession
 
 struct ShadowClientRemoteHostIssuePresentation: Equatable, Sendable {
     let title: String

@@ -1,4 +1,5 @@
 import Foundation
+import ShadowClientFeatureSession
 
 public enum ShadowClientRemoteSessionLaunchTone: Equatable, Sendable {
     case idle

@@ -1,6 +1,7 @@
 import CoreGraphics
 import CoreVideo
 import Foundation
+import ShadowClientFeatureSession
 
 struct ShadowClientSendableFramePixelBuffer: @unchecked Sendable {
     let value: CVPixelBuffer

@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import ShadowClientFeatureSession
 @testable import ShadowClientFeatureHome
 
 @Test("Remote desktop runtime pairs selected host through injected control client")

@@ -1,5 +1,6 @@
 import Foundation
 import ShadowClientStreaming
+import ShadowClientFeatureSession
 
 struct ShadowClientBitrateControlKit {
     static func effectiveBitrateKbps(

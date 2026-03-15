@@ -1,4 +1,5 @@
 @testable import ShadowClientFeatureHome
+import ShadowClientFeatureSession
 import Testing
 
 @Test("Realtime session surface context tracks negotiated video codec")

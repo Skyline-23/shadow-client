@@ -1,5 +1,6 @@
 import Foundation
 import ShadowClientStreaming
+import ShadowClientFeatureSession
 
 public enum ShadowClientStreamingResolutionPreset: String, CaseIterable, Sendable {
     case retinaAuto = "retina-auto"

@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import ShadowClientFeatureSession
 @testable import ShadowClientFeatureHome
 @testable import ShadowClientFeatureConnection
 

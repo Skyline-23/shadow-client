@@ -1,6 +1,7 @@
 import CoreMedia
 import Foundation
 import VideoToolbox
+import ShadowClientFeatureSession
 
 public struct ShadowClientVideoCodecSupport: Sendable {
     public typealias HardwareDecoderSupport = @Sendable (CMVideoCodecType) -> Bool

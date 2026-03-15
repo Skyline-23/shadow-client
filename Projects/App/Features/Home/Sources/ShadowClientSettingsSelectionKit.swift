@@ -1,4 +1,5 @@
 import Foundation
+import ShadowClientFeatureSession
 
 struct ShadowClientSettingsSelectionInput {
     let lowLatencyMode: Bool

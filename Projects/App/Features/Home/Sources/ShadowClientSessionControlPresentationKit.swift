@@ -1,6 +1,7 @@
 import ShadowClientStreaming
 import ShadowClientUI
 import SwiftUI
+import ShadowClientFeatureSession
 
 enum ShadowClientSessionControlPresentationKit {
     static func toneColor(for tone: HealthTone) -> Color {

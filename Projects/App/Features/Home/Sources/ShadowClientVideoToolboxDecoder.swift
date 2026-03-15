@@ -3,6 +3,7 @@ import CoreMedia
 import CoreVideo
 import Foundation
 import VideoToolbox
+import ShadowClientFeatureSession
 
 public enum ShadowClientVideoToolboxDecoderError: Error, Equatable, Sendable {
     case missingParameterSets

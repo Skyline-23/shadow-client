@@ -1,4 +1,5 @@
 import Testing
+import ShadowClientFeatureSession
 @testable import ShadowClientFeatureHome
 
 @Test("Settings selection kit resolves fallback selections from raw values")

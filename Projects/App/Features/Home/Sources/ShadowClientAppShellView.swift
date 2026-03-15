@@ -3,6 +3,7 @@ import ShadowClientUI
 import SwiftUI
 import ShadowUIFoundation
 import ShadowClientFeatureConnection
+import ShadowClientFeatureSession
 
 public struct ShadowClientAppShellView: View {
 enum AppTab: Hashable {

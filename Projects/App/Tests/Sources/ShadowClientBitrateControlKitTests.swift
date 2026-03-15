@@ -1,5 +1,6 @@
 import ShadowClientStreaming
 import Testing
+import ShadowClientFeatureSession
 @testable import ShadowClientFeatureHome
 
 @Test("Bitrate control kit clamps slider values to the configured step and range")

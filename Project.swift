@@ -26,6 +26,17 @@ let project = Project(
             ]
         ),
         .target(
+            name: "ShadowClientFeatureSession",
+            destinations: [.iPhone, .iPad, .mac, .appleTv],
+            product: .framework,
+            bundleId: "com.skyline23.shadowClient.feature.session",
+            deploymentTargets: .multiplatform(iOS: "17.0", macOS: "14.0", tvOS: "17.0"),
+            infoPlist: .default,
+            buildableFolders: [
+                "Projects/App/Features/Session/Sources",
+            ]
+        ),
+        .target(
             name: "ShadowUIFoundation",
             destinations: [.iPhone, .iPad, .mac, .appleTv],
             product: .framework,
@@ -61,6 +72,7 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ShadowClientFeatureConnection"),
+                .target(name: "ShadowClientFeatureSession"),
                 .target(name: "ShadowUIFoundation"),
                 .external(name: "ShadowClientInput"),
                 .external(name: "ShadowClientStreaming"),
@@ -208,6 +220,7 @@ let project = Project(
             dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
                 .target(name: "ShadowClientFeatureConnection"),
+                .target(name: "ShadowClientFeatureSession"),
                 .target(name: "ShadowClientNativeAudioDecoding"),
                 .target(name: "ShadowUIFoundation"),
                 .external(name: "Testing"),
@@ -227,6 +240,7 @@ let project = Project(
             dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
                 .target(name: "ShadowClientFeatureConnection"),
+                .target(name: "ShadowClientFeatureSession"),
                 .target(name: "ShadowClientNativeAudioDecoding"),
                 .target(name: "ShadowUIFoundation"),
                 .external(name: "Testing"),

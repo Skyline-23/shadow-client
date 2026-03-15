@@ -1,4 +1,5 @@
 import Testing
+import ShadowClientFeatureSession
 @testable import ShadowClientFeatureHome
 
 @Test("Session reconfiguration relaunches retina-auto sessions when launch settings change")

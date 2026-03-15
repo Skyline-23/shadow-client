@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 import Network
 import os
+import ShadowClientFeatureSession
 
 public enum ShadowClientRealtimeSessionRuntimeError: Error, Equatable, Sendable {
     case invalidSessionURL

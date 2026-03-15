@@ -1,3 +1,5 @@
+import ShadowClientFeatureSession
+
 enum ShadowClientSessionReconfigurationKit {
     static func shouldRelaunchActiveSession(
         hasActiveSession: Bool,
