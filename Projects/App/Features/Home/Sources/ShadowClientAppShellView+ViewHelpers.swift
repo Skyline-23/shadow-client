@@ -126,7 +126,10 @@ var maxBitrateKbps: Double {
     }
 
 var effectiveBitrateKbps: Int {
-        currentSettings.resolvedBitrateKbps(networkSignal: launchBitrateNetworkSignal)
+        ShadowClientBitrateControlKit.effectiveBitrateKbps(
+            settings: currentSettings,
+            networkSignal: launchBitrateNetworkSignal
+        )
     }
 
 var launchBitrateNetworkSignal: StreamingNetworkSignal? {
@@ -140,12 +143,10 @@ var bitrateSliderBinding: Binding<Double> {
         Binding(
             get: { Double(bitrateKbps) },
             set: { newValue in
-                let rounded = Int(newValue.rounded() / Double(ShadowClientAppSettingsDefaults.bitrateStepKbps)) * ShadowClientAppSettingsDefaults.bitrateStepKbps
-                let clamped = min(
-                    max(ShadowClientStreamingLaunchBounds.minimumBitrateKbps, rounded),
-                    Int(maxBitrateKbps)
+                bitrateKbps = ShadowClientBitrateControlKit.clampedBitrateKbps(
+                    sliderValue: newValue,
+                    maxBitrateKbps: maxBitrateKbps
                 )
-                bitrateKbps = clamped
             }
         )
     }
