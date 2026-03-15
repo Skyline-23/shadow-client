@@ -2,7 +2,6 @@ import SwiftUI
 
 #if os(macOS)
 import AppKit
-import CoreImage
 import CoreVideo
 import Foundation
 import MetalKit
@@ -69,16 +68,12 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private let surfaceContext: ShadowClientRealtimeSessionSurfaceContext
     private let frameStore: ShadowClientRealtimeSessionFrameStore
     private let commandQueue: MTLCommandQueue
-    private let ciContext: CIContext
     private let yuvPipeline: ShadowClientRealtimeSessionYUVMetalPipeline?
     private var frameStreamTask: Task<Void, Never>?
     private var latestSnapshot = ShadowClientRealtimeSessionFrameStore.Snapshot(
         pixelBuffer: nil,
         revision: 0
     )
-    private var cachedSourceRect: CGRect = .null
-    private var cachedDrawableRect: CGRect = .null
-    private var cachedTransform: CGAffineTransform = .identity
     private var lastRenderedFrameRevision: UInt64 = .max
     private var lastRenderedDrawableSize: CGSize = .zero
     private var hasLoggedRenderPathForCurrentSession = false
@@ -95,13 +90,6 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         self.commandQueue = commandQueue
         self.yuvPipeline = ShadowClientRealtimeSessionYUVMetalPipeline(
             device: device
-        )
-        self.ciContext = CIContext(
-            mtlCommandQueue: commandQueue,
-            options: [
-                .cacheIntermediates: false,
-                .useSoftwareRenderer: false,
-            ]
         )
         super.init()
         frameStreamTask = Task { [weak self] in
@@ -206,34 +194,6 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         lastRenderedDrawableSize = drawableSize
     }
 
-    private func transformForRendering(
-        sourceRect: CGRect,
-        drawableRect: CGRect
-    ) -> CGAffineTransform {
-        if sourceRect.equalTo(cachedSourceRect), drawableRect.equalTo(cachedDrawableRect) {
-            return cachedTransform
-        }
-
-        let scale = min(
-            drawableRect.width / max(sourceRect.width, 1),
-            drawableRect.height / max(sourceRect.height, 1)
-        )
-        let scaledSize = CGSize(
-            width: sourceRect.width * scale,
-            height: sourceRect.height * scale
-        )
-        let offset = CGPoint(
-            x: (drawableRect.width - scaledSize.width) * 0.5,
-            y: (drawableRect.height - scaledSize.height) * 0.5
-        )
-
-        cachedSourceRect = sourceRect
-        cachedDrawableRect = drawableRect
-        cachedTransform = CGAffineTransform(scaleX: scale, y: scale)
-            .translatedBy(x: offset.x / max(scale, 0.0001), y: offset.y / max(scale, 0.0001))
-        return cachedTransform
-    }
-
     private func applyColorConfiguration(
         _ renderTargetConfiguration: ShadowClientSurfaceRenderTargetConfiguration,
         to view: MTKView,
@@ -259,55 +219,6 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         let screen = view.window?.screen ?? NSScreen.main
         let potentialHeadroom = screen?.maximumPotentialExtendedDynamicRangeColorComponentValue ?? 1
         return potentialHeadroom > 1.0
-    }
-
-    private func ciSourceOptions(
-        for pixelBuffer: CVPixelBuffer,
-        renderColorSpace: CGColorSpace
-    ) -> [CIImageOption: Any] {
-        switch CVPixelBufferGetPixelFormatType(pixelBuffer) {
-        case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
-             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
-            return [:]
-        default:
-            return [.colorSpace: renderColorSpace]
-        }
-    }
-
-    private func toneMapHDRToSDRSoftwareFallback(_ image: CIImage) -> CIImage {
-        guard let filter = CIFilter(name: "CIToneMapHeadroom") else {
-            return image
-        }
-
-        filter.setValue(image, forKey: kCIInputImageKey)
-        filter.setValue(
-            ShadowClientRealtimeSessionColorPipeline.hdrToSdrToneMapSourceHeadroom,
-            forKey: "inputSourceHeadroom"
-        )
-        filter.setValue(
-            ShadowClientRealtimeSessionColorPipeline.hdrToSdrToneMapTargetHeadroom,
-            forKey: "inputTargetHeadroom"
-        )
-        return filter.outputImage ?? image
-    }
-
-    private func expandVideoRange(
-        _ image: CIImage,
-        scale: CGFloat,
-        bias: CGFloat
-    ) -> CIImage {
-        image.applyingFilter(
-            "CIColorMatrix",
-            parameters: [
-                "inputRVector": CIVector(x: scale, y: 0, z: 0, w: 0),
-                "inputGVector": CIVector(x: 0, y: scale, z: 0, w: 0),
-                "inputBVector": CIVector(x: 0, y: 0, z: scale, w: 0),
-                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
-                "inputBiasVector": CIVector(x: bias, y: bias, z: bias, w: 0),
-            ]
-        )
     }
 }
 #endif
