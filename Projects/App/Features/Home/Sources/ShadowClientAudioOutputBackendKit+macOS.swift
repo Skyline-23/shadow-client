@@ -9,7 +9,7 @@ enum ShadowClientAudioOutputBackendPlatformKit {
         maximumPendingDurationMs: Double,
         prefersSpatialHeadphoneRendering: Bool
     ) throws -> any ShadowClientRealtimeAudioOutput {
-        try ShadowClientRealtimeAudioEngineOutput(
+        try ShadowClientRealtimeSampleBufferAudioOutput(
             format: format,
             maximumQueuedBufferCount: maximumQueuedBufferCount,
             nominalFramesPerBuffer: nominalFramesPerBuffer,
