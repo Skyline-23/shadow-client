@@ -81,6 +81,8 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @State var isLaunchFailureAlertPresented = false
     @State var gamepadInputRuntime = ShadowClientGamepadInputPassthroughRuntime()
     @State var sessionVisiblePointerRegions: [CGRect] = []
+    @State var activeSessionReconfigurationTask: Task<Void, Never>?
+    @State var lastActiveSessionReconfigurationSettings: ShadowClientGameStreamLaunchSettings?
     @State var launchViewportMetrics = ShadowClientLaunchViewportMetrics(
         logicalSize: .zero,
         safeAreaInsets: .init()
@@ -171,10 +173,21 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
                 sessionDiagnosticsHistory = .init(
                     maxSamples: ShadowClientUIRuntimeDefaults.diagnosticsHUDSampleHistoryLimit
                 )
+                activeSessionReconfigurationTask?.cancel()
+                activeSessionReconfigurationTask = nil
+                lastActiveSessionReconfigurationSettings = nil
+            } else {
+                lastActiveSessionReconfigurationSettings = activeSessionLaunchSettings()
             }
             gamepadInputRuntime.setSessionActive(isActive)
             updateActiveSessionProcessActivity(isActive: isActive)
             ShadowClientRemoteSessionOrientationCoordinator.updateSessionState(isActive: isActive)
+        }
+        .onChange(of: launchViewportMetrics, initial: false) { _, _ in
+            scheduleActiveSessionLaunchReconfigurationIfNeeded()
+        }
+        .onChange(of: displayMetrics, initial: false) { _, _ in
+            scheduleActiveSessionLaunchReconfigurationIfNeeded()
         }
         .onChange(of: gamepadInputConfiguration, initial: true) { _, configuration in
             gamepadInputRuntime.updateConfiguration(configuration)
@@ -217,6 +230,8 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
         }
         .onDisappear {
             ShadowClientRemoteSessionOrientationCoordinator.updateSessionState(isActive: false)
+            activeSessionReconfigurationTask?.cancel()
+            activeSessionReconfigurationTask = nil
             gamepadInputRuntime.stop()
             endActiveSessionProcessActivity()
             stopSettingsTelemetrySubscription()
@@ -736,6 +751,64 @@ func launchDesktopFallbackIfNeeded() async {
             viewportMetrics: launchViewportMetrics,
             displayMetrics: displayMetrics
         )
+    }
+
+    @MainActor
+    private func activeSessionLaunchSettings() -> ShadowClientGameStreamLaunchSettings? {
+        guard let activeSession = remoteDesktopRuntime.activeSession else {
+            return nil
+        }
+
+        let activeApp = remoteDesktopRuntime.apps.first { $0.id == activeSession.appID }
+        return resolvedLaunchSettings(
+            hostApp: activeApp,
+            networkSignal: launchBitrateNetworkSignal,
+            localHDRDisplayAvailable: isLocalHDRDisplayAvailable
+        )
+    }
+
+    @MainActor
+    private func scheduleActiveSessionLaunchReconfigurationIfNeeded() {
+        guard let proposedSettings = activeSessionLaunchSettings() else {
+            return
+        }
+        guard ShadowClientSessionReconfigurationKit.shouldRelaunchActiveSession(
+            hasActiveSession: remoteDesktopRuntime.activeSession != nil,
+            isLaunching: remoteDesktopRuntime.launchState == .launching,
+            selectedResolution: selectedResolution,
+            proposedSettings: proposedSettings,
+            lastAppliedSettings: lastActiveSessionReconfigurationSettings
+        ),
+        let activeSession = remoteDesktopRuntime.activeSession
+        else {
+            return
+        }
+
+        activeSessionReconfigurationTask?.cancel()
+        activeSessionReconfigurationTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled,
+                  let latestSettings = activeSessionLaunchSettings(),
+                  ShadowClientSessionReconfigurationKit.shouldRelaunchActiveSession(
+                    hasActiveSession: remoteDesktopRuntime.activeSession != nil,
+                    isLaunching: remoteDesktopRuntime.launchState == .launching,
+                    selectedResolution: selectedResolution,
+                    proposedSettings: latestSettings,
+                    lastAppliedSettings: lastActiveSessionReconfigurationSettings
+                  ),
+                  let latestActiveSession = remoteDesktopRuntime.activeSession,
+                  latestActiveSession.appID == activeSession.appID
+            else {
+                return
+            }
+
+            lastActiveSessionReconfigurationSettings = latestSettings
+            remoteDesktopRuntime.launchSelectedApp(
+                appID: latestActiveSession.appID,
+                appTitle: latestActiveSession.appTitle,
+                settings: latestSettings
+            )
+        }
     }
 
     @MainActor
