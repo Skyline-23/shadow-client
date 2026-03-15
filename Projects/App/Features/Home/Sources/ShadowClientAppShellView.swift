@@ -254,40 +254,42 @@ var mainTabView: some View {
     }
 
 var currentSettings: ShadowClientAppSettings {
-        ShadowClientAppSettings(
-            lowLatencyMode: lowLatencyMode,
-            preferHDR: preferHDR,
-            showDiagnosticsHUD: showDiagnosticsHUD,
-            resolution: selectedResolution,
-            frameRate: selectedFrameRate,
-            bitrateKbps: bitrateKbps,
-            autoBitrate: autoBitrate,
-            displayMode: selectedDisplayMode,
-            preferVirtualDisplay: preferVirtualDisplay,
-            audioConfiguration: selectedAudioConfiguration,
-            videoCodec: selectedVideoCodec,
-            videoDecoder: selectedVideoDecoder,
-            enableVSync: enableVSync,
-            enableFramePacing: enableFramePacing,
-            enableYUV444: enableYUV444,
-            unlockBitrateLimit: unlockBitrateLimit,
-            optimizeMouseForDesktop: optimizeMouseForDesktop,
-            captureSystemKeyboardShortcuts: captureSystemKeyboardShortcuts,
-            keyboardShortcutCaptureMode: selectedKeyboardShortcutCaptureMode,
-            useTouchscreenTrackpad: useTouchscreenTrackpad,
-            swapMouseButtons: swapMouseButtons,
-            reverseMouseScrollDirection: reverseMouseScrollDirection,
-            swapABXYButtons: swapABXYButtons,
-            forceGamepadOneAlwaysConnected: forceGamepadOneAlwaysConnected,
-            enableGamepadMouseMode: enableGamepadMouseMode,
-            processGamepadInputInBackground: processGamepadInputInBackground,
-            optimizeGameSettingsForStreaming: optimizeGameSettingsForStreaming,
-            quitAppOnHostAfterStream: quitAppOnHostAfterStream,
-            muteHostSpeakersWhileStreaming: muteHostSpeakersWhileStreaming,
-            muteAudioWhenInactiveWindow: muteAudioWhenInactiveWindow,
-            autoFindHosts: autoFindHosts,
-            language: selectedLanguage,
-            guiDisplayMode: selectedGUIDisplayMode
+        ShadowClientSettingsSelectionKit.makeSettings(
+            .init(
+                lowLatencyMode: lowLatencyMode,
+                preferHDR: preferHDR,
+                showDiagnosticsHUD: showDiagnosticsHUD,
+                resolution: selectedResolution,
+                frameRate: selectedFrameRate,
+                bitrateKbps: bitrateKbps,
+                autoBitrate: autoBitrate,
+                displayMode: selectedDisplayMode,
+                preferVirtualDisplay: preferVirtualDisplay,
+                audioConfiguration: selectedAudioConfiguration,
+                videoCodec: selectedVideoCodec,
+                videoDecoder: selectedVideoDecoder,
+                enableVSync: enableVSync,
+                enableFramePacing: enableFramePacing,
+                enableYUV444: enableYUV444,
+                unlockBitrateLimit: unlockBitrateLimit,
+                optimizeMouseForDesktop: optimizeMouseForDesktop,
+                captureSystemKeyboardShortcuts: captureSystemKeyboardShortcuts,
+                keyboardShortcutCaptureMode: selectedKeyboardShortcutCaptureMode,
+                useTouchscreenTrackpad: useTouchscreenTrackpad,
+                swapMouseButtons: swapMouseButtons,
+                reverseMouseScrollDirection: reverseMouseScrollDirection,
+                swapABXYButtons: swapABXYButtons,
+                forceGamepadOneAlwaysConnected: forceGamepadOneAlwaysConnected,
+                enableGamepadMouseMode: enableGamepadMouseMode,
+                processGamepadInputInBackground: processGamepadInputInBackground,
+                optimizeGameSettingsForStreaming: optimizeGameSettingsForStreaming,
+                quitAppOnHostAfterStream: quitAppOnHostAfterStream,
+                muteHostSpeakersWhileStreaming: muteHostSpeakersWhileStreaming,
+                muteAudioWhenInactiveWindow: muteAudioWhenInactiveWindow,
+                autoFindHosts: autoFindHosts,
+                language: selectedLanguage,
+                guiDisplayMode: selectedGUIDisplayMode
+            )
         )
     }
 
@@ -300,53 +302,47 @@ var gamepadInputConfiguration: ShadowClientGamepadInputPassthroughRuntime.Config
     }
 
 var selectedResolution: ShadowClientStreamingResolutionPreset {
-        get {
-            ShadowClientStreamingResolutionPreset(rawValue: resolutionRawValue) ??
-                ShadowClientAppSettingsDefaults.defaultResolution
-        }
+        get { ShadowClientSettingsSelectionKit.resolution(rawValue: resolutionRawValue) }
         nonmutating set { resolutionRawValue = newValue.rawValue }
     }
 
 var selectedFrameRate: ShadowClientStreamingFrameRatePreset {
-        get {
-            ShadowClientStreamingFrameRatePreset(rawValue: frameRateRawValue) ??
-                ShadowClientAppSettingsDefaults.defaultFrameRate
-        }
+        get { ShadowClientSettingsSelectionKit.frameRate(rawValue: frameRateRawValue) }
         nonmutating set { frameRateRawValue = newValue.rawValue }
     }
 
 var selectedDisplayMode: ShadowClientDisplayMode {
-        get { ShadowClientDisplayMode(rawValue: displayModeRawValue) ?? .borderlessFullscreen }
+        get { ShadowClientSettingsSelectionKit.displayMode(rawValue: displayModeRawValue) }
         nonmutating set { displayModeRawValue = newValue.rawValue }
     }
 
 var selectedAudioConfiguration: ShadowClientAudioConfiguration {
-        get { ShadowClientAudioConfiguration(rawValue: audioConfigurationRawValue) ?? .surround71 }
+        get { ShadowClientSettingsSelectionKit.audioConfiguration(rawValue: audioConfigurationRawValue) }
         nonmutating set { audioConfigurationRawValue = newValue.rawValue }
     }
 
 var selectedVideoCodec: ShadowClientVideoCodecPreference {
-        get { ShadowClientVideoCodecPreference(rawValue: videoCodecRawValue) ?? .auto }
+        get { ShadowClientSettingsSelectionKit.videoCodec(rawValue: videoCodecRawValue) }
         nonmutating set { videoCodecRawValue = newValue.rawValue }
     }
 
 var selectedVideoDecoder: ShadowClientVideoDecoderPreference {
-        get { ShadowClientVideoDecoderPreference(rawValue: videoDecoderRawValue) ?? .forceHardware }
+        get { ShadowClientSettingsSelectionKit.videoDecoder(rawValue: videoDecoderRawValue) }
         nonmutating set { videoDecoderRawValue = newValue.rawValue }
     }
 
 var selectedKeyboardShortcutCaptureMode: ShadowClientKeyboardShortcutCaptureMode {
-        get { ShadowClientKeyboardShortcutCaptureMode(rawValue: keyboardShortcutCaptureModeRawValue) ?? .fullscreenOnly }
+        get { ShadowClientSettingsSelectionKit.keyboardShortcutCaptureMode(rawValue: keyboardShortcutCaptureModeRawValue) }
         nonmutating set { keyboardShortcutCaptureModeRawValue = newValue.rawValue }
     }
 
 var selectedLanguage: ShadowClientLanguagePreference {
-        get { ShadowClientLanguagePreference(rawValue: languageRawValue) ?? .automatic }
+        get { ShadowClientSettingsSelectionKit.language(rawValue: languageRawValue) }
         nonmutating set { languageRawValue = newValue.rawValue }
     }
 
 var selectedGUIDisplayMode: ShadowClientGUIDisplayMode {
-        get { ShadowClientGUIDisplayMode(rawValue: guiDisplayModeRawValue) ?? .windowed }
+        get { ShadowClientSettingsSelectionKit.guiDisplayMode(rawValue: guiDisplayModeRawValue) }
         nonmutating set { guiDisplayModeRawValue = newValue.rawValue }
     }
 
