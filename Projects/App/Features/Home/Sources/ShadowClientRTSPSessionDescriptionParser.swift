@@ -624,6 +624,7 @@ public enum ShadowClientRTSPSessionDescriptionParser {
     ) -> (payloadType: Int?, codec: ShadowClientVideoCodec?) {
         var payloadType: Int?
         var codec: ShadowClientVideoCodec?
+        var sawExplicitVideoRTPMap = false
 
         for line in lines {
             let lower = line.lowercased()
@@ -651,7 +652,20 @@ public enum ShadowClientRTSPSessionDescriptionParser {
                 }
             }
 
-            if codec == nil, lower.contains("sprop-parameter-sets=aaaau") {
+            if let rtpMapLine = extractAttributeLine(line, prefix: "a=rtpmap:"),
+               let mapping = parseRTPMap(rtpMapLine)
+            {
+                sawExplicitVideoRTPMap = true
+                if codec == nil || mapping.codec == .av1 {
+                    payloadType = mapping.payloadType
+                    codec = mapping.codec
+                }
+            }
+
+            if !sawExplicitVideoRTPMap,
+               codec == nil,
+               lower.contains("sprop-parameter-sets=aaaau")
+            {
                 codec = .h265
             }
         }
