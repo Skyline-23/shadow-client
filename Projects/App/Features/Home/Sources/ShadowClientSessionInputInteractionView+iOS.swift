@@ -87,6 +87,10 @@ private final class ShadowClientIOSSoftwareKeyboardInputView: UIView, UIKeyInput
 
 @MainActor
 final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerDelegate, UIPointerInteractionDelegate {
+    private enum Constants {
+        static let indirectPointerScrollScale = 0.12
+    }
+
     var referenceVideoSize: CGSize?
     var visiblePointerRegions: [CGRect] = []
     var onInputEvent: (@MainActor (ShadowClientRemoteInputEvent) -> Void)?
@@ -312,7 +316,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         let translation = recognizer.translation(in: self)
         recognizer.setTranslation(.zero, in: self)
 
-        if recognizer.buttonMask.contains(.primary) {
+        if recognizer.buttonMask.contains(.primary) || isPrimaryButtonHeld {
             switch recognizer.state {
             case .began:
                 requestInputFocusIfNeeded()
@@ -322,6 +326,10 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
                     emit(.pointerButton(button: .left, isPressed: true))
                 }
             case .changed:
+                if !isPrimaryButtonHeld {
+                    isPrimaryButtonHeld = true
+                    emit(.pointerButton(button: .left, isPressed: true))
+                }
                 emitAbsolutePointerPosition(at: location)
             case .ended, .cancelled, .failed:
                 emitAbsolutePointerPosition(at: location)
@@ -340,7 +348,12 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         guard deltaX != 0 || deltaY != 0 else {
             return
         }
-        emit(.scroll(deltaX: deltaX, deltaY: deltaY))
+        emit(
+            .scroll(
+                deltaX: deltaX * Constants.indirectPointerScrollScale,
+                deltaY: deltaY * Constants.indirectPointerScrollScale
+            )
+        )
     }
 
     @objc
@@ -664,49 +677,6 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         _ touches: Set<UITouch>,
         phase: UITouch.Phase
     ) -> Set<UITouch> {
-        var unhandledTouches = Set<UITouch>()
-        var didHandleIndirectPointer = false
-
-        for touch in touches {
-            guard ShadowClientIOSIndirectPointerInputPolicy.shouldHandleDirectly(touch.type) else {
-                unhandledTouches.insert(touch)
-                continue
-            }
-
-            didHandleIndirectPointer = true
-            let location = touch.location(in: self)
-
-            switch phase {
-            case .began:
-                requestInputFocusIfNeeded()
-                isPrimaryButtonHeld = true
-                lastPrimaryDragLocation = location
-                emitAbsolutePointerPosition(at: location)
-                emit(.pointerButton(button: .left, isPressed: true))
-            case .moved:
-                emitAbsolutePointerPosition(at: location)
-                lastPrimaryDragLocation = location
-            case .ended:
-                emitAbsolutePointerPosition(at: location)
-                if isPrimaryButtonHeld {
-                    isPrimaryButtonHeld = false
-                    emit(.pointerButton(button: .left, isPressed: false))
-                }
-                lastPrimaryDragLocation = nil
-            case .cancelled:
-                if isPrimaryButtonHeld {
-                    isPrimaryButtonHeld = false
-                    emit(.pointerButton(button: .left, isPressed: false))
-                }
-                lastPrimaryDragLocation = nil
-            default:
-                break
-            }
-        }
-
-        if didHandleIndirectPointer {
-            return unhandledTouches
-        }
         return touches
     }
 }
