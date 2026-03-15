@@ -128,19 +128,20 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 allowExtendedDynamicRange: surfaceContext.activeDynamicRangeMode == .hdr
             )
         }
-
-        if let colorConfiguration, let pixelBuffer {
-            let supportsExtendedDynamicRange = supportsExtendedDynamicRangeDisplay(for: view)
-            let renderTargetConfiguration = ShadowClientSurfaceColorSpaceKit.renderTargetConfiguration(
+        let renderTargetConfiguration = colorConfiguration.map { colorConfiguration in
+            ShadowClientSurfaceColorSpaceKit.renderTargetConfiguration(
                 colorConfiguration: colorConfiguration,
-                supportsExtendedDynamicRange: supportsExtendedDynamicRange,
+                supportsExtendedDynamicRange: supportsExtendedDynamicRangeDisplay(for: view),
                 renderBackend: .metalYUV,
                 screenColorSpace: (view.window?.screen ?? NSScreen.main)?.colorSpace?.cgColorSpace
             )
+        }
+
+        if let renderTargetConfiguration, let pixelBuffer {
             applyColorConfiguration(
                 renderTargetConfiguration,
                 to: view,
-                supportsExtendedDynamicRange: supportsExtendedDynamicRange
+                supportsExtendedDynamicRange: supportsExtendedDynamicRangeDisplay(for: view)
             )
         }
 
@@ -151,6 +152,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         }
 
         if let pixelBuffer,
+           let renderTargetConfiguration,
            let renderPass = view.currentRenderPassDescriptor,
            let yuvPipeline,
            yuvPipeline.canRender(pixelBuffer)
@@ -164,7 +166,9 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 into: renderPass,
                 commandBuffer: commandBuffer,
                 drawableSize: drawableSize,
-                colorPixelFormat: view.colorPixelFormat
+                colorPixelFormat: view.colorPixelFormat,
+                outputColorSpace: renderTargetConfiguration.outputColorSpace,
+                prefersExtendedDynamicRange: renderTargetConfiguration.prefersExtendedDynamicRange
             )
             if didRender {
                 commandBuffer.present(drawable)

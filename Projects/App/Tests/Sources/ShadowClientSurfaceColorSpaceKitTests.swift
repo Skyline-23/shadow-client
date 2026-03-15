@@ -32,19 +32,18 @@ func surfaceColorSpaceKitPrefersScreenColorSpaceForHDR() {
     #expect(resolved.name == screen.name)
 }
 
-@Test("Surface color space kit preserves the source HDR color space for Metal YUV rendering")
-func surfaceColorSpaceKitPreservesSourceHDRColorSpaceForMetalYUV() {
+@Test("Surface color space kit uses display HDR color space for Metal YUV rendering")
+func surfaceColorSpaceKitUsesDisplayHDRColorSpaceForMetalYUV() {
     let sdr = CGColorSpace(name: CGColorSpace.itur_709) ?? CGColorSpaceCreateDeviceRGB()
     let hdr = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) ?? CGColorSpaceCreateDeviceRGB()
-    let sourceHDR = CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
 
     let resolved = ShadowClientSurfaceColorSpaceKit.resolvedOutputColorSpace(
         prefersExtendedDynamicRange: true,
         sdrSourceColorSpace: sdr,
         hdrDisplayColorSpace: hdr,
-        hdrSourceColorSpace: sourceHDR,
+        hdrSourceColorSpace: CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB(),
         renderBackend: .metalYUV
     )
 
-    #expect(resolved.name == sourceHDR.name)
+    #expect(resolved.name == hdr.name)
 }

@@ -13,6 +13,35 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         var offsets: SIMD3<Float>
         var chromaOffset: SIMD2<Float>
         var bitnessScaleFactor: Float
+        var transferFunction: UInt32
+        var appliesToneMapToSDR: UInt32
+        var appliesGamutTransform: UInt32
+        var _padding: UInt32
+        var hlgSystemGamma: Float
+        var toneMapSourceHeadroom: Float
+        var toneMapTargetHeadroom: Float
+        var _padding2: Float
+        var gamutRow0: SIMD3<Float>
+        var gamutRow1: SIMD3<Float>
+        var gamutRow2: SIMD3<Float>
+    }
+
+    enum TransferFunctionKind: UInt32, Sendable {
+        case linear = 0
+        case pq = 1
+        case hlg = 2
+    }
+
+    struct ColorProcessingDescriptor: Equatable, Sendable {
+        let transferFunction: TransferFunctionKind
+        let appliesToneMapToSDR: Bool
+        let appliesGamutTransform: Bool
+        let hlgSystemGamma: Float
+        let toneMapSourceHeadroom: Float
+        let toneMapTargetHeadroom: Float
+        let gamutRow0: SIMD3<Float>
+        let gamutRow1: SIMD3<Float>
+        let gamutRow2: SIMD3<Float>
     }
 
     struct Vertex {
@@ -35,6 +64,16 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             SIMD3<Float>(1.0, 0.0, 1.4746),
             SIMD3<Float>(1.0, -0.1646, -0.5714),
             SIMD3<Float>(1.0, 1.8814, 0.0)
+        )
+        static let identity3x3 = (
+            SIMD3<Float>(1, 0, 0),
+            SIMD3<Float>(0, 1, 0),
+            SIMD3<Float>(0, 0, 1)
+        )
+        static let rec2020ToDisplayP3 = (
+            SIMD3<Float>(1.34357825, -0.28217967, -0.06139859),
+            SIMD3<Float>(-0.06529745, 1.07578791, -0.01049045),
+            SIMD3<Float>(0.00282179, -0.0195985, 1.01677671)
         )
     }
 
@@ -119,7 +158,9 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         into renderPassDescriptor: MTLRenderPassDescriptor,
         commandBuffer: MTLCommandBuffer,
         drawableSize: CGSize,
-        colorPixelFormat: MTLPixelFormat
+        colorPixelFormat: MTLPixelFormat,
+        outputColorSpace: CGColorSpace,
+        prefersExtendedDynamicRange: Bool
     ) -> Bool {
         guard canRender(pixelBuffer),
               let pipelineState = pipelineStates[colorPixelFormat],
@@ -149,7 +190,11 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             ),
             drawableSize: drawableSize
         )
-        var parameters = cscParameters(for: pixelBuffer)
+        var parameters = cscParameters(
+            for: pixelBuffer,
+            outputColorSpace: outputColorSpace,
+            prefersExtendedDynamicRange: prefersExtendedDynamicRange
+        )
         logDiagnosticsIfNeeded(
             pixelBuffer: pixelBuffer,
             colorPixelFormat: colorPixelFormat,
@@ -240,7 +285,11 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         }
     }
 
-    private func cscParameters(for pixelBuffer: CVPixelBuffer) -> CSCParameters {
+    private func cscParameters(
+        for pixelBuffer: CVPixelBuffer,
+        outputColorSpace: CGColorSpace,
+        prefersExtendedDynamicRange: Bool
+    ) -> CSCParameters {
         let matrix = cscMatrix(for: pixelBuffer)
         let fullRange = isFullRange(pixelBuffer)
         let bitDepth = bitsPerChannel(for: pixelBuffer)
@@ -251,6 +300,11 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         let uvMax = fullRange ? channelRange : Float(240 << (bitDepth - 8))
         let yScale = channelRange / max(1, (yMax - yMin))
         let uvScale = channelRange / max(1, (uvMax - uvMin))
+        let colorProcessing = Self.colorProcessingDescriptor(
+            for: pixelBuffer,
+            outputColorSpace: outputColorSpace,
+            prefersExtendedDynamicRange: prefersExtendedDynamicRange
+        )
 
         return CSCParameters(
             row0: SIMD3<Float>(matrix.0.x * yScale, matrix.0.y * uvScale, matrix.0.z * uvScale),
@@ -262,7 +316,69 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
                 Float(1 << (bitDepth - 1)) / channelRange
             ),
             chromaOffset: chromaOffsets(for: pixelBuffer),
-            bitnessScaleFactor: 1
+            bitnessScaleFactor: 1,
+            transferFunction: colorProcessing.transferFunction.rawValue,
+            appliesToneMapToSDR: colorProcessing.appliesToneMapToSDR ? 1 : 0,
+            appliesGamutTransform: colorProcessing.appliesGamutTransform ? 1 : 0,
+            _padding: 0,
+            hlgSystemGamma: colorProcessing.hlgSystemGamma,
+            toneMapSourceHeadroom: colorProcessing.toneMapSourceHeadroom,
+            toneMapTargetHeadroom: colorProcessing.toneMapTargetHeadroom,
+            _padding2: 0,
+            gamutRow0: colorProcessing.gamutRow0,
+            gamutRow1: colorProcessing.gamutRow1,
+            gamutRow2: colorProcessing.gamutRow2
+        )
+    }
+
+    static func colorProcessingDescriptor(
+        for pixelBuffer: CVPixelBuffer,
+        outputColorSpace: CGColorSpace,
+        prefersExtendedDynamicRange: Bool
+    ) -> ColorProcessingDescriptor {
+        let transfer = staticAttachmentStringValue(
+            forKey: kCVImageBufferTransferFunctionKey,
+            pixelBuffer: pixelBuffer
+        )?.uppercased()
+
+        let transferFunction: TransferFunctionKind
+        if transfer == nil {
+            transferFunction = .linear
+        } else if transfer == (kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String).uppercased() ||
+            transfer?.contains("_PQ") == true ||
+            transfer?.hasSuffix("PQ") == true
+        {
+            transferFunction = .pq
+        } else if transfer == (kCVImageBufferTransferFunction_ITU_R_2100_HLG as String).uppercased() ||
+            transfer?.hasSuffix("HLG") == true
+        {
+            transferFunction = .hlg
+        } else {
+            transferFunction = .linear
+        }
+
+        let sourceStandard = ShadowClientRealtimeSessionColorPipeline.sourceStandard(for: pixelBuffer)
+        let appliesToneMapToSDR =
+            !prefersExtendedDynamicRange &&
+            (transferFunction == .pq || transferFunction == .hlg)
+        let appliesGamutTransform =
+            sourceStandard == .rec2020 &&
+            outputColorSpace.name == CGColorSpace.extendedLinearDisplayP3
+
+        let gamutRows = appliesGamutTransform
+            ? Constants.rec2020ToDisplayP3
+            : Constants.identity3x3
+
+        return .init(
+            transferFunction: transferFunction,
+            appliesToneMapToSDR: appliesToneMapToSDR,
+            appliesGamutTransform: appliesGamutTransform,
+            hlgSystemGamma: 1.2,
+            toneMapSourceHeadroom: ShadowClientRealtimeSessionColorPipeline.hdrToSdrToneMapSourceHeadroom,
+            toneMapTargetHeadroom: ShadowClientRealtimeSessionColorPipeline.hdrToSdrToneMapTargetHeadroom,
+            gamutRow0: gamutRows.0,
+            gamutRow1: gamutRows.1,
+            gamutRow2: gamutRows.2
         )
     }
 
@@ -527,6 +643,13 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
     }
 
     private func attachmentStringValue(
+        forKey key: CFString,
+        pixelBuffer: CVPixelBuffer
+    ) -> String? {
+        Self.staticAttachmentStringValue(forKey: key, pixelBuffer: pixelBuffer)
+    }
+
+    private static func staticAttachmentStringValue(
         forKey key: CFString,
         pixelBuffer: CVPixelBuffer
     ) -> String? {

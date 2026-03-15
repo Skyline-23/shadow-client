@@ -75,7 +75,7 @@ enum ShadowClientSurfaceColorSpaceKit {
             case .coreImage:
                 return screenColorSpace ?? hdrDisplayColorSpace
             case .metalYUV:
-                return hdrSourceColorSpace ?? screenColorSpace ?? hdrDisplayColorSpace
+                return screenColorSpace ?? hdrDisplayColorSpace
             }
         }
 
