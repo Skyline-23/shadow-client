@@ -87,6 +87,10 @@ float3 applyGamutTransform(float3 rgb, constant ShadowYUVCSCParameters& params) 
     );
 }
 
+float3 scaleHDRForEDR(float3 rgb, constant ShadowYUVCSCParameters& params) {
+    return max(rgb * max(params.toneMapSourceHeadroom, 1.0), 0.0);
+}
+
 vertex ShadowYUVVertexOut shadowYUVVertex(
     const device ShadowYUVVertex* vertices [[buffer(0)]],
     uint vertexID [[vertex_id]]
@@ -124,6 +128,9 @@ fragment half4 shadowYUVBiplanarFragment(
     );
     float3 processed = max(rgb, 0.0);
     processed = decodeTransfer(processed, params);
+    if (params.appliesToneMapToSDR == 0 && params.transferFunction != 0) {
+        processed = scaleHDRForEDR(processed, params);
+    }
     if (params.appliesToneMapToSDR != 0) {
         processed = toneMapToSDR(processed, params);
     }

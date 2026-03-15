@@ -30,6 +30,7 @@ func yuvMetalPipelineUsesPQTransferAndGamutTransformForHDRPQFrames() throws {
     #expect(descriptor.transferFunction == .pq)
     #expect(!descriptor.appliesToneMapToSDR)
     #expect(descriptor.appliesGamutTransform)
+    #expect(descriptor.toneMapSourceHeadroom == 100.0)
 }
 
 @Test("YUV Metal pipeline tone-maps HDR PQ frames when rendering to SDR")
@@ -58,6 +59,7 @@ func yuvMetalPipelineToneMapsHDRPQFramesWhenRenderingToSDR() throws {
 
     #expect(descriptor.transferFunction == .pq)
     #expect(descriptor.appliesToneMapToSDR)
+    #expect(descriptor.toneMapSourceHeadroom == 100.0)
 }
 
 private func makeMetalColorProcessingPixelBuffer(pixelFormat: OSType) throws -> CVPixelBuffer {

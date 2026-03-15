@@ -368,13 +368,24 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         let gamutRows = appliesGamutTransform
             ? Constants.rec2020ToDisplayP3
             : Constants.identity3x3
+        let hdrReferenceWhiteScale: Float
+        switch transferFunction {
+        case .pq:
+            // ST 2084 PQ is absolute (normalized to 10,000 nits). Apple EDR render targets
+            // expect reference white near 1.0, so remap 100 nit reference white to 1.0.
+            hdrReferenceWhiteScale = 100.0
+        case .hlg:
+            hdrReferenceWhiteScale = 1.0
+        case .linear:
+            hdrReferenceWhiteScale = 1.0
+        }
 
         return .init(
             transferFunction: transferFunction,
             appliesToneMapToSDR: appliesToneMapToSDR,
             appliesGamutTransform: appliesGamutTransform,
             hlgSystemGamma: 1.2,
-            toneMapSourceHeadroom: ShadowClientRealtimeSessionColorPipeline.hdrToSdrToneMapSourceHeadroom,
+            toneMapSourceHeadroom: hdrReferenceWhiteScale,
             toneMapTargetHeadroom: ShadowClientRealtimeSessionColorPipeline.hdrToSdrToneMapTargetHeadroom,
             gamutRow0: gamutRows.0,
             gamutRow1: gamutRows.1,
