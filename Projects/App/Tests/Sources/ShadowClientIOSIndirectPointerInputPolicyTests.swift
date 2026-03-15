@@ -58,4 +58,24 @@ func indirectPointerTouchBeginDoesNotDuplicatePrimaryDown() {
     #expect(transition.nextPrimaryButtonHeld)
     #expect(transition.capturesDragLocation)
 }
+
+@Test("Indirect pointer drag movement emits relative pointer motion while held")
+func indirectPointerDragMovementEmitsRelativePointerMotionWhileHeld() {
+    let event = ShadowClientIOSIndirectPointerInputPolicy.dragMoveEvent(
+        translation: CGPoint(x: 14, y: -9),
+        isPrimaryButtonHeld: true
+    )
+
+    #expect(event == .pointerMoved(x: 14, y: -9))
+}
+
+@Test("Indirect pointer drag movement stays idle when primary is not held")
+func indirectPointerDragMovementStaysIdleWithoutPrimaryHold() {
+    let event = ShadowClientIOSIndirectPointerInputPolicy.dragMoveEvent(
+        translation: CGPoint(x: 14, y: -9),
+        isPrimaryButtonHeld: false
+    )
+
+    #expect(event == nil)
+}
 #endif

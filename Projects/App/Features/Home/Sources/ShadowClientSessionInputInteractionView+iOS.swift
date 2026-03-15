@@ -24,6 +24,21 @@ enum ShadowClientIOSIndirectPointerInputPolicy {
         }
         return recognizer is UIPanGestureRecognizer
     }
+
+    static func dragMoveEvent(
+        translation: CGPoint,
+        isPrimaryButtonHeld: Bool
+    ) -> ShadowClientRemoteInputEvent? {
+        guard isPrimaryButtonHeld else {
+            return nil
+        }
+        let deltaX = Double(translation.x)
+        let deltaY = Double(translation.y)
+        guard deltaX != 0 || deltaY != 0 else {
+            return nil
+        }
+        return .pointerMoved(x: deltaX, y: deltaY)
+    }
 }
 
 struct ShadowClientIOSIndirectPointerTouchTransition: Equatable {
@@ -398,7 +413,12 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
                     isPrimaryButtonHeld = true
                     emit(.pointerButton(button: .left, isPressed: true))
                 }
-                emitAbsolutePointerPosition(at: location)
+                if let dragMoveEvent = ShadowClientIOSIndirectPointerInputPolicy.dragMoveEvent(
+                    translation: translation,
+                    isPrimaryButtonHeld: isPrimaryButtonHeld
+                ) {
+                    emit(dragMoveEvent)
+                }
             case .ended, .cancelled, .failed:
                 emitAbsolutePointerPosition(at: location)
                 if isPrimaryButtonHeld {
