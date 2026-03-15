@@ -511,20 +511,12 @@ func diagnosticsSparklineRow(
         color: Color,
         unit: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                Text(title)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Color.white.opacity(0.85))
-                Spacer(minLength: 6)
-                Text(diagnosticsLatestValue(samples: samples, unit: unit))
-                    .font(.caption2.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(color.opacity(0.9))
-            }
-
-            ShadowClientDiagnosticsSparkline(samples: samples, color: color)
-                .frame(height: 20)
-        }
+        ShadowUIRemoteSessionSparklineRow(
+            title: title,
+            latestValue: diagnosticsLatestValue(samples: samples, unit: unit),
+            samples: samples,
+            color: color
+        )
     }
 
 func diagnosticsLatestValue(samples: [Double], unit: String) -> String {
@@ -534,5 +526,4 @@ func diagnosticsLatestValue(samples: [Double], unit: String) -> String {
 func diagnosticsStatChip(label: String, value: String) -> some View {
         ShadowUIRemoteSessionStatChip(label: label, value: value)
     }
-
 }
