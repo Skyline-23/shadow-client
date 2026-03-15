@@ -70,6 +70,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         revision: 0
     )
     private var lastRenderedFrameRevision: UInt64 = .max
+    private var lastRenderedColorConfigurationRevision: UInt64 = .max
     private var lastRenderedDrawableSize: CGSize = .zero
     private var hasDumpedCurrentSessionDrawableSample = false
     private var hasLoggedRenderPathForCurrentSession = false
@@ -108,7 +109,9 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     func draw(in view: MTKView) {
         let snapshot = latestSnapshot
         let drawableSize = view.drawableSize
+        let colorConfigurationRevision = surfaceContext.colorConfigurationRevision
         if snapshot.revision == lastRenderedFrameRevision,
+           colorConfigurationRevision == lastRenderedColorConfigurationRevision,
            drawableSize == lastRenderedDrawableSize
         {
             return
@@ -175,6 +178,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 commandBuffer.commit()
                 surfaceContext.recordPresentedVideoFrame()
                 lastRenderedFrameRevision = snapshot.revision
+                lastRenderedColorConfigurationRevision = colorConfigurationRevision
                 lastRenderedDrawableSize = drawableSize
                 return
             }
@@ -201,6 +205,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             surfaceContext.recordPresentedVideoFrame()
         }
         lastRenderedFrameRevision = snapshot.revision
+        lastRenderedColorConfigurationRevision = colorConfigurationRevision
         lastRenderedDrawableSize = drawableSize
     }
 

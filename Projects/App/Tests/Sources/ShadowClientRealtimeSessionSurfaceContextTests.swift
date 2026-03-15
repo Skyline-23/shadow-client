@@ -115,3 +115,49 @@ func realtimeSessionSurfaceContextTracksHDRMetadata() {
     context.reset()
     #expect(context.activeHDRMetadata == nil)
 }
+
+@Test("Realtime session surface context bumps color configuration revision for dynamic range transitions")
+func realtimeSessionSurfaceContextBumpsColorConfigurationRevisionForDynamicRangeTransitions() {
+    let context = ShadowClientRealtimeSessionSurfaceContext()
+    #expect(context.colorConfigurationRevision == 0)
+
+    context.updateActiveDynamicRangeMode(.hdr)
+    #expect(context.colorConfigurationRevision == 1)
+
+    context.updateActiveDynamicRangeMode(.hdr)
+    #expect(context.colorConfigurationRevision == 1)
+
+    context.updateActiveDynamicRangeMode(.sdr)
+    #expect(context.colorConfigurationRevision == 2)
+}
+
+@Test("Realtime session surface context bumps color configuration revision for HDR metadata transitions")
+func realtimeSessionSurfaceContextBumpsColorConfigurationRevisionForHDRMetadataTransitions() {
+    let context = ShadowClientRealtimeSessionSurfaceContext()
+    let metadata = ShadowClientHDRMetadata(
+        displayPrimaries: [
+            .init(x: 100, y: 200),
+            .init(x: 300, y: 400),
+            .init(x: 500, y: 600),
+        ],
+        whitePoint: .init(x: 700, y: 800),
+        maxDisplayLuminance: 1000,
+        minDisplayLuminance: 1,
+        maxContentLightLevel: 1200,
+        maxFrameAverageLightLevel: 600,
+        maxFullFrameLuminance: 400
+    )
+    #expect(context.colorConfigurationRevision == 0)
+
+    context.updateActiveHDRMetadata(metadata)
+    #expect(context.colorConfigurationRevision == 1)
+
+    context.updateActiveHDRMetadata(metadata)
+    #expect(context.colorConfigurationRevision == 1)
+
+    context.updateActiveHDRMetadata(nil)
+    #expect(context.colorConfigurationRevision == 2)
+
+    context.reset()
+    #expect(context.colorConfigurationRevision == 0)
+}
