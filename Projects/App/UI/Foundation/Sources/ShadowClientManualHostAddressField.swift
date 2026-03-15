@@ -1,11 +1,17 @@
 import SwiftUI
 
-struct ShadowClientManualHostAddressField: View {
-    @Binding var text: String
-    let isFocused: FocusState<Bool>.Binding
-    let onSubmit: () -> Void
+public struct ShadowClientManualHostAddressField: View {
+    @Binding public var text: String
+    public let isFocused: FocusState<Bool>.Binding
+    public let onSubmit: () -> Void
 
-    var body: some View {
+    public init(text: Binding<String>, isFocused: FocusState<Bool>.Binding, onSubmit: @escaping () -> Void) {
+        self._text = text
+        self.isFocused = isFocused
+        self.onSubmit = onSubmit
+    }
+
+    public var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "network")
                 .foregroundStyle(Color.white.opacity(0.60))

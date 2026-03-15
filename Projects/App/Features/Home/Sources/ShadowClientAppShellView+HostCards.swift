@@ -1,6 +1,7 @@
 import ShadowClientStreaming
 import ShadowClientUI
 import SwiftUI
+import ShadowUIFoundation
 
 private struct RemoteDesktopHostFramePreferenceKey: PreferenceKey {
     static var defaultValue: [String: CGRect] = [:]

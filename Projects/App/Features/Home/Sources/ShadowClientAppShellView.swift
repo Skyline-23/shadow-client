@@ -1,6 +1,7 @@
 import ShadowClientStreaming
 import ShadowClientUI
 import SwiftUI
+import ShadowUIFoundation
 
 public struct ShadowClientAppShellView: View {
 enum AppTab: Hashable {

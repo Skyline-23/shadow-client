@@ -1,6 +1,7 @@
 import ShadowClientStreaming
 import ShadowClientUI
 import SwiftUI
+import ShadowUIFoundation
 
 extension ShadowClientAppShellView {
 func settingsSection<Content: View>(

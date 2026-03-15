@@ -1,4 +1,5 @@
 import ShadowClientStreaming
+import ShadowUIFoundation
 
 enum ShadowClientLaunchSettingsKit {
     static func resolvedLaunchSettings(

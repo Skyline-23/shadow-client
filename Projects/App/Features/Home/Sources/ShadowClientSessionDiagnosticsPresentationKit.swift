@@ -1,4 +1,5 @@
 import Foundation
+import ShadowUIFoundation
 
 enum ShadowClientSessionDiagnosticsPresentationKit {
 

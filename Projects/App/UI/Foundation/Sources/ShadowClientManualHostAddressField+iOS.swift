@@ -11,7 +11,7 @@ private struct ShadowClientManualHostAddressFieldPlatformModifier: ViewModifier 
 }
 
 extension View {
-    func shadowClientManualHostAddressFieldPlatformBehavior() -> some View {
+    public func shadowClientManualHostAddressFieldPlatformBehavior() -> some View {
         modifier(ShadowClientManualHostAddressFieldPlatformModifier())
     }
 }

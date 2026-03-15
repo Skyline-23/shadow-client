@@ -12,6 +12,17 @@ let project = Project(
     name: "shadow-client",
     targets: [
         .target(
+            name: "ShadowUIFoundation",
+            destinations: [.iPhone, .iPad, .mac, .appleTv],
+            product: .framework,
+            bundleId: "com.skyline23.shadowClient.ui.foundation",
+            deploymentTargets: .multiplatform(iOS: "17.0", macOS: "14.0", tvOS: "17.0"),
+            infoPlist: .default,
+            buildableFolders: [
+                "Projects/App/UI/Foundation/Sources",
+            ]
+        ),
+        .target(
             name: "ShadowClientFeatureHome",
             destinations: [.iPhone, .iPad, .mac, .appleTv],
             product: .framework,
@@ -35,6 +46,7 @@ let project = Project(
                 "Projects/App/Features/Home/Sources",
             ],
             dependencies: [
+                .target(name: "ShadowUIFoundation"),
                 .external(name: "ShadowClientInput"),
                 .external(name: "ShadowClientStreaming"),
                 .external(name: "ShadowClientUI"),

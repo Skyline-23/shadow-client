@@ -1,3 +1,4 @@
+import ShadowUIFoundation
 #if os(iOS)
 import SwiftUI
 import UIKit

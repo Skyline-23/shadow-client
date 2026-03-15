@@ -1,14 +1,14 @@
 import CoreGraphics
 
-struct ShadowClientSessionAbsolutePointerState: Equatable {
-    let x: Double
-    let y: Double
-    let referenceWidth: Double
-    let referenceHeight: Double
+public struct ShadowClientSessionAbsolutePointerState: Equatable {
+    public let x: Double
+    public let y: Double
+    public let referenceWidth: Double
+    public let referenceHeight: Double
 }
 
-enum ShadowClientSessionPointerGeometry {
-    static func absolutePointerState(
+public enum ShadowClientSessionPointerGeometry {
+    public static func absolutePointerState(
         for location: CGPoint,
         containerBounds: CGRect,
         videoSize: CGSize?

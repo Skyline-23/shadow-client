@@ -1,6 +1,7 @@
 import ShadowClientStreaming
 import ShadowClientUI
 import SwiftUI
+import ShadowUIFoundation
 
 extension ShadowClientAppShellView {
 var homeTab: some View {

@@ -1,4 +1,5 @@
 import CoreGraphics
+import ShadowUIFoundation
 import SwiftUI
 
 struct ShadowClientDisplayMetricsState: Equatable {

@@ -2,7 +2,7 @@
 import SwiftUI
 
 extension View {
-    func shadowClientManualHostAddressFieldPlatformBehavior() -> some View {
+    public func shadowClientManualHostAddressFieldPlatformBehavior() -> some View {
         self
     }
 }
