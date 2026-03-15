@@ -2583,8 +2583,8 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         subsystem: "com.skyline23.shadow-client",
         category: "RealtimeSampleBufferAudio"
     )
-    private static let startupLeadTime = CMTime(value: 3, timescale: 20)
-    private static let minimumStartupPreroll = CMTime(value: 120, timescale: 1000)
+    private static let startupLeadTime = CMTime(value: 1, timescale: 20)
+    private static let minimumStartupPreroll = CMTime(value: 30, timescale: 1000)
 
     private actor BudgetState {
         private let sampleRate: Double
