@@ -140,12 +140,15 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             )
         }
 
+        let canUseMetalYUV = pixelBuffer != nil && yuvPipeline?.canRender(pixelBuffer!) == true
+
         if let colorConfiguration, let pixelBuffer {
             let supportsExtendedDynamicRange = supportsExtendedDynamicRangeDisplay(for: view)
             applyColorConfiguration(
                 colorConfiguration,
                 to: view,
-                supportsExtendedDynamicRange: supportsExtendedDynamicRange
+                supportsExtendedDynamicRange: supportsExtendedDynamicRange,
+                renderBackend: canUseMetalYUV ? .metalYUV : .coreImage
             )
             _ = pixelBuffer
         }
@@ -156,13 +159,10 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             return
         }
 
-        let shouldBypassYUVMetalForHDR = colorConfiguration?.prefersExtendedDynamicRange == true
-
         if let pixelBuffer,
            let renderPass = view.currentRenderPassDescriptor,
            let yuvPipeline,
-           yuvPipeline.canRender(pixelBuffer),
-           !shouldBypassYUVMetalForHDR
+           yuvPipeline.canRender(pixelBuffer)
         {
             if !hasLoggedRenderPathForCurrentSession {
                 logger.notice("Surface render path=metal-yuv pixel-format=0x\(String(CVPixelBufferGetPixelFormatType(pixelBuffer), radix: 16), privacy: .public)")
@@ -177,12 +177,10 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             )
             if didRender {
                 commandBuffer.present(drawable)
-                if pixelBuffer != nil {
-                    scheduleDrawableTextureSampleIfNeeded(
-                        drawable: drawable,
-                        commandBuffer: commandBuffer
-                    )
-                }
+                scheduleDrawableTextureSampleIfNeeded(
+                    drawable: drawable,
+                    commandBuffer: commandBuffer
+                )
                 commandBuffer.commit()
                 surfaceContext.recordPresentedVideoFrame()
                 lastRenderedFrameRevision = snapshot.revision
@@ -190,6 +188,14 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 return
             }
             logger.error("Surface render path=metal-yuv failed; falling back to CI")
+            if let colorConfiguration {
+                applyColorConfiguration(
+                    colorConfiguration,
+                    to: view,
+                    supportsExtendedDynamicRange: supportsExtendedDynamicRangeDisplay(for: view),
+                    renderBackend: .coreImage
+                )
+            }
         }
 
         if let pixelBuffer, let colorConfiguration {
@@ -296,7 +302,8 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private func applyColorConfiguration(
         _ configuration: ShadowClientRealtimeSessionColorConfiguration,
         to view: MTKView,
-        supportsExtendedDynamicRange: Bool
+        supportsExtendedDynamicRange: Bool,
+        renderBackend: ShadowClientSurfaceColorRenderBackend
     ) {
         let shouldRenderExtendedDynamicRange =
             configuration.prefersExtendedDynamicRange && supportsExtendedDynamicRange
@@ -315,7 +322,9 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 for: view,
                 prefersExtendedDynamicRange: shouldRenderExtendedDynamicRange,
                 sdrSourceColorSpace: configuration.renderColorSpace,
-                hdrDisplayColorSpace: configuration.displayColorSpace
+                hdrDisplayColorSpace: configuration.displayColorSpace,
+                hdrSourceColorSpace: configuration.renderColorSpace,
+                renderBackend: renderBackend
             )
             metalLayer.wantsExtendedDynamicRangeContent = shouldRenderExtendedDynamicRange
         }
@@ -333,12 +342,16 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         for view: MTKView,
         prefersExtendedDynamicRange: Bool,
         sdrSourceColorSpace: CGColorSpace,
-        hdrDisplayColorSpace: CGColorSpace
+        hdrDisplayColorSpace: CGColorSpace,
+        hdrSourceColorSpace: CGColorSpace? = nil,
+        renderBackend: ShadowClientSurfaceColorRenderBackend = .coreImage
     ) -> CGColorSpace {
         ShadowClientSurfaceColorSpaceKit.resolvedOutputColorSpace(
             prefersExtendedDynamicRange: prefersExtendedDynamicRange,
             sdrSourceColorSpace: sdrSourceColorSpace,
-            hdrDisplayColorSpace: hdrDisplayColorSpace
+            hdrDisplayColorSpace: hdrDisplayColorSpace,
+            hdrSourceColorSpace: hdrSourceColorSpace,
+            renderBackend: renderBackend
         )
     }
 

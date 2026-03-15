@@ -141,12 +141,15 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             )
         }
 
+        let canUseMetalYUV = pixelBuffer != nil && yuvPipeline?.canRender(pixelBuffer!) == true
+
         if let colorConfiguration, let pixelBuffer {
             let supportsExtendedDynamicRange = supportsExtendedDynamicRangeDisplay(for: view)
             applyColorConfiguration(
                 colorConfiguration,
                 to: view,
-                supportsExtendedDynamicRange: supportsExtendedDynamicRange
+                supportsExtendedDynamicRange: supportsExtendedDynamicRange,
+                renderBackend: canUseMetalYUV ? .metalYUV : .coreImage
             )
             _ = pixelBuffer
         }
@@ -182,6 +185,14 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 return
             }
             logger.error("Surface render path=metal-yuv failed; falling back to CI")
+            if let colorConfiguration {
+                applyColorConfiguration(
+                    colorConfiguration,
+                    to: view,
+                    supportsExtendedDynamicRange: supportsExtendedDynamicRangeDisplay(for: view),
+                    renderBackend: .coreImage
+                )
+            }
         }
 
         if let pixelBuffer, let colorConfiguration {
@@ -272,7 +283,8 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private func applyColorConfiguration(
         _ configuration: ShadowClientRealtimeSessionColorConfiguration,
         to view: MTKView,
-        supportsExtendedDynamicRange: Bool
+        supportsExtendedDynamicRange: Bool,
+        renderBackend: ShadowClientSurfaceColorRenderBackend
     ) {
         let shouldRenderExtendedDynamicRange =
             configuration.prefersExtendedDynamicRange && supportsExtendedDynamicRange
@@ -287,7 +299,9 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             for: view,
             prefersExtendedDynamicRange: shouldRenderExtendedDynamicRange,
             sdrSourceColorSpace: configuration.renderColorSpace,
-            hdrDisplayColorSpace: configuration.displayColorSpace
+            hdrDisplayColorSpace: configuration.displayColorSpace,
+            hdrSourceColorSpace: configuration.renderColorSpace,
+            renderBackend: renderBackend
         )
 
         if #available(macOS 10.15, *),
@@ -297,7 +311,9 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 for: view,
                 prefersExtendedDynamicRange: shouldRenderExtendedDynamicRange,
                 sdrSourceColorSpace: configuration.renderColorSpace,
-                hdrDisplayColorSpace: configuration.displayColorSpace
+                hdrDisplayColorSpace: configuration.displayColorSpace,
+                hdrSourceColorSpace: configuration.renderColorSpace,
+                renderBackend: renderBackend
             )
             metalLayer.wantsExtendedDynamicRangeContent = shouldRenderExtendedDynamicRange
         }
@@ -316,13 +332,17 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         for view: MTKView,
         prefersExtendedDynamicRange: Bool,
         sdrSourceColorSpace: CGColorSpace,
-        hdrDisplayColorSpace: CGColorSpace
+        hdrDisplayColorSpace: CGColorSpace,
+        hdrSourceColorSpace: CGColorSpace? = nil,
+        renderBackend: ShadowClientSurfaceColorRenderBackend = .coreImage
     ) -> CGColorSpace {
         ShadowClientSurfaceColorSpaceKit.resolvedOutputColorSpace(
             prefersExtendedDynamicRange: prefersExtendedDynamicRange,
             sdrSourceColorSpace: sdrSourceColorSpace,
             hdrDisplayColorSpace: hdrDisplayColorSpace,
-            screenColorSpace: (view.window?.screen ?? NSScreen.main)?.colorSpace?.cgColorSpace
+            screenColorSpace: (view.window?.screen ?? NSScreen.main)?.colorSpace?.cgColorSpace,
+            hdrSourceColorSpace: hdrSourceColorSpace,
+            renderBackend: renderBackend
         )
     }
 
