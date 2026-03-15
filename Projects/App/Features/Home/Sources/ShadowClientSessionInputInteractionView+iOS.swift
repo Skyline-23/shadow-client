@@ -569,7 +569,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
     }
 
     func gestureRecognizer(
-        recognizer: UIGestureRecognizer,
+        _ recognizer: UIGestureRecognizer,
         shouldReceive touch: UITouch
     ) -> Bool {
         ShadowClientIOSIndirectPointerInputPolicy.shouldAllowGestureRecognition(
