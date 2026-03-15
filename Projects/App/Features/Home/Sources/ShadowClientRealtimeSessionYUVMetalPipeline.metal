@@ -19,13 +19,13 @@ struct ShadowYUVCSCParameters {
     float2 chromaOffset;
     float bitnessScaleFactor;
     uint transferFunction;
+    uint decodesTransfer;
     uint appliesToneMapToSDR;
     uint appliesGamutTransform;
-    uint _padding;
     float hlgSystemGamma;
     float toneMapSourceHeadroom;
     float toneMapTargetHeadroom;
-    float _padding2;
+    float _padding;
     float3 gamutRow0;
     float3 gamutRow1;
     float3 gamutRow2;
@@ -127,8 +127,10 @@ fragment half4 shadowYUVBiplanarFragment(
         dot(params.row2, yuv)
     );
     float3 processed = max(rgb, 0.0);
-    processed = decodeTransfer(processed, params);
-    if (params.appliesToneMapToSDR == 0 && params.transferFunction != 0) {
+    if (params.decodesTransfer != 0) {
+        processed = decodeTransfer(processed, params);
+    }
+    if (params.decodesTransfer != 0 && params.appliesToneMapToSDR == 0 && params.transferFunction != 0) {
         processed = scaleHDRForEDR(processed, params);
     }
     if (params.appliesToneMapToSDR != 0) {

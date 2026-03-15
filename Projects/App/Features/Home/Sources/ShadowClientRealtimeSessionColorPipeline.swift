@@ -33,8 +33,8 @@ enum ShadowClientRealtimeSessionColorPipeline {
         ?? CGColorSpace(name: CGColorSpace.sRGB)
         ?? CGColorSpaceCreateDeviceRGB()
 
-    private static let defaultHDRDisplayColorSpace = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)
-        ?? CGColorSpace(name: CGColorSpace.extendedLinearITUR_2020)
+    private static let defaultHDRDisplayColorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
+        ?? CGColorSpace(name: CGColorSpace.itur_2020)
         ?? defaultSDRDisplayColorSpace
     static let hdrToSdrToneMapSourceHeadroom: Float = 4.0
     static let hdrToSdrToneMapTargetHeadroom: Float = 1.0
@@ -87,8 +87,10 @@ enum ShadowClientRealtimeSessionColorPipeline {
             metadata: metadata,
             prefersExtendedDynamicRange: prefersExtendedDynamicRange
         )
-        let displayColorSpace = prefersExtendedDynamicRange ? defaultHDRDisplayColorSpace : defaultSDRDisplayColorSpace
-        let pixelFormat: MTLPixelFormat = prefersExtendedDynamicRange ? .rgba16Float : .bgra8Unorm
+        let displayColorSpace = prefersExtendedDynamicRange
+            ? hdrDisplayColorSpace(for: metadata)
+            : defaultSDRDisplayColorSpace
+        let pixelFormat: MTLPixelFormat = prefersExtendedDynamicRange ? .bgr10a2Unorm : .bgra8Unorm
         let videoRangeExpansion = prefersExtendedDynamicRange
             ? nil
             : Self.videoRangeExpansion(for: pixelBuffer)
@@ -153,6 +155,18 @@ enum ShadowClientRealtimeSessionColorPipeline {
         case .rec601:
             return rec601LikeColorSpace
         }
+    }
+
+    private static func hdrDisplayColorSpace(
+        for metadata: ShadowClientColorMetadata
+    ) -> CGColorSpace {
+        if metadata.isPQ {
+            return CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? defaultHDRDisplayColorSpace
+        }
+        if metadata.isHLG {
+            return CGColorSpace(name: CGColorSpace.itur_2100_HLG) ?? defaultHDRDisplayColorSpace
+        }
+        return CGColorSpace(name: CGColorSpace.itur_2020) ?? defaultHDRDisplayColorSpace
     }
 
     private static func colorMetadata(for pixelBuffer: CVPixelBuffer) -> ShadowClientColorMetadata {

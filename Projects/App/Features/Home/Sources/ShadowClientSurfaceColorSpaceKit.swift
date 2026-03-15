@@ -71,12 +71,7 @@ enum ShadowClientSurfaceColorSpaceKit {
         renderBackend: ShadowClientSurfaceColorRenderBackend = .coreImage
     ) -> CGColorSpace {
         if prefersExtendedDynamicRange {
-            switch renderBackend {
-            case .coreImage:
-                return screenColorSpace ?? hdrDisplayColorSpace
-            case .metalYUV:
-                return screenColorSpace ?? hdrDisplayColorSpace
-            }
+            return hdrDisplayColorSpace
         }
 
         return sdrSourceColorSpace

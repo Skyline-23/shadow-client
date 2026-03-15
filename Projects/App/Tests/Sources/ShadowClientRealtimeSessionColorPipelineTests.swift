@@ -4,7 +4,7 @@ import Metal
 import Testing
 @testable import ShadowClientFeatureHome
 
-@Test("Color pipeline enables EDR and float output for HDR PQ frames")
+@Test("Color pipeline preserves HDR PQ output for HDR PQ frames")
 func colorPipelineEnablesEDRForHDRPQFrames() throws {
     let pixelBuffer = try makePixelBuffer(pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
     CVBufferSetAttachment(
@@ -25,14 +25,10 @@ func colorPipelineEnablesEDRForHDRPQFrames() throws {
         allowExtendedDynamicRange: true
     )
     #expect(configuration.prefersExtendedDynamicRange)
-    #expect(configuration.pixelFormat == .rgba16Float)
+    #expect(configuration.pixelFormat == .bgr10a2Unorm)
     #expect(configuration.renderColorSpace.name == CGColorSpace.itur_2100_PQ)
     #expect(configuration.videoRangeExpansion == nil)
-    let displayColorName = configuration.displayColorSpace.name
-    #expect(
-        displayColorName == CGColorSpace.extendedLinearDisplayP3 ||
-            displayColorName == CGColorSpace.extendedLinearITUR_2020
-    )
+    #expect(configuration.displayColorSpace.name == CGColorSpace.itur_2100_PQ)
 }
 
 @Test("Color pipeline keeps SDR output for BT.709 frames")

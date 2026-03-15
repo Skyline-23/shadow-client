@@ -3,8 +3,8 @@ import CoreVideo
 import Testing
 @testable import ShadowClientFeatureHome
 
-@Test("YUV Metal pipeline uses PQ transfer and Rec.2020 to Display P3 gamut transform for HDR PQ frames")
-func yuvMetalPipelineUsesPQTransferAndGamutTransformForHDRPQFrames() throws {
+@Test("YUV Metal pipeline preserves encoded HDR PQ output for HDR PQ frames")
+func yuvMetalPipelinePreservesEncodedHDRPQOutputForHDRPQFrames() throws {
     let pixelBuffer = try makeMetalColorProcessingPixelBuffer(
         pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
     )
@@ -23,13 +23,14 @@ func yuvMetalPipelineUsesPQTransferAndGamutTransformForHDRPQFrames() throws {
 
     let descriptor = ShadowClientRealtimeSessionYUVMetalPipeline.colorProcessingDescriptor(
         for: pixelBuffer,
-        outputColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) ?? CGColorSpaceCreateDeviceRGB(),
+        outputColorSpace: CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB(),
         prefersExtendedDynamicRange: true
     )
 
     #expect(descriptor.transferFunction == .pq)
+    #expect(!descriptor.decodesTransfer)
     #expect(!descriptor.appliesToneMapToSDR)
-    #expect(descriptor.appliesGamutTransform)
+    #expect(!descriptor.appliesGamutTransform)
     #expect(descriptor.toneMapSourceHeadroom == 100.0)
 }
 
@@ -58,6 +59,7 @@ func yuvMetalPipelineToneMapsHDRPQFramesWhenRenderingToSDR() throws {
     )
 
     #expect(descriptor.transferFunction == .pq)
+    #expect(descriptor.decodesTransfer)
     #expect(descriptor.appliesToneMapToSDR)
     #expect(descriptor.toneMapSourceHeadroom == 100.0)
 }

@@ -14,13 +14,13 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         var chromaOffset: SIMD2<Float>
         var bitnessScaleFactor: Float
         var transferFunction: UInt32
+        var decodesTransfer: UInt32
         var appliesToneMapToSDR: UInt32
         var appliesGamutTransform: UInt32
-        var _padding: UInt32
         var hlgSystemGamma: Float
         var toneMapSourceHeadroom: Float
         var toneMapTargetHeadroom: Float
-        var _padding2: Float
+        var _padding: Float
         var gamutRow0: SIMD3<Float>
         var gamutRow1: SIMD3<Float>
         var gamutRow2: SIMD3<Float>
@@ -34,6 +34,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
 
     struct ColorProcessingDescriptor: Equatable, Sendable {
         let transferFunction: TransferFunctionKind
+        let decodesTransfer: Bool
         let appliesToneMapToSDR: Bool
         let appliesGamutTransform: Bool
         let hlgSystemGamma: Float
@@ -128,7 +129,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             return nil
         }
         var pipelineStates: [MTLPixelFormat: MTLRenderPipelineState] = [:]
-        for pixelFormat in [MTLPixelFormat.bgra8Unorm, .rgba16Float] {
+        for pixelFormat in [MTLPixelFormat.bgra8Unorm, .bgr10a2Unorm, .rgba16Float] {
             let descriptor = MTLRenderPipelineDescriptor()
             descriptor.vertexFunction = library.makeFunction(name: "shadowYUVVertex")
             descriptor.fragmentFunction = library.makeFunction(name: "shadowYUVBiplanarFragment")
@@ -318,13 +319,13 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             chromaOffset: chromaOffsets(for: pixelBuffer),
             bitnessScaleFactor: 1,
             transferFunction: colorProcessing.transferFunction.rawValue,
+            decodesTransfer: colorProcessing.decodesTransfer ? 1 : 0,
             appliesToneMapToSDR: colorProcessing.appliesToneMapToSDR ? 1 : 0,
             appliesGamutTransform: colorProcessing.appliesGamutTransform ? 1 : 0,
-            _padding: 0,
             hlgSystemGamma: colorProcessing.hlgSystemGamma,
             toneMapSourceHeadroom: colorProcessing.toneMapSourceHeadroom,
             toneMapTargetHeadroom: colorProcessing.toneMapTargetHeadroom,
-            _padding2: 0,
+            _padding: 0,
             gamutRow0: colorProcessing.gamutRow0,
             gamutRow1: colorProcessing.gamutRow1,
             gamutRow2: colorProcessing.gamutRow2
@@ -358,6 +359,9 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         }
 
         let sourceStandard = ShadowClientRealtimeSessionColorPipeline.sourceStandard(for: pixelBuffer)
+        let decodesTransfer =
+            !prefersExtendedDynamicRange &&
+            (transferFunction == .pq || transferFunction == .hlg)
         let appliesToneMapToSDR =
             !prefersExtendedDynamicRange &&
             (transferFunction == .pq || transferFunction == .hlg)
@@ -382,6 +386,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
 
         return .init(
             transferFunction: transferFunction,
+            decodesTransfer: decodesTransfer,
             appliesToneMapToSDR: appliesToneMapToSDR,
             appliesGamutTransform: appliesGamutTransform,
             hlgSystemGamma: 1.2,
