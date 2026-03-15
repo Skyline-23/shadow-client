@@ -3308,15 +3308,26 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private func launchSettingsApplyingPersistentFallback(
         _ settings: ShadowClientGameStreamLaunchSettings
     ) -> ShadowClientGameStreamLaunchSettings {
+        let result = Self.resolvedSettingsApplyingPersistentFallback(
+            settings,
+            persistentFallback: persistentCodecFallback
+        )
+        persistentCodecFallback = result.remainingFallback
+        return result.settings
+    }
+
+    static func resolvedSettingsApplyingPersistentFallback(
+        _ settings: ShadowClientGameStreamLaunchSettings,
+        persistentFallback: ShadowClientVideoCodecPreference?
+    ) -> (settings: ShadowClientGameStreamLaunchSettings, remainingFallback: ShadowClientVideoCodecPreference?) {
         switch settings.preferredCodec {
         case .h264, .h265:
-            persistentCodecFallback = nil
-            return settings
+            return (settings, nil)
         case .auto, .av1:
-            if let fallback = persistentCodecFallback {
-                return Self.launchSettings(settings, preferredCodec: fallback)
+            if let fallback = persistentFallback {
+                return (Self.launchSettings(settings, preferredCodec: fallback), nil)
             }
-            return settings
+            return (settings, nil)
         }
     }
 
