@@ -103,6 +103,26 @@ func rtspSdpParserHandlesDescribeWithoutMediaSection() throws {
     #expect(track.parameterSets[0] == Data([0x00, 0x00, 0x00, 0x01]))
 }
 
+@Test("RTSP SDP parser infers HEVC track from bare parameter-set line without media section")
+func rtspSdpParserHandlesBareParameterSetLineWithoutMediaSection() throws {
+    let sdp = """
+    a=x-ss-general.featureFlags:0
+    a=x-ss-general.encryptionSupported:5
+    a=x-ss-general.encryptionRequested:1
+    sprop-parameter-sets=AAAAAU
+    """
+
+    let track = try ShadowClientRTSPSessionDescriptionParser.parseVideoTrack(
+        sdp: sdp,
+        contentBase: "rtsp://example-pc.local:48010/",
+        fallbackSessionURL: "rtsp://example-pc.local:48010"
+    )
+
+    #expect(track.codec == .h265)
+    #expect(track.rtpPayloadType == ShadowClientRTSPProtocolProfile.fallbackVideoPayloadType)
+    #expect(track.parameterSets.count == 1)
+}
+
 @Test("RTSP SDP parser keeps non-dynamic video payload types")
 func rtspSdpParserKeepsNonDynamicPayloadType() throws {
     let sdp = """

@@ -137,6 +137,27 @@ public enum ShadowClientRTSPSessionDescriptionParser {
         let hostVideoHint = parseHostVideoHint(from: normalizedLines)
 
         for line in normalizedLines {
+            if let bareVideoFMTP = parseBareVideoFMTP(line) {
+                let payloadType = hostVideoHint.payloadType ??
+                    advertisedPayloadTypes.first ??
+                    ShadowClientRTSPProtocolProfile.fallbackVideoPayloadType
+                var mergedGlobalParameters = globalFmtpByPayloadType[payloadType] ?? [:]
+                for (key, value) in bareVideoFMTP {
+                    mergedGlobalParameters[key] = value
+                }
+                globalFmtpByPayloadType[payloadType] = mergedGlobalParameters
+                if insideVideoSection {
+                    var mergedVideoParameters = fmtpByPayloadType[payloadType] ?? [:]
+                    for (key, value) in bareVideoFMTP {
+                        mergedVideoParameters[key] = value
+                    }
+                    fmtpByPayloadType[payloadType] = mergedVideoParameters
+                }
+                if !advertisedPayloadTypes.contains(payloadType) {
+                    advertisedPayloadTypes.append(payloadType)
+                }
+            }
+
             if line.hasPrefix("m=") {
                 insideVideoSection = line.hasPrefix("m=video")
                 if insideVideoSection {
@@ -649,6 +670,29 @@ public enum ShadowClientRTSPSessionDescriptionParser {
         return String(line.dropFirst(key.count)).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private static func parseBareVideoFMTP(_ line: String) -> [String: String]? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.hasPrefix("a="),
+              trimmed.contains("=")
+        else {
+            return nil
+        }
+
+        let parts = trimmed.split(separator: "=", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else {
+            return nil
+        }
+
+        let key = parts[0].lowercased()
+        switch key {
+        case "sprop-parameter-sets", "sprop-vps", "sprop-sps", "sprop-pps", "config", "profile", "level-idx":
+            return [key: parts[1]]
+        default:
+            return nil
+        }
+    }
+
     private static func parseFMTP(_ line: String) -> (payloadType: Int, parameters: [String: String])? {
         let body = String(line.dropFirst("a=fmtp:".count))
         let parts = body.split(separator: " ", maxSplits: 1).map(String.init)
@@ -896,6 +940,11 @@ public enum ShadowClientRTSPSessionDescriptionParser {
 
         let fmtp = fmtpByPayloadType[payloadType] ?? [:]
         if fmtp["sprop-vps"] != nil {
+            return .h265
+        }
+        if let parameterSets = fmtp["sprop-parameter-sets"],
+           parameterSets.lowercased().contains("aaaau")
+        {
             return .h265
         }
         if fmtp["sprop-parameter-sets"] != nil {
