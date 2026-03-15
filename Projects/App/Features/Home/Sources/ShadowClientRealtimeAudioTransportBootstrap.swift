@@ -3,6 +3,44 @@ import Network
 import os
 
 enum ShadowClientRealtimeAudioTransportBootstrap {
+    static func bootstrapUDPSocket(
+        remoteHost: NWEndpoint.Host,
+        remotePort: NWEndpoint.Port,
+        localHost: NWEndpoint.Host?,
+        preferredLocalPort: UInt16?,
+        logger: Logger,
+        readyMessagePrefix: String,
+        fallbackReadyMessagePrefix: String
+    ) async throws -> ShadowClientUDPDatagramSocket {
+        do {
+            let socket = try ShadowClientUDPDatagramSocket(
+                localHost: localHost,
+                localPort: preferredLocalPort,
+                remoteHost: remoteHost,
+                remotePort: remotePort.rawValue
+            )
+            let endpointDescription = await socket.localEndpointDescription()
+            logger.notice("\(readyMessagePrefix, privacy: .public) \(endpointDescription, privacy: .public)")
+            return socket
+        } catch {
+            guard preferredLocalPort != nil else {
+                throw error
+            }
+            logger.error(
+                "Audio UDP bind on preferred client port \(preferredLocalPort ?? 0, privacy: .public) failed: \(error.localizedDescription, privacy: .public); retrying with ephemeral port"
+            )
+            let socket = try ShadowClientUDPDatagramSocket(
+                localHost: localHost,
+                localPort: nil,
+                remoteHost: remoteHost,
+                remotePort: remotePort.rawValue
+            )
+            let endpointDescription = await socket.localEndpointDescription()
+            logger.notice("\(fallbackReadyMessagePrefix, privacy: .public) \(endpointDescription, privacy: .public)")
+            return socket
+        }
+    }
+
     static func bootstrapUDPConnection(
         remoteHost: NWEndpoint.Host,
         remotePort: NWEndpoint.Port,
@@ -90,6 +128,24 @@ enum ShadowClientRealtimeAudioTransportBootstrap {
         )
     }
 
+    static func sendInitialPing(
+        over socket: ShadowClientUDPDatagramSocket,
+        pingPayload: Data?,
+        logger: Logger,
+        messagePrefix: String
+    ) async throws {
+        let initialPackets = ShadowClientHostPingPacketCodec.makePingPackets(
+            sequence: 1,
+            negotiatedPayload: pingPayload
+        )
+        for packet in initialPackets {
+            try await send(bytes: packet, over: socket)
+        }
+        logger.notice(
+            "\(messagePrefix, privacy: .public) (variants=\(initialPackets.count, privacy: .public), bytes=\(initialPackets.first?.count ?? 0, privacy: .public))"
+        )
+    }
+
     static func startPingLoop(
         over connection: NWConnection,
         pingPayload: Data?,
@@ -129,6 +185,45 @@ enum ShadowClientRealtimeAudioTransportBootstrap {
         }
     }
 
+    static func startPingLoop(
+        over socket: ShadowClientUDPDatagramSocket,
+        pingPayload: Data?,
+        logger: Logger,
+        successMessagePrefix: String,
+        errorMessagePrefix: String,
+        successLogLimit: Int = 3
+    ) -> Task<Void, Never> {
+        Task.detached {
+            var sequence: UInt32 = 1
+            var loggedPingCount = 0
+            var loggedPingError = false
+            while !Task.isCancelled {
+                sequence &+= 1
+                let pingPackets = ShadowClientHostPingPacketCodec.makePingPackets(
+                    sequence: sequence,
+                    negotiatedPayload: pingPayload
+                )
+                do {
+                    for pingPacket in pingPackets {
+                        try await send(bytes: pingPacket, over: socket)
+                    }
+                    if loggedPingCount < successLogLimit {
+                        logger.notice(
+                            "\(successMessagePrefix, privacy: .public) (sequence=\(sequence, privacy: .public), variants=\(pingPackets.count, privacy: .public), bytes=\(pingPackets.first?.count ?? 0, privacy: .public))"
+                        )
+                        loggedPingCount += 1
+                    }
+                } catch {
+                    if !loggedPingError {
+                        logger.error("\(errorMessagePrefix, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                        loggedPingError = true
+                    }
+                }
+                try? await Task.sleep(for: ShadowClientRealtimeSessionDefaults.pingInterval)
+            }
+        }
+    }
+
     static func send(
         bytes: Data,
         over connection: NWConnection
@@ -143,6 +238,13 @@ enum ShadowClientRealtimeAudioTransportBootstrap {
                 }
             })
         }
+    }
+
+    static func send(
+        bytes: Data,
+        over socket: ShadowClientUDPDatagramSocket
+    ) async throws {
+        try await socket.send(bytes)
     }
 
     static func logLocalEndpoint(

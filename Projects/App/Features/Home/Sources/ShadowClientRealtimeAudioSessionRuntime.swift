@@ -177,11 +177,14 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             if let existingConnection {
                 existingConnection.cancel()
             }
-            let udpConnection = try await makeUDPSocket(
+            let udpConnection = try await ShadowClientRealtimeAudioTransportBootstrap.bootstrapUDPSocket(
                 remoteHost: remoteHost,
                 remotePort: remotePort,
                 localHost: localHost,
-                preferredLocalPort: preferredLocalPort
+                preferredLocalPort: preferredLocalPort,
+                logger: logger,
+                readyMessagePrefix: "Audio UDP socket ready",
+                fallbackReadyMessagePrefix: "Audio UDP socket ready (ephemeral fallback)"
             )
             connection = udpConnection
             jitterBuffer.reset(preferredPayloadType: resolvedTrack.rtpPayloadType)
@@ -194,45 +197,19 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             self.packetQueue = packetQueue
             let moonlightRSFECQueue = ShadowClientRealtimeAudioMoonlightRSFECQueue()
 
-            let initialPackets = ShadowClientHostPingPacketCodec.makePingPackets(
-                sequence: 1,
-                negotiatedPayload: pingPayload
+            try await ShadowClientRealtimeAudioTransportBootstrap.sendInitialPing(
+                over: udpConnection,
+                pingPayload: pingPayload,
+                logger: logger,
+                messagePrefix: "Audio UDP initial ping sent"
             )
-            for initialPacket in initialPackets {
-                try await udpConnection.send(initialPacket)
-            }
-            logger.notice(
-                "Audio UDP initial ping sent (variants=\(initialPackets.count, privacy: .public), bytes=\(initialPackets.first?.count ?? 0, privacy: .public))"
+            pingTask = ShadowClientRealtimeAudioTransportBootstrap.startPingLoop(
+                over: udpConnection,
+                pingPayload: pingPayload,
+                logger: logger,
+                successMessagePrefix: "Audio UDP ping sent",
+                errorMessagePrefix: "Audio UDP ping send failed"
             )
-            pingTask = Task.detached(priority: .high) { [logger] in
-                var sequence: UInt32 = 1
-                var loggedPingCount = 0
-                var loggedPingError = false
-                while !Task.isCancelled {
-                    sequence &+= 1
-                    let pingPackets = ShadowClientHostPingPacketCodec.makePingPackets(
-                        sequence: sequence,
-                        negotiatedPayload: pingPayload
-                    )
-                    do {
-                        for pingPacket in pingPackets {
-                            try await udpConnection.send(pingPacket)
-                        }
-                        if loggedPingCount < 3 {
-                            logger.notice(
-                                "Audio UDP ping sent (sequence=\(sequence, privacy: .public), variants=\(pingPackets.count, privacy: .public), bytes=\(pingPackets.first?.count ?? 0, privacy: .public))"
-                            )
-                            loggedPingCount += 1
-                        }
-                    } catch {
-                        if !loggedPingError {
-                            logger.error("Audio UDP ping send failed: \(error.localizedDescription, privacy: .public)")
-                            loggedPingError = true
-                        }
-                    }
-                    try? await Task.sleep(for: ShadowClientRealtimeSessionDefaults.pingInterval)
-                }
-            }
             guard let activeDecoder = decoder,
                   let activeOutput = output
             else {
@@ -1023,41 +1000,6 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         payloadDecryptor = nil
         jitterBuffer.reset(preferredPayloadType: nil)
         updateState(finalState)
-    }
-
-    private func makeUDPSocket(
-        remoteHost: NWEndpoint.Host,
-        remotePort: NWEndpoint.Port,
-        localHost: NWEndpoint.Host?,
-        preferredLocalPort: UInt16?
-    ) async throws -> ShadowClientUDPDatagramSocket {
-        do {
-            let socket = try ShadowClientUDPDatagramSocket(
-                localHost: localHost,
-                localPort: preferredLocalPort,
-                remoteHost: remoteHost,
-                remotePort: remotePort.rawValue
-            )
-            let endpointDescription = await socket.localEndpointDescription()
-            logger.notice("Audio UDP socket ready \(endpointDescription, privacy: .public)")
-            return socket
-        } catch {
-            guard preferredLocalPort != nil else {
-                throw error
-            }
-            logger.error(
-                "Audio UDP bind on preferred client port \(preferredLocalPort ?? 0, privacy: .public) failed: \(error.localizedDescription, privacy: .public); retrying with ephemeral port"
-            )
-            let socket = try ShadowClientUDPDatagramSocket(
-                localHost: localHost,
-                localPort: nil,
-                remoteHost: remoteHost,
-                remotePort: remotePort.rawValue
-            )
-            let endpointDescription = await socket.localEndpointDescription()
-            logger.notice("Audio UDP socket ready (ephemeral fallback) \(endpointDescription, privacy: .public)")
-            return socket
-        }
     }
 
     private func updateState(_ nextState: ShadowClientRealtimeAudioOutputState) {
