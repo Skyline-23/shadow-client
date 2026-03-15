@@ -3331,7 +3331,10 @@ final class ShadowClientRealtimeAudioEngineOutput: @unchecked Sendable, ShadowCl
     ) throws {
         self.format = format
         self.prefersSpatialHeadphoneRendering = prefersSpatialHeadphoneRendering
-        self.environmentNode = Self.makeEnvironmentNodeIfNeeded(format: format)
+        self.environmentNode = Self.makeEnvironmentNodeIfNeeded(
+            format: format,
+            prefersSpatialHeadphoneRendering: prefersSpatialHeadphoneRendering
+        )
         self.maximumQueuedBufferCount = max(
             Self.minimumQueuedBufferCount,
             maximumQueuedBufferCount
@@ -3727,8 +3730,14 @@ final class ShadowClientRealtimeAudioEngineOutput: @unchecked Sendable, ShadowCl
         )
     }
 
-    private static func makeEnvironmentNodeIfNeeded(format: AVAudioFormat) -> AVAudioEnvironmentNode? {
-        guard supportsSpatialAudio(for: format) else {
+    private static func makeEnvironmentNodeIfNeeded(
+        format: AVAudioFormat,
+        prefersSpatialHeadphoneRendering: Bool
+    ) -> AVAudioEnvironmentNode? {
+        guard supportsSpatialAudio(
+            for: format,
+            prefersSpatialHeadphoneRendering: prefersSpatialHeadphoneRendering
+        ) else {
             return nil
         }
 
@@ -3740,13 +3749,21 @@ final class ShadowClientRealtimeAudioEngineOutput: @unchecked Sendable, ShadowCl
         return environmentNode
     }
 
-    private static func supportsSpatialAudio(for format: AVAudioFormat) -> Bool {
+    private static func supportsSpatialAudio(
+        for format: AVAudioFormat,
+        prefersSpatialHeadphoneRendering: Bool
+    ) -> Bool {
         guard format.channelCount > 2 else {
             return false
         }
 
         #if os(iOS)
-        return AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.isSpatialAudioEnabled }
+        if prefersSpatialHeadphoneRendering {
+            return true
+        }
+        return AVAudioSession.sharedInstance().currentRoute.outputs.contains { output in
+            output.isSpatialAudioEnabled
+        }
         #elseif os(tvOS)
         guard format.channelCount > 2 else {
             return false
