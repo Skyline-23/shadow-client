@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ShadowClientFeatureHome
+@testable import ShadowClientFeatureConnection
 
 @Test("Live Apollo metadata client fetches server info and app list")
 func liveApolloFetchesServerInfoAndAppList() async throws {

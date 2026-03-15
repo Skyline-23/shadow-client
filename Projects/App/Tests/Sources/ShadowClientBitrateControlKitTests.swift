@@ -11,6 +11,6 @@ func bitrateControlKitClampsSliderValues() {
 
 @Test("Bitrate control kit resolves effective bitrate through app settings")
 func bitrateControlKitResolvesEffectiveBitrate() {
-    let settings = ShadowClientAppSettings(autoBitrate: false, bitrateKbps: 18000)
+    let settings = ShadowClientAppSettings(bitrateKbps: 18000, autoBitrate: false)
     #expect(ShadowClientBitrateControlKit.effectiveBitrateKbps(settings: settings, networkSignal: nil) == 18000)
 }

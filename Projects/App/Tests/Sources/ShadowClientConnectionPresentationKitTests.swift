@@ -1,5 +1,6 @@
 import Testing
 @testable import ShadowClientFeatureHome
+@testable import ShadowClientFeatureConnection
 
 @Test("Connection presentation kit derives connect and disconnect affordances from connection state")
 func connectionPresentationKitAffordances() {

@@ -29,7 +29,7 @@ func settingsSelectionKitBuildsAppSettings() {
             preferVirtualDisplay: true,
             audioConfiguration: .stereo,
             videoCodec: .h265,
-            videoDecoder: .forceSoftware,
+            videoDecoder: .software,
             enableVSync: false,
             enableFramePacing: false,
             enableYUV444: true,
@@ -56,8 +56,8 @@ func settingsSelectionKitBuildsAppSettings() {
 
     #expect(settings.lowLatencyMode)
     #expect(settings.preferHDR)
-    #expect(settings.resolution == .retinaAuto)
-    #expect(settings.frameRate == .fps120)
-    #expect(settings.videoCodec == .h265)
-    #expect(settings.videoDecoder == .forceSoftware)
+    #expect(settings.resolution == ShadowClientStreamingResolutionPreset.retinaAuto)
+    #expect(settings.frameRate == ShadowClientStreamingFrameRatePreset.fps120)
+    #expect(settings.videoCodec == ShadowClientVideoCodecPreference.h265)
+    #expect(settings.videoDecoder == ShadowClientVideoDecoderPreference.software)
 }
