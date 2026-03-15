@@ -103,7 +103,7 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
         enableHDR: Bool,
         enableSurroundAudio: Bool,
         preferredSurroundChannelCount: Int = 6,
-        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy = .lowLatency,
+        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy = .videoSynchronized,
         lowLatencyMode: Bool,
         enableVSync: Bool = false,
         enableFramePacing: Bool = false,

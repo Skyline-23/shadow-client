@@ -8,7 +8,7 @@ func settingsSelectionKitFallbackSelections() {
     #expect(ShadowClientSettingsSelectionKit.frameRate(rawValue: -1) == ShadowClientAppSettingsDefaults.defaultFrameRate)
     #expect(ShadowClientSettingsSelectionKit.displayMode(rawValue: "invalid") == .borderlessFullscreen)
     #expect(ShadowClientSettingsSelectionKit.audioConfiguration(rawValue: "invalid") == .surround71)
-    #expect(ShadowClientSettingsSelectionKit.audioSynchronizationPolicy(rawValue: "invalid") == .lowLatency)
+    #expect(ShadowClientSettingsSelectionKit.audioSynchronizationPolicy(rawValue: "invalid") == .videoSynchronized)
     #expect(ShadowClientSettingsSelectionKit.videoCodec(rawValue: "invalid") == .auto)
     #expect(ShadowClientSettingsSelectionKit.videoDecoder(rawValue: "invalid") == .forceHardware)
     #expect(ShadowClientSettingsSelectionKit.keyboardShortcutCaptureMode(rawValue: "invalid") == .fullscreenOnly)

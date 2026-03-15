@@ -419,7 +419,7 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
         enableHDR: Bool = false,
         enableSurroundAudio: Bool = false,
         preferredSurroundChannelCount: Int = 6,
-        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy = .lowLatency,
+        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy = .videoSynchronized,
         enableYUV444: Bool = false,
         remoteInputKey: Data? = nil,
         remoteInputKeyID: UInt32? = nil,

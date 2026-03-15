@@ -33,7 +33,7 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @AppStorage(ShadowClientAppSettings.StorageKeys.displayMode) var displayModeRawValue = ShadowClientDisplayMode.borderlessFullscreen.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferVirtualDisplay) var preferVirtualDisplay = false
     @AppStorage(ShadowClientAppSettings.StorageKeys.audioConfiguration) var audioConfigurationRawValue = ShadowClientAudioConfiguration.surround71.rawValue
-    @AppStorage(ShadowClientAppSettings.StorageKeys.audioSynchronizationPolicy) var audioSynchronizationPolicyRawValue = ShadowClientAudioSynchronizationPolicy.lowLatency.rawValue
+    @AppStorage(ShadowClientAppSettings.StorageKeys.audioSynchronizationPolicy) var audioSynchronizationPolicyRawValue = ShadowClientAudioSynchronizationPolicy.videoSynchronized.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.videoCodec) var videoCodecRawValue = ShadowClientVideoCodecPreference.auto.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.videoDecoder) var videoDecoderRawValue = ShadowClientVideoDecoderPreference.automatic.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.enableVSync) var enableVSync = false

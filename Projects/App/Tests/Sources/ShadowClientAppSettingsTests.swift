@@ -10,7 +10,7 @@ func appSettingsMapToStreamingPreferences() {
         preferHDR: false,
         showDiagnosticsHUD: true,
         audioConfiguration: .surround71,
-        audioSynchronizationPolicy: .lowLatency
+        audioSynchronizationPolicy: .videoSynchronized
     )
 
     #expect(settings.streamingPreferences == StreamingUserPreferences(

@@ -48,7 +48,7 @@ struct ShadowClientSettingsSelectionInput {
         displayMode: ShadowClientDisplayMode,
         preferVirtualDisplay: Bool,
         audioConfiguration: ShadowClientAudioConfiguration,
-        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy = .lowLatency,
+        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy = .videoSynchronized,
         videoCodec: ShadowClientVideoCodecPreference,
         videoDecoder: ShadowClientVideoDecoderPreference,
         enableVSync: Bool,
@@ -167,7 +167,7 @@ enum ShadowClientSettingsSelectionKit {
     }
 
     static func audioSynchronizationPolicy(rawValue: String) -> ShadowClientAudioSynchronizationPolicy {
-        ShadowClientAudioSynchronizationPolicy(rawValue: rawValue) ?? .lowLatency
+        ShadowClientAudioSynchronizationPolicy(rawValue: rawValue) ?? .videoSynchronized
     }
 
     static func videoCodec(rawValue: String) -> ShadowClientVideoCodecPreference {

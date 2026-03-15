@@ -242,7 +242,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         displayMode: ShadowClientDisplayMode = .borderlessFullscreen,
         preferVirtualDisplay: Bool = false,
         audioConfiguration: ShadowClientAudioConfiguration = .surround71,
-        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy = .lowLatency,
+        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy = .videoSynchronized,
         videoCodec: ShadowClientVideoCodecPreference = .auto,
         videoDecoder: ShadowClientVideoDecoderPreference = .automatic,
         enableVSync: Bool = false,
