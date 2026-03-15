@@ -36,7 +36,7 @@ func displayMetricsKitPrefersViewportMetricsWhenAvailable() {
     )
 
     #expect(geometry.renderSize == CGSize(width: 820, height: 1136))
-    #expect(geometry.pixelSize == CGSize(width: 1640, height: 2360))
+    #expect(geometry.pixelSize == CGSize(width: 1640, height: 2272))
     #expect(geometry.scalePercent == 200)
 }
 
@@ -79,5 +79,5 @@ func displayMetricsKitPreservesFallbackSafeAreaInsets() {
     )
 
     #expect(geometry.renderSize == CGSize(width: 1194, height: 790))
-    #expect(geometry.pixelSize == CGSize(width: 2388, height: 1668))
+    #expect(geometry.pixelSize == CGSize(width: 2388, height: 1580))
 }

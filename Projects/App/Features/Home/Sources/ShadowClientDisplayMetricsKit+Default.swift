@@ -2,6 +2,12 @@
 import CoreGraphics
 
 enum ShadowClientDisplayMetricsPlatformKit {
+    static func displayPixelSizeForLaunch(
+        from _: ShadowClientDisplayMetricsState
+    ) -> CGSize? {
+        nil
+    }
+
     static func launchRequestSize(
         from geometry: ShadowClientAutoResolutionPolicy.LaunchGeometry
     ) -> CGSize {

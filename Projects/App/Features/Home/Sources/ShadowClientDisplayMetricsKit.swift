@@ -39,7 +39,9 @@ enum ShadowClientDisplayMetricsKit {
             displayLogicalSize: resolvedLogicalSize,
             safeAreaInsets: resolvedSafeAreaInsets,
             scale: max(1.0, displayMetrics.scale),
-            displayPixelSize: displayMetrics.pixelSize
+            displayPixelSize: ShadowClientDisplayMetricsPlatformKit.displayPixelSizeForLaunch(
+                from: displayMetrics
+            )
         )
     }
 
