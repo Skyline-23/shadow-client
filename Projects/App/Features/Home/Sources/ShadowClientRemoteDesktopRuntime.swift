@@ -1901,27 +1901,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return
         }
 
-        let isReconfiguringActiveSession =
-            activeSession?.appID == appID &&
-            activeSession?.host.lowercased() == selectedHost.host.lowercased()
-        launchState = isReconfiguringActiveSession
-            ? .optimizing("Optimizing Display...")
-            : .launching
-        clearSessionIssueState()
-        stopInputKeepAliveLoop()
-        if !isReconfiguringActiveSession {
-            activeSession = nil
-            lastKnownSessionURL = nil
-        }
-        let previousLaunchTask = launchTask
-        previousLaunchTask?.cancel()
-        launchGeneration &+= 1
-        let currentLaunchGeneration = launchGeneration
-        let controlClient = controlClient
-        let sessionConnectionClient = sessionConnectionClient
-        let latestResolvedHostDescriptors = latestResolvedHostDescriptors
-        let pairingRouteStore = pairingRouteStore
-        let runtimeLogger = logger
         let selectedHostKey = Self.mergeKey(for: selectedHost)
         let launchedAppTitle = appTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let launchSettingsToUse = Self.normalizeAudioLaunchSettings(
@@ -1960,6 +1939,33 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             settingsChangedForCurrentGame ||
             negotiatedCodecMismatchForCurrentGame ||
             activeGameSettingsUnknown
+        let isReconfiguringActiveSession =
+            activeSession?.appID == appID &&
+            activeSession?.host.lowercased() == selectedHost.host.lowercased()
+        let isResumingActiveHostSession =
+            selectedHost.currentGameID == appID &&
+            !effectiveForceLaunch
+        let preserveLocalSessionState =
+            isReconfiguringActiveSession &&
+            !isResumingActiveHostSession
+        launchState = preserveLocalSessionState
+            ? .optimizing("Optimizing Display...")
+            : .launching
+        clearSessionIssueState()
+        stopInputKeepAliveLoop()
+        if !preserveLocalSessionState {
+            activeSession = nil
+            lastKnownSessionURL = nil
+        }
+        let previousLaunchTask = launchTask
+        previousLaunchTask?.cancel()
+        launchGeneration &+= 1
+        let currentLaunchGeneration = launchGeneration
+        let controlClient = controlClient
+        let sessionConnectionClient = sessionConnectionClient
+        let latestResolvedHostDescriptors = latestResolvedHostDescriptors
+        let pairingRouteStore = pairingRouteStore
+        let runtimeLogger = logger
         if settingsChangedForCurrentGame {
             logger.notice(
                 "Launch settings changed for active game appID=\(appID, privacy: .public); forcing relaunch instead of resume"

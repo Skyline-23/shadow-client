@@ -751,6 +751,67 @@ func remoteDesktopRuntimePreservesHostProvidedSessionURL() async {
     }
 }
 
+@Test("Remote desktop runtime cold-starts local state before resume reconnect")
+@MainActor
+func remoteDesktopRuntimeColdStartsLocalStateBeforeResumeReconnect() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "stream-host.example.invalid": .init(
+                host: "stream-host.example.invalid",
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 881_448_767,
+                serverState: "SUNSHINE_SERVER_BUSY",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-RESUME-COLDSTART"
+            ),
+        ],
+        appListByHost: [
+            "stream-host.example.invalid": [
+                .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let sessionURL = "rtsp://192.168.0.52:48010/resume"
+    let control = FakeControlClient(
+        simulatedLaunchResults: [
+            .init(sessionURL: sessionURL, verb: "resume"),
+            .init(sessionURL: sessionURL, verb: "resume"),
+        ]
+    )
+    let sessionConnector = BlockNthSessionConnectionClient(blockedConnectCall: 2)
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["stream-host.example.invalid"], preferredHost: "stream-host.example.invalid")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 881_448_767,
+        settings: .init(enableHDR: false, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+    #expect(runtime.activeSession?.sessionURL == sessionURL)
+
+    runtime.launchSelectedApp(
+        appID: 881_448_767,
+        settings: .init(enableHDR: false, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForSessionConnectCalls(sessionConnector, expectedCount: 2)
+
+    #expect(runtime.activeSession == nil)
+    if case .launching = runtime.launchState {
+        #expect(true)
+    } else {
+        Issue.record("Expected launching state during resume reconnect, got \(runtime.launchState)")
+    }
+}
+
 @Test("Remote desktop runtime retries launch with forceLaunch when resume connect times out")
 @MainActor
 func remoteDesktopRuntimeRetriesForceLaunchAfterResumeConnectTimeout() async {
@@ -2846,6 +2907,44 @@ private actor BlockingFirstSessionConnectionClient: ShadowClientRemoteSessionCon
     }
 }
 
+private actor BlockNthSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
+    let presentationMode: ShadowClientRemoteSessionPresentationMode = .embeddedPlayer
+    nonisolated let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init()
+
+    private let blockedConnectCall: Int
+    private var recordedConnectCalls: [String] = []
+    private var disconnectCallCount = 0
+
+    init(blockedConnectCall: Int) {
+        self.blockedConnectCall = blockedConnectCall
+    }
+
+    func connect(
+        to sessionURL: String,
+        host: String,
+        appTitle: String,
+        videoConfiguration: ShadowClientRemoteSessionVideoConfiguration
+    ) async throws {
+        recordedConnectCalls.append(sessionURL)
+
+        if recordedConnectCalls.count == blockedConnectCall {
+            try await Task.sleep(for: .seconds(30))
+        }
+    }
+
+    func disconnect() async {
+        disconnectCallCount += 1
+    }
+
+    func connectCalls() -> [String] {
+        recordedConnectCalls
+    }
+
+    func disconnectCalls() -> Int {
+        disconnectCallCount
+    }
+}
+
 private actor SerializingLaunchSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
     let presentationMode: ShadowClientRemoteSessionPresentationMode = .embeddedPlayer
     nonisolated let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init()
@@ -2993,6 +3092,20 @@ private func waitForSessionConnectCalls(
 ) async {
     for _ in 0..<maxAttempts {
         if await connector.connectCalls() >= expectedCount {
+            return
+        }
+
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+private func waitForSessionConnectCalls(
+    _ connector: BlockNthSessionConnectionClient,
+    expectedCount: Int,
+    maxAttempts: Int = 50
+) async {
+    for _ in 0..<maxAttempts {
+        if await connector.connectCalls().count >= expectedCount {
             return
         }
 
