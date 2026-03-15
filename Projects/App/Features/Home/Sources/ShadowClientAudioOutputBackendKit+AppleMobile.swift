@@ -11,28 +11,14 @@ enum ShadowClientAudioOutputBackendPlatformKit {
         synchronizationPolicy: ShadowClientAudioSynchronizationPolicy,
         prefersSpatialHeadphoneRendering: Bool
     ) throws -> any ShadowClientRealtimeAudioOutput {
-        switch ShadowClientAudioOutputBackendKit.preferredBackend(
+        try ShadowClientRealtimeSampleBufferAudioOutput(
             format: format,
-            synchronizationPolicy: synchronizationPolicy
-        ) {
-        case .sampleBufferRenderer:
-            return try ShadowClientRealtimeSampleBufferAudioOutput(
-                format: format,
-                maximumQueuedBufferCount: maximumQueuedBufferCount,
-                nominalFramesPerBuffer: nominalFramesPerBuffer,
-                maximumPendingDurationMs: maximumPendingDurationMs,
-                synchronizationPolicy: synchronizationPolicy,
-                prefersSpatialHeadphoneRendering: prefersSpatialHeadphoneRendering
-            )
-        case .audioEngine:
-            return try ShadowClientRealtimeAudioEngineOutput(
-                format: format,
-                maximumQueuedBufferCount: maximumQueuedBufferCount,
-                nominalFramesPerBuffer: nominalFramesPerBuffer,
-                maximumPendingDurationMs: maximumPendingDurationMs,
-                prefersSpatialHeadphoneRendering: prefersSpatialHeadphoneRendering
-            )
-        }
+            maximumQueuedBufferCount: maximumQueuedBufferCount,
+            nominalFramesPerBuffer: nominalFramesPerBuffer,
+            maximumPendingDurationMs: maximumPendingDurationMs,
+            synchronizationPolicy: synchronizationPolicy,
+            prefersSpatialHeadphoneRendering: prefersSpatialHeadphoneRendering
+        )
     }
 }
 #endif

@@ -2,22 +2,7 @@
 import Foundation
 import ShadowClientFeatureSession
 
-enum ShadowClientAudioOutputBackendKind: Equatable {
-    case sampleBufferRenderer
-    case audioEngine
-}
-
 enum ShadowClientAudioOutputBackendKit {
-    static func preferredBackend(
-        format: AVAudioFormat,
-        synchronizationPolicy: ShadowClientAudioSynchronizationPolicy
-    ) -> ShadowClientAudioOutputBackendKind {
-        if synchronizationPolicy == .lowLatency, format.channelCount <= 2 {
-            return .audioEngine
-        }
-        return .sampleBufferRenderer
-    }
-
     static func make(
         format: AVAudioFormat,
         maximumQueuedBufferCount: Int,
