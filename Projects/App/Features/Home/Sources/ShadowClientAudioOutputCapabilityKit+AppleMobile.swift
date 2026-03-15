@@ -10,9 +10,7 @@ enum ShadowClientAudioOutputCapabilityPlatformKit {
     }
 
     static func prefersSpatialHeadphoneRendering(channels: Int) async -> Bool {
-        guard channels > 2 else {
-            return false
-        }
+        _ = channels
         return await MainActor.run {
             let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
             return outputs.contains { output in
