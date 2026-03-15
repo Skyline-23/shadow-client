@@ -16,7 +16,13 @@ enum ShadowClientIOSIndirectPointerInputPolicy {
             return true
         }
 
-        return recognizer is UIHoverGestureRecognizer
+        if recognizer is UIHoverGestureRecognizer {
+            return true
+        }
+        if let tap = recognizer as? UITapGestureRecognizer {
+            return tap.numberOfTouchesRequired == 1
+        }
+        return recognizer is UIPanGestureRecognizer
     }
 }
 
@@ -89,6 +95,8 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
     var onPasteClipboardCommand: (@MainActor () -> Void)?
 
     private let softwareKeyboardInputView = ShadowClientIOSSoftwareKeyboardInputView(frame: .zero)
+    private var directPanGestureRecognizer: UIPanGestureRecognizer?
+    private var indirectPointerPanGestureRecognizer: UIPanGestureRecognizer?
     private var pointerInteractionRef: UIPointerInteraction?
     private var isPrimaryButtonHeld = false
     private var lastPrimaryDragLocation: CGPoint?
@@ -203,6 +211,18 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         pan.maximumNumberOfTouches = 1
         pan.delegate = self
         addGestureRecognizer(pan)
+        directPanGestureRecognizer = pan
+
+        let indirectPan = UIPanGestureRecognizer(
+            target: self,
+            action: #selector(handleIndirectPointerPan(_:))
+        )
+        indirectPan.minimumNumberOfTouches = 1
+        indirectPan.maximumNumberOfTouches = 1
+        indirectPan.allowedScrollTypesMask = .all
+        indirectPan.delegate = self
+        addGestureRecognizer(indirectPan)
+        indirectPointerPanGestureRecognizer = indirectPan
 
         let singleTap = UITapGestureRecognizer(
             target: self,
@@ -213,6 +233,16 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         singleTap.delegate = self
         addGestureRecognizer(singleTap)
 
+        let indirectPrimaryTap = UITapGestureRecognizer(
+            target: self,
+            action: #selector(handlePrimaryTap(_:))
+        )
+        indirectPrimaryTap.numberOfTouchesRequired = 1
+        indirectPrimaryTap.numberOfTapsRequired = 1
+        indirectPrimaryTap.buttonMaskRequired = .primary
+        indirectPrimaryTap.delegate = self
+        addGestureRecognizer(indirectPrimaryTap)
+
         let secondaryTap = UITapGestureRecognizer(
             target: self,
             action: #selector(handleSecondaryTap(_:))
@@ -221,6 +251,16 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         secondaryTap.numberOfTapsRequired = 1
         secondaryTap.delegate = self
         addGestureRecognizer(secondaryTap)
+
+        let indirectSecondaryTap = UITapGestureRecognizer(
+            target: self,
+            action: #selector(handleSecondaryTap(_:))
+        )
+        indirectSecondaryTap.numberOfTouchesRequired = 1
+        indirectSecondaryTap.numberOfTapsRequired = 1
+        indirectSecondaryTap.buttonMaskRequired = .secondary
+        indirectSecondaryTap.delegate = self
+        addGestureRecognizer(indirectSecondaryTap)
 
         let longPress = UILongPressGestureRecognizer(
             target: self,
@@ -264,6 +304,43 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
             return
         }
         emit(.pointerMoved(x: deltaX, y: deltaY))
+    }
+
+    @objc
+    private func handleIndirectPointerPan(_ recognizer: UIPanGestureRecognizer) {
+        let location = recognizer.location(in: self)
+        let translation = recognizer.translation(in: self)
+        recognizer.setTranslation(.zero, in: self)
+
+        if recognizer.buttonMask.contains(.primary) {
+            switch recognizer.state {
+            case .began:
+                requestInputFocusIfNeeded()
+                if !isPrimaryButtonHeld {
+                    isPrimaryButtonHeld = true
+                    emitAbsolutePointerPosition(at: location)
+                    emit(.pointerButton(button: .left, isPressed: true))
+                }
+            case .changed:
+                emitAbsolutePointerPosition(at: location)
+            case .ended, .cancelled, .failed:
+                emitAbsolutePointerPosition(at: location)
+                if isPrimaryButtonHeld {
+                    isPrimaryButtonHeld = false
+                    emit(.pointerButton(button: .left, isPressed: false))
+                }
+            default:
+                break
+            }
+            return
+        }
+
+        let deltaX = Double(translation.x)
+        let deltaY = Double(translation.y)
+        guard deltaX != 0 || deltaY != 0 else {
+            return
+        }
+        emit(.scroll(deltaX: deltaX, deltaY: deltaY))
     }
 
     @objc
@@ -572,7 +649,12 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         _ recognizer: UIGestureRecognizer,
         shouldReceive touch: UITouch
     ) -> Bool {
-        ShadowClientIOSIndirectPointerInputPolicy.shouldAllowGestureRecognition(
+        if touch.type == .indirectPointer {
+            if recognizer === directPanGestureRecognizer {
+                return false
+            }
+        }
+        return ShadowClientIOSIndirectPointerInputPolicy.shouldAllowGestureRecognition(
             for: touch.type,
             recognizer: recognizer
         )
