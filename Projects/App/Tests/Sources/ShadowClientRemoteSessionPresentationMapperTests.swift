@@ -25,6 +25,18 @@ func remoteSessionPresentationMapperLaunching() {
     #expect(model.overlay?.symbol == "antenna.radiowaves.left.and.right")
 }
 
+@Test("Remote session presentation mapper emits optimization state while relaunching an active session")
+func remoteSessionPresentationMapperOptimizing() {
+    let model = ShadowClientRemoteSessionPresentationKit.make(
+        activeSessionEndpoint: "rtsp://stream-host.example.invalid:48010",
+        launchState: .optimizing("Optimizing Display...")
+    )
+
+    #expect(model.launchTone == .launching)
+    #expect(model.statusText.localizedCaseInsensitiveContains("optimizing"))
+    #expect(model.overlay?.symbol == "arrow.trianglehead.2.clockwise.rotate.90")
+}
+
 @Test("Remote session presentation mapper emits decoder wait state after launch")
 func remoteSessionPresentationMapperLaunched() {
     let model = ShadowClientRemoteSessionPresentationKit.make(

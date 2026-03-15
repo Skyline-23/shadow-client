@@ -774,7 +774,7 @@ func launchDesktopFallbackIfNeeded() async {
         }
         guard ShadowClientSessionReconfigurationKit.shouldRelaunchActiveSession(
             hasActiveSession: remoteDesktopRuntime.activeSession != nil,
-            isLaunching: remoteDesktopRuntime.launchState == .launching,
+            isLaunching: remoteDesktopRuntime.launchState.isTransitioning,
             selectedResolution: selectedResolution,
             proposedSettings: proposedSettings,
             lastAppliedSettings: lastActiveSessionReconfigurationSettings
@@ -791,7 +791,7 @@ func launchDesktopFallbackIfNeeded() async {
                   let latestSettings = activeSessionLaunchSettings(),
                   ShadowClientSessionReconfigurationKit.shouldRelaunchActiveSession(
                     hasActiveSession: remoteDesktopRuntime.activeSession != nil,
-                    isLaunching: remoteDesktopRuntime.launchState == .launching,
+                    isLaunching: remoteDesktopRuntime.launchState.isTransitioning,
                     selectedResolution: selectedResolution,
                     proposedSettings: latestSettings,
                     lastAppliedSettings: lastActiveSessionReconfigurationSettings

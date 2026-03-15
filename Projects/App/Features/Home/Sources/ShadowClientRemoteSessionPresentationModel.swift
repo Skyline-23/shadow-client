@@ -105,6 +105,15 @@ public enum ShadowClientRemoteSessionPresentationKit {
                 ),
                 launchTone: .launching
             )
+        case let .optimizing(message):
+            return .init(
+                statusText: message,
+                overlay: .init(
+                    title: "Optimizing display for the current window...",
+                    symbol: "arrow.trianglehead.2.clockwise.rotate.90"
+                ),
+                launchTone: .launching
+            )
         case .launched:
             switch renderState {
             case .rendering:

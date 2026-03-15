@@ -1496,7 +1496,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return
         }
 
-        if launchState == .launching || activeSession != nil {
+        if launchState.isTransitioning || activeSession != nil {
             logger.notice(
                 "Skipping host metadata refresh while session transition is active"
             )
@@ -1814,11 +1814,18 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return
         }
 
-        launchState = .launching
+        let isReconfiguringActiveSession =
+            activeSession?.appID == appID &&
+            activeSession?.host.lowercased() == selectedHost.host.lowercased()
+        launchState = isReconfiguringActiveSession
+            ? .optimizing("Optimizing Display...")
+            : .launching
         clearSessionIssueState()
         stopInputKeepAliveLoop()
-        activeSession = nil
-        lastKnownSessionURL = nil
+        if !isReconfiguringActiveSession {
+            activeSession = nil
+            lastKnownSessionURL = nil
+        }
         let previousLaunchTask = launchTask
         previousLaunchTask?.cancel()
         launchGeneration &+= 1
@@ -1895,7 +1902,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 await MainActor.run { [weak self] in
                     guard let self,
                           self.launchGeneration == currentLaunchGeneration,
-                          self.launchState == .launching
+                          self.launchState.isTransitioning
                     else {
                         return
                     }
@@ -2029,7 +2036,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     await MainActor.run { [weak self] in
                         guard let self,
                               self.launchGeneration == currentLaunchGeneration,
-                              self.launchState == .launching
+                              self.launchState.isTransitioning
                         else {
                             return
                         }
@@ -2089,7 +2096,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     await MainActor.run { [weak self] in
                         guard let self,
                               self.launchGeneration == currentLaunchGeneration,
-                              self.launchState == .launching
+                              self.launchState.isTransitioning
                         else {
                             return
                         }
@@ -2657,7 +2664,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         let shouldAttemptRecoveryFromLaunchState: Bool
         switch launchState {
-        case .launched, .launching:
+        case .launched, .launching, .optimizing:
             shouldAttemptRecoveryFromLaunchState = true
         case .idle, .failed:
             shouldAttemptRecoveryFromLaunchState = false
@@ -2701,7 +2708,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
         let shouldAttemptRecoveryFromLaunchState: Bool
         switch launchState {
-        case .launched, .launching:
+        case .launched, .launching, .optimizing:
             shouldAttemptRecoveryFromLaunchState = true
         case .idle, .failed:
             shouldAttemptRecoveryFromLaunchState = false
@@ -3442,7 +3449,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         appRefreshGeneration &+= 1
         let refreshGeneration = appRefreshGeneration
 
-        if launchState == .launching || activeSession != nil {
+        if launchState.isTransitioning || activeSession != nil {
             logger.notice(
                 "Skipping app list refresh while session transition is active"
             )

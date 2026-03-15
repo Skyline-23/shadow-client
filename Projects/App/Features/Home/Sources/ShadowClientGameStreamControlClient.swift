@@ -49,6 +49,7 @@ public extension ShadowClientRemotePairingState {
 public enum ShadowClientRemoteLaunchState: Equatable, Sendable {
     case idle
     case launching
+    case optimizing(String)
     case launched(String)
     case failed(String)
 }
@@ -60,10 +61,21 @@ public extension ShadowClientRemoteLaunchState {
             return "Idle"
         case .launching:
             return "Launching"
+        case let .optimizing(message):
+            return message
         case let .launched(message):
             return message
         case let .failed(message):
             return "Failed - \(message)"
+        }
+    }
+
+    var isTransitioning: Bool {
+        switch self {
+        case .launching, .optimizing:
+            return true
+        case .idle, .launched, .failed:
+            return false
         }
     }
 }

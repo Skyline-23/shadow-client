@@ -784,7 +784,7 @@ var remoteDesktopHostCard: some View {
                         launchAccessibilityLabel: "Launch \(app.title)",
                         launchAccessibilityHint: ShadowClientHostAppLibraryPresentationKit.launchAccessibilityHint(),
                         launchAccessibilityIdentifier: "shadow.home.applist.launch.\(appIdentifier)",
-                        launchDisabled: remoteDesktopRuntime.launchState == .launching
+                        launchDisabled: remoteDesktopRuntime.launchState.isTransitioning
                     ) {
                         launchRemoteApp(app)
                     }
