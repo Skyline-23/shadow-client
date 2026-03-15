@@ -118,8 +118,6 @@ let project = Project(
             dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
                 .target(name: "ShadowClientNativeAudioDecoding"),
-                .external(name: "ShadowClientStreaming"),
-                .external(name: "ShadowClientUI"),
             ],
             settings: signableTargetSettings
         ),
@@ -155,8 +153,6 @@ let project = Project(
             dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
                 .target(name: "ShadowClientNativeAudioDecoding"),
-                .external(name: "ShadowClientStreaming"),
-                .external(name: "ShadowClientUI"),
             ],
             settings: signableTargetSettings
         ),
@@ -196,8 +192,6 @@ let project = Project(
             dependencies: [
                 .target(name: "ShadowClientFeatureHome"),
                 .target(name: "ShadowClientNativeAudioDecoding"),
-                .external(name: "ShadowClientStreaming"),
-                .external(name: "ShadowClientUI"),
             ],
             settings: signableTargetSettings
         ),

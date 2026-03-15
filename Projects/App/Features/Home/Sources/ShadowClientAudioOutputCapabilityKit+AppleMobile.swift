@@ -32,15 +32,21 @@ enum ShadowClientAudioOutputCapabilityPlatformKit {
     static func maximumOutputChannels() async -> Int {
         await MainActor.run {
             let session = AVAudioSession.sharedInstance()
-            let headphoneSpatialRoute = session.currentRoute.outputs.contains { output in
+            let outputs = session.currentRoute.outputs
+            let headphoneSpatialRoute = outputs.contains { output in
                 output.isSpatialAudioEnabled
             }
             if headphoneSpatialRoute {
                 return 8
             }
-            let routeMaximumChannels = Int(session.maximumOutputNumberOfChannels)
+            let routeChannelCount = outputs
+                .compactMap { output in
+                    let count = output.channels?.count ?? 0
+                    return count > 0 ? count : nil
+                }
+                .max() ?? 0
             let currentRouteChannels = Int(session.outputNumberOfChannels)
-            return max(2, routeMaximumChannels, currentRouteChannels)
+            return max(2, routeChannelCount, currentRouteChannels)
         }
     }
 
