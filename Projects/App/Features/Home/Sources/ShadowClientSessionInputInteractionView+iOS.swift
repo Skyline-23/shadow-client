@@ -3,6 +3,16 @@ import ShadowUIFoundation
 import SwiftUI
 import UIKit
 
+enum ShadowClientIOSIndirectPointerInputPolicy {
+    static func shouldHandleDirectly(_ touchType: UITouch.TouchType) -> Bool {
+        touchType == .indirectPointer
+    }
+
+    static func shouldAllowGestureRecognition(for touchType: UITouch.TouchType) -> Bool {
+        !shouldHandleDirectly(touchType)
+    }
+}
+
 struct ShadowClientSessionInputInteractionPlatformView: UIViewRepresentable {
     let referenceVideoSize: CGSize?
     let visiblePointerRegions: [CGRect]
@@ -317,6 +327,46 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         }
     }
 
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let remainingTouches = handleIndirectPointerTouches(
+            touches,
+            phase: .began
+        )
+        if !remainingTouches.isEmpty {
+            super.touchesBegan(remainingTouches, with: event)
+        }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let remainingTouches = handleIndirectPointerTouches(
+            touches,
+            phase: .moved
+        )
+        if !remainingTouches.isEmpty {
+            super.touchesMoved(remainingTouches, with: event)
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let remainingTouches = handleIndirectPointerTouches(
+            touches,
+            phase: .ended
+        )
+        if !remainingTouches.isEmpty {
+            super.touchesEnded(remainingTouches, with: event)
+        }
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let remainingTouches = handleIndirectPointerTouches(
+            touches,
+            phase: .cancelled
+        )
+        if !remainingTouches.isEmpty {
+            super.touchesCancelled(remainingTouches, with: event)
+        }
+    }
+
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         let unhandledPresses = handleKeyboardPresses(presses, isPressed: true)
         if !unhandledPresses.isEmpty {
@@ -509,6 +559,65 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         shouldRecognizeSimultaneouslyWith _: UIGestureRecognizer
     ) -> Bool {
         false
+    }
+
+    func gestureRecognizer(
+        _: UIGestureRecognizer,
+        shouldReceive touch: UITouch
+    ) -> Bool {
+        ShadowClientIOSIndirectPointerInputPolicy.shouldAllowGestureRecognition(
+            for: touch.type
+        )
+    }
+
+    private func handleIndirectPointerTouches(
+        _ touches: Set<UITouch>,
+        phase: UITouch.Phase
+    ) -> Set<UITouch> {
+        var unhandledTouches = Set<UITouch>()
+        var didHandleIndirectPointer = false
+
+        for touch in touches {
+            guard ShadowClientIOSIndirectPointerInputPolicy.shouldHandleDirectly(touch.type) else {
+                unhandledTouches.insert(touch)
+                continue
+            }
+
+            didHandleIndirectPointer = true
+            let location = touch.location(in: self)
+
+            switch phase {
+            case .began:
+                requestInputFocusIfNeeded()
+                isPrimaryButtonHeld = true
+                lastPrimaryDragLocation = location
+                emitAbsolutePointerPosition(at: location)
+                emit(.pointerButton(button: .left, isPressed: true))
+            case .moved:
+                emitAbsolutePointerPosition(at: location)
+                lastPrimaryDragLocation = location
+            case .ended:
+                emitAbsolutePointerPosition(at: location)
+                if isPrimaryButtonHeld {
+                    isPrimaryButtonHeld = false
+                    emit(.pointerButton(button: .left, isPressed: false))
+                }
+                lastPrimaryDragLocation = nil
+            case .cancelled:
+                if isPrimaryButtonHeld {
+                    isPrimaryButtonHeld = false
+                    emit(.pointerButton(button: .left, isPressed: false))
+                }
+                lastPrimaryDragLocation = nil
+            default:
+                break
+            }
+        }
+
+        if didHandleIndirectPointer {
+            return unhandledTouches
+        }
+        return touches
     }
 }
 #endif
