@@ -943,15 +943,25 @@ public actor ShadowClientVideoToolboxDecoder {
 
     private func pixelBufferAttributes(for codec: ShadowClientVideoCodec) -> [String: Any] {
         var attributes = Self.defaultPixelBufferAttributes
-        guard codec == .av1 else {
-            return attributes
-        }
-
-        let pixelFormat: OSType = av1FallbackHDR
-            ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
-            : kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-        attributes[kCVPixelBufferPixelFormatTypeKey as String] = pixelFormat
+        attributes[kCVPixelBufferPixelFormatTypeKey as String] = Self.preferredPixelBufferFormat(
+            for: codec,
+            hdrEnabled: av1FallbackHDR
+        )
         return attributes
+    }
+
+    static func preferredPixelBufferFormat(
+        for codec: ShadowClientVideoCodec,
+        hdrEnabled: Bool
+    ) -> OSType {
+        switch codec {
+        case .h264:
+            return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        case .h265, .av1:
+            return hdrEnabled
+                ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
+                : kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        }
     }
 
     private func makeFormatDescription(
