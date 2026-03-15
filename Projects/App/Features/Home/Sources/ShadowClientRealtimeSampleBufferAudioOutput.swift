@@ -130,6 +130,19 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     private var flushTask: Task<Void, Never>?
     private var outputConfigurationTask: Task<Void, Never>?
 
+    private enum TimelineStartupState {
+        case idle
+        case requested
+        case started
+    }
+
+    private enum TimelineStartupReason: String {
+        case rendererPreroll = "renderer-preroll"
+        case rendererStatusRendering = "renderer-status-rendering"
+    }
+
+    private var timelineStartupState: TimelineStartupState = .idle
+
     init(
         format: AVAudioFormat,
         maximumQueuedBufferCount: Int,
@@ -269,6 +282,8 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             synchronizer.rate = 0
             queuedDurationAnchorTime = nextPresentationTime
             hasRequestedTimelineStart = false
+            hasStartedTimeline = false
+            timelineStartupState = .idle
         }
 
         let budgetState = self.budgetState
@@ -289,6 +304,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             queuedDurationAnchorTime = nextPresentationTime
             hasStartedTimeline = synchronizer.rate != 0
             hasRequestedTimelineStart = hasStartedTimeline
+            timelineStartupState = hasStartedTimeline ? .started : .idle
             startFeedingLocked()
             let budgetState = self.budgetState
             let currentTime = nextPresentationTime
@@ -358,6 +374,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         queuedDurationAnchorTime = resetTime
         hasStartedTimeline = synchronizer.rate != 0
         hasRequestedTimelineStart = hasStartedTimeline
+        timelineStartupState = hasStartedTimeline ? .started : .idle
         startFeedingLocked()
         let budgetState = self.budgetState
         Task {
@@ -381,6 +398,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         queuedDurationAnchorTime = currentTime
         hasStartedTimeline = synchronizer.rate != 0
         hasRequestedTimelineStart = hasStartedTimeline
+        timelineStartupState = hasStartedTimeline ? .started : .idle
         startFeedingLocked()
         let budgetState = self.budgetState
         Task {
@@ -448,28 +466,66 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         guard shouldRequestTimelineStart else {
             return
         }
-        guard !hasStartedTimeline else {
+        guard timelineStartupState != .started else {
             if synchronizer.rate == 0 {
                 synchronizer.setRate(1, time: currentTime)
             }
             return
         }
-        if !hasRequestedTimelineStart {
+        if timelineStartupState == .idle {
             hasRequestedTimelineStart = true
+            timelineStartupState = .requested
             synchronizer.setRate(1, time: currentTime)
             Self.logger.notice(
                 "Sample buffer audio timeline start requested rate=\(self.synchronizer.rate, privacy: .public) time=\(CMTimeGetSeconds(currentTime), privacy: .public)s pending=\(self.pendingSampleBuffers.count, privacy: .public) renderer-preroll=\(self.renderer.hasSufficientMediaDataForReliablePlaybackStart, privacy: .public) renderer-backpressured=\(rendererBackpressured, privacy: .public) queued-threshold-met=\(queuedDurationMeetsStartupThreshold, privacy: .public) queued-preroll-ms=\(CMTimeGetSeconds(queuedDuration) * Self.millisecondsPerSecond, privacy: .public) startup-threshold-ms=\(CMTimeGetSeconds(startupThreshold) * Self.millisecondsPerSecond, privacy: .public)"
             )
             logRendererDiagnosticsLocked(reason: "timeline-start-requested")
         }
-        if rendererReadyForStartup {
-            queuedDurationAnchorTime = currentTime
-            Self.logger.notice(
-                "Sample buffer audio timeline started rate=\(self.synchronizer.rate, privacy: .public) time=\(CMTimeGetSeconds(currentTime), privacy: .public)s pending=\(self.pendingSampleBuffers.count, privacy: .public) renderer-preroll=\(self.renderer.hasSufficientMediaDataForReliablePlaybackStart, privacy: .public) queued-preroll-ms=\(CMTimeGetSeconds(queuedDuration) * Self.millisecondsPerSecond, privacy: .public) startup-threshold-ms=\(CMTimeGetSeconds(startupThreshold) * Self.millisecondsPerSecond, privacy: .public)"
-            )
-            logRendererDiagnosticsLocked(reason: "timeline-started")
-            hasStartedTimeline = true
+        guard let startupReason = timelineStartupReasonLocked(
+            rendererReadyForStartup: rendererReadyForStartup
+        ) else {
+            return
         }
+        markTimelineStartedLocked(
+            currentTime: currentTime,
+            queuedDuration: queuedDuration,
+            startupThreshold: startupThreshold,
+            reason: startupReason
+        )
+    }
+
+    private func timelineStartupReasonLocked(
+        rendererReadyForStartup: Bool
+    ) -> TimelineStartupReason? {
+        if rendererReadyForStartup {
+            return .rendererPreroll
+        }
+        if timelineStartupState == .requested,
+           synchronizer.rate != 0,
+           renderer.status == .rendering
+        {
+            return .rendererStatusRendering
+        }
+        return nil
+    }
+
+    private func markTimelineStartedLocked(
+        currentTime: CMTime,
+        queuedDuration: CMTime,
+        startupThreshold: CMTime,
+        reason: TimelineStartupReason
+    ) {
+        guard timelineStartupState != .started else {
+            return
+        }
+        queuedDurationAnchorTime = currentTime
+        hasStartedTimeline = true
+        hasRequestedTimelineStart = true
+        timelineStartupState = .started
+        Self.logger.notice(
+            "Sample buffer audio timeline started reason=\(reason.rawValue, privacy: .public) rate=\(self.synchronizer.rate, privacy: .public) time=\(CMTimeGetSeconds(currentTime), privacy: .public)s pending=\(self.pendingSampleBuffers.count, privacy: .public) renderer-preroll=\(self.renderer.hasSufficientMediaDataForReliablePlaybackStart, privacy: .public) renderer-status=\(String(describing: self.renderer.status), privacy: .public) queued-preroll-ms=\(CMTimeGetSeconds(queuedDuration) * Self.millisecondsPerSecond, privacy: .public) startup-threshold-ms=\(CMTimeGetSeconds(startupThreshold) * Self.millisecondsPerSecond, privacy: .public)"
+        )
+        logRendererDiagnosticsLocked(reason: "timeline-started")
     }
 
     private func logRendererDiagnosticsLocked(reason: StaticString) {
