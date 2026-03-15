@@ -61,6 +61,12 @@ struct ShadowClientRealtimeSessionSurfaceRepresentable: NSViewRepresentable {
 
 @MainActor
 final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate {
+    private struct RenderTargetSignature: Equatable {
+        let pixelFormat: MTLPixelFormat
+        let prefersExtendedDynamicRange: Bool
+        let outputColorSpaceName: String?
+    }
+
     private let logger = Logger(
         subsystem: "com.skyline23.shadow-client",
         category: "SurfaceView.macOS"
@@ -78,6 +84,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private var lastRenderedColorConfigurationRevision: UInt64 = .max
     private var lastRenderedDrawableSize: CGSize = .zero
     private var hasLoggedRenderPathForCurrentSession = false
+    private var lastAppliedRenderTargetSignature: RenderTargetSignature?
 
     init?(
         device: MTLDevice,
@@ -124,6 +131,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         let pixelBuffer = snapshot.pixelBuffer?.value
         if pixelBuffer == nil {
             hasLoggedRenderPathForCurrentSession = false
+            lastAppliedRenderTargetSignature = nil
         }
         let colorConfiguration = pixelBuffer.map {
             ShadowClientRealtimeSessionColorPipeline.configuration(
@@ -141,11 +149,17 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         }
 
         if let renderTargetConfiguration, let pixelBuffer {
-            applyColorConfiguration(
+            let renderTargetSignature = Self.renderTargetSignature(for: renderTargetConfiguration)
+            let didResetDrawablePool = applyColorConfiguration(
                 renderTargetConfiguration,
+                signature: renderTargetSignature,
                 to: view,
                 supportsExtendedDynamicRange: supportsExtendedDynamicRangeDisplay(for: view)
             )
+            if didResetDrawablePool {
+                logger.notice("Surface render target changed; released drawable pool before rendering next frame")
+                return
+            }
         }
 
         guard let drawable = view.currentDrawable,
@@ -205,17 +219,33 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
 
     private func applyColorConfiguration(
         _ renderTargetConfiguration: ShadowClientSurfaceRenderTargetConfiguration,
+        signature: RenderTargetSignature,
         to view: MTKView,
         supportsExtendedDynamicRange _: Bool
-    ) {
+    ) -> Bool {
+        var requiresDrawableReset = false
+
         if view.colorPixelFormat != renderTargetConfiguration.targetPixelFormat {
             view.colorPixelFormat = renderTargetConfiguration.targetPixelFormat
+            requiresDrawableReset = true
+        }
+        let outputColorSpaceName = renderTargetConfiguration.outputColorSpace.name as String?
+        let currentViewColorSpaceName = view.colorspace?.name as String?
+        if currentViewColorSpaceName != outputColorSpaceName {
+            requiresDrawableReset = true
         }
         view.colorspace = renderTargetConfiguration.outputColorSpace
 
         if #available(macOS 10.15, *),
            let metalLayer = view.layer as? CAMetalLayer
         {
+            let currentLayerColorSpaceName = metalLayer.colorspace?.name as String?
+            if currentLayerColorSpaceName != outputColorSpaceName {
+                requiresDrawableReset = true
+            }
+            if metalLayer.wantsExtendedDynamicRangeContent != renderTargetConfiguration.prefersExtendedDynamicRange {
+                requiresDrawableReset = true
+            }
             metalLayer.colorspace = renderTargetConfiguration.outputColorSpace
             metalLayer.wantsExtendedDynamicRangeContent = renderTargetConfiguration.prefersExtendedDynamicRange
             metalLayer.edrMetadata = edrMetadata(
@@ -224,6 +254,24 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 currentHeadroom: currentExtendedDynamicRangeHeadroom(for: view)
             )
         }
+
+        let didChangeRenderTarget = lastAppliedRenderTargetSignature != signature
+        lastAppliedRenderTargetSignature = signature
+        if requiresDrawableReset || didChangeRenderTarget {
+            view.releaseDrawables()
+            return true
+        }
+        return false
+    }
+
+    private static func renderTargetSignature(
+        for renderTargetConfiguration: ShadowClientSurfaceRenderTargetConfiguration
+    ) -> RenderTargetSignature {
+        .init(
+            pixelFormat: renderTargetConfiguration.targetPixelFormat,
+            prefersExtendedDynamicRange: renderTargetConfiguration.prefersExtendedDynamicRange,
+            outputColorSpaceName: renderTargetConfiguration.outputColorSpace.name as String?
+        )
     }
 
     private func supportsExtendedDynamicRangeDisplay(for view: MTKView) -> Bool {
