@@ -2017,6 +2017,55 @@ func remoteDesktopRuntimeUsesClipboardActionForActiveSession() async {
     #expect(await sessionInput.inputCalls().isEmpty)
 }
 
+@Test("Remote desktop runtime cancels the active host session when clearing an active session")
+@MainActor
+func remoteDesktopRuntimeCancelsHostSessionWhenClearingActiveSession() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.28": .init(
+                host: "192.168.0.28",
+                displayName: "Loft-PC",
+                pairStatus: .paired,
+                currentGameID: 1,
+                serverState: "SUNSHINE_SERVER_BUSY",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-CANCEL-1"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.28": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.28:48010/session", verb: "resume")
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.28"], preferredHost: "192.168.0.28")
+    await waitForControlHostLoaded(runtime)
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+
+    runtime.clearActiveSession()
+    await waitForCancelCalls(control, expectedCount: 1)
+
+    #expect(await control.cancelCalls() == [
+        .init(host: "192.168.0.28", httpsPort: 47984),
+    ])
+}
+
 @Test("Remote desktop runtime does not fall back to text input when Apollo clipboard action fails")
 @MainActor
 func remoteDesktopRuntimeDoesNotFallbackToTextInputWhenClipboardActionFails() async {
@@ -2481,9 +2530,15 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
         let text: String
     }
 
+    struct CancelCall: Equatable {
+        let host: String
+        let httpsPort: Int
+    }
+
     private var recordedPairCalls: [PairCall] = []
     private var recordedLaunchCalls: [LaunchCall] = []
     private var recordedClipboardCalls: [ClipboardCall] = []
+    private var recordedCancelCalls: [CancelCall] = []
     private var simulatedPairFailures: [any Error & Sendable]
     private var simulatedLaunchResults: [ShadowClientGameStreamLaunchResult]
     private var simulatedLaunchFailures: [any Error & Sendable]
@@ -2587,6 +2642,17 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
 
     func clipboardCalls() -> [ClipboardCall] {
         recordedClipboardCalls
+    }
+
+    func cancelActiveSession(
+        host: String,
+        httpsPort: Int
+    ) async throws {
+        recordedCancelCalls.append(.init(host: host, httpsPort: httpsPort))
+    }
+
+    func cancelCalls() -> [CancelCall] {
+        recordedCancelCalls
     }
 
     func getClipboard(
@@ -2955,6 +3021,20 @@ private func waitForClipboardCalls(
 ) async {
     for _ in 0..<maxAttempts {
         if await controlClient.clipboardCalls().count >= expectedCount {
+            return
+        }
+
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+private func waitForCancelCalls(
+    _ controlClient: FakeControlClient,
+    expectedCount: Int,
+    maxAttempts: Int = 50
+) async {
+    for _ in 0..<maxAttempts {
+        if await controlClient.cancelCalls().count >= expectedCount {
             return
         }
 

@@ -2186,9 +2186,21 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     @MainActor
     private func performClearActiveSession() {
+        let selectedHost = selectedHost
+        let latestResolvedHostDescriptors = latestResolvedHostDescriptors
+        let latestHostCandidates = latestHostCandidates
+        let controlClient = controlClient
+        let pairingRouteStore = pairingRouteStore
         let previousLaunchTask = prepareActiveSessionClear()
         Task {
-            await completeActiveSessionClear(previousLaunchTask: previousLaunchTask)
+            await completeActiveSessionClear(
+                previousLaunchTask: previousLaunchTask,
+                selectedHost: selectedHost,
+                latestResolvedHostDescriptors: latestResolvedHostDescriptors,
+                latestHostCandidates: latestHostCandidates,
+                controlClient: controlClient,
+                pairingRouteStore: pairingRouteStore
+            )
         }
     }
 
@@ -2210,7 +2222,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         return previousLaunchTask
     }
 
-    private func completeActiveSessionClear(previousLaunchTask: Task<Void, Never>?) async {
+    private func completeActiveSessionClear(
+        previousLaunchTask: Task<Void, Never>?,
+        selectedHost: ShadowClientRemoteHostDescriptor? = nil,
+        latestResolvedHostDescriptors: [ShadowClientRemoteHostDescriptor] = [],
+        latestHostCandidates: [String] = [],
+        controlClient: (any ShadowClientGameStreamControlClient)? = nil,
+        pairingRouteStore: ShadowClientPairingRouteStore? = nil
+    ) async {
         let sessionConnectionClient = sessionConnectionClient
         let inputSendQueue = inputSendQueue
         if let previousLaunchTask {
@@ -2218,6 +2237,33 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
         await inputSendQueue.clear()
         await sessionConnectionClient.disconnect()
+        if let selectedHost,
+           selectedHost.currentGameID > 0,
+           let controlClient,
+           let pairingRouteStore
+        {
+            let runtimeHost = await Self.preferredRuntimeHostDescriptor(
+                for: selectedHost,
+                latestResolvedHostDescriptors: latestResolvedHostDescriptors,
+                pairingRouteStore: pairingRouteStore
+            )
+            try? await controlClient.cancelActiveSession(
+                host: runtimeHost.host,
+                httpsPort: runtimeHost.httpsPort
+            )
+            await MainActor.run { [weak self] in
+                guard let self else {
+                    return
+                }
+                let candidates = latestHostCandidates.isEmpty
+                    ? [selectedHost.host]
+                    : latestHostCandidates
+                self.refreshHosts(
+                    candidates: candidates,
+                    preferredHost: runtimeHost.host
+                )
+            }
+        }
     }
 
     @MainActor

@@ -127,6 +127,10 @@ public protocol ShadowClientGameStreamControlClient: Sendable {
         forceLaunch: Bool,
         settings: ShadowClientGameStreamLaunchSettings
     ) async throws -> ShadowClientGameStreamLaunchResult
+    func cancelActiveSession(
+        host: String,
+        httpsPort: Int
+    ) async throws
 }
 
 public extension ShadowClientGameStreamControlClient {
@@ -165,6 +169,14 @@ public extension ShadowClientGameStreamControlClient {
             forceLaunch: false,
             settings: settings
         )
+    }
+
+    func cancelActiveSession(
+        host: String,
+        httpsPort: Int
+    ) async throws {
+        _ = host
+        _ = httpsPort
     }
 }
 
@@ -1034,6 +1046,31 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             }
             throw Self.remapLaunchError(error)
         }
+    }
+
+    public func cancelActiveSession(
+        host: String,
+        httpsPort: Int
+    ) async throws {
+        let uniqueID = await identityStore.uniqueID()
+        let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(forHost: host)
+        let tlsClientCredential = try? await identityStore.tlsClientCertificateCredential()
+        let tlsClientCertificates = try? await identityStore.tlsClientCertificates()
+        let tlsClientIdentity = try? await identityStore.tlsClientIdentity()
+
+        _ = try await ShadowClientGameStreamHTTPTransport.requestXML(
+            host: host,
+            port: httpsPort,
+            scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
+            command: ShadowClientGameStreamCommand.cancel.rawValue,
+            parameters: [:],
+            uniqueID: uniqueID,
+            pinnedServerCertificateDER: pinnedServerCertificate,
+            clientCertificateCredential: tlsClientCredential,
+            clientCertificates: tlsClientCertificates,
+            clientCertificateIdentity: tlsClientIdentity,
+            timeout: defaultRequestTimeout
+        )
     }
 
     static func makeLaunchParameters(
