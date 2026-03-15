@@ -2583,8 +2583,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         subsystem: "com.skyline23.shadow-client",
         category: "RealtimeSampleBufferAudio"
     )
-    private static let startupLeadTime = CMTime(value: 3, timescale: 20)
-    private static let minimumStartupPreroll = CMTime(value: 120, timescale: 1000)
+    private static let startupLeadTime = CMTime(value: 1, timescale: 20)
 
     private actor BudgetState {
         private let sampleRate: Double
@@ -2719,7 +2718,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         renderer.volume = 1
         renderer.isMuted = false
         synchronizer.addRenderer(renderer)
-        synchronizer.delaysRateChangeUntilHasSufficientMediaData = false
+        synchronizer.delaysRateChangeUntilHasSufficientMediaData = true
         synchronizer.rate = 0
 
         rendererQueue.sync {
@@ -2963,14 +2962,11 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     }
 
     private func startTimelineIfNeededLocked() {
-        let currentTime = currentSynchronizerTimeLocked()
-        let queuedDuration = CMTimeSubtract(nextPresentationTime, currentTime)
-        let hasMinimumPreroll = queuedDuration.isValid &&
-            queuedDuration.isNumeric &&
-            CMTimeCompare(queuedDuration, Self.minimumStartupPreroll) >= 0
-        guard renderer.hasSufficientMediaDataForReliablePlaybackStart || hasMinimumPreroll else {
+        guard renderer.hasSufficientMediaDataForReliablePlaybackStart else {
             return
         }
+        let currentTime = currentSynchronizerTimeLocked()
+        let queuedDuration = CMTimeSubtract(nextPresentationTime, currentTime)
         guard !hasStartedTimeline else {
             if synchronizer.rate == 0 {
                 synchronizer.setRate(1, time: currentTime)
