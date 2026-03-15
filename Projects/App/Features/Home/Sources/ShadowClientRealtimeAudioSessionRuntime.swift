@@ -3045,15 +3045,17 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         from format: AVAudioFormat
     ) throws -> AVAudioFormat {
         if format.channelCount <= 2,
-           let rendererFormat = AVAudioFormat(settings: [
-               AVFormatIDKey: kAudioFormatLinearPCM,
-               AVSampleRateKey: format.sampleRate,
-               AVNumberOfChannelsKey: Int(format.channelCount),
-               AVLinearPCMBitDepthKey: 16,
-               AVLinearPCMIsFloatKey: false,
-               AVLinearPCMIsBigEndianKey: false,
-               AVLinearPCMIsNonInterleaved: false,
-           ]) {
+           let layout = AVAudioChannelLayout(
+               layoutTag: format.channelCount == 1
+                   ? kAudioChannelLayoutTag_Mono
+                   : kAudioChannelLayoutTag_Stereo
+           ),
+           let rendererFormat = AVAudioFormat(
+               commonFormat: .pcmFormatFloat32,
+               sampleRate: format.sampleRate,
+               interleaved: true,
+               channelLayout: layout
+           ) {
             return rendererFormat
         }
 
