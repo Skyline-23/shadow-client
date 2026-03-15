@@ -2717,7 +2717,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         renderer.volume = 1
         renderer.isMuted = false
         synchronizer.addRenderer(renderer)
-        synchronizer.delaysRateChangeUntilHasSufficientMediaData = true
+        synchronizer.delaysRateChangeUntilHasSufficientMediaData = false
         synchronizer.rate = 0
 
         rendererQueue.sync {
@@ -2961,7 +2961,9 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     }
 
     private func startTimelineIfNeededLocked() {
-        guard renderer.hasSufficientMediaDataForReliablePlaybackStart else {
+        let rendererReadyForStartup = renderer.hasSufficientMediaDataForReliablePlaybackStart ||
+            renderer.status == .rendering
+        guard rendererReadyForStartup else {
             return
         }
         let currentTime = currentSynchronizerTimeLocked()
