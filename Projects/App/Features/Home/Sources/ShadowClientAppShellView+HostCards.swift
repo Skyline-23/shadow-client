@@ -774,35 +774,20 @@ var remoteDesktopHostCard: some View {
             } else {
                 ForEach(remoteDesktopRuntime.apps.prefix(5)) { app in
                     let appIdentifier = ShadowClientRemoteHostPresentationKit.sanitizedIdentifier(String(app.id))
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(app.title)
-                                .font(.callout.weight(.bold))
-                                .foregroundStyle(.white)
-                            Text(
-                                ShadowClientHostAppLibraryPresentationKit.metadata(
-                                    appID: app.id,
-                                    hdrSupported: app.hdrSupported
-                                )
-                            )
-                                .font(.footnote.monospacedDigit())
-                                .foregroundStyle(Color.white.opacity(0.68))
-                        }
-
-                        Spacer(minLength: 8)
-
-                        Button("Launch") {
-                            launchRemoteApp(app)
-                        }
-                        .accessibilityIdentifier("shadow.home.applist.launch.\(appIdentifier)")
-                        .accessibilityLabel("Launch \(app.title)")
-                        .accessibilityHint(ShadowClientHostAppLibraryPresentationKit.launchAccessibilityHint())
-                        .buttonStyle(.borderedProminent)
-                        .disabled(remoteDesktopRuntime.launchState == .launching)
+                    ShadowUIHostAppRow(
+                        title: app.title,
+                        subtitle: ShadowClientHostAppLibraryPresentationKit.metadata(
+                            appID: app.id,
+                            hdrSupported: app.hdrSupported
+                        ),
+                        launchTitle: "Launch",
+                        launchAccessibilityLabel: "Launch \(app.title)",
+                        launchAccessibilityHint: ShadowClientHostAppLibraryPresentationKit.launchAccessibilityHint(),
+                        launchAccessibilityIdentifier: "shadow.home.applist.launch.\(appIdentifier)",
+                        launchDisabled: remoteDesktopRuntime.launchState == .launching
+                    ) {
+                        launchRemoteApp(app)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(hostSpotlightInsetSurface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
             }
         }
