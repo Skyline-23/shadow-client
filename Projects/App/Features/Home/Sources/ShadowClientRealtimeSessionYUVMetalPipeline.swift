@@ -48,6 +48,25 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
     private let textureCache: CVMetalTextureCache
     private var lastLoggedDiagnosticsSignature: String?
 
+    static func supportsPixelFormat(_ pixelFormat: OSType) -> Bool {
+        switch pixelFormat {
+        case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+             kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
+             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
+             kCVPixelFormatType_Lossless_420YpCbCr8BiPlanarVideoRange,
+             kCVPixelFormatType_Lossless_420YpCbCr8BiPlanarFullRange,
+             kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarVideoRange,
+             kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarFullRange,
+             kCVPixelFormatType_Lossy_420YpCbCr8BiPlanarVideoRange,
+             kCVPixelFormatType_Lossy_420YpCbCr8BiPlanarFullRange,
+             kCVPixelFormatType_Lossy_420YpCbCr10PackedBiPlanarVideoRange:
+            return true
+        default:
+            return false
+        }
+    }
+
     init?(device: MTLDevice) {
         self.device = device
 
@@ -92,15 +111,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
     }
 
     func canRender(_ pixelBuffer: CVPixelBuffer) -> Bool {
-        switch CVPixelBufferGetPixelFormatType(pixelBuffer) {
-        case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-             kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
-             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
-            return true
-        default:
-            return false
-        }
+        Self.supportsPixelFormat(CVPixelBufferGetPixelFormatType(pixelBuffer))
     }
 
     func render(
@@ -177,6 +188,14 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         planeIndex: Int,
         pixelFormat: MTLPixelFormat
     ) -> CVMetalTexture? {
+        let dimensions = planeDimensions(
+            for: pixelBuffer,
+            planeIndex: planeIndex
+        )
+        guard dimensions.width > 0, dimensions.height > 0 else {
+            return nil
+        }
+
         var textureRef: CVMetalTexture?
         let status = CVMetalTextureCacheCreateTextureFromImage(
             kCFAllocatorDefault,
@@ -184,8 +203,8 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             pixelBuffer,
             nil,
             pixelFormat,
-            CVPixelBufferGetWidthOfPlane(pixelBuffer, planeIndex),
-            CVPixelBufferGetHeightOfPlane(pixelBuffer, planeIndex),
+            dimensions.width,
+            dimensions.height,
             planeIndex,
             &textureRef
         )
@@ -198,7 +217,10 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
     private func lumaTextureFormat(for pixelBuffer: CVPixelBuffer) -> MTLPixelFormat {
         switch CVPixelBufferGetPixelFormatType(pixelBuffer) {
         case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
-             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
+             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
+             kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarVideoRange,
+             kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarFullRange,
+             kCVPixelFormatType_Lossy_420YpCbCr10PackedBiPlanarVideoRange:
             return .r16Unorm
         default:
             return .r8Unorm
@@ -208,7 +230,10 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
     private func chromaTextureFormat(for pixelBuffer: CVPixelBuffer) -> MTLPixelFormat {
         switch CVPixelBufferGetPixelFormatType(pixelBuffer) {
         case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
-             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
+             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
+             kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarVideoRange,
+             kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarFullRange,
+             kCVPixelFormatType_Lossy_420YpCbCr10PackedBiPlanarVideoRange:
             return .rg16Unorm
         default:
             return .rg8Unorm
@@ -397,7 +422,9 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
     private func isFullRange(_ pixelBuffer: CVPixelBuffer) -> Bool {
         switch CVPixelBufferGetPixelFormatType(pixelBuffer) {
         case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
+             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
+             kCVPixelFormatType_Lossless_420YpCbCr8BiPlanarFullRange,
+             kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarFullRange:
             return true
         default:
             return false
@@ -407,10 +434,37 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
     private func bitsPerChannel(for pixelBuffer: CVPixelBuffer) -> Int {
         switch CVPixelBufferGetPixelFormatType(pixelBuffer) {
         case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
-             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
+             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
+             kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarVideoRange,
+             kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarFullRange,
+             kCVPixelFormatType_Lossy_420YpCbCr10PackedBiPlanarVideoRange:
             return 10
         default:
             return 8
+        }
+    }
+
+    private func planeDimensions(
+        for pixelBuffer: CVPixelBuffer,
+        planeIndex: Int
+    ) -> (width: Int, height: Int) {
+        let planeCount = CVPixelBufferGetPlaneCount(pixelBuffer)
+        if planeCount > planeIndex {
+            return (
+                CVPixelBufferGetWidthOfPlane(pixelBuffer, planeIndex),
+                CVPixelBufferGetHeightOfPlane(pixelBuffer, planeIndex)
+            )
+        }
+
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        switch planeIndex {
+        case 0:
+            return (width, height)
+        case 1:
+            return ((width + 1) / 2, (height + 1) / 2)
+        default:
+            return (0, 0)
         }
     }
 
