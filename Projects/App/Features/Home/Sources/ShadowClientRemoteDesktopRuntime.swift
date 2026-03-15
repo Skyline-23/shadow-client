@@ -62,6 +62,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
     public let appVersion: String?
     public let gfeVersion: String?
     public let uniqueID: String?
+    public let serverCodecModeSupport: Int
     public let lastError: String?
     public let routes: ShadowClientRemoteHostRoutes
 
@@ -75,6 +76,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         appVersion: String?,
         gfeVersion: String?,
         uniqueID: String?,
+        serverCodecModeSupport: Int = 0x00000001,
         lastError: String?,
         localHost: String? = nil,
         remoteHost: String? = nil,
@@ -88,6 +90,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         self.appVersion = appVersion
         self.gfeVersion = gfeVersion
         self.uniqueID = uniqueID
+        self.serverCodecModeSupport = serverCodecModeSupport
         self.lastError = lastError
         self.routes = ShadowClientRemoteHostRoutes(
             active: .init(host: host, httpsPort: httpsPort),
@@ -106,6 +109,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         appVersion: String?,
         gfeVersion: String?,
         uniqueID: String?,
+        serverCodecModeSupport: Int = 0x00000001,
         lastError: String?,
         routes: ShadowClientRemoteHostRoutes
     ) {
@@ -117,6 +121,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         self.appVersion = appVersion
         self.gfeVersion = gfeVersion
         self.uniqueID = uniqueID
+        self.serverCodecModeSupport = serverCodecModeSupport
         self.lastError = lastError
         self.routes = routes
     }
@@ -321,6 +326,7 @@ public struct ShadowClientGameStreamServerInfo: Equatable, Sendable {
     let appVersion: String?
     let gfeVersion: String?
     let uniqueID: String?
+    let serverCodecModeSupport: Int
 
     init(
         host: String,
@@ -334,7 +340,8 @@ public struct ShadowClientGameStreamServerInfo: Equatable, Sendable {
         httpsPort: Int,
         appVersion: String?,
         gfeVersion: String?,
-        uniqueID: String?
+        uniqueID: String?,
+        serverCodecModeSupport: Int = ShadowClientServerCodecModeSupport.h264
     ) {
         self.host = host
         self.localHost = localHost
@@ -348,7 +355,25 @@ public struct ShadowClientGameStreamServerInfo: Equatable, Sendable {
         self.appVersion = appVersion
         self.gfeVersion = gfeVersion
         self.uniqueID = uniqueID
+        self.serverCodecModeSupport = serverCodecModeSupport
     }
+}
+
+enum ShadowClientServerCodecModeSupport {
+    static let h264 = 0x00000001
+    static let hevc = 0x00000100
+    static let hevcMain10 = 0x00000200
+    static let av1Main8 = 0x00010000
+    static let av1Main10 = 0x00020000
+    static let h264High8444 = 0x00040000
+    static let hevcRext8444 = 0x00080000
+    static let hevcRext10444 = 0x00100000
+    static let av1High8444 = 0x00200000
+    static let av1High10444 = 0x00400000
+
+    static let maskH264 = h264 | h264High8444
+    static let maskHEVC = hevc | hevcMain10 | hevcRext8444 | hevcRext10444
+    static let maskAV1 = av1Main8 | av1Main10 | av1High8444 | av1High10444
 }
 
 public protocol ShadowClientGameStreamMetadataClient: Sendable {
@@ -1838,7 +1863,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let selectedHostKey = Self.mergeKey(for: selectedHost)
         let launchedAppTitle = appTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let launchSettingsToUse = Self.normalizeAudioLaunchSettings(
-            launchSettingsApplyingPersistentFallback(settings),
+            Self.normalizeCodecLaunchSettings(
+                launchSettingsApplyingPersistentFallback(settings),
+                serverCodecModeSupport: selectedHost.serverCodecModeSupport
+            ),
             maximumOutputChannels: ShadowClientAudioOutputCapabilityKit.currentMaximumOutputChannels()
         )
         let currentFingerprint = Self.sessionFingerprint(
@@ -3122,6 +3150,43 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         )
     }
 
+    static func normalizeCodecLaunchSettings(
+        _ settings: ShadowClientGameStreamLaunchSettings,
+        serverCodecModeSupport: Int
+    ) -> ShadowClientGameStreamLaunchSettings {
+        let normalizedCodec = normalizePreferredCodec(
+            settings.preferredCodec,
+            serverCodecModeSupport: serverCodecModeSupport
+        )
+        guard normalizedCodec != settings.preferredCodec else {
+            return settings
+        }
+        return launchSettings(settings, preferredCodec: normalizedCodec)
+    }
+
+    private static func normalizePreferredCodec(
+        _ preferredCodec: ShadowClientVideoCodecPreference,
+        serverCodecModeSupport: Int
+    ) -> ShadowClientVideoCodecPreference {
+        let supportsAV1 = (serverCodecModeSupport & ShadowClientServerCodecModeSupport.maskAV1) != 0
+        let supportsHEVC = (serverCodecModeSupport & ShadowClientServerCodecModeSupport.maskHEVC) != 0
+
+        switch preferredCodec {
+        case .auto, .av1:
+            if supportsAV1 {
+                return preferredCodec
+            }
+            if supportsHEVC {
+                return .h265
+            }
+            return .h264
+        case .h265:
+            return supportsHEVC ? .h265 : .h264
+        case .h264:
+            return .h264
+        }
+    }
+
     private static func normalizeAudioLaunchSettings(
         _ settings: ShadowClientGameStreamLaunchSettings
     ) async -> ShadowClientGameStreamLaunchSettings {
@@ -3837,6 +3902,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 appVersion: info.appVersion,
                 gfeVersion: info.gfeVersion,
                 uniqueID: info.uniqueID,
+                serverCodecModeSupport: info.serverCodecModeSupport,
                 lastError: nil,
                 localHost: info.localHost,
                 remoteHost: info.remoteHost,
@@ -3856,6 +3922,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 appVersion: nil,
                 gfeVersion: nil,
                 uniqueID: nil,
+                serverCodecModeSupport: ShadowClientServerCodecModeSupport.h264,
                 lastError: message
             )
         }
@@ -3876,6 +3943,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             appVersion: info.appVersion,
             gfeVersion: info.gfeVersion,
             uniqueID: info.uniqueID,
+            serverCodecModeSupport: info.serverCodecModeSupport,
             lastError: nil,
             localHost: info.localHost,
             remoteHost: info.remoteHost,
@@ -4571,6 +4639,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             appVersion: host.appVersion,
             gfeVersion: host.gfeVersion,
             uniqueID: host.uniqueID,
+            serverCodecModeSupport: host.serverCodecModeSupport,
             lastError: host.lastError,
             routes: routes
         )
@@ -4657,6 +4726,9 @@ enum ShadowClientGameStreamXMLParsers {
             localHost: localHost,
             remoteHost: externalHost
         )
+        let serverCodecModeSupport = Int(
+            document.values["ServerCodecModeSupport"]?.first ?? ""
+        ) ?? ShadowClientServerCodecModeSupport.h264
 
         return ShadowClientGameStreamServerInfo(
             host: host,
@@ -4670,7 +4742,8 @@ enum ShadowClientGameStreamXMLParsers {
             httpsPort: httpsPort,
             appVersion: document.values["appversion"]?.first,
             gfeVersion: document.values["GfeVersion"]?.first,
-            uniqueID: document.values["uniqueid"]?.first
+            uniqueID: document.values["uniqueid"]?.first,
+            serverCodecModeSupport: serverCodecModeSupport
         )
     }
 
