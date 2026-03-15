@@ -29,4 +29,33 @@ func indirectPointerTouchesBypassGestureRecognizers() {
         )
     )
 }
+
+@Test("Indirect pointer touch end releases held primary button")
+func indirectPointerTouchEndReleasesHeldPrimaryButton() {
+    let transition = ShadowClientIOSIndirectPointerTouchTransition.make(
+        for: .ended,
+        isPrimaryButtonHeld: true
+    )
+
+    #expect(transition.shouldEmitAbsolutePosition)
+    #expect(
+        transition.buttonEvent == .pointerButton(button: .left, isPressed: false)
+    )
+    #expect(!transition.nextPrimaryButtonHeld)
+    #expect(!transition.capturesDragLocation)
+}
+
+@Test("Indirect pointer touch begin only emits primary down once")
+func indirectPointerTouchBeginDoesNotDuplicatePrimaryDown() {
+    let transition = ShadowClientIOSIndirectPointerTouchTransition.make(
+        for: .began,
+        isPrimaryButtonHeld: true
+    )
+
+    #expect(transition.shouldRequestFocus)
+    #expect(transition.shouldEmitAbsolutePosition)
+    #expect(transition.buttonEvent == nil)
+    #expect(transition.nextPrimaryButtonHeld)
+    #expect(transition.capturesDragLocation)
+}
 #endif

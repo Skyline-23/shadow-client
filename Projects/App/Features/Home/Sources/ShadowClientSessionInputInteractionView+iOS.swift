@@ -26,6 +26,62 @@ enum ShadowClientIOSIndirectPointerInputPolicy {
     }
 }
 
+struct ShadowClientIOSIndirectPointerTouchTransition: Equatable {
+    let shouldRequestFocus: Bool
+    let shouldEmitAbsolutePosition: Bool
+    let buttonEvent: ShadowClientRemoteInputEvent?
+    let capturesDragLocation: Bool
+    let nextPrimaryButtonHeld: Bool
+
+    static func make(
+        for phase: UITouch.Phase,
+        isPrimaryButtonHeld: Bool
+    ) -> ShadowClientIOSIndirectPointerTouchTransition {
+        switch phase {
+        case .began:
+            return .init(
+                shouldRequestFocus: true,
+                shouldEmitAbsolutePosition: true,
+                buttonEvent: isPrimaryButtonHeld ? nil : .pointerButton(button: .left, isPressed: true),
+                capturesDragLocation: true,
+                nextPrimaryButtonHeld: true
+            )
+        case .ended:
+            return .init(
+                shouldRequestFocus: false,
+                shouldEmitAbsolutePosition: true,
+                buttonEvent: isPrimaryButtonHeld ? .pointerButton(button: .left, isPressed: false) : nil,
+                capturesDragLocation: false,
+                nextPrimaryButtonHeld: false
+            )
+        case .cancelled:
+            return .init(
+                shouldRequestFocus: false,
+                shouldEmitAbsolutePosition: false,
+                buttonEvent: isPrimaryButtonHeld ? .pointerButton(button: .left, isPressed: false) : nil,
+                capturesDragLocation: false,
+                nextPrimaryButtonHeld: false
+            )
+        case .moved, .regionEntered, .regionMoved, .regionExited, .stationary:
+            return .init(
+                shouldRequestFocus: false,
+                shouldEmitAbsolutePosition: false,
+                buttonEvent: nil,
+                capturesDragLocation: false,
+                nextPrimaryButtonHeld: isPrimaryButtonHeld
+            )
+        @unknown default:
+            return .init(
+                shouldRequestFocus: false,
+                shouldEmitAbsolutePosition: false,
+                buttonEvent: nil,
+                capturesDragLocation: false,
+                nextPrimaryButtonHeld: isPrimaryButtonHeld
+            )
+        }
+    }
+}
+
 struct ShadowClientSessionInputInteractionPlatformView: UIViewRepresentable {
     let referenceVideoSize: CGSize?
     let visiblePointerRegions: [CGRect]
@@ -703,29 +759,25 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
             }
 
             let location = touch.location(in: self)
+            let transition = ShadowClientIOSIndirectPointerTouchTransition.make(
+                for: phase,
+                isPrimaryButtonHeld: isPrimaryButtonHeld
+            )
 
-            switch phase {
-            case .began:
+            if transition.shouldRequestFocus {
                 requestInputFocusIfNeeded()
+            }
+            if transition.shouldEmitAbsolutePosition {
                 emitAbsolutePointerPosition(at: location)
-                if !isPrimaryButtonHeld {
-                    isPrimaryButtonHeld = true
-                    emit(.pointerButton(button: .left, isPressed: true))
-                }
+            }
+            if let buttonEvent = transition.buttonEvent {
+                emit(buttonEvent)
+            }
+            isPrimaryButtonHeld = transition.nextPrimaryButtonHeld
+            if transition.capturesDragLocation {
                 lastPrimaryDragLocation = location
-            case .ended:
-                emitAbsolutePointerPosition(at: location)
+            } else {
                 lastPrimaryDragLocation = nil
-            case .cancelled:
-                if isPrimaryButtonHeld {
-                    isPrimaryButtonHeld = false
-                    emit(.pointerButton(button: .left, isPressed: false))
-                }
-                lastPrimaryDragLocation = nil
-            case .moved, .regionEntered, .regionMoved, .regionExited, .stationary:
-                break
-            @unknown default:
-                break
             }
         }
 
