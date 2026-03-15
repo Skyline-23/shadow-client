@@ -91,3 +91,27 @@ func realtimeSessionSurfaceContextStreamsControllerFeedbackEvents() async {
     let received = await iterator.next()
     #expect(received == expected)
 }
+
+@Test("Realtime session surface context tracks active HDR metadata")
+func realtimeSessionSurfaceContextTracksHDRMetadata() {
+    let context = ShadowClientRealtimeSessionSurfaceContext()
+    let metadata = ShadowClientHDRMetadata(
+        displayPrimaries: [
+            .init(x: 100, y: 200),
+            .init(x: 300, y: 400),
+            .init(x: 500, y: 600),
+        ],
+        whitePoint: .init(x: 700, y: 800),
+        maxDisplayLuminance: 1000,
+        minDisplayLuminance: 1,
+        maxContentLightLevel: 1200,
+        maxFrameAverageLightLevel: 600,
+        maxFullFrameLuminance: 400
+    )
+
+    context.updateActiveHDRMetadata(metadata)
+    #expect(context.activeHDRMetadata == metadata)
+
+    context.reset()
+    #expect(context.activeHDRMetadata == nil)
+}

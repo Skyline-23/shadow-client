@@ -12,6 +12,53 @@ struct ShadowClientHostControllerTriggerRumbleEvent: Equatable, Sendable {
     let rightTriggerMotor: UInt16
 }
 
+public struct ShadowClientHDRMetadataChromaticity: Equatable, Sendable {
+    public let x: UInt16
+    public let y: UInt16
+}
+
+public struct ShadowClientHDRMetadata: Equatable, Sendable {
+    public let displayPrimaries: [ShadowClientHDRMetadataChromaticity]
+    public let whitePoint: ShadowClientHDRMetadataChromaticity
+    public let maxDisplayLuminance: UInt16
+    public let minDisplayLuminance: UInt16
+    public let maxContentLightLevel: UInt16
+    public let maxFrameAverageLightLevel: UInt16
+    public let maxFullFrameLuminance: UInt16
+
+    var hdr10DisplayInfoData: Data {
+        var data = Data()
+        data.reserveCapacity(24)
+        for primary in displayPrimaries {
+            Self.appendUInt16BE(primary.x, to: &data)
+            Self.appendUInt16BE(primary.y, to: &data)
+        }
+        Self.appendUInt16BE(whitePoint.x, to: &data)
+        Self.appendUInt16BE(whitePoint.y, to: &data)
+        Self.appendUInt16BE(maxDisplayLuminance, to: &data)
+        Self.appendUInt16BE(minDisplayLuminance, to: &data)
+        return data
+    }
+
+    var hdr10ContentInfoData: Data {
+        var data = Data()
+        data.reserveCapacity(4)
+        Self.appendUInt16BE(maxContentLightLevel, to: &data)
+        Self.appendUInt16BE(maxFrameAverageLightLevel, to: &data)
+        return data
+    }
+
+    private static func appendUInt16BE(_ value: UInt16, to data: inout Data) {
+        data.append(UInt8(truncatingIfNeeded: value >> 8))
+        data.append(UInt8(truncatingIfNeeded: value))
+    }
+}
+
+struct ShadowClientHostHDRModeEvent: Equatable, Sendable {
+    let isEnabled: Bool
+    let metadata: ShadowClientHDRMetadata?
+}
+
 enum ShadowClientHostControllerFeedbackEvent: Equatable, Sendable {
     case rumble(ShadowClientHostControllerRumbleEvent)
     case triggerRumble(ShadowClientHostControllerTriggerRumbleEvent)
@@ -59,6 +106,49 @@ enum ShadowClientHostControlFeedbackCodec {
 
         let reasonCode = readUInt32BE(payload, at: 0)
         return .init(reasonCode: reasonCode)
+    }
+
+    static func parseHDRMode(
+        type: UInt16,
+        payload: Data
+    ) -> ShadowClientHostHDRModeEvent? {
+        guard type == ShadowClientHostControlMessageProfile.hdrModeType,
+              payload.count >= 1
+        else {
+            return nil
+        }
+
+        let isEnabled = payload[0] != 0
+        guard payload.count >= 25 else {
+            return .init(isEnabled: isEnabled, metadata: nil)
+        }
+
+        var offset = 1
+        var primaries: [ShadowClientHDRMetadataChromaticity] = []
+        primaries.reserveCapacity(3)
+        for _ in 0 ..< 3 {
+            primaries.append(
+                .init(
+                    x: readUInt16LE(payload, at: offset),
+                    y: readUInt16LE(payload, at: offset + 2)
+                )
+            )
+            offset += 4
+        }
+
+        let metadata = ShadowClientHDRMetadata(
+            displayPrimaries: primaries,
+            whitePoint: .init(
+                x: readUInt16LE(payload, at: offset),
+                y: readUInt16LE(payload, at: offset + 2)
+            ),
+            maxDisplayLuminance: readUInt16LE(payload, at: offset + 4),
+            minDisplayLuminance: readUInt16LE(payload, at: offset + 6),
+            maxContentLightLevel: readUInt16LE(payload, at: offset + 8),
+            maxFrameAverageLightLevel: readUInt16LE(payload, at: offset + 10),
+            maxFullFrameLuminance: readUInt16LE(payload, at: offset + 12)
+        )
+        return .init(isEnabled: isEnabled, metadata: metadata)
     }
 
     private static func parseRumble(

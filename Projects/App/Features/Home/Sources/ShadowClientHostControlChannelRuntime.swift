@@ -17,6 +17,7 @@ actor ShadowClientHostControlChannelRuntime {
     private let commandAcknowledgeTimeout: Duration
     private let onRoundTripSample: (@Sendable (Double) async -> Void)?
     private let onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)?
+    private let onHDRMode: (@Sendable (ShadowClientHostHDRModeEvent) async -> Void)?
     private let onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)?
     private let queue = DispatchQueue(
         label: "com.skyline23.shadowclient.control.enet",
@@ -44,12 +45,14 @@ actor ShadowClientHostControlChannelRuntime {
         commandAcknowledgeTimeout: Duration = ShadowClientHostControlChannelDefaults.commandAcknowledgeTimeout,
         onRoundTripSample: (@Sendable (Double) async -> Void)? = nil,
         onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)? = nil,
+        onHDRMode: (@Sendable (ShadowClientHostHDRModeEvent) async -> Void)? = nil,
         onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)? = nil
     ) {
         self.connectTimeout = connectTimeout
         self.commandAcknowledgeTimeout = commandAcknowledgeTimeout
         self.onRoundTripSample = onRoundTripSample
         self.onControllerFeedback = onControllerFeedback
+        self.onHDRMode = onHDRMode
         self.onTermination = onTermination
     }
 
@@ -275,24 +278,10 @@ actor ShadowClientHostControlChannelRuntime {
                         from: packet,
                         command: command
                     )
-
-                    if let feedbackEvent = parseControllerFeedbackEvent(
+                    await processIncomingControlEvents(
                         from: packet,
                         command: command
-                    ) {
-                        reportControllerFeedbackEventIfNeeded(feedbackEvent)
-                        await onControllerFeedback?(feedbackEvent)
-                    }
-
-                    if let terminationEvent = parseTerminationEvent(
-                        from: packet,
-                        command: command
-                    ) {
-                        logger.error(
-                            "Apollo control termination received reason=0x\(String(terminationEvent.reasonCode, radix: 16), privacy: .public)"
-                        )
-                        await onTermination?(terminationEvent)
-                    }
+                    )
 
                     guard command.isAcknowledgeRequired else {
                         continue
@@ -442,6 +431,10 @@ actor ShadowClientHostControlChannelRuntime {
                     from: packet,
                     command: command
                 )
+                await processIncomingControlEvents(
+                    from: packet,
+                    command: command
+                )
 
                 logger.notice(
                     "Apollo control ACK wait command number=\(command.number, privacy: .public) flags=\(command.flags, privacy: .public) relSeq=\(command.reliableSequenceNumber, privacy: .public) channel=\(command.channelID, privacy: .public)"
@@ -523,6 +516,52 @@ actor ShadowClientHostControlChannelRuntime {
             type: type,
             payload: payload
         )
+    }
+
+    private func parseHDRModeEvent(
+        from packet: ShadowClientHostENetPacketCodec.ParsedPacket,
+        command: ShadowClientHostENetPacketCodec.ParsedPacket.Command
+    ) -> ShadowClientHostHDRModeEvent? {
+        guard let controlPayload = parseControlPayload(from: packet, command: command) else {
+            return nil
+        }
+
+        let type = readUInt16LE(controlPayload, at: 0)
+        let payload = Data(controlPayload.dropFirst(2))
+        return ShadowClientHostControlFeedbackCodec.parseHDRMode(
+            type: type,
+            payload: payload
+        )
+    }
+
+    private func processIncomingControlEvents(
+        from packet: ShadowClientHostENetPacketCodec.ParsedPacket,
+        command: ShadowClientHostENetPacketCodec.ParsedPacket.Command
+    ) async {
+        if let feedbackEvent = parseControllerFeedbackEvent(
+            from: packet,
+            command: command
+        ) {
+            reportControllerFeedbackEventIfNeeded(feedbackEvent)
+            await onControllerFeedback?(feedbackEvent)
+        }
+
+        if let hdrModeEvent = parseHDRModeEvent(
+            from: packet,
+            command: command
+        ) {
+            await onHDRMode?(hdrModeEvent)
+        }
+
+        if let terminationEvent = parseTerminationEvent(
+            from: packet,
+            command: command
+        ) {
+            logger.error(
+                "Apollo control termination received reason=0x\(String(terminationEvent.reasonCode, radix: 16), privacy: .public)"
+            )
+            await onTermination?(terminationEvent)
+        }
     }
 
     private func parseControlPayload(

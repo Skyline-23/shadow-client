@@ -206,6 +206,7 @@ actor ShadowClientRTSPInterleavedClient {
     private let timeout: Duration
     private let onControlRoundTripSample: (@Sendable (Double) async -> Void)?
     private let onAudioOutputStateChanged: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)?
+    private let onHDRMode: (@Sendable (ShadowClientHostHDRModeEvent) async -> Void)?
     private let onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)?
     private let onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)?
     private let inputChannelGateway = ShadowClientRealtimeInputChannelGateway()
@@ -258,6 +259,7 @@ actor ShadowClientRTSPInterleavedClient {
         timeout: Duration,
         onControlRoundTripSample: (@Sendable (Double) async -> Void)? = nil,
         onAudioOutputStateChanged: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)? = nil,
+        onHDRMode: (@Sendable (ShadowClientHostHDRModeEvent) async -> Void)? = nil,
         onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)? = nil,
         onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)? = nil,
         audioSessionActivation: (@Sendable () async -> Void)? = nil,
@@ -266,6 +268,7 @@ actor ShadowClientRTSPInterleavedClient {
         self.timeout = timeout
         self.onControlRoundTripSample = onControlRoundTripSample
         self.onAudioOutputStateChanged = onAudioOutputStateChanged
+        self.onHDRMode = onHDRMode
         self.onControllerFeedback = onControllerFeedback
         self.onTermination = onTermination
         self.audioSessionActivation = audioSessionActivation
@@ -1513,6 +1516,7 @@ actor ShadowClientRTSPInterleavedClient {
         let runtime = ShadowClientHostControlChannelRuntime(
             onRoundTripSample: onControlRoundTripSample,
             onControllerFeedback: onControllerFeedback,
+            onHDRMode: onHDRMode,
             onTermination: onTermination
         )
 

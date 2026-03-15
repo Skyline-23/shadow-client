@@ -122,6 +122,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     @Published public private(set) var estimatedVideoBitrateKbps: Int?
     @Published public private(set) var audioOutputState: ShadowClientRealtimeAudioOutputState = .idle
     @Published public private(set) var activeDynamicRangeMode: DynamicRangeMode = .unknown
+    @Published public private(set) var activeHDRMetadata: ShadowClientHDRMetadata?
     @Published public private(set) var preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
     @Published public private(set) var videoPresentationSize: CGSize?
     private var lastControlRoundTripPublishUptime: TimeInterval = 0
@@ -159,6 +160,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         estimatedVideoBitrateKbps = nil
         audioOutputState = .idle
         activeDynamicRangeMode = .unknown
+        activeHDRMetadata = nil
         preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
         videoPresentationSize = nil
         lastControlRoundTripPublishUptime = 0
@@ -303,6 +305,13 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
             return
         }
         activeDynamicRangeMode = mode
+    }
+
+    public func updateActiveHDRMetadata(_ metadata: ShadowClientHDRMetadata?) {
+        if activeHDRMetadata == metadata {
+            return
+        }
+        activeHDRMetadata = metadata
     }
 
     public func updateVideoPresentationSize(_ size: CGSize?) {

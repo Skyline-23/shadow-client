@@ -105,3 +105,54 @@ func hostControlFeedbackCodecParsesTerminationPayload() {
     #expect(event == .init(reasonCode: 0x80030023))
     #expect(event?.message == "Host terminated the session gracefully (0x80030023).")
 }
+
+@Test("Host control feedback codec parses Sunshine HDR metadata payload")
+func hostControlFeedbackCodecParsesHDRModePayload() {
+    let payload = Data([
+        0x01,
+        0x34, 0x12, 0x78, 0x56,
+        0x9A, 0xBC, 0xDE, 0xF0,
+        0x11, 0x22, 0x33, 0x44,
+        0x55, 0x66, 0x77, 0x88,
+        0x99, 0x00,
+        0xAB, 0xCD,
+        0xEF, 0x01,
+        0x23, 0x45,
+        0x67, 0x89,
+    ])
+
+    let event = ShadowClientHostControlFeedbackCodec.parseHDRMode(
+        type: ShadowClientHostControlMessageProfile.hdrModeType,
+        payload: payload
+    )
+
+    #expect(
+        event ==
+            .init(
+                isEnabled: true,
+                metadata: .init(
+                    displayPrimaries: [
+                        .init(x: 0x1234, y: 0x5678),
+                        .init(x: 0xBC9A, y: 0xF0DE),
+                        .init(x: 0x2211, y: 0x4433),
+                    ],
+                    whitePoint: .init(x: 0x6655, y: 0x8877),
+                    maxDisplayLuminance: 0x0099,
+                    minDisplayLuminance: 0xCDAB,
+                    maxContentLightLevel: 0x01EF,
+                    maxFrameAverageLightLevel: 0x4523,
+                    maxFullFrameLuminance: 0x8967
+                )
+            )
+    )
+    #expect(event?.metadata?.hdr10DisplayInfoData == Data([
+        0x12, 0x34, 0x56, 0x78,
+        0xBC, 0x9A, 0xF0, 0xDE,
+        0x22, 0x11, 0x44, 0x33,
+        0x66, 0x55, 0x88, 0x77,
+        0x00, 0x99, 0xCD, 0xAB,
+    ]))
+    #expect(event?.metadata?.hdr10ContentInfoData == Data([
+        0x01, 0xEF, 0x45, 0x23,
+    ]))
+}
