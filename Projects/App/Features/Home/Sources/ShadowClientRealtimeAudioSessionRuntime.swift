@@ -2716,12 +2716,15 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         formatDescription = try Self.makeFormatDescription(for: renderFormat)
 
         renderer.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
+        renderer.volume = 1
+        renderer.isMuted = false
         synchronizer.addRenderer(renderer)
         synchronizer.delaysRateChangeUntilHasSufficientMediaData = false
         synchronizer.rate = 0
 
         rendererQueue.sync {
             startFeedingLocked()
+            logRendererDiagnosticsLocked(reason: "configured")
         }
         startRendererNotificationMonitoring()
         Self.logger.notice(
@@ -2761,8 +2764,9 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             if !hasLoggedFirstQueuedSample {
                 hasLoggedFirstQueuedSample = true
                 Self.logger.notice(
-                    "Sample buffer audio queued first sample pts=\(CMTimeGetSeconds(self.nextPresentationTime), privacy: .public)s frames=\(pcmBuffer.frameLength, privacy: .public) renderer-ready=\(self.renderer.isReadyForMoreMediaData, privacy: .public)"
+                    "Sample buffer audio queued first sample pts=\(CMTimeGetSeconds(self.nextPresentationTime), privacy: .public)s frames=\(pcmBuffer.frameLength, privacy: .public) renderer-ready=\(self.renderer.isReadyForMoreMediaData, privacy: .public) sample-ready=\(CMSampleBufferDataIsReady(sampleBuffer), privacy: .public)"
                 )
+                logRendererDiagnosticsLocked(reason: "first-queued-sample")
             }
             pendingSampleBuffers.append(PendingSampleBuffer(sampleBuffer: sampleBuffer))
             nextPresentationTime = CMTimeAdd(
@@ -2907,6 +2911,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         Self.logger.notice(
             "Sample buffer audio renderer auto-flushed; resetting at \(CMTimeGetSeconds(resetTime), privacy: .public)s routes=[\(Self.currentRouteSummary(), privacy: .public)]"
         )
+        logRendererDiagnosticsLocked(reason: "auto-flush")
     }
 
     private func handleOutputConfigurationChangeLocked() {
@@ -2927,6 +2932,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         Self.logger.notice(
             "Sample buffer audio output configuration changed; resetting renderer routes=[\(Self.currentRouteSummary(), privacy: .public)]"
         )
+        logRendererDiagnosticsLocked(reason: "output-configuration-changed")
     }
 
     private func startFeedingLocked() {
@@ -2950,6 +2956,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
                 Self.logger.notice(
                     "Sample buffer audio renderer accepted first sample status=\(String(describing: self.renderer.status), privacy: .public) rate=\(self.synchronizer.rate, privacy: .public) pending=\(self.pendingSampleBuffers.count, privacy: .public)"
                 )
+                logRendererDiagnosticsLocked(reason: "first-renderer-enqueue")
             }
             startTimelineIfNeededLocked()
         }
@@ -2979,7 +2986,20 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         Self.logger.notice(
             "Sample buffer audio timeline started rate=\(self.synchronizer.rate, privacy: .public) time=\(CMTimeGetSeconds(currentTime), privacy: .public)s pending=\(self.pendingSampleBuffers.count, privacy: .public) renderer-preroll=\(self.renderer.hasSufficientMediaDataForReliablePlaybackStart, privacy: .public) queued-preroll-ms=\(CMTimeGetSeconds(queuedDuration) * 1000, privacy: .public)"
         )
+        logRendererDiagnosticsLocked(reason: "timeline-started")
         hasStartedTimeline = true
+    }
+
+    private func logRendererDiagnosticsLocked(reason: StaticString) {
+        let errorDescription = renderer.error?.localizedDescription ?? "nil"
+        #if os(macOS)
+        let outputDevice = renderer.audioOutputDeviceUniqueID ?? "nil"
+        #else
+        let outputDevice = "unavailable"
+        #endif
+        Self.logger.notice(
+            "Sample buffer renderer diagnostics reason=\(reason, privacy: .public) status=\(String(describing: self.renderer.status), privacy: .public) muted=\(self.renderer.isMuted, privacy: .public) volume=\(self.renderer.volume, privacy: .public) device=\(outputDevice, privacy: .public) error=\(errorDescription, privacy: .public) rendering=[\(Self.currentRenderingSummary(), privacy: .public)] routes=[\(Self.currentRouteSummary(), privacy: .public)]"
+        )
     }
 
     private func currentSynchronizerTimeLocked() -> CMTime {
@@ -3194,6 +3214,10 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
 
     private static func currentRouteSummary() -> String {
         ShadowClientAudioOutputCapabilityKit.currentRouteSummary()
+    }
+
+    private static func currentRenderingSummary() -> String {
+        ShadowClientAudioOutputCapabilityKit.currentRenderingSummary()
     }
 }
 #endif
