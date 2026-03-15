@@ -5,7 +5,13 @@ enum ShadowClientDisplayMetricsPlatformKit {
     static func launchRequestSize(
         from geometry: ShadowClientAutoResolutionPolicy.LaunchGeometry
     ) -> CGSize {
-        geometry.renderSize
+        geometry.pixelSize
+    }
+
+    static func launchRequestScalePercent(
+        from geometry: ShadowClientAutoResolutionPolicy.LaunchGeometry
+    ) -> Int {
+        100
     }
 }
 #endif

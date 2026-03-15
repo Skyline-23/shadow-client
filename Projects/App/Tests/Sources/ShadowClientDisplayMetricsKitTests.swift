@@ -37,3 +37,28 @@ func displayMetricsKitPrefersViewportMetricsWhenAvailable() {
     #expect(geometry.pixelSize == CGSize(width: 1640, height: 2360))
     #expect(geometry.scalePercent == 200)
 }
+
+@Test("Retina auto launch settings use pixel size without a second iOS scale factor")
+func retinaAutoLaunchSettingsUsePixelSizeWithoutExtraScaleFactor() {
+    let settings = ShadowClientLaunchSettingsKit.resolvedLaunchSettings(
+        currentSettings: ShadowClientAppSettings(
+            resolution: .retinaAuto,
+            frameRate: .fps60,
+            bitrateKbps: 18_000
+        ),
+        selectedResolution: .retinaAuto,
+        hostApp: nil,
+        networkSignal: nil,
+        localHDRDisplayAvailable: false,
+        viewportMetrics: .init(logicalSize: CGSize(width: 1048, height: 970), safeAreaInsets: .init()),
+        displayMetrics: .init(
+            scale: 2.0,
+            pixelSize: CGSize(width: 2096, height: 1940),
+            logicalSize: CGSize(width: 1048, height: 970)
+        )
+    )
+
+    #expect(settings.width == 2096)
+    #expect(settings.height == 1940)
+    #expect(settings.resolutionScalePercent == 100)
+}

@@ -27,6 +27,9 @@ enum ShadowClientLaunchSettingsKit {
         let launchSize = ShadowClientDisplayMetricsPlatformKit.launchRequestSize(
             from: launchGeometry
         )
+        let launchScalePercent = ShadowClientDisplayMetricsPlatformKit.launchRequestScalePercent(
+            from: launchGeometry
+        )
         return .init(
             width: Int(launchSize.width),
             height: Int(launchSize.height),
@@ -42,7 +45,7 @@ enum ShadowClientLaunchSettingsKit {
             enableYUV444: base.enableYUV444,
             unlockBitrateLimit: base.unlockBitrateLimit,
             forceHardwareDecoding: base.forceHardwareDecoding,
-            resolutionScalePercent: launchGeometry.scalePercent,
+            resolutionScalePercent: launchScalePercent,
             preferVirtualDisplay: base.preferVirtualDisplay,
             optimizeGameSettingsForStreaming: base.optimizeGameSettingsForStreaming,
             quitAppOnHostAfterStreamEnds: base.quitAppOnHostAfterStreamEnds,
