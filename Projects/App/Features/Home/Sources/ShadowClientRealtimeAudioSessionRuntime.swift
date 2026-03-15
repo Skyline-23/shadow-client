@@ -57,10 +57,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         category: "RealtimeAudio"
     )
     private let stateDidChange: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)?
-    private let connectionQueue = DispatchQueue(
-        label: "com.skyline23.shadowclient.realtime-audio.connection"
-    )
-    private var connection: NWConnection?
+    private var connection: ShadowClientUDPDatagramSocket?
     private var receiveTask: Task<Void, Never>?
     private var decodeTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
@@ -177,22 +174,15 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         }
 
         do {
-            let udpConnection: NWConnection
             if let existingConnection {
-                udpConnection = existingConnection
-                ShadowClientRealtimeAudioTransportBootstrap.logLocalEndpoint(
-                    existingConnection,
-                    messagePrefix: "Audio UDP socket reused from pre-PLAY bootstrap",
-                    logger: logger
-                )
-            } else {
-                udpConnection = try await makeUDPConnection(
-                    remoteHost: remoteHost,
-                    remotePort: remotePort,
-                    localHost: localHost,
-                    preferredLocalPort: preferredLocalPort
-                )
+                existingConnection.cancel()
             }
+            let udpConnection = try await makeUDPSocket(
+                remoteHost: remoteHost,
+                remotePort: remotePort,
+                localHost: localHost,
+                preferredLocalPort: preferredLocalPort
+            )
             connection = udpConnection
             jitterBuffer.reset(preferredPayloadType: resolvedTrack.rtpPayloadType)
             let packetQueue = ShadowClientRealtimeAudioPacketQueue(
@@ -204,19 +194,45 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             self.packetQueue = packetQueue
             let moonlightRSFECQueue = ShadowClientRealtimeAudioMoonlightRSFECQueue()
 
-            try await ShadowClientRealtimeAudioTransportBootstrap.sendInitialPing(
-                over: udpConnection,
-                pingPayload: pingPayload,
-                logger: logger,
-                messagePrefix: "Audio UDP initial ping sent"
+            let initialPackets = ShadowClientHostPingPacketCodec.makePingPackets(
+                sequence: 1,
+                negotiatedPayload: pingPayload
             )
-            pingTask = ShadowClientRealtimeAudioTransportBootstrap.startPingLoop(
-                over: udpConnection,
-                pingPayload: pingPayload,
-                logger: logger,
-                successMessagePrefix: "Audio UDP ping sent",
-                errorMessagePrefix: "Audio UDP ping send failed"
+            for initialPacket in initialPackets {
+                try await udpConnection.send(initialPacket)
+            }
+            logger.notice(
+                "Audio UDP initial ping sent (variants=\(initialPackets.count, privacy: .public), bytes=\(initialPackets.first?.count ?? 0, privacy: .public))"
             )
+            pingTask = Task.detached(priority: .high) { [logger] in
+                var sequence: UInt32 = 1
+                var loggedPingCount = 0
+                var loggedPingError = false
+                while !Task.isCancelled {
+                    sequence &+= 1
+                    let pingPackets = ShadowClientHostPingPacketCodec.makePingPackets(
+                        sequence: sequence,
+                        negotiatedPayload: pingPayload
+                    )
+                    do {
+                        for pingPacket in pingPackets {
+                            try await udpConnection.send(pingPacket)
+                        }
+                        if loggedPingCount < 3 {
+                            logger.notice(
+                                "Audio UDP ping sent (sequence=\(sequence, privacy: .public), variants=\(pingPackets.count, privacy: .public), bytes=\(pingPackets.first?.count ?? 0, privacy: .public))"
+                            )
+                            loggedPingCount += 1
+                        }
+                    } catch {
+                        if !loggedPingError {
+                            logger.error("Audio UDP ping send failed: \(error.localizedDescription, privacy: .public)")
+                            loggedPingError = true
+                        }
+                    }
+                    try? await Task.sleep(for: ShadowClientRealtimeSessionDefaults.pingInterval)
+                }
+            }
             guard let activeDecoder = decoder,
                   let activeOutput = output
             else {
@@ -230,7 +246,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 )
             }
             startDecodeLoop(
-                over: udpConnection,
+                connection: udpConnection,
                 packetQueue: packetQueue,
                 moonlightRSFECQueue: moonlightRSFECQueue,
                 sampleRate: resolvedTrack.sampleRate,
@@ -287,8 +303,13 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         pingTask?.cancel()
         pingTask = nil
 
-        connection?.cancel()
+        let connectionToClose = connection
         connection = nil
+        if let connectionToClose {
+            Task {
+                await connectionToClose.close()
+            }
+        }
 
         let packetQueueToShutdown = packetQueue
         packetQueue = nil
@@ -311,7 +332,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     }
 
     private func startDecodeLoop(
-        over connection: NWConnection,
+        connection: ShadowClientUDPDatagramSocket,
         packetQueue: ShadowClientRealtimeAudioPacketQueue,
         moonlightRSFECQueue: ShadowClientRealtimeAudioMoonlightRSFECQueue,
         sampleRate: Int,
@@ -780,7 +801,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     }
 
     private func startReceiveLoop(
-        over connection: NWConnection,
+        over connection: ShadowClientUDPDatagramSocket,
         preferredPayloadType: Int,
         sampleRate _: Int,
         channels _: Int,
@@ -814,7 +835,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
 
             while !Task.isCancelled {
                 do {
-                    guard let datagram = try await Self.receiveDatagram(over: connection),
+                    guard let datagram = try await connection.receive(
+                        maximumLength: ShadowClientRealtimeSessionDefaults.maximumTransportReadLength
+                    ),
                           !datagram.isEmpty
                     else {
                         continue
@@ -963,7 +986,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     }
 
     private func handleReceiveLoopTermination(
-        over connection: NWConnection,
+        over connection: ShadowClientUDPDatagramSocket,
         output audioOutput: any ShadowClientRealtimeAudioOutput,
         state finalState: ShadowClientRealtimeAudioOutputState
     ) {
@@ -974,7 +997,9 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         }
         audioOutput.stop()
 
-        guard self.connection === connection else {
+        guard let currentConnection = self.connection,
+              ObjectIdentifier(currentConnection) == ObjectIdentifier(connection)
+        else {
             return
         }
 
@@ -990,30 +1015,49 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 _ = await packetQueueToShutdown.shutdown()
             }
         }
-        connection.cancel()
         self.connection = nil
+        Task {
+            await connection.close()
+        }
         decoder = nil
         payloadDecryptor = nil
         jitterBuffer.reset(preferredPayloadType: nil)
         updateState(finalState)
     }
 
-    private func makeUDPConnection(
+    private func makeUDPSocket(
         remoteHost: NWEndpoint.Host,
         remotePort: NWEndpoint.Port,
         localHost: NWEndpoint.Host?,
         preferredLocalPort: UInt16?
-    ) async throws -> NWConnection {
-        try await ShadowClientRealtimeAudioTransportBootstrap.bootstrapUDPConnection(
-            remoteHost: remoteHost,
-            remotePort: remotePort,
-            localHost: localHost,
-            preferredLocalPort: preferredLocalPort,
-            queue: connectionQueue,
-            logger: logger,
-            readyMessagePrefix: "Audio UDP socket ready",
-            fallbackReadyMessagePrefix: "Audio UDP socket ready (ephemeral fallback)"
-        )
+    ) async throws -> ShadowClientUDPDatagramSocket {
+        do {
+            let socket = try ShadowClientUDPDatagramSocket(
+                localHost: localHost,
+                localPort: preferredLocalPort,
+                remoteHost: remoteHost,
+                remotePort: remotePort.rawValue
+            )
+            let endpointDescription = await socket.localEndpointDescription()
+            logger.notice("Audio UDP socket ready \(endpointDescription, privacy: .public)")
+            return socket
+        } catch {
+            guard preferredLocalPort != nil else {
+                throw error
+            }
+            logger.error(
+                "Audio UDP bind on preferred client port \(preferredLocalPort ?? 0, privacy: .public) failed: \(error.localizedDescription, privacy: .public); retrying with ephemeral port"
+            )
+            let socket = try ShadowClientUDPDatagramSocket(
+                localHost: localHost,
+                localPort: nil,
+                remoteHost: remoteHost,
+                remotePort: remotePort.rawValue
+            )
+            let endpointDescription = await socket.localEndpointDescription()
+            logger.notice("Audio UDP socket ready (ephemeral fallback) \(endpointDescription, privacy: .public)")
+            return socket
+        }
     }
 
     private func updateState(_ nextState: ShadowClientRealtimeAudioOutputState) {
@@ -1026,20 +1070,6 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         }
         Task {
             await stateDidChange(nextState)
-        }
-    }
-
-    private static func receiveDatagram(
-        over connection: NWConnection
-    ) async throws -> Data? {
-        try await withCheckedThrowingContinuation { continuation in
-            connection.receiveMessage { payload, _, _, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                continuation.resume(returning: payload)
-            }
         }
     }
 
