@@ -1193,28 +1193,15 @@ var remoteDesktopHostCard: some View {
     }
 
 var connectionStatusCard: some View {
-        HStack(spacing: 12) {
-            Circle()
-                .fill(connectionStatusColor)
-                .frame(width: 10, height: 10)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Client Connection")
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                Text(connectionStatusText)
-                    .font(.footnote)
-                    .foregroundStyle(Color.white.opacity(0.82))
-            }
-
-            Spacer()
-        }
+        ShadowUIConnectionStatusCard(
+            title: "Client Connection",
+            statusText: connectionStatusText,
+            indicatorColor: connectionStatusColor
+        )
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("shadow.home.connection-status")
         .accessibilityLabel("Client Connection")
         .accessibilityValue(connectionStatusText)
-        .padding(14)
-        .background(panelSurface(cornerRadius: 12))
     }
 
 func remoteHostStatusColor(_ host: ShadowClientRemoteHostDescriptor) -> Color {
