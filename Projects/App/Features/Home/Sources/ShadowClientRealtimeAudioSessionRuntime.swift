@@ -3044,6 +3044,16 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     private static func makeRendererFormat(
         from format: AVAudioFormat
     ) throws -> AVAudioFormat {
+        if format.channelCount <= 2,
+           let rendererFormat = AVAudioFormat(
+               commonFormat: format.commonFormat,
+               sampleRate: format.sampleRate,
+               channels: format.channelCount,
+               interleaved: true
+           ) {
+            return rendererFormat
+        }
+
         let channelLayoutData = format.channelLayout.map {
             Data(
                 bytes: $0.layout,
@@ -3071,7 +3081,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             AVLinearPCMBitDepthKey: bitDepth,
             AVLinearPCMIsFloatKey: isFloat,
             AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsNonInterleaved: !format.isInterleaved,
+            AVLinearPCMIsNonInterleaved: false,
             AVChannelLayoutKey: channelLayoutData,
         ]) else {
             throw NSError(
@@ -3145,14 +3155,29 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         }
 
         let outputList = UnsafeMutableAudioBufferListPointer(convertedBuffer.mutableAudioBufferList)
-        guard let outputBaseAddress = outputList.first?.mData?.assumingMemoryBound(to: Int16.self)
-        else {
-            return nil
-        }
-
-        switch pcmBuffer.format.commonFormat {
-        case .pcmFormatFloat32:
-            guard let inputChannels = pcmBuffer.floatChannelData else {
+        switch (renderFormat.commonFormat, pcmBuffer.format.commonFormat) {
+        case (.pcmFormatFloat32, .pcmFormatFloat32):
+            guard let outputBaseAddress = outputList.first?.mData?.assumingMemoryBound(to: Float.self) else {
+                return nil
+            }
+            if pcmBuffer.format.isInterleaved {
+                guard let inputBaseAddress = pcmBuffer.audioBufferList.pointee.mBuffers.mData?.assumingMemoryBound(to: Float.self) else {
+                    return nil
+                }
+                memcpy(outputBaseAddress, inputBaseAddress, frameCount * channelCount * MemoryLayout<Float>.size)
+            } else {
+                guard let inputChannels = pcmBuffer.floatChannelData else {
+                    return nil
+                }
+                for frame in 0 ..< frameCount {
+                    for channel in 0 ..< channelCount {
+                        outputBaseAddress[(frame * channelCount) + channel] = inputChannels[channel][frame]
+                    }
+                }
+            }
+        case (.pcmFormatInt16, .pcmFormatFloat32):
+            guard let outputBaseAddress = outputList.first?.mData?.assumingMemoryBound(to: Int16.self),
+                  let inputChannels = pcmBuffer.floatChannelData else {
                 return nil
             }
             for frame in 0 ..< frameCount {
@@ -3162,7 +3187,10 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
                     outputBaseAddress[(frame * channelCount) + channel] = Int16(clamped * Float(Int16.max))
                 }
             }
-        case .pcmFormatInt16:
+        case (.pcmFormatInt16, .pcmFormatInt16):
+            guard let outputBaseAddress = outputList.first?.mData?.assumingMemoryBound(to: Int16.self) else {
+                return nil
+            }
             if pcmBuffer.format.isInterleaved {
                 guard let inputBaseAddress = pcmBuffer.audioBufferList.pointee.mBuffers.mData?.assumingMemoryBound(to: Int16.self) else {
                     return nil
