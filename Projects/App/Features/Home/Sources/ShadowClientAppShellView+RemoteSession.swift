@@ -288,18 +288,20 @@ func playbackOverlayLabel(
         tone: ShadowClientRemoteSessionLaunchTone
     ) -> some View {
         let style = ShadowClientRemoteSessionOverlayPresentationKit.overlayStyle(for: tone)
+        let overlayWidth = isCompactLayout ? 250.0 : 320.0
+        let animatesSymbol =
+            tone == .launching &&
+            (symbol.contains("clockwise") || title.localizedCaseInsensitiveContains("optimizing"))
 
-        return RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(Color.black.opacity(style.backgroundOpacity))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(style.textColor.opacity(style.strokeOpacity), lineWidth: 1)
-            )
-            .overlay {
-                Label(title, systemImage: symbol)
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(style.textColor)
-            }
+        return ShadowUIRemoteSessionOverlayBadge(
+            title: title,
+            symbol: symbol,
+            textColor: style.textColor,
+            backgroundOpacity: style.backgroundOpacity,
+            strokeOpacity: style.strokeOpacity,
+            width: overlayWidth,
+            animatesSymbol: animatesSymbol
+        )
     }
 
 func realtimeSessionHUDCard<Content: View>(
