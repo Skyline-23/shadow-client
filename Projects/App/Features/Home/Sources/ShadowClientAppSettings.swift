@@ -154,6 +154,7 @@ public enum ShadowClientGUIDisplayMode: String, CaseIterable, Sendable {
 public struct ShadowClientAppSettings: Equatable, Sendable {
     public struct StorageKeys {
         public static let lowLatencyMode = "settings.lowLatencyMode"
+        public static let audioSynchronizationPolicy = "settings.audioSynchronizationPolicy"
         public static let preferHDR = "settings.preferHDR"
         public static let showDiagnosticsHUD = "settings.showDiagnosticsHUD"
         public static let connectionHost = "settings.connectionHost"
@@ -205,6 +206,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
     public let displayMode: ShadowClientDisplayMode
     public let preferVirtualDisplay: Bool
     public let audioConfiguration: ShadowClientAudioConfiguration
+    public let audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy
     public let videoCodec: ShadowClientVideoCodecPreference
     public let videoDecoder: ShadowClientVideoDecoderPreference
     public let enableVSync: Bool
@@ -240,6 +242,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         displayMode: ShadowClientDisplayMode = .borderlessFullscreen,
         preferVirtualDisplay: Bool = false,
         audioConfiguration: ShadowClientAudioConfiguration = .surround71,
+        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy = .lowLatency,
         videoCodec: ShadowClientVideoCodecPreference = .auto,
         videoDecoder: ShadowClientVideoDecoderPreference = .automatic,
         enableVSync: Bool = false,
@@ -277,6 +280,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         self.displayMode = displayMode
         self.preferVirtualDisplay = preferVirtualDisplay
         self.audioConfiguration = audioConfiguration
+        self.audioSynchronizationPolicy = audioSynchronizationPolicy
         self.videoCodec = videoCodec
         self.videoDecoder = videoDecoder
         self.enableVSync = enableVSync
@@ -332,6 +336,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             enableHDR: preferHDR && localHDRDisplayAvailable && (hostApp?.hdrSupported ?? true),
             enableSurroundAudio: audioConfiguration.prefersSurroundAudio,
             preferredSurroundChannelCount: audioConfiguration.preferredChannelCount,
+            audioSynchronizationPolicy: audioSynchronizationPolicy,
             lowLatencyMode: lowLatencyMode,
             enableVSync: enableVSync,
             enableFramePacing: enableFramePacing,
@@ -535,6 +540,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             "\(autoBitrate)",
             "\(preferVirtualDisplay)",
             audioConfiguration.rawValue,
+            audioSynchronizationPolicy.rawValue,
             videoCodec.rawValue,
             videoDecoder.rawValue,
             "\(enableVSync)",
@@ -551,6 +557,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             "\(preferHDR)",
             "\(preferVirtualDisplay)",
             audioConfiguration.rawValue,
+            audioSynchronizationPolicy.rawValue,
         ].joined(separator: "-")
     }
 }

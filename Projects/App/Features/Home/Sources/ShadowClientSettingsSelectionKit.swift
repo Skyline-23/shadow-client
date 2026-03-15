@@ -12,6 +12,7 @@ struct ShadowClientSettingsSelectionInput {
     let displayMode: ShadowClientDisplayMode
     let preferVirtualDisplay: Bool
     let audioConfiguration: ShadowClientAudioConfiguration
+    let audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy
     let videoCodec: ShadowClientVideoCodecPreference
     let videoDecoder: ShadowClientVideoDecoderPreference
     let enableVSync: Bool
@@ -35,6 +36,78 @@ struct ShadowClientSettingsSelectionInput {
     let autoFindHosts: Bool
     let language: ShadowClientLanguagePreference
     let guiDisplayMode: ShadowClientGUIDisplayMode
+
+    init(
+        lowLatencyMode: Bool,
+        preferHDR: Bool,
+        showDiagnosticsHUD: Bool,
+        resolution: ShadowClientStreamingResolutionPreset,
+        frameRate: ShadowClientStreamingFrameRatePreset,
+        bitrateKbps: Int,
+        autoBitrate: Bool,
+        displayMode: ShadowClientDisplayMode,
+        preferVirtualDisplay: Bool,
+        audioConfiguration: ShadowClientAudioConfiguration,
+        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy = .lowLatency,
+        videoCodec: ShadowClientVideoCodecPreference,
+        videoDecoder: ShadowClientVideoDecoderPreference,
+        enableVSync: Bool,
+        enableFramePacing: Bool,
+        enableYUV444: Bool,
+        unlockBitrateLimit: Bool,
+        optimizeMouseForDesktop: Bool,
+        captureSystemKeyboardShortcuts: Bool,
+        keyboardShortcutCaptureMode: ShadowClientKeyboardShortcutCaptureMode,
+        useTouchscreenTrackpad: Bool,
+        swapMouseButtons: Bool,
+        reverseMouseScrollDirection: Bool,
+        swapABXYButtons: Bool,
+        forceGamepadOneAlwaysConnected: Bool,
+        enableGamepadMouseMode: Bool,
+        processGamepadInputInBackground: Bool,
+        optimizeGameSettingsForStreaming: Bool,
+        quitAppOnHostAfterStream: Bool,
+        muteHostSpeakersWhileStreaming: Bool,
+        muteAudioWhenInactiveWindow: Bool,
+        autoFindHosts: Bool,
+        language: ShadowClientLanguagePreference,
+        guiDisplayMode: ShadowClientGUIDisplayMode
+    ) {
+        self.lowLatencyMode = lowLatencyMode
+        self.preferHDR = preferHDR
+        self.showDiagnosticsHUD = showDiagnosticsHUD
+        self.resolution = resolution
+        self.frameRate = frameRate
+        self.bitrateKbps = bitrateKbps
+        self.autoBitrate = autoBitrate
+        self.displayMode = displayMode
+        self.preferVirtualDisplay = preferVirtualDisplay
+        self.audioConfiguration = audioConfiguration
+        self.audioSynchronizationPolicy = audioSynchronizationPolicy
+        self.videoCodec = videoCodec
+        self.videoDecoder = videoDecoder
+        self.enableVSync = enableVSync
+        self.enableFramePacing = enableFramePacing
+        self.enableYUV444 = enableYUV444
+        self.unlockBitrateLimit = unlockBitrateLimit
+        self.optimizeMouseForDesktop = optimizeMouseForDesktop
+        self.captureSystemKeyboardShortcuts = captureSystemKeyboardShortcuts
+        self.keyboardShortcutCaptureMode = keyboardShortcutCaptureMode
+        self.useTouchscreenTrackpad = useTouchscreenTrackpad
+        self.swapMouseButtons = swapMouseButtons
+        self.reverseMouseScrollDirection = reverseMouseScrollDirection
+        self.swapABXYButtons = swapABXYButtons
+        self.forceGamepadOneAlwaysConnected = forceGamepadOneAlwaysConnected
+        self.enableGamepadMouseMode = enableGamepadMouseMode
+        self.processGamepadInputInBackground = processGamepadInputInBackground
+        self.optimizeGameSettingsForStreaming = optimizeGameSettingsForStreaming
+        self.quitAppOnHostAfterStream = quitAppOnHostAfterStream
+        self.muteHostSpeakersWhileStreaming = muteHostSpeakersWhileStreaming
+        self.muteAudioWhenInactiveWindow = muteAudioWhenInactiveWindow
+        self.autoFindHosts = autoFindHosts
+        self.language = language
+        self.guiDisplayMode = guiDisplayMode
+    }
 }
 
 enum ShadowClientSettingsSelectionKit {
@@ -50,6 +123,7 @@ enum ShadowClientSettingsSelectionKit {
             displayMode: input.displayMode,
             preferVirtualDisplay: input.preferVirtualDisplay,
             audioConfiguration: input.audioConfiguration,
+            audioSynchronizationPolicy: input.audioSynchronizationPolicy,
             videoCodec: input.videoCodec,
             videoDecoder: input.videoDecoder,
             enableVSync: input.enableVSync,
@@ -90,6 +164,10 @@ enum ShadowClientSettingsSelectionKit {
 
     static func audioConfiguration(rawValue: String) -> ShadowClientAudioConfiguration {
         ShadowClientAudioConfiguration(rawValue: rawValue) ?? .surround71
+    }
+
+    static func audioSynchronizationPolicy(rawValue: String) -> ShadowClientAudioSynchronizationPolicy {
+        ShadowClientAudioSynchronizationPolicy(rawValue: rawValue) ?? .lowLatency
     }
 
     static func videoCodec(rawValue: String) -> ShadowClientVideoCodecPreference {

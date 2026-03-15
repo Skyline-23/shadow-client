@@ -32,6 +32,7 @@ enum ShadowClientSessionReconfigurationKit {
         }
 
         return proposedSettings.enableSurroundAudio != lastAppliedSettings.enableSurroundAudio ||
-            proposedSettings.preferredSurroundChannelCount != lastAppliedSettings.preferredSurroundChannelCount
+            proposedSettings.preferredSurroundChannelCount != lastAppliedSettings.preferredSurroundChannelCount ||
+            proposedSettings.audioSynchronizationPolicy != lastAppliedSettings.audioSynchronizationPolicy
     }
 }
