@@ -68,3 +68,39 @@ func sessionReconfigurationSkipsFixedResolutionAndLaunchingSessions() {
         )
     )
 }
+
+@Test("Session reconfiguration relaunches fixed-resolution sessions when audio negotiation changes")
+func sessionReconfigurationRelaunchesWhenAudioNegotiationChanges() {
+    let previous = ShadowClientGameStreamLaunchSettings(
+        width: 1920,
+        height: 1080,
+        fps: 60,
+        bitrateKbps: 15_000,
+        preferredCodec: .auto,
+        enableHDR: false,
+        enableSurroundAudio: false,
+        preferredSurroundChannelCount: 2,
+        lowLatencyMode: false
+    )
+    let proposed = ShadowClientGameStreamLaunchSettings(
+        width: 1920,
+        height: 1080,
+        fps: 60,
+        bitrateKbps: 15_000,
+        preferredCodec: .auto,
+        enableHDR: false,
+        enableSurroundAudio: true,
+        preferredSurroundChannelCount: 6,
+        lowLatencyMode: false
+    )
+
+    #expect(
+        ShadowClientSessionReconfigurationKit.shouldRelaunchActiveSession(
+            hasActiveSession: true,
+            isLaunching: false,
+            selectedResolution: .p1080,
+            proposedSettings: proposed,
+            lastAppliedSettings: previous
+        )
+    )
+}

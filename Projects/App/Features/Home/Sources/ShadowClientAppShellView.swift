@@ -4,6 +4,9 @@ import SwiftUI
 import ShadowUIFoundation
 import ShadowClientFeatureConnection
 import ShadowClientFeatureSession
+#if os(iOS) || os(tvOS)
+@preconcurrency import AVFoundation
+#endif
 
 public struct ShadowClientAppShellView: View {
 enum AppTab: Hashable {
@@ -178,7 +181,9 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
                 activeSessionReconfigurationTask = nil
                 lastActiveSessionReconfigurationSettings = nil
             } else {
-                lastActiveSessionReconfigurationSettings = activeSessionLaunchSettings()
+                Task { @MainActor in
+                    lastActiveSessionReconfigurationSettings = await activeSessionNegotiatedLaunchSettings()
+                }
             }
             gamepadInputRuntime.setSessionActive(isActive)
             updateActiveSessionProcessActivity(isActive: isActive)
@@ -219,6 +224,21 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
                 gamepadInputRuntime.applyControllerFeedback(feedbackEvent)
             }
         }
+        #if os(iOS) || os(tvOS)
+        .task(id: remoteDesktopRuntime.activeSession != nil) {
+            guard remoteDesktopRuntime.activeSession != nil else {
+                return
+            }
+            for await _ in NotificationCenter.default.notifications(
+                named: AVAudioSession.routeChangeNotification
+            ) {
+                guard remoteDesktopRuntime.activeSession != nil else {
+                    break
+                }
+                await scheduleActiveSessionAudioReconfigurationIfNeeded()
+            }
+        }
+        #endif
         .onAppear {
             ShadowClientRemoteSessionOrientationCoordinator.updateSessionState(
                 isActive: remoteDesktopRuntime.activeSession != nil
@@ -769,6 +789,18 @@ func launchDesktopFallbackIfNeeded() async {
     }
 
     @MainActor
+    private func activeSessionNegotiatedLaunchSettings() async -> ShadowClientGameStreamLaunchSettings? {
+        guard let settings = activeSessionLaunchSettings() else {
+            return nil
+        }
+        let maximumOutputChannels = await ShadowClientAudioOutputCapabilityKit.maximumOutputChannels()
+        return ShadowClientRemoteDesktopRuntime.normalizeAudioLaunchSettings(
+            settings,
+            maximumOutputChannels: maximumOutputChannels
+        )
+    }
+
+    @MainActor
     private func scheduleActiveSessionLaunchReconfigurationIfNeeded() {
         guard let proposedSettings = activeSessionLaunchSettings() else {
             return
@@ -790,6 +822,50 @@ func launchDesktopFallbackIfNeeded() async {
             try? await Task.sleep(for: .milliseconds(350))
             guard !Task.isCancelled,
                   let latestSettings = activeSessionLaunchSettings(),
+                  ShadowClientSessionReconfigurationKit.shouldRelaunchActiveSession(
+                    hasActiveSession: remoteDesktopRuntime.activeSession != nil,
+                    isLaunching: remoteDesktopRuntime.launchState.isTransitioning,
+                    selectedResolution: selectedResolution,
+                    proposedSettings: latestSettings,
+                    lastAppliedSettings: lastActiveSessionReconfigurationSettings
+                  ),
+                  let latestActiveSession = remoteDesktopRuntime.activeSession,
+                  latestActiveSession.appID == activeSession.appID
+            else {
+                return
+            }
+
+            lastActiveSessionReconfigurationSettings = latestSettings
+            remoteDesktopRuntime.launchSelectedApp(
+                appID: latestActiveSession.appID,
+                appTitle: latestActiveSession.appTitle,
+                settings: latestSettings
+            )
+        }
+    }
+
+    @MainActor
+    private func scheduleActiveSessionAudioReconfigurationIfNeeded() async {
+        guard let proposedSettings = await activeSessionNegotiatedLaunchSettings() else {
+            return
+        }
+        guard ShadowClientSessionReconfigurationKit.shouldRelaunchActiveSession(
+            hasActiveSession: remoteDesktopRuntime.activeSession != nil,
+            isLaunching: remoteDesktopRuntime.launchState.isTransitioning,
+            selectedResolution: selectedResolution,
+            proposedSettings: proposedSettings,
+            lastAppliedSettings: lastActiveSessionReconfigurationSettings
+        ),
+        let activeSession = remoteDesktopRuntime.activeSession
+        else {
+            return
+        }
+
+        activeSessionReconfigurationTask?.cancel()
+        activeSessionReconfigurationTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled,
+                  let latestSettings = await activeSessionNegotiatedLaunchSettings(),
                   ShadowClientSessionReconfigurationKit.shouldRelaunchActiveSession(
                     hasActiveSession: remoteDesktopRuntime.activeSession != nil,
                     isLaunching: remoteDesktopRuntime.launchState.isTransitioning,
