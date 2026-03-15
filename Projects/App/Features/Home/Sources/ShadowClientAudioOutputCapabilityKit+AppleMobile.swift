@@ -5,15 +5,7 @@ import Foundation
 enum ShadowClientAudioOutputCapabilityPlatformKit {
     static func supportsHeadTrackedRoute() -> Bool {
         AVAudioSession.sharedInstance().currentRoute.outputs.contains { output in
-            guard output.isSpatialAudioEnabled else {
-                return false
-            }
-            switch output.portType {
-            case .headphones, .bluetoothA2DP, .bluetoothLE, .bluetoothHFP:
-                return true
-            default:
-                return false
-            }
+            isHeadphoneSpatialRoute(output)
         }
     }
 
@@ -24,7 +16,7 @@ enum ShadowClientAudioOutputCapabilityPlatformKit {
         return await MainActor.run {
             let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
             return outputs.contains { output in
-                output.isSpatialAudioEnabled
+                isHeadphoneSpatialRoute(output)
             }
         }
     }
@@ -34,7 +26,7 @@ enum ShadowClientAudioOutputCapabilityPlatformKit {
             let session = AVAudioSession.sharedInstance()
             let outputs = session.currentRoute.outputs
             let headphoneSpatialRoute = outputs.contains { output in
-                output.isSpatialAudioEnabled
+                isHeadphoneSpatialRoute(output)
             }
             if headphoneSpatialRoute {
                 return 8
@@ -56,6 +48,19 @@ enum ShadowClientAudioOutputCapabilityPlatformKit {
                 "\(output.portType.rawValue){name=\(output.portName),channels=\(output.channels?.count ?? 0),spatial=\(output.isSpatialAudioEnabled)}"
             }
             .joined(separator: ",")
+    }
+
+    private static func isHeadphoneSpatialRoute(_ output: AVAudioSessionPortDescription) -> Bool {
+        guard output.isSpatialAudioEnabled else {
+            return false
+        }
+
+        switch output.portType {
+        case .headphones, .bluetoothA2DP, .bluetoothLE, .bluetoothHFP:
+            return true
+        default:
+            return false
+        }
     }
 }
 #endif
