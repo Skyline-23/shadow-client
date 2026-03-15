@@ -5,15 +5,16 @@ import Testing
 func remoteHostCandidateFilterRemovesSelfHostsAndLoopbackEntries() {
     let candidates = ShadowClientRemoteHostCandidateFilter.filteredCandidates(
         discoveredHosts: [
-            "buseongs-macbook-pro-14.local",
             "localhost",
             "127.0.0.1",
+            "169.254.15.176",
+            "fe80::1",
             "skyline23-pc.local",
+            "192.168.0.50",
         ],
         manualHost: "skyline23-pc.local",
-        selfHostNames: [
-            "buseongs-macbook-pro-14",
-            "buseongs-macbook-pro-14.local",
+        localInterfaceHosts: [
+            "192.168.0.50",
         ]
     )
 

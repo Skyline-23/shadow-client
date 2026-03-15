@@ -4,16 +4,12 @@ enum ShadowClientRemoteHostCandidateFilter {
     static func filteredCandidates(
         discoveredHosts: [String],
         manualHost: String?,
-        selfHostNames: Set<String>
+        localInterfaceHosts: Set<String>
     ) -> [String] {
         var candidates = discoveredHosts
         if let manualHost, !manualHost.isEmpty {
             candidates.append(manualHost)
         }
-
-        let normalizedSelfHostNames = Set(
-            selfHostNames.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-        )
 
         var seen: Set<String> = []
         return candidates.compactMap { candidate in
@@ -28,7 +24,8 @@ enum ShadowClientRemoteHostCandidateFilter {
             }
 
             guard !isLoopbackHost(normalized),
-                  !normalizedSelfHostNames.contains(normalized)
+                  !isLinkLocalHost(normalized),
+                  !localInterfaceHosts.contains(normalized)
             else {
                 return nil
             }
@@ -51,7 +48,7 @@ enum ShadowClientRemoteHostCandidateFilter {
         return host
     }
 
-    private static func isLoopbackHost(_ normalized: String) -> Bool {
+    static func isLoopbackHost(_ normalized: String) -> Bool {
         if normalized == "localhost" {
             return true
         }
@@ -59,6 +56,26 @@ enum ShadowClientRemoteHostCandidateFilter {
             return true
         }
         if normalized.hasPrefix("127.") {
+            return true
+        }
+        return false
+    }
+
+    static func isLinkLocalHost(_ normalized: String) -> Bool {
+        let trimmed = normalized.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if trimmed.hasPrefix(ShadowClientHostClassificationDefaults.linkLocalIPv6Prefix) {
+            return true
+        }
+        if trimmed.hasPrefix("\(ShadowClientHostClassificationDefaults.uniqueLocalIPv6PrefixFC):") ||
+            trimmed.hasPrefix("\(ShadowClientHostClassificationDefaults.uniqueLocalIPv6PrefixFD):")
+        {
+            return true
+        }
+        let parts = trimmed.split(separator: ".")
+        if parts.count == 4,
+           parts[0] == Substring(String(ShadowClientHostClassificationDefaults.linkLocalIPv4FirstOctet)),
+           parts[1] == Substring(String(ShadowClientHostClassificationDefaults.linkLocalIPv4SecondOctet))
+        {
             return true
         }
         return false

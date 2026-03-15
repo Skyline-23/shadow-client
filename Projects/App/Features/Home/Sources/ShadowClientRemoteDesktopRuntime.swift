@@ -77,7 +77,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         appVersion: String?,
         gfeVersion: String?,
         uniqueID: String?,
-        serverCodecModeSupport: Int = 0x00000001,
+        serverCodecModeSupport: Int = 0,
         lastError: String?,
         localHost: String? = nil,
         remoteHost: String? = nil,
@@ -110,7 +110,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         appVersion: String?,
         gfeVersion: String?,
         uniqueID: String?,
-        serverCodecModeSupport: Int = 0x00000001,
+        serverCodecModeSupport: Int = 0,
         lastError: String?,
         routes: ShadowClientRemoteHostRoutes
     ) {
@@ -342,7 +342,7 @@ public struct ShadowClientGameStreamServerInfo: Equatable, Sendable {
         appVersion: String?,
         gfeVersion: String?,
         uniqueID: String?,
-        serverCodecModeSupport: Int = ShadowClientServerCodecModeSupport.h264
+        serverCodecModeSupport: Int = 0
     ) {
         self.host = host
         self.localHost = localHost
@@ -1534,6 +1534,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let metadataClient = metadataClient
         let pairingRouteStore = pairingRouteStore
         let pinnedCertificateStore = self.pinnedCertificateStore
+        let localInterfaceHosts = ShadowClientHostCatalogKit.currentMachineInterfaceHosts()
         let existingHosts = latestResolvedHostDescriptors.isEmpty ? hosts : latestResolvedHostDescriptors
         refreshHostsTask = Task { [weak self] in
             let descriptors = await withTaskGroup(
@@ -1553,7 +1554,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 return resolved
             }
 
-            let sorted = descriptors.sorted(by: Self.compareHosts)
+            let filteredDescriptors = Self.filterOutSelfHosts(
+                descriptors,
+                localInterfaceHosts: localInterfaceHosts
+            )
+            let sorted = filteredDescriptors.sorted(by: Self.compareHosts)
             let pairedHostKeys = await Self.pairedHostKeys(
                 for: sorted,
                 existingHosts: existingHosts,
@@ -2664,6 +2669,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return false
         }
 
+        if isStartupVideoDatagramFailure(normalizedError: normalized) {
+            return true
+        }
+
         // Inactivity/stall class errors should stay in-session recovery only.
         // Runtime relaunch is reserved for explicit transport-termination class errors.
         let reconnectSignatures = [
@@ -3009,6 +3018,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return false
         }
 
+        if isStartupVideoDatagramFailure(normalizedError: normalized) {
+            return false
+        }
+
         let codecFallbackSignatures = [
             "could not create hardware decoder session",
             "cannot create decoder",
@@ -3030,6 +3043,16 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         ]
 
         return codecFallbackSignatures.contains(where: normalized.contains)
+    }
+
+    static func isStartupVideoDatagramFailure(
+        normalizedError: String
+    ) -> Bool {
+        let signatures = [
+            "udp video startup traffic missing",
+            "no startup datagrams received",
+        ]
+        return signatures.contains(where: normalizedError.contains)
     }
 
     private static func userFacingLaunchFailureMessage(
@@ -3169,6 +3192,15 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         _ preferredCodec: ShadowClientVideoCodecPreference,
         serverCodecModeSupport: Int
     ) -> ShadowClientVideoCodecPreference {
+        if serverCodecModeSupport == 0 {
+            // Sunshine always advertises ServerCodecModeSupport, but Apollo can omit it.
+            // Keep the client-decoder-derived preference in that case instead of forcing H.264.
+            return ShadowClientVideoCodecSupport().resolvePreferredCodec(
+                preferredCodec,
+                enableHDR: false,
+                enableYUV444: false
+            )
+        }
         let supportsAV1 = (serverCodecModeSupport & ShadowClientServerCodecModeSupport.maskAV1) != 0
         let supportsHEVC = (serverCodecModeSupport & ShadowClientServerCodecModeSupport.maskHEVC) != 0
 
@@ -3934,7 +3966,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 appVersion: nil,
                 gfeVersion: nil,
                 uniqueID: nil,
-                serverCodecModeSupport: ShadowClientServerCodecModeSupport.h264,
+                serverCodecModeSupport: 0,
                 lastError: message
             )
         }
@@ -3961,6 +3993,31 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             remoteHost: info.remoteHost,
             manualHost: info.manualHost
         )
+    }
+
+    static func filterOutSelfHosts(
+        _ hosts: [ShadowClientRemoteHostDescriptor],
+        localInterfaceHosts: Set<String>
+    ) -> [ShadowClientRemoteHostDescriptor] {
+        var removedUniqueIDs: Set<String> = []
+        let routeFilteredHosts = hosts.filter { host in
+            let overlapsLocalRoute = !routeHostSet(for: host).isDisjoint(with: localInterfaceHosts)
+            if overlapsLocalRoute, let uniqueID = normalizedUniqueID(host.uniqueID) {
+                removedUniqueIDs.insert(uniqueID)
+            }
+            return !overlapsLocalRoute
+        }
+
+        guard !removedUniqueIDs.isEmpty else {
+            return routeFilteredHosts
+        }
+
+        return routeFilteredHosts.filter { host in
+            guard let uniqueID = normalizedUniqueID(host.uniqueID) else {
+                return true
+            }
+            return !removedUniqueIDs.contains(uniqueID)
+        }
     }
 
     private static func shouldRetryPairing(error: Error, deadline: Date) -> Bool {
@@ -4425,10 +4482,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     private static func mergeKey(for host: ShadowClientRemoteHostDescriptor) -> String {
-        if let uniqueID = host.uniqueID?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !uniqueID.isEmpty
-        {
-            return "uniqueid:\(uniqueID.lowercased())"
+        if let uniqueID = normalizedUniqueID(host.uniqueID) {
+            return "uniqueid:\(uniqueID)"
         }
 
         let routeHosts = routeHostSet(for: host).sorted()
@@ -4446,6 +4501,15 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             }
             .filter { !$0.isEmpty }
         )
+    }
+
+    private static func normalizedUniqueID(_ uniqueID: String?) -> String? {
+        guard let uniqueID else {
+            return nil
+        }
+
+        let normalized = uniqueID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty ? nil : normalized
     }
 
     private static func mergedHostRoutes(
@@ -4740,7 +4804,7 @@ enum ShadowClientGameStreamXMLParsers {
         )
         let serverCodecModeSupport = Int(
             document.values["ServerCodecModeSupport"]?.first ?? ""
-        ) ?? ShadowClientServerCodecModeSupport.h264
+        ) ?? 0
 
         return ShadowClientGameStreamServerInfo(
             host: host,

@@ -38,3 +38,22 @@ func remoteDesktopRuntimeFallsBackToH264WhenHostOnlyAdvertisesH264() {
 
     #expect(normalized.preferredCodec == .h264)
 }
+
+@Test("Remote desktop runtime keeps auto when host codec support is unknown instead of forcing H264")
+func remoteDesktopRuntimeKeepsAutoWhenHostCodecSupportIsUnknown() {
+    let normalized = ShadowClientRemoteDesktopRuntime.normalizeCodecLaunchSettings(
+        .init(
+            width: 1920,
+            height: 1080,
+            fps: 60,
+            bitrateKbps: 15_000,
+            preferredCodec: .auto,
+            enableHDR: false,
+            enableSurroundAudio: false,
+            lowLatencyMode: false
+        ),
+        serverCodecModeSupport: 0
+    )
+
+    #expect(normalized.preferredCodec == .auto || normalized.preferredCodec == .h265)
+}
