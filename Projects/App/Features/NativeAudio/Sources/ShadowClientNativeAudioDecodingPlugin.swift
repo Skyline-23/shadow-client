@@ -48,6 +48,10 @@ public enum ShadowClientNativeAudioDecodingPlugin {
     public static func ensureDefaultDecodersRegistered() async {
         await registrationState.ensureRegistered()
     }
+
+    static func requiresPlaybackSafetyGuard(channels: Int) -> Bool {
+        channels > 2
+    }
 }
 
 private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAudioDecoder {
@@ -55,7 +59,7 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
     let sampleRate: Int
     let channels: Int
     let outputFormat: AVAudioFormat
-    let requiresPlaybackSafetyGuard = true
+    let requiresPlaybackSafetyGuard: Bool
 
     private let decoder: OpusDecoder
     private let maximumSamplesPerChannel: Int
@@ -70,6 +74,10 @@ private final class ShadowClientNativeOpusDecoder: ShadowClientRealtimeCustomAud
     ) throws {
         self.sampleRate = sampleRate
         self.channels = channels
+        self.requiresPlaybackSafetyGuard =
+            ShadowClientNativeAudioDecodingPlugin.requiresPlaybackSafetyGuard(
+                channels: channels
+            )
         maximumPayloadBytes = max(512, compatibilityProfile.maximumSupportedPayloadBytes)
 
         guard let opusSampleRate = OpusSampleRate(exactly: sampleRate) else {
