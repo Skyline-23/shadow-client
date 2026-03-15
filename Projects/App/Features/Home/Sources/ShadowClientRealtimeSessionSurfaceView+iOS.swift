@@ -140,17 +140,21 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             )
         }
 
-        let canUseMetalYUV = pixelBuffer != nil && yuvPipeline?.canRender(pixelBuffer!) == true
-
         if let colorConfiguration, let pixelBuffer {
             let supportsExtendedDynamicRange = supportsExtendedDynamicRangeDisplay(for: view)
-            applyColorConfiguration(
-                colorConfiguration,
-                to: view,
+            let renderTargetConfiguration = ShadowClientSurfaceColorSpaceKit.renderTargetConfiguration(
+                colorConfiguration: colorConfiguration,
                 supportsExtendedDynamicRange: supportsExtendedDynamicRange,
-                renderBackend: canUseMetalYUV ? .metalYUV : .coreImage
+                renderBackend: ShadowClientSurfaceColorSpaceKit.renderBackend(
+                    hasPixelBuffer: true,
+                    canRenderWithMetalYUV: yuvPipeline?.canRender(pixelBuffer) == true
+                )
             )
-            _ = pixelBuffer
+            applyColorConfiguration(
+                renderTargetConfiguration,
+                to: view,
+                supportsExtendedDynamicRange: supportsExtendedDynamicRange
+            )
         }
 
         guard let drawable = view.currentDrawable,
@@ -189,11 +193,15 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             }
             logger.error("Surface render path=metal-yuv failed; falling back to CI")
             if let colorConfiguration {
-                applyColorConfiguration(
-                    colorConfiguration,
-                    to: view,
+                let fallbackRenderTargetConfiguration = ShadowClientSurfaceColorSpaceKit.renderTargetConfiguration(
+                    colorConfiguration: colorConfiguration,
                     supportsExtendedDynamicRange: supportsExtendedDynamicRangeDisplay(for: view),
-                    renderBackend: .coreImage
+                    renderBackend: ShadowClientSurfaceColorSpaceKit.fallbackRenderBackend(from: .metalYUV)
+                )
+                applyColorConfiguration(
+                    fallbackRenderTargetConfiguration,
+                    to: view,
+                    supportsExtendedDynamicRange: supportsExtendedDynamicRangeDisplay(for: view)
                 )
             }
         }
@@ -300,33 +308,19 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     }
 
     private func applyColorConfiguration(
-        _ configuration: ShadowClientRealtimeSessionColorConfiguration,
+        _ renderTargetConfiguration: ShadowClientSurfaceRenderTargetConfiguration,
         to view: MTKView,
-        supportsExtendedDynamicRange: Bool,
-        renderBackend: ShadowClientSurfaceColorRenderBackend
+        supportsExtendedDynamicRange _: Bool
     ) {
-        let shouldRenderExtendedDynamicRange =
-            configuration.prefersExtendedDynamicRange && supportsExtendedDynamicRange
-
-        let targetPixelFormat: MTLPixelFormat = shouldRenderExtendedDynamicRange
-            ? configuration.pixelFormat
-            : .bgra8Unorm
-        if view.colorPixelFormat != targetPixelFormat {
-            view.colorPixelFormat = targetPixelFormat
+        if view.colorPixelFormat != renderTargetConfiguration.targetPixelFormat {
+            view.colorPixelFormat = renderTargetConfiguration.targetPixelFormat
         }
 
         if #available(iOS 16.0, tvOS 16.0, *),
            let metalLayer = view.layer as? CAMetalLayer
         {
-            metalLayer.colorspace = resolvedDisplayColorSpace(
-                for: view,
-                prefersExtendedDynamicRange: shouldRenderExtendedDynamicRange,
-                sdrSourceColorSpace: configuration.renderColorSpace,
-                hdrDisplayColorSpace: configuration.displayColorSpace,
-                hdrSourceColorSpace: configuration.renderColorSpace,
-                renderBackend: renderBackend
-            )
-            metalLayer.wantsExtendedDynamicRangeContent = shouldRenderExtendedDynamicRange
+            metalLayer.colorspace = renderTargetConfiguration.outputColorSpace
+            metalLayer.wantsExtendedDynamicRangeContent = renderTargetConfiguration.prefersExtendedDynamicRange
         }
     }
 
@@ -336,23 +330,6 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         }
         let screen = view.window?.screen ?? UIScreen.main
         return screen.potentialEDRHeadroom > 1.0
-    }
-
-    private func resolvedDisplayColorSpace(
-        for view: MTKView,
-        prefersExtendedDynamicRange: Bool,
-        sdrSourceColorSpace: CGColorSpace,
-        hdrDisplayColorSpace: CGColorSpace,
-        hdrSourceColorSpace: CGColorSpace? = nil,
-        renderBackend: ShadowClientSurfaceColorRenderBackend = .coreImage
-    ) -> CGColorSpace {
-        ShadowClientSurfaceColorSpaceKit.resolvedOutputColorSpace(
-            prefersExtendedDynamicRange: prefersExtendedDynamicRange,
-            sdrSourceColorSpace: sdrSourceColorSpace,
-            hdrDisplayColorSpace: hdrDisplayColorSpace,
-            hdrSourceColorSpace: hdrSourceColorSpace,
-            renderBackend: renderBackend
-        )
     }
 
     private func ciSourceOptions(
