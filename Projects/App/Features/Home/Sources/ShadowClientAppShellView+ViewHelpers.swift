@@ -80,19 +80,19 @@ func discoveredHostRow(_ discoveredHost: ShadowClientDiscoveredHost) -> some Vie
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                Text("\(discoveredHost.host):\(discoveredHost.port) · \(discoveredHost.serviceType)")
+                Text(ShadowClientDiscoveredHostPresentationKit.detailText(discoveredHost))
                     .font(.footnote.monospacedDigit())
                     .foregroundStyle(ShadowClientAppShellChrome.Palette.tertiaryText)
                     .lineLimit(2)
                     .truncationMode(.middle)
             }
             Spacer(minLength: 8)
-            Button("Use") {
+            Button(ShadowClientDiscoveredHostPresentationKit.useButtonTitle()) {
                 connectionHost = discoveredHost.host
                 refreshRemoteDesktopCatalog()
             }
             .buttonStyle(.bordered)
-            Button("Connect") {
+            Button(ShadowClientDiscoveredHostPresentationKit.connectButtonTitle()) {
                 connectToDiscoveredHost(discoveredHost)
             }
             .buttonStyle(.borderedProminent)
