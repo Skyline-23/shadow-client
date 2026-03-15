@@ -677,7 +677,46 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         _ touches: Set<UITouch>,
         phase: UITouch.Phase
     ) -> Set<UITouch> {
-        return touches
+        var remainingTouches = Set<UITouch>()
+
+        for touch in touches {
+            guard ShadowClientIOSIndirectPointerInputPolicy.shouldHandleDirectly(touch.type) else {
+                remainingTouches.insert(touch)
+                continue
+            }
+
+            let location = touch.location(in: self)
+
+            switch phase {
+            case .began:
+                requestInputFocusIfNeeded()
+                emitAbsolutePointerPosition(at: location)
+                if !isPrimaryButtonHeld {
+                    isPrimaryButtonHeld = true
+                    emit(.pointerButton(button: .left, isPressed: true))
+                }
+                lastPrimaryDragLocation = location
+            case .ended:
+                emitAbsolutePointerPosition(at: location)
+                if isPrimaryButtonHeld {
+                    isPrimaryButtonHeld = false
+                    emit(.pointerButton(button: .left, isPressed: false))
+                }
+                lastPrimaryDragLocation = nil
+            case .cancelled:
+                if isPrimaryButtonHeld {
+                    isPrimaryButtonHeld = false
+                    emit(.pointerButton(button: .left, isPressed: false))
+                }
+                lastPrimaryDragLocation = nil
+            case .moved, .regionEntered, .regionMoved, .regionExited, .stationary:
+                break
+            @unknown default:
+                break
+            }
+        }
+
+        return remainingTouches
     }
 }
 #endif
