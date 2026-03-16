@@ -7,16 +7,33 @@ func remoteHostCandidateFilterRemovesSelfHostsAndLoopbackEntries() {
         discoveredHosts: [
             "localhost",
             "127.0.0.1",
-            "169.254.15.176",
+            "198.18.0.176",
             "fe80::1",
-            "skyline23-pc.local",
-            "192.168.0.50",
+            "desktop-lan.local",
+            "10.0.0.50",
         ],
-        manualHost: "skyline23-pc.local",
+        manualHost: "desktop-lan.local",
         localInterfaceHosts: [
-            "192.168.0.50",
+            "10.0.0.50",
         ]
     )
 
-    #expect(candidates == ["skyline23-pc.local"])
+    #expect(candidates == ["desktop-lan.local"])
+}
+
+@Test("Remote host candidate filter removes current machine hostnames")
+func remoteHostCandidateFilterRemovesCurrentMachineHostNames() {
+    let candidates = ShadowClientRemoteHostCandidateFilter.filteredCandidates(
+        discoveredHosts: [
+            "example-remote.local",
+            "current-machine.local",
+        ],
+        manualHost: "CURRENT-MACHINE.LOCAL",
+        localInterfaceHosts: [
+            "current-machine.local",
+            "current-machine",
+        ]
+    )
+
+    #expect(candidates == ["example-remote.local"])
 }

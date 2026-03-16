@@ -1637,9 +1637,12 @@ enum ShadowClientGameStreamHTTPTransport {
         )
 
         do {
+            let connectionTargets = resolvedConnectionTargets(for: host)
             if scheme == ShadowClientGameStreamNetworkDefaults.httpsScheme {
                 return try await requestPinnedHTTPSXML(
                     url: url,
+                    requestHost: host,
+                    connectionTargets: connectionTargets,
                     pinnedServerCertificateDER: pinnedServerCertificateDER,
                     clientCertificates: clientCertificates,
                     clientCertificateIdentity: clientCertificateIdentity,
@@ -1648,6 +1651,8 @@ enum ShadowClientGameStreamHTTPTransport {
             } else {
                 return try await requestPlainHTTPXML(
                     url: url,
+                    requestHost: host,
+                    connectionTargets: connectionTargets,
                     timeout: timeout
                 )
             }
@@ -1712,47 +1717,74 @@ enum ShadowClientGameStreamHTTPTransport {
 
     private static func requestPlainHTTPXML(
         url: URL,
+        requestHost: String,
+        connectionTargets: [String],
         timeout: TimeInterval
     ) async throws -> String {
-        guard let host = url.host,
-              let port = NWEndpoint.Port(rawValue: UInt16(url.port ?? 80))
+        guard let port = NWEndpoint.Port(rawValue: UInt16(url.port ?? 80))
         else {
             throw ShadowClientGameStreamError.invalidURL
         }
 
-        let connection = NWConnection(
-            host: .init(host),
-            port: port,
-            using: .tcp
-        )
-        do {
-            try await waitForReady(connection, timeout: timeout)
-        } catch let urlError as URLError where urlError.code == .timedOut {
-            logger.error(
-                "Plain HTTP connection ready timed out host=\(host, privacy: .public) port=\(port.rawValue, privacy: .public)"
+        var failures: [Error] = []
+        let startedAt = ContinuousClock.now
+
+        for connectionTarget in connectionTargets {
+            let connection = NWConnection(
+                host: .init(connectionTarget),
+                port: port,
+                using: .tcp
             )
-            throw ShadowClientGameStreamError.requestFailed("connection ready timed out")
-        }
-        defer {
-            connection.cancel()
+            do {
+                try await waitForReady(
+                    connection,
+                    timeout: remainingPerTargetTimeout(
+                        startedAt: startedAt,
+                        overallTimeout: timeout
+                    )
+                )
+            } catch let urlError as URLError where urlError.code == .timedOut {
+                logger.error(
+                    "Plain HTTP connection ready timed out host=\(requestHost, privacy: .public) connect-host=\(connectionTarget, privacy: .public) port=\(port.rawValue, privacy: .public)"
+                )
+                failures.append(ShadowClientGameStreamError.requestFailed("connection ready timed out"))
+                connection.cancel()
+                continue
+            } catch {
+                failures.append(error)
+                connection.cancel()
+                continue
+            }
+            defer {
+                connection.cancel()
+            }
+
+            let requestData = makePlainHTTPRequestData(url: url, host: requestHost)
+            do {
+                try await send(requestData, over: connection)
+                let responseData = try await receiveHTTPResponse(
+                    over: connection,
+                    timeout: remainingPerTargetTimeout(
+                        startedAt: startedAt,
+                        overallTimeout: timeout
+                    )
+                )
+                let body = try extractHTTPBody(from: responseData)
+                guard let xml = String(data: body, encoding: .utf8), !xml.isEmpty else {
+                    throw ShadowClientGameStreamError.malformedXML
+                }
+                return xml
+            } catch let urlError as URLError where urlError.code == .timedOut {
+                logger.error(
+                    "Plain HTTP response receive timed out host=\(requestHost, privacy: .public) connect-host=\(connectionTarget, privacy: .public) port=\(port.rawValue, privacy: .public)"
+                )
+                failures.append(ShadowClientGameStreamError.requestFailed("response receive timed out"))
+            } catch {
+                failures.append(error)
+            }
         }
 
-        let requestData = makePlainHTTPRequestData(url: url, host: host)
-        try await send(requestData, over: connection)
-        let responseData: Data
-        do {
-            responseData = try await receiveHTTPResponse(over: connection, timeout: timeout)
-        } catch let urlError as URLError where urlError.code == .timedOut {
-            logger.error(
-                "Plain HTTP response receive timed out host=\(host, privacy: .public) port=\(port.rawValue, privacy: .public)"
-            )
-            throw ShadowClientGameStreamError.requestFailed("response receive timed out")
-        }
-        let body = try extractHTTPBody(from: responseData)
-        guard let xml = String(data: body, encoding: .utf8), !xml.isEmpty else {
-            throw ShadowClientGameStreamError.malformedXML
-        }
-        return xml
+        throw failures.last ?? ShadowClientGameStreamError.requestFailed("HTTP transport failed")
     }
 
     static func requestPinnedHTTPSData(
@@ -1766,35 +1798,392 @@ enum ShadowClientGameStreamHTTPTransport {
         guard let host = url.host else {
             throw ShadowClientGameStreamError.invalidURL
         }
-        return try await ShadowClientSecureHTTPStreamTransport.requestData(
-            url: url,
-            host: host,
-            requestData: requestData,
-            pinnedServerCertificateDER: pinnedServerCertificateDER,
-            clientCertificates: clientCertificates,
-            clientCertificateIdentity: clientCertificateIdentity,
-            timeout: timeout
-        )
+        let startedAt = ContinuousClock.now
+        var failures: [Error] = []
+
+        for connectionTarget in resolvedConnectionTargets(for: host) {
+            do {
+                let connectURL = try urlByReplacingHost(url, with: connectionTarget)
+                return try await ShadowClientSecureHTTPStreamTransport.requestData(
+                    url: connectURL,
+                    requestHost: host,
+                    connectHost: connectionTarget,
+                    requestData: requestData,
+                    pinnedServerCertificateDER: pinnedServerCertificateDER,
+                    clientCertificates: clientCertificates,
+                    clientCertificateIdentity: clientCertificateIdentity,
+                    timeout: remainingPerTargetTimeout(
+                        startedAt: startedAt,
+                        overallTimeout: timeout
+                    )
+                )
+            } catch {
+                failures.append(error)
+            }
+        }
+
+        throw failures.last ?? ShadowClientGameStreamError.requestFailed("HTTPS transport failed")
     }
 
     private static func requestPinnedHTTPSXML(
         url: URL,
+        requestHost: String,
+        connectionTargets: [String],
         pinnedServerCertificateDER: Data?,
         clientCertificates: [SecCertificate]?,
         clientCertificateIdentity: SecIdentity?,
         timeout: TimeInterval
     ) async throws -> String {
-        guard let host = url.host else {
+        guard url.host != nil else {
             throw ShadowClientGameStreamError.invalidURL
         }
-        return try await ShadowClientSecureHTTPStreamTransport.requestXML(
-            url: url,
-            host: host,
-            requestData: makeHTTPRequestData(url: url, host: host, method: "GET"),
+        let startedAt = ContinuousClock.now
+        var failures: [Error] = []
+        let credential = clientCertificateCredential(
+            identity: clientCertificateIdentity,
+            certificates: clientCertificates
+        )
+
+        for connectionTarget in connectionTargets {
+            do {
+                let connectURL = try urlByReplacingHost(url, with: connectionTarget)
+                return try await requestPinnedHTTPSXMLUsingURLSession(
+                    url: connectURL,
+                    requestHost: requestHost,
+                    connectHost: connectionTarget,
+                    pinnedServerCertificateDER: pinnedServerCertificateDER,
+                    clientCertificateCredential: credential,
+                    timeout: remainingPerTargetTimeout(
+                        startedAt: startedAt,
+                        overallTimeout: timeout
+                    )
+                )
+            } catch {
+                failures.append(error)
+            }
+        }
+
+        throw failures.last ?? ShadowClientGameStreamError.requestFailed("HTTPS transport failed")
+    }
+
+    private static func requestPinnedHTTPSXMLUsingURLSession(
+        url: URL,
+        requestHost: String,
+        connectHost: String,
+        pinnedServerCertificateDER: Data?,
+        clientCertificateCredential: URLCredential?,
+        timeout: TimeInterval
+    ) async throws -> String {
+        let delegate = ShadowClientServerTrustURLSessionDelegate(
             pinnedServerCertificateDER: pinnedServerCertificateDER,
-            clientCertificates: clientCertificates,
-            clientCertificateIdentity: clientCertificateIdentity,
-            timeout: timeout
+            clientCertificateCredential: clientCertificateCredential
+        )
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = timeout
+        configuration.timeoutIntervalForResource = timeout
+        configuration.waitsForConnectivity = false
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        let session = URLSession(
+            configuration: configuration,
+            delegate: delegate,
+            delegateQueue: nil
+        )
+        defer {
+            session.invalidateAndCancel()
+        }
+
+        var request = URLRequest(url: url, timeoutInterval: timeout)
+        request.httpMethod = "GET"
+        request.setValue(
+            "\(requestHost)\(url.port.map { ":\($0)" } ?? "")",
+            forHTTPHeaderField: "Host"
+        )
+        request.setValue("close", forHTTPHeaderField: "Connection")
+
+        do {
+            let (data, response) = try await session.data(for: request, delegate: delegate)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw ShadowClientGameStreamError.invalidResponse
+            }
+            guard (200 ..< 300).contains(httpResponse.statusCode) else {
+                let message = String(data: data, encoding: .utf8) ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+                throw ShadowClientGameStreamError.responseRejected(
+                    code: httpResponse.statusCode,
+                    message: message
+                )
+            }
+            guard let xml = String(data: data, encoding: .utf8), !xml.isEmpty else {
+                throw ShadowClientGameStreamError.malformedXML
+            }
+            return xml
+        } catch {
+            if let urlError = error as? URLError, urlError.code == .timedOut {
+                logger.error(
+                    "Secure HTTP timed out host=\(requestHost, privacy: .public) connect-host=\(connectHost, privacy: .public) stage=session data"
+                )
+            }
+            throw requestFailureError(error, tlsFailure: delegate.tlsFailure)
+        }
+    }
+
+    static func connectionTargetCandidates(
+        for host: String,
+        resolvedHosts: [String]
+    ) -> [String] {
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedHost.isEmpty else {
+            return []
+        }
+
+        let shouldAllowLoopback = isLoopbackHost(normalizedHost)
+        var seen: Set<String> = []
+        var preferred: [String] = []
+        var deferred: [String] = []
+
+        for candidate in resolvedHosts {
+            let trimmedCandidate = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedCandidate.isEmpty else {
+                continue
+            }
+            let normalizedCandidate = trimmedCandidate.lowercased()
+            guard seen.insert(normalizedCandidate).inserted else {
+                continue
+            }
+
+            if isLoopbackHost(trimmedCandidate), !shouldAllowLoopback {
+                continue
+            }
+
+            if isScopedLinkLocalIPv6Host(trimmedCandidate) {
+                continue
+            }
+
+            if isLinkLocalIPv6Host(trimmedCandidate) {
+                deferred.append(trimmedCandidate)
+                continue
+            }
+
+            preferred.append(trimmedCandidate)
+        }
+
+        let candidates = preferred + deferred
+        return candidates.isEmpty ? [normalizedHost] : candidates
+    }
+
+    private static func resolvedConnectionTargets(for host: String) -> [String] {
+        connectionTargetCandidates(
+            for: host,
+            resolvedHosts: resolveNumericHosts(for: host)
+        )
+    }
+
+    private static func resolveNumericHosts(for host: String) -> [String] {
+        if parseIPv4Literal(host) != nil || parseIPv6Literal(host) != nil {
+            return [host]
+        }
+
+        var results = resolveNumericHostsUsingGetAddrInfo(for: host)
+        if results.isEmpty {
+            results = resolveNumericHostsUsingCFHost(for: host)
+        }
+        return results.isEmpty ? [host] : results
+    }
+
+    private static func resolveNumericHostsUsingGetAddrInfo(for host: String) -> [String] {
+        var hints = addrinfo(
+            ai_flags: AI_ADDRCONFIG,
+            ai_family: AF_UNSPEC,
+            ai_socktype: SOCK_STREAM,
+            ai_protocol: IPPROTO_TCP,
+            ai_addrlen: 0,
+            ai_canonname: nil,
+            ai_addr: nil,
+            ai_next: nil
+        )
+        var resultPointer: UnsafeMutablePointer<addrinfo>?
+        let status = getaddrinfo(host, nil, &hints, &resultPointer)
+        guard status == 0, let resultPointer else {
+            return []
+        }
+        defer {
+            freeaddrinfo(resultPointer)
+        }
+
+        var results: [String] = []
+        var cursor: UnsafeMutablePointer<addrinfo>? = resultPointer
+        while let current = cursor {
+            var hostnameBuffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            let status = getnameinfo(
+                current.pointee.ai_addr,
+                socklen_t(current.pointee.ai_addrlen),
+                &hostnameBuffer,
+                socklen_t(hostnameBuffer.count),
+                nil,
+                0,
+                NI_NUMERICHOST
+            )
+            if status == 0 {
+                let numericHost = String(cString: hostnameBuffer)
+                if !numericHost.isEmpty {
+                    results.append(numericHost)
+                }
+            }
+            cursor = current.pointee.ai_next
+        }
+
+        return results
+    }
+
+    private static func resolveNumericHostsUsingCFHost(for host: String) -> [String] {
+        let cfHost = CFHostCreateWithName(nil, host as CFString).takeRetainedValue()
+        var streamError = CFStreamError()
+        guard CFHostStartInfoResolution(cfHost, .addresses, &streamError) else {
+            return []
+        }
+
+        var hasBeenResolved = DarwinBoolean(false)
+        guard let addressArray = CFHostGetAddressing(cfHost, &hasBeenResolved)?.takeUnretainedValue() as? [Data],
+              hasBeenResolved.boolValue
+        else {
+            return []
+        }
+
+        var seen: Set<String> = []
+        var results: [String] = []
+
+        for addressData in addressArray {
+            let hostString = addressData.withUnsafeBytes { rawBuffer -> String? in
+                guard let baseAddress = rawBuffer.baseAddress else {
+                    return nil
+                }
+                let sockaddrPointer = baseAddress.assumingMemoryBound(to: sockaddr.self)
+                let length = socklen_t(addressData.count)
+                return numericHostString(
+                    from: UnsafeMutablePointer(mutating: sockaddrPointer),
+                    length: length
+                )
+            }
+
+            guard let hostString else {
+                continue
+            }
+            let normalized = hostString.lowercased()
+            guard seen.insert(normalized).inserted else {
+                continue
+            }
+            results.append(hostString)
+        }
+
+        return results
+    }
+
+    private static func numericHostString(
+        from address: UnsafeMutablePointer<sockaddr>,
+        length: socklen_t
+    ) -> String? {
+        var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        let status = getnameinfo(
+            address,
+            length,
+            &buffer,
+            socklen_t(buffer.count),
+            nil,
+            0,
+            NI_NUMERICHOST
+        )
+        guard status == 0 else {
+            return nil
+        }
+        return String(cString: buffer)
+    }
+
+    private static func remainingPerTargetTimeout(
+        startedAt: ContinuousClock.Instant,
+        overallTimeout: TimeInterval
+    ) -> TimeInterval {
+        let elapsed = startedAt.duration(to: ContinuousClock.now)
+        let elapsedSeconds = Double(elapsed.components.seconds) +
+            (Double(elapsed.components.attoseconds) / 1_000_000_000_000_000_000)
+        let remaining = overallTimeout - elapsedSeconds
+        return max(0.75, min(1.5, remaining))
+    }
+
+    private static func urlByReplacingHost(_ url: URL, with host: String) throws -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            throw ShadowClientGameStreamError.invalidURL
+        }
+        components.host = formattedURLHost(host)
+        guard let updatedURL = components.url else {
+            throw ShadowClientGameStreamError.invalidURL
+        }
+        return updatedURL
+    }
+
+    private static func formattedURLHost(_ host: String) -> String {
+        let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedHost.contains(":"), !trimmedHost.hasPrefix("["), !trimmedHost.hasSuffix("]") else {
+            return trimmedHost
+        }
+        return "[\(trimmedHost)]"
+    }
+
+    static func urlForConnectionTarget(_ url: URL, host: String) throws -> URL {
+        try urlByReplacingHost(url, with: host)
+    }
+
+    private static func isLoopbackHost(_ host: String) -> Bool {
+        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized == "localhost" || normalized == "::1" || normalized.hasPrefix("127.")
+    }
+
+    private static func isLinkLocalIPv6Host(_ host: String) -> Bool {
+        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.hasPrefix("fe8") || normalized.hasPrefix("fe9") ||
+            normalized.hasPrefix("fea") || normalized.hasPrefix("feb")
+    }
+
+    private static func isScopedLinkLocalIPv6Host(_ host: String) -> Bool {
+        isLinkLocalIPv6Host(host) && host.contains("%")
+    }
+
+    private static func parseIPv4Literal(_ host: String) -> in_addr? {
+        var parsed = in_addr()
+        let result = host.withCString { cString in
+            inet_pton(AF_INET, cString, &parsed)
+        }
+        guard result == 1 else {
+            return nil
+        }
+        return parsed
+    }
+
+    private static func parseIPv6Literal(_ host: String) -> in6_addr? {
+        var parsed = in6_addr()
+        let result = host.withCString { cString in
+            inet_pton(AF_INET6, cString, &parsed)
+        }
+        guard result == 1 else {
+            return nil
+        }
+        return parsed
+    }
+
+    private static func clientCertificateCredential(
+        identity: SecIdentity?,
+        certificates: [SecCertificate]?
+    ) -> URLCredential? {
+        guard let identity else {
+            return nil
+        }
+
+        var credentialCertificates: [Any] = [identity]
+        if let certificates {
+            credentialCertificates.append(contentsOf: certificates)
+        }
+        return URLCredential(
+            identity: identity,
+            certificates: credentialCertificates,
+            persistence: .forSession
         )
     }
 
@@ -1963,7 +2352,8 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         subsystem: "com.skyline23.shadow-client",
         category: "GameStreamHTTPS"
     )
-    private let host: String
+    private let requestHost: String
+    private let connectHost: String
     private let url: URL
     private let pinnedServerCertificateDER: Data?
     private let clientCertificates: [SecCertificate]?
@@ -1991,7 +2381,8 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
 
     private init(
         url: URL,
-        host: String,
+        requestHost: String,
+        connectHost: String,
         requestData: Data,
         pinnedServerCertificateDER: Data?,
         clientCertificates: [SecCertificate]?,
@@ -1999,7 +2390,8 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         timeout: TimeInterval
     ) {
         self.url = url
-        self.host = host
+        self.requestHost = requestHost
+        self.connectHost = connectHost
         self.pinnedServerCertificateDER = pinnedServerCertificateDER
         self.clientCertificates = clientCertificates
         self.clientCertificateIdentity = clientCertificateIdentity
@@ -2009,7 +2401,8 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
 
     static func requestData(
         url: URL,
-        host: String,
+        requestHost: String,
+        connectHost: String,
         requestData: Data,
         pinnedServerCertificateDER: Data?,
         clientCertificates: [SecCertificate]?,
@@ -2018,7 +2411,8 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
     ) async throws -> Data {
         let transport = ShadowClientSecureHTTPStreamTransport(
             url: url,
-            host: host,
+            requestHost: requestHost,
+            connectHost: connectHost,
             requestData: requestData,
             pinnedServerCertificateDER: pinnedServerCertificateDER,
             clientCertificates: clientCertificates,
@@ -2030,7 +2424,8 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
 
     static func requestXML(
         url: URL,
-        host: String,
+        requestHost: String,
+        connectHost: String,
         requestData: Data,
         pinnedServerCertificateDER: Data?,
         clientCertificates: [SecCertificate]?,
@@ -2039,7 +2434,8 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
     ) async throws -> String {
         let responseData = try await ShadowClientSecureHTTPStreamTransport.requestData(
             url: url,
-            host: host,
+            requestHost: requestHost,
+            connectHost: connectHost,
             requestData: requestData,
             pinnedServerCertificateDER: pinnedServerCertificateDER,
             clientCertificates: clientCertificates,
@@ -2070,7 +2466,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         var writeRef: Unmanaged<CFWriteStream>?
         CFStreamCreatePairWithSocketToHost(
             nil,
-            host as CFString,
+            connectHost as CFString,
             UInt32(url.port ?? 443),
             &readRef,
             &writeRef
@@ -2137,7 +2533,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         let timeoutWorkItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             Self.logger.error(
-                "Secure HTTP timed out host=\(self.host, privacy: .public) stage=\(self.timeoutStage, privacy: .public)"
+                "Secure HTTP timed out host=\(self.requestHost, privacy: .public) connect-host=\(self.connectHost, privacy: .public) stage=\(self.timeoutStage, privacy: .public)"
             )
             self.finish(.failure(
                 ShadowClientGameStreamError.requestFailed("HTTPS \(self.timeoutStage) timed out")
@@ -2197,7 +2593,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
             guard validatePeerIfPossible() else { return }
             timeoutStage = "request write"
             Self.logger.notice(
-                "Secure HTTP writable host=\(self.host, privacy: .public) stage=\(self.timeoutStage, privacy: .public)"
+                "Secure HTTP writable host=\(self.requestHost, privacy: .public) connect-host=\(self.connectHost, privacy: .public) stage=\(self.timeoutStage, privacy: .public)"
             )
             writePendingBytes()
         case .endEncountered:
@@ -2258,7 +2654,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         if requestOffset >= requestData.count {
             timeoutStage = "response read"
             Self.logger.notice(
-                "Secure HTTP request write complete host=\(self.host, privacy: .public) next-stage=\(self.timeoutStage, privacy: .public)"
+                "Secure HTTP request write complete host=\(self.requestHost, privacy: .public) connect-host=\(self.connectHost, privacy: .public) next-stage=\(self.timeoutStage, privacy: .public)"
             )
         }
     }

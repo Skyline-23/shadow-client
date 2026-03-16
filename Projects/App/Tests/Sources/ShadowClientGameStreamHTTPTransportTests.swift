@@ -58,10 +58,10 @@ func pairchallengeDoesNotPinServerCertificateDuringPairing() {
 
 @Test("HTTP request builder includes method headers and body length")
 func httpRequestBuilderIncludesMethodHeadersAndBodyLength() {
-    let url = URL(string: "https://skyline23-pc.local:47984/actions/clipboard?type=text")!
+    let url = URL(string: "https://desktop-lan.local:47984/actions/clipboard?type=text")!
     let requestData = ShadowClientGameStreamHTTPTransport.makeHTTPRequestData(
         url: url,
-        host: "skyline23-pc.local",
+        host: "desktop-lan.local",
         method: "POST",
         headers: [
             "Content-Type": "text/plain; charset=utf-8",
@@ -71,10 +71,49 @@ func httpRequestBuilderIncludesMethodHeadersAndBodyLength() {
 
     let requestText = String(decoding: requestData, as: UTF8.self)
     #expect(requestText.contains("POST /actions/clipboard?type=text HTTP/1.1"))
-    #expect(requestText.contains("Host: skyline23-pc.local:47984"))
+    #expect(requestText.contains("Host: desktop-lan.local:47984"))
     #expect(requestText.contains("Content-Type: text/plain; charset=utf-8"))
     #expect(requestText.contains("Content-Length: 5"))
     #expect(requestText.hasSuffix("\r\n\r\nhello"))
+}
+
+@Test("HTTP transport keeps dual-stack targets while skipping loopback and scoped link-local fallbacks")
+func httpTransportConnectionTargetsPreferUsableRemoteAddresses() {
+    let targets = ShadowClientGameStreamHTTPTransport.connectionTargetCandidates(
+        for: "desktop.local",
+        resolvedHosts: [
+            "fe80::1%bridge100",
+            "::1",
+            "2001:db8::20",
+            "10.0.0.20",
+            "10.0.0.20",
+        ]
+    )
+
+    #expect(targets == ["2001:db8::20", "10.0.0.20"])
+}
+
+@Test("HTTP transport preserves loopback targets for localhost requests")
+func httpTransportConnectionTargetsKeepLoopbackForLocalhost() {
+    let targets = ShadowClientGameStreamHTTPTransport.connectionTargetCandidates(
+        for: "localhost",
+        resolvedHosts: [
+            "::1",
+            "127.0.0.1",
+        ]
+    )
+
+    #expect(targets == ["::1", "127.0.0.1"])
+}
+
+@Test("HTTP transport rewrites HTTPS URLs for numeric IPv6 targets")
+func httpTransportRewritesURLForNumericIPv6Targets() throws {
+    let rewrittenURL = try ShadowClientGameStreamHTTPTransport.urlForConnectionTarget(
+        URL(string: "https://desktop.local:47984/serverinfo")!,
+        host: "2001:db8::20"
+    )
+
+    #expect(rewrittenURL.absoluteString == "https://[2001:db8::20]:47984/serverinfo")
 }
 
 @Test("Launch parameter builder includes Apollo virtual display request when enabled")

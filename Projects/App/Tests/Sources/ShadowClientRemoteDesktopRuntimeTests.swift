@@ -423,15 +423,15 @@ func metadataClientSkipsPlainHTTPFallbackForLocalHostCertificateMismatch() async
     )
 
     let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
-    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "buseongs-macbook-pro-14.local")
+    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "apollo-host.local")
     let client = NativeGameStreamMetadataClient(
         identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
         pinnedCertificateStore: pinnedStore,
         transport: transport
     )
 
-    let info = try await client.fetchServerInfo(host: "buseongs-macbook-pro-14.local")
-    #expect(info.host == "buseongs-macbook-pro-14.local")
+    let info = try await client.fetchServerInfo(host: "apollo-host.local")
+    #expect(info.host == "apollo-host.local")
     #expect(info.pairStatus == .notPaired)
     #expect(
         await transport.calls() == [
@@ -624,8 +624,8 @@ func metadataClientSkipsAppListHTTPSWithoutPinnedCertificate() async {
 func remoteDesktopRuntimeRefreshesHostsAndLoadsApps() async {
     let client = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "192.168.0.20": .init(
-                host: "192.168.0.20",
+            "10.0.0.20": .init(
+                host: "10.0.0.20",
                 displayName: "LivingRoom-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -648,7 +648,7 @@ func remoteDesktopRuntimeRefreshesHostsAndLoadsApps() async {
             ),
         ],
         appListByHost: [
-            "192.168.0.20": [
+            "10.0.0.20": [
                 .init(id: 10, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
                 .init(id: 11, title: "Steam", hdrSupported: false, isAppCollectorGame: true),
             ],
@@ -657,15 +657,15 @@ func remoteDesktopRuntimeRefreshesHostsAndLoadsApps() async {
 
     let runtime = ShadowClientRemoteDesktopRuntime(metadataClient: client)
     runtime.refreshHosts(
-        candidates: ["192.168.0.30", "192.168.0.20"],
-        preferredHost: "192.168.0.20"
+        candidates: ["192.168.0.30", "10.0.0.20"],
+        preferredHost: "10.0.0.20"
     )
 
     await waitForHostCatalogReady(runtime)
     await waitForAppCatalogReady(runtime)
 
     #expect(runtime.hostState == .loaded)
-    #expect(runtime.selectedHost?.host == "192.168.0.20")
+    #expect(runtime.selectedHost?.host == "10.0.0.20")
     #expect(runtime.apps.count == 2)
     #expect(runtime.appState == .loaded)
 
@@ -871,8 +871,8 @@ func remoteDesktopRuntimeTriesSelectedExternalHostBeforeLocalFallback() async {
                 gfeVersion: nil,
                 uniqueID: "HOST-123"
             ),
-            "192.168.0.20": .init(
-                host: "192.168.0.20",
+            "10.0.0.20": .init(
+                host: "10.0.0.20",
                 displayName: "Example-PC",
                 pairStatus: .notPaired,
                 currentGameID: 0,
@@ -885,7 +885,7 @@ func remoteDesktopRuntimeTriesSelectedExternalHostBeforeLocalFallback() async {
         ],
         appListByHost: [:]
     )
-    let controlClient = RecordingGameStreamControlClient(successfulHosts: ["192.168.0.20"])
+    let controlClient = RecordingGameStreamControlClient(successfulHosts: ["10.0.0.20"])
     let pairingRouteStore = ShadowClientPairingRouteStore(
         defaultsSuiteName: "shadow-client.pairing.local-preferred.\(UUID().uuidString)"
     )
@@ -896,7 +896,7 @@ func remoteDesktopRuntimeTriesSelectedExternalHostBeforeLocalFallback() async {
     )
 
     runtime.refreshHosts(
-        candidates: ["external-host.example.invalid", "192.168.0.20"],
+        candidates: ["external-host.example.invalid", "10.0.0.20"],
         preferredHost: "external-host.example.invalid"
     )
     await waitForHostCatalogReady(runtime)
@@ -905,7 +905,7 @@ func remoteDesktopRuntimeTriesSelectedExternalHostBeforeLocalFallback() async {
     await waitForPairingState(runtime)
 
     #expect(runtime.pairingState == .paired("Paired"))
-    #expect(await controlClient.pairRequests() == ["external-host.example.invalid", "192.168.0.20"])
+    #expect(await controlClient.pairRequests() == ["external-host.example.invalid", "10.0.0.20"])
 }
 
 @Test("Remote desktop runtime merges local and external descriptors for the same unique ID")
@@ -924,8 +924,8 @@ func remoteDesktopRuntimeMergesDescriptorsSharingUniqueID() async {
                 gfeVersion: nil,
                 uniqueID: "HOST-123"
             ),
-            "192.168.0.20": .init(
-                host: "192.168.0.20",
+            "10.0.0.20": .init(
+                host: "10.0.0.20",
                 displayName: "Example-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -944,7 +944,7 @@ func remoteDesktopRuntimeMergesDescriptorsSharingUniqueID() async {
     )
 
     runtime.refreshHosts(
-        candidates: ["external-host.example.invalid", "192.168.0.20"],
+        candidates: ["external-host.example.invalid", "10.0.0.20"],
         preferredHost: "external-host.example.invalid"
     )
     await waitForHostCatalogReady(runtime)
@@ -952,6 +952,145 @@ func remoteDesktopRuntimeMergesDescriptorsSharingUniqueID() async {
     #expect(runtime.hosts.count == 1)
     #expect(runtime.hosts.first?.uniqueID == "HOST-123")
     #expect(runtime.hosts.first?.pairStatus == .paired)
+}
+
+@Test("Remote desktop runtime preserves cached identity when alias serverinfo refresh fails")
+@MainActor
+func remoteDesktopRuntimePreservesCachedIdentityForFailedAliasRefresh() async {
+    let defaultsSuite = "shadow-client.runtime.alias-refresh.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let initialMetadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "desktop-discovery.example.invalid": .init(
+                host: "desktop-discovery.example.invalid",
+                localHost: "10.0.0.52",
+                remoteHost: "198.51.100.20",
+                manualHost: "desktop-manual.example.invalid",
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
+        ],
+        appListByHost: [:]
+    )
+
+    let seedingRuntime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: initialMetadataClient,
+        controlClient: RecordingGameStreamControlClient(),
+        defaults: defaults
+    )
+    seedingRuntime.refreshHosts(
+        candidates: ["desktop-discovery.example.invalid"],
+        preferredHost: "desktop-discovery.example.invalid"
+    )
+    await waitForHostCatalogReady(seedingRuntime)
+    #expect(seedingRuntime.hosts.count == 1)
+
+    let failingMetadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [:],
+        appListByHost: [:]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: failingMetadataClient,
+        controlClient: RecordingGameStreamControlClient(),
+        defaults: defaults
+    )
+
+    runtime.refreshHosts(
+        candidates: ["desktop-manual.example.invalid", "desktop-discovery.example.invalid"],
+        preferredHost: "desktop-manual.example.invalid"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(runtime.hosts.count == 1)
+    #expect(runtime.hosts.first?.uniqueID == "HOST-123")
+    #expect(runtime.hosts.first?.pairStatus == .paired)
+    #expect(runtime.hosts.first?.routes.allEndpoints.map(\.host).contains("desktop-manual.example.invalid") == true)
+    #expect(runtime.hosts.first?.routes.allEndpoints.map(\.host).contains("desktop-discovery.example.invalid") == true)
+}
+
+@Test("Remote desktop runtime coalesces known alias candidates before probing serverinfo")
+@MainActor
+func remoteDesktopRuntimeCoalescesKnownAliasCandidatesBeforeProbe() async {
+    let defaultsSuite = "shadow-client.runtime.alias-coalesce.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let seedingClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "desktop-discovery.example.invalid": .init(
+                host: "desktop-discovery.example.invalid",
+                localHost: "10.0.0.52",
+                remoteHost: "198.51.100.20",
+                manualHost: "desktop-manual.example.invalid",
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let seedingRuntime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: seedingClient,
+        controlClient: RecordingGameStreamControlClient(),
+        defaults: defaults
+    )
+    seedingRuntime.refreshHosts(candidates: ["desktop-discovery.example.invalid"])
+    await waitForHostCatalogReady(seedingRuntime)
+
+    let probingClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "desktop-manual.example.invalid": .init(
+                host: "desktop-manual.example.invalid",
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: probingClient,
+        controlClient: RecordingGameStreamControlClient(),
+        defaults: defaults
+    )
+
+    runtime.refreshHosts(
+        candidates: ["desktop-manual.example.invalid", "desktop-discovery.example.invalid"],
+        preferredHost: "desktop-manual.example.invalid"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(await probingClient.serverInfoRequests() == ["desktop-manual.example.invalid"])
+    #expect(runtime.hosts.count == 1)
+    #expect(runtime.hosts.first?.host == "desktop-manual.example.invalid")
 }
 
 @Test("Remote desktop runtime preserves paired status when a host has a pinned certificate")
@@ -967,12 +1106,12 @@ func remoteDesktopRuntimePreservesPairedStatusForPinnedHosts() async {
     }
 
     let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
-    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "192.168.0.20")
+    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "10.0.0.20")
 
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "192.168.0.20": .init(
-                host: "192.168.0.20",
+            "10.0.0.20": .init(
+                host: "10.0.0.20",
                 displayName: "Example-PC",
                 pairStatus: .notPaired,
                 currentGameID: 0,
@@ -994,8 +1133,8 @@ func remoteDesktopRuntimePreservesPairedStatusForPinnedHosts() async {
     )
 
     runtime.refreshHosts(
-        candidates: ["192.168.0.20"],
-        preferredHost: "192.168.0.20"
+        candidates: ["10.0.0.20"],
+        preferredHost: "10.0.0.20"
     )
     await waitForHostCatalogReady(runtime)
 
@@ -1015,15 +1154,15 @@ func remoteDesktopRuntimeDeletesHostAndClearsPairingArtifacts() async {
     }
 
     let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
-    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "192.168.0.20")
+    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "10.0.0.20")
 
     let pairingRouteStore = ShadowClientPairingRouteStore(defaultsSuiteName: defaultsSuite)
-    await pairingRouteStore.setPreferredHost("192.168.0.20", for: "uniqueid:host-123")
+    await pairingRouteStore.setPreferredHost("10.0.0.20", for: "uniqueid:host-123")
 
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "192.168.0.20": .init(
-                host: "192.168.0.20",
+            "10.0.0.20": .init(
+                host: "10.0.0.20",
                 displayName: "Example-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -1046,16 +1185,16 @@ func remoteDesktopRuntimeDeletesHostAndClearsPairingArtifacts() async {
     )
 
     runtime.refreshHosts(
-        candidates: ["192.168.0.20"],
-        preferredHost: "192.168.0.20"
+        candidates: ["10.0.0.20"],
+        preferredHost: "10.0.0.20"
     )
     await waitForHostCatalogReady(runtime)
 
-    runtime.deleteHost("192.168.0.20")
+    runtime.deleteHost("10.0.0.20")
 
     #expect(runtime.hosts.isEmpty)
     #expect(runtime.selectedHost == nil)
-    #expect(await pinnedStore.certificateDER(forHost: "192.168.0.20") == nil)
+    #expect(await pinnedStore.certificateDER(forHost: "10.0.0.20") == nil)
     #expect(await pairingRouteStore.preferredHost(for: "uniqueid:host-123") == nil)
 }
 
@@ -1075,8 +1214,8 @@ func remoteDesktopRuntimePrefersReachableLocalRouteWhenMerging() async {
                 gfeVersion: nil,
                 uniqueID: "HOST-123"
             ),
-            "192.168.0.20": .init(
-                host: "192.168.0.20",
+            "10.0.0.20": .init(
+                host: "10.0.0.20",
                 displayName: "Example-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -1103,22 +1242,40 @@ func remoteDesktopRuntimePrefersReachableLocalRouteWhenMerging() async {
     )
 
     runtime.refreshHosts(
-        candidates: ["external-host.example.invalid", "192.168.0.20"]
+        candidates: ["external-host.example.invalid", "10.0.0.20"]
     )
     await waitForHostCatalogReady(runtime)
 
     #expect(runtime.hosts.count == 1)
-    #expect(runtime.hosts.first?.host == "192.168.0.20")
+    #expect(runtime.hosts.first?.host == "10.0.0.20")
 }
 
 @Test("Remote desktop runtime rewrites launch session URLs to the active runtime host")
 func remoteDesktopRuntimeRewritesLaunchSessionURLToRuntimeHost() {
     let rewritten = ShadowClientRemoteDesktopRuntime.rewrittenSessionURL(
-        "rtsp://192.168.0.52:48010",
-        runtimeHost: "wifi.skyline23.com"
+        "rtsp://10.0.0.52:48010",
+        runtimeHost: "public-gateway.example.invalid"
     )
 
-    #expect(rewritten == "rtsp://wifi.skyline23.com:48010")
+    #expect(rewritten == "rtsp://public-gateway.example.invalid:48010")
+}
+
+@Test("Remote desktop runtime removes self-host candidates before probing metadata")
+func remoteDesktopRuntimeRefreshProbeCandidatesExcludeCurrentMachineAliases() {
+    let candidates = ShadowClientRemoteDesktopRuntime.refreshProbeCandidates(
+        [
+            "desktop-lan.local",
+            "apollo-host.local",
+            "10.0.0.50",
+        ],
+        localInterfaceHosts: [
+            "apollo-host.local",
+            "apollo-host",
+            "10.0.0.50",
+        ]
+    )
+
+    #expect(candidates == ["desktop-lan.local"])
 }
 
 private struct FailingIdentityProvider: ShadowClientPairingIdentityProviding {
@@ -1212,6 +1369,7 @@ private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient
     private let serverInfoByHost: [String: ShadowClientGameStreamServerInfo]
     private let appListByHost: [String: [ShadowClientRemoteAppDescriptor]]
     private let appListFailureByHost: [String: ShadowClientGameStreamError]
+    private var recordedServerInfoHosts: [String] = []
 
     init(
         serverInfoByHost: [String: ShadowClientGameStreamServerInfo],
@@ -1224,6 +1382,7 @@ private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient
     }
 
     func fetchServerInfo(host: String) async throws -> ShadowClientGameStreamServerInfo {
+        recordedServerInfoHosts.append(host)
         if let info = serverInfoByHost[host] {
             return info
         }
@@ -1236,6 +1395,10 @@ private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient
             throw error
         }
         return appListByHost[host] ?? []
+    }
+
+    func serverInfoRequests() -> [String] {
+        recordedServerInfoHosts
     }
 }
 
