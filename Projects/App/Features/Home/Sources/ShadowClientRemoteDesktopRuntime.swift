@@ -1272,6 +1272,15 @@ private struct ShadowClientLaunchRequestContext: Sendable {
 private struct ShadowClientPairHostCandidate: Equatable, Sendable {
     let host: String
     let httpsPort: Int
+
+    init(host: String, httpsPort: Int) {
+        let endpoint = ShadowClientHostEndpointKit.parseCandidate(
+            host,
+            fallbackHTTPSPort: httpsPort
+        ) ?? ShadowClientRemoteHostEndpoint(host: host, httpsPort: httpsPort)
+        self.host = endpoint.host
+        self.httpsPort = endpoint.httpsPort
+    }
 }
 
 private struct ShadowClientPersistedRemoteHostCatalog: Codable {
@@ -1308,13 +1317,13 @@ private struct ShadowClientPersistedRemoteHostRecord: Codable {
         gfeVersion = descriptor.gfeVersion
         uniqueID = descriptor.uniqueID
         lastError = descriptor.lastError
-        localHost = descriptor.routes.local?.host
-        remoteHost = descriptor.routes.remote?.host
-        manualHost = descriptor.routes.manual?.host
         activeRoute = ShadowClientHostEndpointKit.candidateString(for: descriptor.routes.active)
-        localRoute = descriptor.routes.local.map { ShadowClientHostEndpointKit.candidateString(for: $0) }
-        remoteRoute = descriptor.routes.remote.map { ShadowClientHostEndpointKit.candidateString(for: $0) }
-        manualRoute = descriptor.routes.manual.map { ShadowClientHostEndpointKit.candidateString(for: $0) }
+        localHost = nil
+        remoteHost = nil
+        manualHost = nil
+        localRoute = nil
+        remoteRoute = nil
+        manualRoute = nil
     }
 
     var descriptor: ShadowClientRemoteHostDescriptor {
@@ -1329,9 +1338,9 @@ private struct ShadowClientPersistedRemoteHostRecord: Codable {
             gfeVersion: gfeVersion,
             uniqueID: uniqueID,
             lastError: lastError,
-            localHost: localRoute ?? localHost,
-            remoteHost: remoteRoute ?? remoteHost,
-            manualHost: manualRoute ?? manualHost
+            localHost: nil,
+            remoteHost: nil,
+            manualHost: nil
         )
     }
 }
@@ -1663,6 +1672,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let metadataClient = metadataClient
         let pairingRouteStore = pairingRouteStore
         let pinnedCertificateStore = self.pinnedCertificateStore
+        let logger = self.logger
         let localInterfaceHosts = ShadowClientHostCatalogKit.currentMachineInterfaceHosts()
         let probeCandidates = Self.refreshProbeCandidates(
             normalizedCandidates,
@@ -1686,13 +1696,25 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
         let knownHosts = hosts.isEmpty ? latestResolvedHostDescriptors : hosts
         refreshHostsTask = Task { [weak self] in
-            let preferredRoutes = await Self.preferredRouteOverrides(
+            let persistentPreferredRoutes = await Self.persistentPreferredRouteOverrides(
                 for: knownHosts,
                 pairingRouteStore: pairingRouteStore
             )
-            let storedAliasHostsByKey = Self.aliasHostsByKey(
+            let sessionPreferredRoutes = await Self.sessionPreferredRouteOverrides(
+                for: knownHosts,
+                pairingRouteStore: pairingRouteStore
+            )
+            let preferredRoutes = Self.mergedPreferredRouteOverrides(
+                persistentPreferredRoutesByKey: persistentPreferredRoutes,
+                sessionPreferredRoutesByKey: sessionPreferredRoutes
+            )
+            let storedAliasHostsByKey = Self.sanitizedAliasHostsByKey(
+                Self.aliasHostsByKey(
+                    knownHosts: knownHosts,
+                    preferredRoutesByKey: sessionPreferredRoutes
+                ),
                 knownHosts: knownHosts,
-                preferredRoutesByKey: preferredRoutes
+                refreshCandidates: probeCandidates
             )
             let inferredAliasHostsByKey = Self.inferredAliasHostsByKey(
                 refreshCandidates: probeCandidates,
@@ -1766,6 +1788,40 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 hydratedDescriptors,
                 localInterfaceHosts: localInterfaceHosts
             )
+            let reconciledPersistentPreferredRoutes = Self.reconciledPreferredRoutesByKey(
+                preferredRoutesByKey: persistentPreferredRoutes,
+                resolvedHosts: filteredDescriptors
+            )
+            let reconciledSessionPreferredRoutes = Self.reconciledPreferredRoutesByKey(
+                preferredRoutesByKey: sessionPreferredRoutes,
+                resolvedHosts: filteredDescriptors
+            )
+            if reconciledPersistentPreferredRoutes != persistentPreferredRoutes {
+                let allKeys = Set(persistentPreferredRoutes.keys).union(reconciledPersistentPreferredRoutes.keys)
+                for key in allKeys {
+                    let previousValue = persistentPreferredRoutes[key]
+                    let nextValue = reconciledPersistentPreferredRoutes[key]
+                    guard previousValue != nextValue else {
+                        continue
+                    }
+                    await pairingRouteStore.setPersistentPreferredHost(nextValue, for: key)
+                }
+            }
+            if reconciledSessionPreferredRoutes != sessionPreferredRoutes {
+                let allKeys = Set(sessionPreferredRoutes.keys).union(reconciledSessionPreferredRoutes.keys)
+                for key in allKeys {
+                    let previousValue = sessionPreferredRoutes[key]
+                    let nextValue = reconciledSessionPreferredRoutes[key]
+                    guard previousValue != nextValue else {
+                        continue
+                    }
+                    await pairingRouteStore.setSessionPreferredHost(nextValue, for: key)
+                }
+            }
+            let reconciledPreferredRoutes = Self.mergedPreferredRouteOverrides(
+                persistentPreferredRoutesByKey: reconciledPersistentPreferredRoutes,
+                sessionPreferredRoutesByKey: reconciledSessionPreferredRoutes
+            )
             let sorted = filteredDescriptors.sorted(by: Self.compareHosts)
             let pairedHostKeys = await Self.pairedHostKeys(
                 for: sorted,
@@ -1786,7 +1842,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     sorted,
                     selectedHostID: self.selectedHostID,
                     preferredHost: preferredNormalized,
-                    preferredRoutesByKey: preferredRoutes,
+                    preferredRoutesByKey: reconciledPreferredRoutes,
                     pairedHostKeys: pairedHostKeys
                 )
                 let mergedSummary = mergedHosts
@@ -1861,8 +1917,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let currentLatestHostCandidates = latestHostCandidates
         pairTask = Task { [weak self] in
             do {
-                let pairRouteKey = Self.pairRouteStoreKey(for: selectedHost)
-                let storedPreferredPairHost = await pairingRouteStore.preferredHost(for: pairRouteKey)
+                let storedPreferredPairHost = await Self.effectivePreferredRoute(
+                    for: selectedHost,
+                    pairingRouteStore: pairingRouteStore
+                )
                 let pairCandidates = Self.pairHostCandidates(
                     for: selectedHost,
                     hosts: currentHosts,
@@ -1898,7 +1956,16 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                                 httpsPort: candidate.httpsPort
                             )
                             pairedHost = candidate.host
-                            await pairingRouteStore.setPreferredHost(candidate.host, for: pairRouteKey)
+                            await pairingRouteStore.setSessionPreferredHost(
+                                candidate.host,
+                                for: Self.sessionRouteStoreKey(for: selectedHost)
+                            )
+                            if let persistentRouteKey = Self.persistentRouteStoreKey(for: selectedHost) {
+                                await pairingRouteStore.setPersistentPreferredHost(
+                                    candidate.host,
+                                    for: persistentRouteKey
+                                )
+                            }
                             break candidateLoop
                         } catch {
                             lastError = error
@@ -1996,7 +2063,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return
         }
 
-        let mergeKey = Self.mergeKey(for: host)
+        let sessionRouteKey = Self.sessionRouteStoreKey(for: host)
+        let persistentRouteKey = Self.persistentRouteStoreKey(for: host)
         let remainingHosts = hosts.filter { $0.id != hostID }
 
         hosts = remainingHosts
@@ -2012,7 +2080,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         Task {
-            await self.pairingRouteStore.setPreferredHost(nil, for: mergeKey)
+            await self.pairingRouteStore.setSessionPreferredHost(nil, for: sessionRouteKey)
+            if let persistentRouteKey {
+                await self.pairingRouteStore.setPersistentPreferredHost(nil, for: persistentRouteKey)
+            }
             for endpoint in host.routes.allEndpoints {
                 await self.pinnedCertificateStore.removeCertificate(forHost: endpoint.host)
             }
@@ -2335,14 +2406,16 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     self.lastKnownSessionURL = Self.normalizedSessionURL(connectedSessionURL)
                     self.clearSessionIssueState()
                     Task {
-                        await self.pairingRouteStore.setPreferredHost(
+                        await self.pairingRouteStore.setSessionPreferredHost(
                             resolvedHostDescriptor.host,
-                            for: selectedHostKey
+                            for: Self.sessionRouteStoreKey(for: selectedHost)
                         )
-                        await self.pairingRouteStore.setPreferredHost(
-                            resolvedHostDescriptor.host,
-                            for: Self.mergeKey(for: selectedHost)
-                        )
+                        if let persistentRouteKey = Self.persistentRouteStoreKey(for: selectedHost) {
+                            await self.pairingRouteStore.setPersistentPreferredHost(
+                                resolvedHostDescriptor.host,
+                                for: persistentRouteKey
+                            )
+                        }
                     }
                     if self.sessionPresentationMode == .externalRuntime {
                         self.launchState = .launched(
@@ -3781,7 +3854,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         let mergeKey = Self.mergeKey(for: matchedHost)
         let knownHosts = hosts.isEmpty ? latestResolvedHostDescriptors : hosts
-        let preferredRoutesByKey = await Self.preferredRouteOverrides(
+        let preferredRoutesByKey = await Self.effectivePreferredRouteOverrides(
             for: knownHosts,
             pairingRouteStore: pairingRouteStore
         )
@@ -3789,9 +3862,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             knownHosts: knownHosts,
             preferredRoutesByKey: preferredRoutesByKey
         )
-        let conflictingDescriptor = knownHosts.first { descriptor in
-            Self.knownHostSet(for: descriptor, aliasHostsByKey: aliasHostsByKey).contains(normalizedRouteHost)
-                && Self.mergeKey(for: descriptor) != mergeKey
+        let conflictingDescriptor = Self.bestKnownHost(
+            matching: normalizedRouteHost,
+            in: knownHosts,
+            aliasHostsByKey: aliasHostsByKey
+        ).flatMap { descriptor in
+            Self.mergeKey(for: descriptor) == mergeKey ? nil : descriptor
         }
         if let conflictingDescriptor {
             logger.notice(
@@ -3800,7 +3876,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return
         }
 
-        let pairRouteKey = Self.pairRouteStoreKey(for: matchedHost)
+        let sessionRouteKey = Self.sessionRouteStoreKey(for: matchedHost)
         hosts = Self.updatingHostDescriptors(
             hosts,
             matching: mergeKey,
@@ -3814,8 +3890,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         logger.notice(
             "Host route alias remembered mergeKey=\(mergeKey, privacy: .public) alias=\(normalizedRouteHost, privacy: .public)"
         )
-        await pairingRouteStore.setPreferredHost(normalizedRouteHost, for: mergeKey)
-        await pairingRouteStore.setPreferredHost(normalizedRouteHost, for: pairRouteKey)
+        await pairingRouteStore.setSessionPreferredHost(normalizedRouteHost, for: sessionRouteKey)
     }
 
     @MainActor
@@ -3967,10 +4042,16 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         return
                     }
                     Task {
-                        await pairingRouteStore.setPreferredHost(
+                        await pairingRouteStore.setSessionPreferredHost(
                             resolvedHostDescriptor.host,
-                            for: Self.mergeKey(for: hostDescriptor)
+                            for: Self.sessionRouteStoreKey(for: hostDescriptor)
                         )
+                        if let persistentRouteKey = Self.persistentRouteStoreKey(for: hostDescriptor) {
+                            await pairingRouteStore.setPersistentPreferredHost(
+                                resolvedHostDescriptor.host,
+                                for: persistentRouteKey
+                            )
+                        }
                     }
                     if !sorted.isEmpty {
                         self.cachedAppsByHostID[hostDescriptor.id] = sorted
@@ -4523,13 +4604,16 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         return 4
     }
 
-    private static func pairRouteStoreKey(for selectedHost: ShadowClientRemoteHostDescriptor) -> String {
-        if let uniqueID = selectedHost.uniqueID?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !uniqueID.isEmpty {
-            return "uniqueid:\(uniqueID.lowercased())"
+    private static func persistentRouteStoreKey(for selectedHost: ShadowClientRemoteHostDescriptor) -> String? {
+        guard let uniqueID = normalizedUniqueID(selectedHost.uniqueID) else {
+            return nil
         }
 
-        return "host:\(selectedHost.id)"
+        return "uniqueid:\(uniqueID)"
+    }
+
+    private static func sessionRouteStoreKey(for selectedHost: ShadowClientRemoteHostDescriptor) -> String {
+        mergeKey(for: selectedHost)
     }
 
     private static func isLocalPairHost(_ host: String) -> Bool {
@@ -4556,6 +4640,17 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return 10
         }
         return isLocalPairHost(normalized) ? 1 : 0
+    }
+
+    private static func compareRuntimeEndpointCandidates(_ lhs: String, _ rhs: String) -> Bool {
+        let lhsHost = normalizedCandidateHost(lhs) ?? lhs
+        let rhsHost = normalizedCandidateHost(rhs) ?? rhs
+        let lhsRank = runtimeRouteRank(lhsHost)
+        let rhsRank = runtimeRouteRank(rhsHost)
+        if lhsRank == rhsRank {
+            return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+        }
+        return lhsRank < rhsRank
     }
 
     private static func normalizedHostCandidates(_ candidates: [String]) -> [String] {
@@ -4598,6 +4693,41 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         return ShadowClientHostEndpointKit.candidateString(for: endpoint)
     }
 
+    private static func normalizedCandidateHost(_ candidate: String?) -> String? {
+        guard let endpoint = ShadowClientHostEndpointKit.parseCandidate(
+            candidate,
+            fallbackHTTPSPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
+        ) else {
+            return nil
+        }
+
+        let normalizedHost = endpoint.host
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalizedHost.isEmpty ? nil : normalizedHost
+    }
+
+    private static func knownHostSetContainsCandidate(
+        _ candidate: String,
+        knownHostSet: Set<String>
+    ) -> Bool {
+        let normalizedCandidate = normalizeCandidate(candidate)
+            ?? candidate.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedCandidate.isEmpty else {
+            return false
+        }
+
+        if knownHostSet.contains(normalizedCandidate) {
+            return true
+        }
+
+        guard let normalizedHost = normalizedCandidateHost(normalizedCandidate) else {
+            return false
+        }
+
+        return knownHostSet.contains(normalizedHost)
+    }
+
     private static func compareHosts(
         lhs: ShadowClientRemoteHostDescriptor,
         rhs: ShadowClientRemoteHostDescriptor
@@ -4635,9 +4765,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         var seenKnownHostKeys: Set<String> = []
 
         for candidate in candidates {
-            if let matchedKnownHost = bestKnownHost(
-                matching: candidate,
-                in: knownHosts,
+            if let matchedKnownHost = matchedKnownHostForProbeCandidate(
+                candidate,
+                knownHosts: knownHosts,
+                preferredRoutesByKey: preferredRoutesByKey,
                 aliasHostsByKey: aliasHostsByKey
             ) {
                 let hostKey = mergeKey(for: matchedKnownHost)
@@ -4646,8 +4777,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
                 seenKnownHostKeys.insert(hostKey)
 
+                let matchedKnownHostSet = knownHostSet(for: matchedKnownHost, aliasHostsByKey: aliasHostsByKey)
                 let groupedCandidates = candidates.filter { groupedCandidate in
-                    knownHostSet(for: matchedKnownHost, aliasHostsByKey: aliasHostsByKey).contains(groupedCandidate)
+                    knownHostSetContainsCandidate(groupedCandidate, knownHostSet: matchedKnownHostSet)
                 }
                 let probeCandidate = preferredProbeCandidate(
                     from: groupedCandidates,
@@ -4669,6 +4801,39 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         return results
+    }
+
+    private static func matchedKnownHostForProbeCandidate(
+        _ candidate: String,
+        knownHosts: [ShadowClientRemoteHostDescriptor],
+        preferredRoutesByKey: [String: String],
+        aliasHostsByKey: [String: Set<String>] = [:]
+    ) -> ShadowClientRemoteHostDescriptor? {
+        if let matchedKnownHost = bestKnownHost(
+            matching: candidate,
+            in: knownHosts,
+            aliasHostsByKey: aliasHostsByKey
+        ) {
+            return matchedKnownHost
+        }
+
+        guard let normalizedCandidate = normalizeCandidate(candidate),
+              let normalizedCandidateHostname = normalizedCandidateHost(normalizedCandidate)
+        else {
+            return nil
+        }
+
+        return knownHosts
+            .filter { host in
+                guard let preferredRoute = normalizeCandidate(preferredRoutesByKey[mergeKey(for: host)]),
+                      let preferredRouteHost = normalizedCandidateHost(preferredRoute)
+                else {
+                    return false
+                }
+                return preferredRoute == normalizedCandidate || preferredRouteHost == normalizedCandidateHostname
+            }
+            .sorted(by: compareKnownHostHydrationPriority)
+            .first
     }
 
     private static func hydrateDescriptorsUsingKnownHosts(
@@ -4761,10 +4926,74 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         return knownHosts
             .filter { knownHost in
-                knownHostSet(for: knownHost, aliasHostsByKey: aliasHostsByKey).contains(normalizedHost)
+                knownHostSetContainsCandidate(
+                    normalizedHost,
+                    knownHostSet: knownHostSet(for: knownHost, aliasHostsByKey: aliasHostsByKey)
+                )
             }
             .sorted(by: compareKnownHostHydrationPriority)
             .first
+    }
+
+    private static func reconciledPreferredRoutesByKey(
+        preferredRoutesByKey: [String: String],
+        resolvedHosts: [ShadowClientRemoteHostDescriptor]
+    ) -> [String: String] {
+        guard !preferredRoutesByKey.isEmpty, !resolvedHosts.isEmpty else {
+            return preferredRoutesByKey
+        }
+
+        let groupedHosts = clusterResolvedHosts(resolvedHosts)
+        let reachableGroups = groupedHosts.compactMap { group -> (key: String, group: [ShadowClientRemoteHostDescriptor])? in
+            guard let primary = group.first(where: \.isReachable) ?? group.first else {
+                return nil
+            }
+            return (mergeKey(for: primary), group)
+        }
+        let reachableRouteGroupsByKey = Dictionary(uniqueKeysWithValues: reachableGroups.map { ($0.key, $0.group) })
+
+        var reconciledRoutes = preferredRoutesByKey
+        for (key, preferredRoute) in preferredRoutesByKey {
+            guard let normalizedPreferredRoute = normalizeCandidate(preferredRoute),
+                  let normalizedPreferredHost = normalizedCandidateHost(normalizedPreferredRoute)
+            else {
+                reconciledRoutes.removeValue(forKey: key)
+                continue
+            }
+
+            if let owningGroup = reachableRouteGroupsByKey[key] {
+                let reachableCandidates = owningGroup
+                    .filter(\.isReachable)
+                    .filter { $0.host.lowercased() == normalizedPreferredHost }
+                    .map { ShadowClientHostEndpointKit.candidateString(for: $0.routes.active) }
+                if reachableCandidates.contains(normalizedPreferredRoute) {
+                    reconciledRoutes[key] = normalizedPreferredRoute
+                    continue
+                }
+                if let fallbackCandidate = reachableCandidates.sorted(by: {
+                    compareRuntimeEndpointCandidates($0, $1)
+                }).first {
+                    reconciledRoutes[key] = fallbackCandidate
+                    continue
+                }
+            }
+
+            let competingOwners = reachableRouteGroupsByKey.compactMap { ownerKey, group -> String? in
+                guard ownerKey != key else {
+                    return nil
+                }
+                let ownsHost = group.contains {
+                    $0.isReachable && $0.host.lowercased() == normalizedPreferredHost
+                }
+                return ownsHost ? ownerKey : nil
+            }
+
+            if !competingOwners.isEmpty {
+                reconciledRoutes.removeValue(forKey: key)
+            }
+        }
+
+        return reconciledRoutes
     }
 
     private static func compareKnownHostHydrationPriority(
@@ -5094,6 +5323,48 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
     }
 
+    private static func sanitizedAliasHostsByKey(
+        _ aliasHostsByKey: [String: Set<String>],
+        knownHosts: [ShadowClientRemoteHostDescriptor],
+        refreshCandidates: [String]
+    ) -> [String: Set<String>] {
+        let normalizedRefreshHosts = Set(refreshCandidates.compactMap(normalizedCandidateHost))
+        let routeHostsByKey = Dictionary(
+            uniqueKeysWithValues: knownHosts.map { (mergeKey(for: $0), routeHostSet(for: $0)) }
+        )
+
+        return aliasHostsByKey.reduce(into: [String: Set<String>]()) { partialResult, entry in
+            let key = entry.key
+            let ownRouteHosts = routeHostsByKey[key] ?? []
+            let sanitizedAliases = entry.value.filter { alias in
+                guard let aliasHost = normalizedCandidateHost(alias) else {
+                    return false
+                }
+                if ownRouteHosts.contains(aliasHost) {
+                    return true
+                }
+
+                let claimedByAnotherKnownHost = routeHostsByKey.contains { otherEntry in
+                    otherEntry.key != key && otherEntry.value.contains(aliasHost)
+                }
+                if claimedByAnotherKnownHost {
+                    return false
+                }
+
+                if normalizedRefreshHosts.contains(aliasHost) {
+                    return false
+                }
+
+                return true
+            }
+
+            guard !sanitizedAliases.isEmpty else {
+                return
+            }
+            partialResult[key] = sanitizedAliases
+        }
+    }
+
     private static func mergedAliasHostsByKey(
         _ lhs: [String: Set<String>],
         _ rhs: [String: Set<String>]
@@ -5140,7 +5411,30 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return [:]
         }
 
+        let matchedRouteHosts = routeHostsByKey(
+            knownHosts: knownHosts,
+            aliasHostsByKey: aliasHostsByKey
+        )[matchingKnownHostKey] ?? []
+        guard let normalizedPreferredHostOnly = normalizedCandidateHost(normalizedPreferredHost),
+              matchedRouteHosts.contains(normalizedPreferredHostOnly)
+        else {
+            return [:]
+        }
+
         return [matchingKnownHostKey: [normalizedPreferredHost]]
+    }
+
+    private static func routeHostsByKey(
+        knownHosts: [ShadowClientRemoteHostDescriptor],
+        aliasHostsByKey: [String: Set<String>] = [:]
+    ) -> [String: Set<String>] {
+        Dictionary(
+            uniqueKeysWithValues: knownHosts.map { host in
+                let key = mergeKey(for: host)
+                let aliasHosts = Set((aliasHostsByKey[key] ?? []).compactMap(normalizedCandidateHost))
+                return (key, routeHostSet(for: host).union(aliasHosts))
+            }
+        )
     }
 
     private static func normalizedUniqueID(_ uniqueID: String?) -> String? {
@@ -5301,9 +5595,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         pairingRouteStore: ShadowClientPairingRouteStore
     ) async -> ShadowClientRemoteHostDescriptor {
         let routeGroupKey = mergeKey(for: selectedHost)
-        let preferredHost = await pairingRouteStore.preferredHost(for: pairRouteStoreKey(for: selectedHost))?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
+        let preferredHost = await effectivePreferredRoute(
+            for: selectedHost,
+            pairingRouteStore: pairingRouteStore
+        )
         let knownRouteHosts = Set(
             selectedHost.routes.allEndpoints.map { $0.host.lowercased() }
         )
@@ -5314,8 +5609,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let candidateDescriptors = reachableDescriptors.isEmpty ? matchingDescriptors : reachableDescriptors
 
         if let preferredHost,
+           let normalizedPreferredHost = normalizeCandidate(preferredHost),
+           let normalizedPreferredHostname = normalizedCandidateHost(normalizedPreferredHost),
            let preferredDescriptor = candidateDescriptors.first(where: {
-               $0.host.lowercased() == preferredHost
+               let activeCandidate = ShadowClientHostEndpointKit.candidateString(for: $0.routes.active)
+               return activeCandidate == normalizedPreferredHost || $0.host.lowercased() == normalizedPreferredHostname
            }) {
             return preferredDescriptor
         }
@@ -5477,18 +5775,85 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         )
     }
 
-    private static func preferredRouteOverrides(
+    private static func persistentPreferredRouteOverrides(
         for hosts: [ShadowClientRemoteHostDescriptor],
         pairingRouteStore: ShadowClientPairingRouteStore
     ) async -> [String: String] {
-        let keys = Set(hosts.map(mergeKey(for:)))
         var routes: [String: String] = [:]
-        for key in keys {
-            if let preferredHost = await pairingRouteStore.preferredHost(for: key) {
-                routes[key] = preferredHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        for host in hosts {
+            let mergeKey = mergeKey(for: host)
+            guard let persistentKey = persistentRouteStoreKey(for: host),
+                  let preferredHost = await pairingRouteStore.persistentPreferredHost(for: persistentKey),
+                  let normalizedPreferredHost = normalizeCandidate(preferredHost)
+            else {
+                continue
             }
+            routes[mergeKey] = normalizedPreferredHost
         }
         return routes
+    }
+
+    private static func sessionPreferredRouteOverrides(
+        for hosts: [ShadowClientRemoteHostDescriptor],
+        pairingRouteStore: ShadowClientPairingRouteStore
+    ) async -> [String: String] {
+        var routes: [String: String] = [:]
+        for host in hosts {
+            let sessionKey = sessionRouteStoreKey(for: host)
+            guard let preferredHost = await pairingRouteStore.sessionPreferredHost(for: sessionKey),
+                  let normalizedPreferredHost = normalizeCandidate(preferredHost)
+            else {
+                continue
+            }
+            routes[mergeKey(for: host)] = normalizedPreferredHost
+        }
+        return routes
+    }
+
+    private static func mergedPreferredRouteOverrides(
+        persistentPreferredRoutesByKey: [String: String],
+        sessionPreferredRoutesByKey: [String: String]
+    ) -> [String: String] {
+        persistentPreferredRoutesByKey.merging(sessionPreferredRoutesByKey) { _, sessionValue in
+            sessionValue
+        }
+    }
+
+    private static func effectivePreferredRouteOverrides(
+        for hosts: [ShadowClientRemoteHostDescriptor],
+        pairingRouteStore: ShadowClientPairingRouteStore
+    ) async -> [String: String] {
+        let persistentPreferredRoutes = await persistentPreferredRouteOverrides(
+            for: hosts,
+            pairingRouteStore: pairingRouteStore
+        )
+        let sessionPreferredRoutes = await sessionPreferredRouteOverrides(
+            for: hosts,
+            pairingRouteStore: pairingRouteStore
+        )
+        return mergedPreferredRouteOverrides(
+            persistentPreferredRoutesByKey: persistentPreferredRoutes,
+            sessionPreferredRoutesByKey: sessionPreferredRoutes
+        )
+    }
+
+    private static func effectivePreferredRoute(
+        for host: ShadowClientRemoteHostDescriptor,
+        pairingRouteStore: ShadowClientPairingRouteStore
+    ) async -> String? {
+        if let sessionPreferredHost = await pairingRouteStore.sessionPreferredHost(
+            for: sessionRouteStoreKey(for: host)
+        ), let normalizedSessionPreferredHost = normalizeCandidate(sessionPreferredHost) {
+            return normalizedSessionPreferredHost
+        }
+
+        guard let persistentKey = persistentRouteStoreKey(for: host),
+              let persistentPreferredHost = await pairingRouteStore.persistentPreferredHost(for: persistentKey)
+        else {
+            return nil
+        }
+
+        return normalizeCandidate(persistentPreferredHost)
     }
 
     private static func synthesizedFallbackApps(
