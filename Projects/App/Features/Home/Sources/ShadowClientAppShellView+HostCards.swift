@@ -172,13 +172,39 @@ var remoteDesktopHostCard: some View {
                 Text(ShadowClientHostPanelPresentationKit.manualEntryTitle())
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(.white)
-                ShadowClientManualHostAddressField(
-                    text: $manualHostDraft,
-                    isFocused: $isManualHostFieldFocused
-                ) {
-                    addManualHostToCatalog()
+                VStack(alignment: .leading, spacing: 10) {
+                    ShadowClientManualHostAddressField(
+                        text: $manualHostDraft,
+                        isFocused: $isManualHostFieldFocused
+                    ) {
+                        addManualHostToCatalog()
+                    }
+
+                    HStack(spacing: 10) {
+                        Image(systemName: "number")
+                            .foregroundStyle(Color.white.opacity(0.60))
+
+                        TextField("HTTPS port", text: $manualPortDraft)
+                            .font(.body.monospaced().weight(.semibold))
+                            .textFieldStyle(.plain)
+                            .foregroundStyle(.white)
+                            .autocorrectionDisabled(true)
+                            .accessibilityIdentifier("shadow.home.hosts.manual-port")
+                            .accessibilityLabel("Remote host HTTPS port")
+                            .onSubmit(addManualHostToCatalog)
+#if os(iOS) || os(tvOS)
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.numberPad)
+#endif
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(hostPanelInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                    Text("Leave port empty to use the default HTTPS port.")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.white.opacity(0.64))
                 }
-                .background(hostPanelInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
 
             Spacer(minLength: 8)
@@ -189,7 +215,7 @@ var remoteDesktopHostCard: some View {
                         addManualHostToCatalog()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!ShadowClientManualHostEntryKit.canSubmit(manualHostDraft))
+                    .disabled(!ShadowClientManualHostEntryKit.canSubmit(hostDraft: manualHostDraft, portDraft: manualPortDraft))
 
                     Button("Cancel") {
                         cancelManualHostEntry()
@@ -202,7 +228,7 @@ var remoteDesktopHostCard: some View {
                         addManualHostToCatalog()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!ShadowClientManualHostEntryKit.canSubmit(manualHostDraft))
+                    .disabled(!ShadowClientManualHostEntryKit.canSubmit(hostDraft: manualHostDraft, portDraft: manualPortDraft))
 
                     Button("Cancel") {
                         cancelManualHostEntry()
