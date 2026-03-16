@@ -12,7 +12,6 @@ struct ShadowClientSettingsSelectionInput {
     let displayMode: ShadowClientDisplayMode
     let preferVirtualDisplay: Bool
     let audioConfiguration: ShadowClientAudioConfiguration
-    let audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy
     let videoCodec: ShadowClientVideoCodecPreference
     let videoDecoder: ShadowClientVideoDecoderPreference
     let enableVSync: Bool
@@ -48,7 +47,6 @@ struct ShadowClientSettingsSelectionInput {
         displayMode: ShadowClientDisplayMode,
         preferVirtualDisplay: Bool,
         audioConfiguration: ShadowClientAudioConfiguration,
-        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy = .videoSynchronized,
         videoCodec: ShadowClientVideoCodecPreference,
         videoDecoder: ShadowClientVideoDecoderPreference,
         enableVSync: Bool,
@@ -83,7 +81,6 @@ struct ShadowClientSettingsSelectionInput {
         self.displayMode = displayMode
         self.preferVirtualDisplay = preferVirtualDisplay
         self.audioConfiguration = audioConfiguration
-        self.audioSynchronizationPolicy = audioSynchronizationPolicy
         self.videoCodec = videoCodec
         self.videoDecoder = videoDecoder
         self.enableVSync = enableVSync
@@ -123,7 +120,6 @@ enum ShadowClientSettingsSelectionKit {
             displayMode: input.displayMode,
             preferVirtualDisplay: input.preferVirtualDisplay,
             audioConfiguration: input.audioConfiguration,
-            audioSynchronizationPolicy: input.audioSynchronizationPolicy,
             videoCodec: input.videoCodec,
             videoDecoder: input.videoDecoder,
             enableVSync: input.enableVSync,
@@ -164,10 +160,6 @@ enum ShadowClientSettingsSelectionKit {
 
     static func audioConfiguration(rawValue: String) -> ShadowClientAudioConfiguration {
         ShadowClientAudioConfiguration(rawValue: rawValue) ?? .surround71
-    }
-
-    static func audioSynchronizationPolicy(rawValue: String) -> ShadowClientAudioSynchronizationPolicy {
-        ShadowClientAudioSynchronizationPolicy(rawValue: rawValue) ?? .videoSynchronized
     }
 
     static func videoCodec(rawValue: String) -> ShadowClientVideoCodecPreference {

@@ -404,7 +404,6 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
     public let enableHDR: Bool
     public let enableSurroundAudio: Bool
     public let preferredSurroundChannelCount: Int
-    public let audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy
     public let enableYUV444: Bool
     public let remoteInputKey: Data?
     public let remoteInputKeyID: UInt32?
@@ -419,7 +418,6 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
         enableHDR: Bool = false,
         enableSurroundAudio: Bool = false,
         preferredSurroundChannelCount: Int = 6,
-        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy = .videoSynchronized,
         enableYUV444: Bool = false,
         remoteInputKey: Data? = nil,
         remoteInputKeyID: UInt32? = nil,
@@ -436,7 +434,6 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
         self.enableHDR = enableHDR
         self.enableSurroundAudio = enableSurroundAudio
         self.preferredSurroundChannelCount = max(2, min(8, preferredSurroundChannelCount))
-        self.audioSynchronizationPolicy = audioSynchronizationPolicy
         self.enableYUV444 = enableYUV444
         self.remoteInputKey = remoteInputKey
         self.remoteInputKeyID = remoteInputKeyID
@@ -3278,7 +3275,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             enableHDR: settings.enableHDR,
             enableSurroundAudio: settings.enableSurroundAudio,
             preferredSurroundChannelCount: settings.preferredSurroundChannelCount,
-            audioSynchronizationPolicy: settings.audioSynchronizationPolicy,
             lowLatencyMode: settings.lowLatencyMode,
             enableVSync: settings.enableVSync,
             enableFramePacing: settings.enableFramePacing,
@@ -3397,7 +3393,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 enableHDR: settings.enableHDR,
                 enableSurroundAudio: true,
                 preferredSurroundChannelCount: preferredOpusChannelCount,
-                audioSynchronizationPolicy: settings.audioSynchronizationPolicy,
                 lowLatencyMode: settings.lowLatencyMode,
                 enableVSync: settings.enableVSync,
                 enableFramePacing: settings.enableFramePacing,
@@ -3421,7 +3416,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             enableHDR: settings.enableHDR,
             enableSurroundAudio: false,
             preferredSurroundChannelCount: 2,
-            audioSynchronizationPolicy: settings.audioSynchronizationPolicy,
             lowLatencyMode: settings.lowLatencyMode,
             enableVSync: settings.enableVSync,
             enableFramePacing: settings.enableFramePacing,
@@ -3452,7 +3446,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             enableHDR: settings.enableHDR,
             enableSurroundAudio: settings.enableSurroundAudio,
             preferredSurroundChannelCount: settings.preferredSurroundChannelCount,
-            audioSynchronizationPolicy: settings.audioSynchronizationPolicy,
             enableYUV444: settings.enableYUV444,
             remoteInputKey: remoteInputKey,
             remoteInputKeyID: remoteInputKeyID,

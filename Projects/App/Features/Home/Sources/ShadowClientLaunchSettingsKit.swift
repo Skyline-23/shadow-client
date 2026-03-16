@@ -40,7 +40,6 @@ enum ShadowClientLaunchSettingsKit {
             enableHDR: base.enableHDR,
             enableSurroundAudio: base.enableSurroundAudio,
             preferredSurroundChannelCount: base.preferredSurroundChannelCount,
-            audioSynchronizationPolicy: base.audioSynchronizationPolicy,
             lowLatencyMode: base.lowLatencyMode,
             enableVSync: base.enableVSync,
             enableFramePacing: base.enableFramePacing,

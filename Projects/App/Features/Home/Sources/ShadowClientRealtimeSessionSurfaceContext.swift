@@ -121,6 +121,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     @Published public private(set) var estimatedVideoFPS: Double?
     @Published public private(set) var estimatedVideoBitrateKbps: Int?
     @Published public private(set) var audioOutputState: ShadowClientRealtimeAudioOutputState = .idle
+    @Published public private(set) var audioPendingDurationMs: Double = 0
     @Published public private(set) var activeDynamicRangeMode: DynamicRangeMode = .unknown
     @Published public private(set) var activeHDRMetadata: ShadowClientHDRMetadata?
     @Published public private(set) var colorConfigurationRevision: UInt64 = 0
@@ -174,6 +175,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         estimatedVideoFPS = nil
         estimatedVideoBitrateKbps = nil
         audioOutputState = .idle
+        audioPendingDurationMs = 0
         activeDynamicRangeMode = .unknown
         activeHDRMetadata = nil
         colorConfigurationRevision = 0
@@ -314,6 +316,14 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
             return
         }
         audioOutputState = state
+    }
+
+    public func updateAudioPendingDurationMs(_ milliseconds: Double) {
+        let normalized = max(0, milliseconds)
+        if abs(audioPendingDurationMs - normalized) < 0.5 {
+            return
+        }
+        audioPendingDurationMs = normalized
     }
 
     public func updateActiveDynamicRangeMode(_ mode: DynamicRangeMode) {

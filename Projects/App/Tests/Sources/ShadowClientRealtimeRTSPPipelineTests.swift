@@ -2886,17 +2886,14 @@ func realtimeRuntimeVideoPresentationDelayUsesCurrentAudioRouteDrainBudget() {
         ioBufferDurationSeconds: 0.005
     )
 
-    let synchronizedDelay = ShadowClientRealtimeRTSPSessionRuntime.videoPresentationDelaySeconds(
-        audioSynchronizationPolicy: .videoSynchronized,
-        timingBudget: timingBudget
-    )
-    let lowLatencyDelay = ShadowClientRealtimeRTSPSessionRuntime.videoPresentationDelaySeconds(
-        audioSynchronizationPolicy: .lowLatency,
-        timingBudget: timingBudget
+    let delay = ShadowClientRealtimeRTSPSessionRuntime.videoPresentationDelaySeconds(
+        timingBudget: timingBudget,
+        audioPendingDurationSeconds: 0,
+        estimatedVideoFPS: 60,
+        defaultVideoFPS: 60
     )
 
-    #expect(abs(synchronizedDelay - 0.168) < 0.000_001)
-    #expect(lowLatencyDelay == 0)
+    #expect(delay == 0)
 }
 
 private let nvVideoPacketFlagContainsPicData: UInt8 = 0x01

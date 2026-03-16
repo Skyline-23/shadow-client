@@ -293,6 +293,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     sessionSurfaceContext.updateAudioOutputState(audioState)
                 }
             },
+            onAudioPendingDurationChanged: { [sessionSurfaceContext] pendingDurationMs in
+                await MainActor.run {
+                    sessionSurfaceContext.updateAudioPendingDurationMs(pendingDurationMs)
+                }
+            },
             onHDRMode: { [sessionSurfaceContext] hdrModeEvent in
                 await MainActor.run {
                     sessionSurfaceContext.updateActiveHDRMetadata(
@@ -1727,8 +1732,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             pixelBuffer: pixelBuffer
         )
         let presentationDelaySeconds = Self.videoPresentationDelaySeconds(
-            audioSynchronizationPolicy: activeVideoConfiguration?.audioSynchronizationPolicy ?? .videoSynchronized,
-            timingBudget: ShadowClientAudioOutputCapabilityKit.currentTimingBudget()
+            timingBudget: ShadowClientAudioOutputCapabilityKit.currentTimingBudget(),
+            audioPendingDurationSeconds: surfaceContext.audioPendingDurationMs / 1_000.0,
+            estimatedVideoFPS: surfaceContext.estimatedVideoFPS,
+            defaultVideoFPS: activeVideoConfiguration?.fps ?? ShadowClientStreamingLaunchBounds.defaultFPS
         )
         if presentationDelaySeconds > 0 {
             await videoPresentationDelayCoordinator.enqueue(
@@ -1825,7 +1832,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             enableHDR: configuration.enableHDR,
             enableSurroundAudio: configuration.enableSurroundAudio,
             preferredSurroundChannelCount: configuration.preferredSurroundChannelCount,
-            audioSynchronizationPolicy: configuration.audioSynchronizationPolicy,
             enableYUV444: configuration.enableYUV444,
             remoteInputKey: configuration.remoteInputKey,
             remoteInputKeyID: configuration.remoteInputKeyID,
@@ -2398,13 +2404,16 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     }
 
     static func videoPresentationDelaySeconds(
-        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy,
-        timingBudget: ShadowClientAudioOutputTimingBudget
+        timingBudget: ShadowClientAudioOutputTimingBudget,
+        audioPendingDurationSeconds: TimeInterval,
+        estimatedVideoFPS: Double?,
+        defaultVideoFPS: Int
     ) -> TimeInterval {
-        guard audioSynchronizationPolicy == .videoSynchronized else {
-            return 0
-        }
-        return max(0, timingBudget.drainDurationSeconds)
+        let _ = timingBudget
+        let _ = audioPendingDurationSeconds
+        let _ = estimatedVideoFPS
+        let _ = defaultVideoFPS
+        return 0
     }
 
     static func shouldKeepDecoderOutputStallRecoveryNonFatal(

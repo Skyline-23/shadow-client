@@ -453,9 +453,9 @@ func diagnosticsEstimatedInputLatencyValue(model: SettingsDiagnosticsHUDModel) -
         ShadowClientSessionDiagnosticsPresentationKit.estimatedInputLatencyValue(
             controlRoundTripMs: sessionSurfaceContext.controlRoundTripMs,
             targetBufferMs: model.targetBufferMs,
+            audioPendingDurationMs: sessionSurfaceContext.audioPendingDurationMs,
             estimatedVideoFPS: sessionSurfaceContext.estimatedVideoFPS,
             defaultFPS: currentSettings.frameRate.fps,
-            audioSynchronizationPolicy: currentSettings.audioSynchronizationPolicy,
             timingBudget: ShadowClientAudioOutputCapabilityKit.currentTimingBudget()
         )
     }
@@ -468,9 +468,9 @@ func diagnosticsBootstrapEstimatedInputLatencyValue(_ controlRoundTripMs: Int?) 
         return ShadowClientSessionDiagnosticsPresentationKit.estimatedInputLatencyValue(
             controlRoundTripMs: controlRoundTripMs,
             targetBufferMs: 0,
+            audioPendingDurationMs: sessionSurfaceContext.audioPendingDurationMs,
             estimatedVideoFPS: sessionSurfaceContext.estimatedVideoFPS,
             defaultFPS: currentSettings.frameRate.fps,
-            audioSynchronizationPolicy: currentSettings.audioSynchronizationPolicy,
             timingBudget: ShadowClientAudioOutputCapabilityKit.currentTimingBudget()
         )
     }

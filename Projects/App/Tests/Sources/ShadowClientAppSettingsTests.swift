@@ -9,8 +9,7 @@ func appSettingsMapToStreamingPreferences() {
         lowLatencyMode: false,
         preferHDR: false,
         showDiagnosticsHUD: true,
-        audioConfiguration: .surround71,
-        audioSynchronizationPolicy: .videoSynchronized
+        audioConfiguration: .surround71
     )
 
     #expect(settings.streamingPreferences == StreamingUserPreferences(
@@ -72,13 +71,11 @@ func settingsIdentityKeyChangesPerToggle() {
     let lowLatencyDisabled = ShadowClientAppSettings(lowLatencyMode: false)
     let hdrDisabled = ShadowClientAppSettings(preferHDR: false)
     let surroundDisabled = ShadowClientAppSettings(audioConfiguration: .stereo)
-    let lowLatencyAudioStartup = ShadowClientAppSettings(audioSynchronizationPolicy: .lowLatency)
     let hudDisabled = ShadowClientAppSettings(showDiagnosticsHUD: false)
 
     #expect(baseline.identityKey != lowLatencyDisabled.identityKey)
     #expect(baseline.identityKey != hdrDisabled.identityKey)
     #expect(baseline.identityKey != surroundDisabled.identityKey)
-    #expect(baseline.identityKey != lowLatencyAudioStartup.identityKey)
     #expect(baseline.identityKey != hudDisabled.identityKey)
 }
 
@@ -88,13 +85,11 @@ func settingsStreamingIdentityKeyTracksStreamingToggles() {
     let lowLatencyDisabled = ShadowClientAppSettings(lowLatencyMode: false)
     let hdrDisabled = ShadowClientAppSettings(preferHDR: false)
     let surroundDisabled = ShadowClientAppSettings(audioConfiguration: .stereo)
-    let lowLatencyAudioStartup = ShadowClientAppSettings(audioSynchronizationPolicy: .lowLatency)
     let hudDisabled = ShadowClientAppSettings(showDiagnosticsHUD: false)
 
     #expect(baseline.streamingIdentityKey != lowLatencyDisabled.streamingIdentityKey)
     #expect(baseline.streamingIdentityKey != hdrDisabled.streamingIdentityKey)
     #expect(baseline.streamingIdentityKey != surroundDisabled.streamingIdentityKey)
-    #expect(baseline.streamingIdentityKey != lowLatencyAudioStartup.streamingIdentityKey)
     #expect(baseline.streamingIdentityKey == hudDisabled.streamingIdentityKey)
 }
 
@@ -109,7 +104,6 @@ func appSettingsMapToLaunchSettings() {
         autoBitrate: false,
         preferVirtualDisplay: true,
         audioConfiguration: .surround51,
-        audioSynchronizationPolicy: .lowLatency,
         videoCodec: .av1,
         enableVSync: true,
         enableFramePacing: true,
@@ -135,7 +129,6 @@ func appSettingsMapToLaunchSettings() {
     #expect(launch.enableHDR == true)
     #expect(launch.enableSurroundAudio == true)
     #expect(launch.preferredSurroundChannelCount == 6)
-    #expect(launch.audioSynchronizationPolicy == .lowLatency)
     #expect(launch.enableVSync == true)
     #expect(launch.enableFramePacing == true)
     #expect(launch.enableYUV444 == true)

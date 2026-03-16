@@ -54,24 +54,6 @@ public enum ShadowClientVideoCodecPreference: String, CaseIterable, Equatable, S
     }
 }
 
-public enum ShadowClientAudioSynchronizationPolicy: String, CaseIterable, Equatable, Sendable {
-    case videoSynchronized = "video-synchronized"
-    case lowLatency = "low-latency"
-
-    public var label: String {
-        switch self {
-        case .videoSynchronized:
-            return "Sync with video"
-        case .lowLatency:
-            return "Low latency"
-        }
-    }
-
-    public var requiresVideoRenderingGate: Bool {
-        self == .videoSynchronized
-    }
-}
-
 public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
     public let width: Int
     public let height: Int
@@ -81,7 +63,6 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
     public let enableHDR: Bool
     public let enableSurroundAudio: Bool
     public let preferredSurroundChannelCount: Int
-    public let audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy
     public let lowLatencyMode: Bool
     public let enableVSync: Bool
     public let enableFramePacing: Bool
@@ -103,7 +84,6 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
         enableHDR: Bool,
         enableSurroundAudio: Bool,
         preferredSurroundChannelCount: Int = 6,
-        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy = .videoSynchronized,
         lowLatencyMode: Bool,
         enableVSync: Bool = false,
         enableFramePacing: Bool = false,
@@ -127,7 +107,6 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
         self.enableHDR = enableHDR
         self.enableSurroundAudio = enableSurroundAudio
         self.preferredSurroundChannelCount = max(2, min(8, preferredSurroundChannelCount))
-        self.audioSynchronizationPolicy = audioSynchronizationPolicy
         self.lowLatencyMode = lowLatencyMode
         self.enableVSync = enableVSync
         self.enableFramePacing = enableFramePacing

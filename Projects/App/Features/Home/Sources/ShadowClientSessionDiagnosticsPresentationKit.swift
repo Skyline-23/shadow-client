@@ -6,9 +6,9 @@ enum ShadowClientSessionDiagnosticsPresentationKit {
     static func estimatedInputLatencyMs(
         controlRoundTripMs: Int?,
         targetBufferMs: Int,
+        audioPendingDurationMs: Double,
         estimatedVideoFPS: Double?,
         defaultFPS: Int,
-        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy,
         timingBudget: ShadowClientAudioOutputTimingBudget
     ) -> Int? {
         guard let controlRoundTripMs else {
@@ -22,19 +22,14 @@ enum ShadowClientSessionDiagnosticsPresentationKit {
             resolvedFPS = Double(max(defaultFPS, 1))
         }
 
+        let _ = audioPendingDurationMs
+        let _ = timingBudget
         let frameIntervalMs = 1_000.0 / max(resolvedFPS, 1)
-        let presentationDelayMs: Double
-        if audioSynchronizationPolicy == .videoSynchronized {
-            presentationDelayMs = timingBudget.drainDurationSeconds * 1_000.0
-        } else {
-            presentationDelayMs = 0
-        }
 
         let estimate =
             Double(max(controlRoundTripMs, 0)) +
             Double(max(targetBufferMs, 0)) +
-            frameIntervalMs +
-            presentationDelayMs
+            frameIntervalMs
 
         return Int(estimate.rounded())
     }
@@ -42,17 +37,17 @@ enum ShadowClientSessionDiagnosticsPresentationKit {
     static func estimatedInputLatencyValue(
         controlRoundTripMs: Int?,
         targetBufferMs: Int,
+        audioPendingDurationMs: Double,
         estimatedVideoFPS: Double?,
         defaultFPS: Int,
-        audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy,
         timingBudget: ShadowClientAudioOutputTimingBudget
     ) -> String {
         guard let estimatedInputLatencyMs = estimatedInputLatencyMs(
             controlRoundTripMs: controlRoundTripMs,
             targetBufferMs: targetBufferMs,
+            audioPendingDurationMs: audioPendingDurationMs,
             estimatedVideoFPS: estimatedVideoFPS,
             defaultFPS: defaultFPS,
-            audioSynchronizationPolicy: audioSynchronizationPolicy,
             timingBudget: timingBudget
         ) else {
             return "--"

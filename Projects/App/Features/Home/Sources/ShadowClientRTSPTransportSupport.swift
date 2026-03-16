@@ -206,6 +206,7 @@ actor ShadowClientRTSPInterleavedClient {
     private let timeout: Duration
     private let onControlRoundTripSample: (@Sendable (Double) async -> Void)?
     private let onAudioOutputStateChanged: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)?
+    private let onAudioPendingDurationChanged: (@Sendable (Double) async -> Void)?
     private let onHDRMode: (@Sendable (ShadowClientHostHDRModeEvent) async -> Void)?
     private let onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)?
     private let onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)?
@@ -249,7 +250,6 @@ actor ShadowClientRTSPInterleavedClient {
     private var rtspSessionPort: NWEndpoint.Port?
     private var playRecoveryTargets: [String] = ["/"]
     private var currentServerAppVersion: String?
-    private var audioSynchronizationPolicy: ShadowClientAudioSynchronizationPolicy = .videoSynchronized
     private var audioRuntime: ShadowClientRealtimeAudioSessionRuntime?
     private let videoFECUnrecoverableRecoveryRequestCooldownSeconds: TimeInterval = 0.35
     private let videoFECUnrecoverableRecoveryBurstWindowSeconds: TimeInterval = 2.0
@@ -260,6 +260,7 @@ actor ShadowClientRTSPInterleavedClient {
         timeout: Duration,
         onControlRoundTripSample: (@Sendable (Double) async -> Void)? = nil,
         onAudioOutputStateChanged: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)? = nil,
+        onAudioPendingDurationChanged: (@Sendable (Double) async -> Void)? = nil,
         onHDRMode: (@Sendable (ShadowClientHostHDRModeEvent) async -> Void)? = nil,
         onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)? = nil,
         onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)? = nil,
@@ -269,6 +270,7 @@ actor ShadowClientRTSPInterleavedClient {
         self.timeout = timeout
         self.onControlRoundTripSample = onControlRoundTripSample
         self.onAudioOutputStateChanged = onAudioOutputStateChanged
+        self.onAudioPendingDurationChanged = onAudioPendingDurationChanged
         self.onHDRMode = onHDRMode
         self.onControllerFeedback = onControllerFeedback
         self.onTermination = onTermination
@@ -320,7 +322,6 @@ actor ShadowClientRTSPInterleavedClient {
         rtspSessionPort = nil
         playRecoveryTargets = ["/"]
         currentServerAppVersion = nil
-        audioSynchronizationPolicy = .videoSynchronized
 
         self.remoteInputKey = remoteInputKey
         self.remoteInputKeyID = remoteInputKeyID
@@ -332,7 +333,6 @@ actor ShadowClientRTSPInterleavedClient {
         }
         remoteHost = .init(host)
         currentServerAppVersion = videoConfiguration.serverAppVersion
-        audioSynchronizationPolicy = videoConfiguration.audioSynchronizationPolicy
         let portValue = normalizedURL.port ?? ShadowClientRTSPProtocolProfile.defaultPort
         rtspHostHeaderValue = ShadowClientRTSPProtocolProfile.hostHeaderValue(
             forRTSPURLString: normalizedURL.absoluteString
@@ -1578,7 +1578,6 @@ actor ShadowClientRTSPInterleavedClient {
         rtspHostHeaderValue = nil
         rtspClientVersionHeaderValue = ShadowClientRTSPRequestDefaults.clientVersionHeaderValue
         currentServerAppVersion = nil
-        audioSynchronizationPolicy = .videoSynchronized
         lastInteractiveInputEventUptime = 0
     }
 
@@ -1813,7 +1812,8 @@ actor ShadowClientRTSPInterleavedClient {
         let audioPingPayload = self.audioPingPayload
         let audioEncryptionConfiguration = self.audioEncryptionConfiguration
         let audioRuntime = ShadowClientRealtimeAudioSessionRuntime(
-            stateDidChange: onAudioOutputStateChanged
+            stateDidChange: onAudioOutputStateChanged,
+            pendingDurationDidChange: onAudioPendingDurationChanged
         )
         self.audioRuntime = audioRuntime
         let prePlayAudioConnection = prePlayAudioUDPConnection
@@ -1849,7 +1849,6 @@ actor ShadowClientRTSPInterleavedClient {
                     preferredLocalPort: negotiatedClientPortBase &+ 1,
                     track: audioTrack,
                     pingPayload: audioPingPayload,
-                    synchronizationPolicy: audioSynchronizationPolicy,
                     encryption: audioEncryptionConfiguration,
                     existingConnection: prePlayAudioConnection
                 )

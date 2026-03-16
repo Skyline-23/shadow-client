@@ -201,19 +201,6 @@ var settingsTab: some View {
                             }
                         }
 
-                        settingsPickerRow(
-                            title: "Audio startup",
-                            symbol: "waveform.and.person.filled",
-                            selection: Binding(
-                                get: { selectedAudioSynchronizationPolicy },
-                                set: { selectedAudioSynchronizationPolicy = $0 }
-                            )
-                        ) {
-                            ForEach(ShadowClientAudioSynchronizationPolicy.allCases, id: \.self) { option in
-                                Text(option.label).tag(option)
-                            }
-                        }
-
                         #if os(iOS) || os(tvOS)
                         Text(ShadowClientSettingsCopyKit.mobileAudioRouteFootnote())
                             .font(.caption2.weight(.medium))

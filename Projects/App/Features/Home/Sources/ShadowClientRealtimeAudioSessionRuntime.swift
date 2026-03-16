@@ -57,6 +57,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         category: "RealtimeAudio"
     )
     private let stateDidChange: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)?
+    private let pendingDurationDidChange: (@Sendable (Double) async -> Void)?
     private var connection: ShadowClientUDPDatagramSocket?
     private var receiveTask: Task<Void, Never>?
     private var decodeTask: Task<Void, Never>?
@@ -73,9 +74,11 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     private var state: ShadowClientRealtimeAudioOutputState = .idle
 
     public init(
-        stateDidChange: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)? = nil
+        stateDidChange: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)? = nil,
+        pendingDurationDidChange: (@Sendable (Double) async -> Void)? = nil
     ) {
         self.stateDidChange = stateDidChange
+        self.pendingDurationDidChange = pendingDurationDidChange
     }
 
     deinit {
@@ -89,7 +92,6 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         preferredLocalPort: UInt16?,
         track: ShadowClientRTSPAudioTrackDescriptor?,
         pingPayload: Data?,
-        synchronizationPolicy: ShadowClientAudioSynchronizationPolicy = .videoSynchronized,
         encryption: ShadowClientRealtimeAudioEncryptionConfiguration? = nil,
         existingConnection: NWConnection? = nil
     ) async throws {
@@ -153,7 +155,6 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 maximumQueuedBufferCount: queuePressureProfile.maximumQueuedBuffers,
                 nominalFramesPerBuffer: AVAudioFrameCount(max(1, nominalPacketFrameCount)),
                 maximumPendingDurationMs: rendererPendingDurationCapMs,
-                synchronizationPolicy: synchronizationPolicy,
                 prefersSpatialHeadphoneRendering: prefersSpatialHeadphoneRendering
             )
             logger.notice(
@@ -303,6 +304,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         decoder = nil
         payloadDecryptor = nil
         jitterBuffer.reset(preferredPayloadType: nil)
+        publishPendingDuration(0)
         if emitIdleState {
             updateState(.idle)
         }
@@ -563,6 +565,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     let packet = queuedPacket.packet
                     let isStartupPressureGraceActive = await audioOutput.shouldDeferPressureShedding()
                     let outputPendingDurationMs = await audioOutput.pendingDurationMs()
+                    self.publishPendingDuration(outputPendingDurationMs)
                     let shouldDropDueToPendingPressure = !audioOutput.usesSystemManagedBuffering && Self
                         .shouldRequeueReadyPacketsForPendingOutputPressure(
                             pendingOutputDurationMs: outputPendingDurationMs,
@@ -999,6 +1002,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         decoder = nil
         payloadDecryptor = nil
         jitterBuffer.reset(preferredPayloadType: nil)
+        publishPendingDuration(0)
         updateState(finalState)
     }
 
@@ -1012,6 +1016,15 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         }
         Task {
             await stateDidChange(nextState)
+        }
+    }
+
+    private func publishPendingDuration(_ pendingDurationMs: Double) {
+        guard let pendingDurationDidChange else {
+            return
+        }
+        Task {
+            await pendingDurationDidChange(max(0, pendingDurationMs))
         }
     }
 

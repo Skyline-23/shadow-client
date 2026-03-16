@@ -43,17 +43,16 @@ public struct ShadowUIRemoteSessionStatChip: View {
             Text(value)
                 .font(.caption.monospacedDigit().weight(.semibold))
                 .foregroundStyle(Color.white.opacity(0.92))
-                .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .minimumScaleFactor(0.72)
                 .multilineTextAlignment(.center)
         }
+        .frame(maxWidth: .infinity, minHeight: 64, alignment: .top)
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.black.opacity(0.22))
         )
-        .frame(maxWidth: .infinity, minHeight: 64, alignment: .center)
     }
 }

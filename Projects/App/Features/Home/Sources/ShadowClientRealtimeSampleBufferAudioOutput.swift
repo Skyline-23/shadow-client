@@ -117,7 +117,6 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     private let formatConverter: AVAudioConverter?
     private let budgetState: BudgetState
     private let nominalFramesPerBufferEstimate: Double
-    private let synchronizationPolicy: ShadowClientAudioSynchronizationPolicy
     private var pendingSampleBuffers: [PendingSampleBuffer] = []
     private var nextPresentationTime: CMTime = .zero
     private var queuedDurationAnchorTime: CMTime = .zero
@@ -152,12 +151,10 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         maximumQueuedBufferCount: Int,
         nominalFramesPerBuffer: AVAudioFrameCount,
         maximumPendingDurationMs: Double,
-        synchronizationPolicy: ShadowClientAudioSynchronizationPolicy,
         prefersSpatialHeadphoneRendering _: Bool
     ) throws {
         inputFormat = format
         renderFormat = try Self.makeRendererFormat(from: format)
-        self.synchronizationPolicy = synchronizationPolicy
         let nominalFrames = max(1, Double(nominalFramesPerBuffer))
         let boundedMaximumPendingDurationMs = max(1, maximumPendingDurationMs)
         let maximumPendingFramesFromDuration = max(
@@ -190,7 +187,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             logRendererDiagnosticsLocked(reason: "configured")
         }
         startRendererNotificationMonitoring()
-        isVideoRenderingReady = !synchronizationPolicy.requiresVideoRenderingGate
+        isVideoRenderingReady = true
         Self.logger.notice(
             "Sample buffer audio backend configured routes=[\(Self.currentRouteSummary(), privacy: .public)] spatial-formats=\(String(describing: self.renderer.allowedAudioSpatializationFormats), privacy: .public)"
         )
@@ -370,9 +367,6 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             guard let self, !self.isTerminated else {
                 return
             }
-            guard self.synchronizationPolicy.requiresVideoRenderingGate else {
-                return
-            }
             guard self.isVideoRenderingReady != isRendering else {
                 return
             }
@@ -545,7 +539,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     }
 
     private func startTimelineIfNeededLocked() {
-        guard isVideoRenderingReady || !synchronizationPolicy.requiresVideoRenderingGate else {
+        guard isVideoRenderingReady else {
             return
         }
         let currentTime = budgetReferenceTimeLocked()
