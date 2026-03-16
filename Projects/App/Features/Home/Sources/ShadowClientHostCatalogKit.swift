@@ -2,6 +2,29 @@ import Darwin
 import Foundation
 
 enum ShadowClientHostCatalogKit {
+    static func cachedCandidateHosts(
+        from descriptors: [ShadowClientRemoteHostDescriptor]
+    ) -> [String] {
+        var seen: Set<String> = []
+        var results: [String] = []
+
+        for host in descriptors {
+            for endpoint in host.routes.allEndpoints {
+                let normalizedHost = endpoint.host
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                guard !normalizedHost.isEmpty,
+                      seen.insert(normalizedHost).inserted
+                else {
+                    continue
+                }
+                results.append(normalizedHost)
+            }
+        }
+
+        return results
+    }
+
     static func refreshCandidates(
         autoFindHosts: Bool,
         discoveredHosts: [String],

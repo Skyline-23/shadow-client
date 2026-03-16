@@ -528,7 +528,7 @@ func refreshRemoteDesktopCatalog() {
         let candidates = ShadowClientHostCatalogKit.refreshCandidates(
             autoFindHosts: autoFindHosts,
             discoveredHosts: hostDiscoveryRuntime.hosts.map(\.host),
-            cachedHosts: remoteDesktopRuntime.hosts.map(\.host),
+            cachedHosts: ShadowClientHostCatalogKit.cachedCandidateHosts(from: remoteDesktopRuntime.hosts),
             manualHost: normalizedConnectionHost.isEmpty ? nil : normalizedConnectionHost
         )
 
@@ -583,6 +583,12 @@ func cancelManualHostEntry() {
 
     @MainActor
 func presentHostSpotlight(for host: ShadowClientRemoteHostDescriptor) {
+        let preferredRoute = normalizedConnectionHost
+        if !preferredRoute.isEmpty, preferredRoute != host.host.lowercased() {
+            Task {
+                await remoteDesktopRuntime.rememberPreferredRoute(preferredRoute, forHostID: host.id)
+            }
+        }
         connectionHost = host.host
         remoteDesktopRuntime.selectHost(host.id)
         spotlightedHostSourceFrame = remoteDesktopHostFrames[host.id] ?? .zero
@@ -691,6 +697,11 @@ func connectToHost(
             let state = await baseDependencies.connectionRuntime.connect(to: host)
             await MainActor.run {
                 connectionState = state
+                if let preferredHostID, !host.isEmpty {
+                    Task {
+                        await remoteDesktopRuntime.rememberPreferredRoute(host, forHostID: preferredHostID)
+                    }
+                }
                 if let connectedHost = state.host, !connectedHost.isEmpty {
                     connectionHost = connectedHost
                     refreshRemoteDesktopCatalog()

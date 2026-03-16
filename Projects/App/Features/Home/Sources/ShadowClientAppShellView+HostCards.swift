@@ -705,6 +705,12 @@ var remoteDesktopHostCard: some View {
     @ViewBuilder
     func selectedHostPrimaryActionButton(for host: ShadowClientRemoteHostDescriptor) -> some View {
         Button("Go") {
+            let preferredRoute = normalizedConnectionHost
+            if !preferredRoute.isEmpty, preferredRoute != host.host.lowercased() {
+                Task {
+                    await remoteDesktopRuntime.rememberPreferredRoute(preferredRoute, forHostID: host.id)
+                }
+            }
             connectionHost = host.host
             connectToHost(autoLaunchAfterConnect: true, preferredHostID: host.id)
         }
@@ -725,6 +731,12 @@ var remoteDesktopHostCard: some View {
         if canPairSelectedHost {
             Button("Pair") {
                 if let selectedHost = remoteDesktopRuntime.selectedHost {
+                    let preferredRoute = normalizedConnectionHost
+                    if !preferredRoute.isEmpty, preferredRoute != selectedHost.host.lowercased() {
+                        Task {
+                            await remoteDesktopRuntime.rememberPreferredRoute(preferredRoute, forHostID: selectedHost.id)
+                        }
+                    }
                     connectionHost = selectedHost.host
                 }
                 remoteDesktopRuntime.pairSelectedHost()

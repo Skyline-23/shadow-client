@@ -1608,13 +1608,61 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             launchState = .idle
             return
         }
-        let existingHosts = latestResolvedHostDescriptors.isEmpty ? hosts : latestResolvedHostDescriptors
-        let coalescedCandidates = Self.coalescedCandidatesUsingKnownHosts(
-            probeCandidates,
-            knownHosts: existingHosts,
-            preferredHost: preferredHost
-        )
+        let knownHosts = hosts.isEmpty ? latestResolvedHostDescriptors : hosts
         refreshHostsTask = Task { [weak self] in
+            let preferredRoutes = await Self.preferredRouteOverrides(
+                for: knownHosts,
+                pairingRouteStore: pairingRouteStore
+            )
+            let storedAliasHostsByKey = Self.aliasHostsByKey(
+                knownHosts: knownHosts,
+                preferredRoutesByKey: preferredRoutes
+            )
+            let inferredAliasHostsByKey = Self.inferredAliasHostsByKey(
+                refreshCandidates: probeCandidates,
+                knownHosts: knownHosts,
+                preferredHost: preferredHost,
+                aliasHostsByKey: storedAliasHostsByKey
+            )
+            let aliasHostsByKey = Self.mergedAliasHostsByKey(
+                storedAliasHostsByKey,
+                inferredAliasHostsByKey
+            )
+            let coalescedCandidates = Self.coalescedCandidatesUsingKnownHosts(
+                probeCandidates,
+                knownHosts: knownHosts,
+                preferredHost: preferredHost,
+                preferredRoutesByKey: preferredRoutes,
+                aliasHostsByKey: aliasHostsByKey
+            )
+            if !knownHosts.isEmpty {
+                let summary = knownHosts
+                    .map { host in
+                        let key = Self.mergeKey(for: host)
+                        let endpoints = Self.knownHostSet(for: host, aliasHostsByKey: aliasHostsByKey)
+                            .sorted()
+                            .joined(separator: ",")
+                        return "\(key)=\(endpoints)"
+                    }
+                    .sorted()
+                    .joined(separator: ";")
+                logger.notice("Host refresh known groups \(summary, privacy: .public)")
+            }
+            if !inferredAliasHostsByKey.isEmpty {
+                let summary = inferredAliasHostsByKey
+                    .map { "\($0.key)=\($0.value.sorted().joined(separator: ","))" }
+                    .sorted()
+                    .joined(separator: ";")
+                logger.notice("Host refresh inferred alias groups \(summary, privacy: .public)")
+            }
+            if coalescedCandidates != probeCandidates {
+                let originalCandidatesSummary = probeCandidates.joined(separator: ",")
+                let coalescedCandidatesSummary = coalescedCandidates.joined(separator: ",")
+                logger.notice(
+                    "Host refresh coalesced candidates from \(originalCandidatesSummary, privacy: .public) to \(coalescedCandidatesSummary, privacy: .public)"
+                )
+            }
+
             let descriptors = await withTaskGroup(
                 of: ShadowClientRemoteHostDescriptor.self,
                 returning: [ShadowClientRemoteHostDescriptor].self
@@ -1634,7 +1682,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
             let hydratedDescriptors = Self.hydrateDescriptorsUsingKnownHosts(
                 descriptors,
-                knownHosts: existingHosts
+                knownHosts: knownHosts,
+                preferredRoutesByKey: preferredRoutes,
+                aliasHostsByKey: aliasHostsByKey
             )
             let filteredDescriptors = Self.filterOutSelfHosts(
                 hydratedDescriptors,
@@ -1643,12 +1693,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             let sorted = filteredDescriptors.sorted(by: Self.compareHosts)
             let pairedHostKeys = await Self.pairedHostKeys(
                 for: sorted,
-                existingHosts: existingHosts,
+                existingHosts: knownHosts,
                 pinnedCertificateStore: pinnedCertificateStore
-            )
-            let preferredRoutes = await Self.preferredRouteOverrides(
-                for: sorted,
-                pairingRouteStore: pairingRouteStore
             )
             guard !Task.isCancelled else {
                 return
@@ -1667,6 +1713,15 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     preferredRoutesByKey: preferredRoutes,
                     pairedHostKeys: pairedHostKeys
                 )
+                let mergedSummary = mergedHosts
+                    .map { host in
+                        let endpoints = host.routes.allEndpoints
+                            .map(\.host)
+                            .joined(separator: ",")
+                        return "\(host.displayName)=\(endpoints)"
+                    }
+                    .joined(separator: ";")
+                logger.notice("Host refresh merged hosts \(mergedSummary, privacy: .public)")
                 self.hosts = mergedHosts
                 self.persistence.saveCachedHosts(mergedHosts)
 
@@ -3631,6 +3686,63 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
+    public func rememberPreferredRoute(_ routeHost: String?, forHostID hostID: String) async {
+        guard let normalizedRouteHost = Self.normalizeCandidate(routeHost),
+              !normalizedRouteHost.isEmpty
+        else {
+            return
+        }
+
+        guard let matchedHost = hosts.first(where: { $0.id == hostID })
+            ?? latestResolvedHostDescriptors.first(where: { $0.id == hostID })
+        else {
+            return
+        }
+
+        guard normalizedRouteHost != matchedHost.host.lowercased() else {
+            return
+        }
+
+        let mergeKey = Self.mergeKey(for: matchedHost)
+        let knownHosts = hosts.isEmpty ? latestResolvedHostDescriptors : hosts
+        let preferredRoutesByKey = await Self.preferredRouteOverrides(
+            for: knownHosts,
+            pairingRouteStore: pairingRouteStore
+        )
+        let aliasHostsByKey = Self.aliasHostsByKey(
+            knownHosts: knownHosts,
+            preferredRoutesByKey: preferredRoutesByKey
+        )
+        let conflictingDescriptor = knownHosts.first { descriptor in
+            Self.knownHostSet(for: descriptor, aliasHostsByKey: aliasHostsByKey).contains(normalizedRouteHost)
+                && Self.mergeKey(for: descriptor) != mergeKey
+        }
+        if let conflictingDescriptor {
+            logger.notice(
+                "Host route alias skipped mergeKey=\(mergeKey, privacy: .public) alias=\(normalizedRouteHost, privacy: .public) conflictingMergeKey=\(Self.mergeKey(for: conflictingDescriptor), privacy: .public)"
+            )
+            return
+        }
+
+        let pairRouteKey = Self.pairRouteStoreKey(for: matchedHost)
+        hosts = Self.updatingHostDescriptors(
+            hosts,
+            matching: mergeKey,
+            aliasHost: normalizedRouteHost
+        )
+        latestResolvedHostDescriptors = Self.updatingHostDescriptors(
+            latestResolvedHostDescriptors,
+            matching: mergeKey,
+            aliasHost: normalizedRouteHost
+        )
+        logger.notice(
+            "Host route alias remembered mergeKey=\(mergeKey, privacy: .public) alias=\(normalizedRouteHost, privacy: .public)"
+        )
+        await pairingRouteStore.setPreferredHost(normalizedRouteHost, for: mergeKey)
+        await pairingRouteStore.setPreferredHost(normalizedRouteHost, for: pairRouteKey)
+    }
+
+    @MainActor
     private func performSelectHost(_ hostID: String) {
         pendingSelectedHostID = hostID
         guard hosts.contains(where: { $0.id == hostID }) else {
@@ -4448,7 +4560,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private static func coalescedCandidatesUsingKnownHosts(
         _ candidates: [String],
         knownHosts: [ShadowClientRemoteHostDescriptor],
-        preferredHost: String?
+        preferredHost: String?,
+        preferredRoutesByKey: [String: String],
+        aliasHostsByKey: [String: Set<String>] = [:]
     ) -> [String] {
         let normalizedPreferredHost = normalizeCandidate(preferredHost)
         var results: [String] = []
@@ -4458,7 +4572,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         for candidate in candidates {
             if let matchedKnownHost = bestKnownHost(
                 matching: candidate,
-                in: knownHosts
+                in: knownHosts,
+                aliasHostsByKey: aliasHostsByKey
             ) {
                 let hostKey = mergeKey(for: matchedKnownHost)
                 guard !seenKnownHostKeys.contains(hostKey) else {
@@ -4467,12 +4582,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 seenKnownHostKeys.insert(hostKey)
 
                 let groupedCandidates = candidates.filter { groupedCandidate in
-                    routeHostSet(for: matchedKnownHost).contains(groupedCandidate)
+                    knownHostSet(for: matchedKnownHost, aliasHostsByKey: aliasHostsByKey).contains(groupedCandidate)
                 }
                 let probeCandidate = preferredProbeCandidate(
                     from: groupedCandidates,
                     knownHost: matchedKnownHost,
-                    preferredHost: normalizedPreferredHost
+                    preferredHost: normalizedPreferredHost,
+                    preferredRoute: normalizeCandidate(preferredRoutesByKey[hostKey])
                 )
                 guard seenCandidates.insert(probeCandidate).inserted else {
                     continue
@@ -4492,19 +4608,25 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     private static func hydrateDescriptorsUsingKnownHosts(
         _ descriptors: [ShadowClientRemoteHostDescriptor],
-        knownHosts: [ShadowClientRemoteHostDescriptor]
+        knownHosts: [ShadowClientRemoteHostDescriptor],
+        preferredRoutesByKey: [String: String],
+        aliasHostsByKey: [String: Set<String>] = [:]
     ) -> [ShadowClientRemoteHostDescriptor] {
         descriptors.map { descriptor in
             hydrateDescriptorUsingKnownHosts(
                 descriptor,
-                knownHosts: knownHosts
+                knownHosts: knownHosts,
+                preferredRoutesByKey: preferredRoutesByKey,
+                aliasHostsByKey: aliasHostsByKey
             )
         }
     }
 
     private static func hydrateDescriptorUsingKnownHosts(
         _ descriptor: ShadowClientRemoteHostDescriptor,
-        knownHosts: [ShadowClientRemoteHostDescriptor]
+        knownHosts: [ShadowClientRemoteHostDescriptor],
+        preferredRoutesByKey: [String: String],
+        aliasHostsByKey: [String: Set<String>] = [:]
     ) -> ShadowClientRemoteHostDescriptor {
         guard descriptor.lastError != nil, normalizedUniqueID(descriptor.uniqueID) == nil else {
             return descriptor
@@ -4517,19 +4639,27 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         guard let matchedHost = bestKnownHost(
             matching: normalizedHost,
-            in: knownHosts
+            in: knownHosts,
+            aliasHostsByKey: aliasHostsByKey
         ) else {
             return descriptor
         }
 
-        let activeRoute = matchedHost.routes.allEndpoints.first(where: {
+        let matchedHostKey = mergeKey(for: matchedHost)
+        let preferredRoute = normalizeCandidate(preferredRoutesByKey[matchedHostKey])
+        let hydratedRoutes = routesByAddingAlias(
+            matchedHost.routes,
+            aliasHost: preferredRoute,
+            httpsPort: descriptor.routes.active.httpsPort
+        )
+        let activeRoute = hydratedRoutes.allEndpoints.first(where: {
             $0.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedHost
         }) ?? descriptor.routes.active
         let routes = ShadowClientRemoteHostRoutes(
             active: activeRoute,
-            local: matchedHost.routes.local,
-            remote: matchedHost.routes.remote,
-            manual: matchedHost.routes.manual
+            local: hydratedRoutes.local,
+            remote: hydratedRoutes.remote,
+            manual: hydratedRoutes.manual
         )
         let displayName = descriptor.displayName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedHost
             ? matchedHost.displayName
@@ -4555,7 +4685,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     private static func bestKnownHost(
         matching host: String,
-        in knownHosts: [ShadowClientRemoteHostDescriptor]
+        in knownHosts: [ShadowClientRemoteHostDescriptor],
+        aliasHostsByKey: [String: Set<String>] = [:]
     ) -> ShadowClientRemoteHostDescriptor? {
         let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalizedHost.isEmpty else {
@@ -4564,7 +4695,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         return knownHosts
             .filter { knownHost in
-                routeHostSet(for: knownHost).contains(normalizedHost)
+                knownHostSet(for: knownHost, aliasHostsByKey: aliasHostsByKey).contains(normalizedHost)
             }
             .sorted(by: compareKnownHostHydrationPriority)
             .first
@@ -4600,11 +4731,17 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private static func preferredProbeCandidate(
         from groupedCandidates: [String],
         knownHost: ShadowClientRemoteHostDescriptor,
-        preferredHost: String?
+        preferredHost: String?,
+        preferredRoute: String?
     ) -> String {
         if let preferredHost,
            groupedCandidates.contains(preferredHost) {
             return preferredHost
+        }
+
+        if let preferredRoute,
+           groupedCandidates.contains(preferredRoute) {
+            return preferredRoute
         }
 
         let activeHost = knownHost.routes.active.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -4861,6 +4998,77 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         )
     }
 
+    private static func knownHostSet(
+        for host: ShadowClientRemoteHostDescriptor,
+        aliasHostsByKey: [String: Set<String>]
+    ) -> Set<String> {
+        routeHostSet(for: host).union(aliasHostsByKey[mergeKey(for: host)] ?? [])
+    }
+
+    private static func aliasHostsByKey(
+        knownHosts: [ShadowClientRemoteHostDescriptor],
+        preferredRoutesByKey: [String: String]
+    ) -> [String: Set<String>] {
+        knownHosts.reduce(into: [String: Set<String>]()) { partialResult, host in
+            let key = mergeKey(for: host)
+            guard let preferredRoute = normalizeCandidate(preferredRoutesByKey[key]),
+                  !routeHostSet(for: host).contains(preferredRoute)
+            else {
+                return
+            }
+            partialResult[key, default: []].insert(preferredRoute)
+        }
+    }
+
+    private static func mergedAliasHostsByKey(
+        _ lhs: [String: Set<String>],
+        _ rhs: [String: Set<String>]
+    ) -> [String: Set<String>] {
+        var merged = lhs
+        for (key, aliases) in rhs {
+            merged[key, default: []].formUnion(aliases)
+        }
+        return merged
+    }
+
+    private static func inferredAliasHostsByKey(
+        refreshCandidates: [String],
+        knownHosts: [ShadowClientRemoteHostDescriptor],
+        preferredHost: String?,
+        aliasHostsByKey: [String: Set<String>] = [:]
+    ) -> [String: Set<String>] {
+        guard let normalizedPreferredHost = normalizeCandidate(preferredHost),
+              refreshCandidates.contains(normalizedPreferredHost),
+              bestKnownHost(
+                matching: normalizedPreferredHost,
+                in: knownHosts,
+                aliasHostsByKey: aliasHostsByKey
+              ) == nil
+        else {
+            return [:]
+        }
+
+        let matchingKnownHostKeys = Set(
+            refreshCandidates
+                .filter { $0 != normalizedPreferredHost }
+                .compactMap { candidate in
+                    bestKnownHost(
+                        matching: candidate,
+                        in: knownHosts,
+                        aliasHostsByKey: aliasHostsByKey
+                    ).map(mergeKey(for:))
+                }
+        )
+
+        guard matchingKnownHostKeys.count == 1,
+              let matchingKnownHostKey = matchingKnownHostKeys.first
+        else {
+            return [:]
+        }
+
+        return [matchingKnownHostKey: [normalizedPreferredHost]]
+    }
+
     private static func normalizedUniqueID(_ uniqueID: String?) -> String? {
         guard let uniqueID else {
             return nil
@@ -4924,12 +5132,88 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             isLocalPairHost($0.host)
         }) ?? rankedActiveRouteCandidates.first ?? fallbackPrimary.routes.active
 
-        return ShadowClientRemoteHostRoutes(
+        let routes = ShadowClientRemoteHostRoutes(
             active: active,
             local: local,
             remote: remote,
             manual: manual
         )
+        return routesByAddingAlias(routes, aliasHost: preferredRoute, httpsPort: active.httpsPort)
+    }
+
+    private static func updatingHostDescriptors(
+        _ descriptors: [ShadowClientRemoteHostDescriptor],
+        matching mergeKey: String,
+        aliasHost: String
+    ) -> [ShadowClientRemoteHostDescriptor] {
+        descriptors.map { descriptor in
+            guard Self.mergeKey(for: descriptor) == mergeKey else {
+                return descriptor
+            }
+
+            let routes = routesByAddingAlias(
+                descriptor.routes,
+                aliasHost: aliasHost,
+                httpsPort: descriptor.routes.active.httpsPort
+            )
+            return ShadowClientRemoteHostDescriptor(
+                activeRoute: routes.active,
+                displayName: descriptor.displayName,
+                pairStatus: descriptor.pairStatus,
+                currentGameID: descriptor.currentGameID,
+                serverState: descriptor.serverState,
+                appVersion: descriptor.appVersion,
+                gfeVersion: descriptor.gfeVersion,
+                uniqueID: descriptor.uniqueID,
+                serverCodecModeSupport: descriptor.serverCodecModeSupport,
+                lastError: descriptor.lastError,
+                routes: routes
+            )
+        }
+    }
+
+    private static func routesByAddingAlias(
+        _ routes: ShadowClientRemoteHostRoutes,
+        aliasHost: String?,
+        httpsPort: Int
+    ) -> ShadowClientRemoteHostRoutes {
+        guard let aliasHost = normalizeCandidate(aliasHost),
+              !routes.allEndpoints.contains(where: {
+                  $0.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == aliasHost
+              })
+        else {
+            return routes
+        }
+
+        let aliasEndpoint = ShadowClientRemoteHostEndpoint(host: aliasHost, httpsPort: httpsPort)
+        if routes.manual == nil {
+            return ShadowClientRemoteHostRoutes(
+                active: routes.active,
+                local: routes.local,
+                remote: routes.remote,
+                manual: aliasEndpoint
+            )
+        }
+
+        if routes.remote == nil {
+            return ShadowClientRemoteHostRoutes(
+                active: routes.active,
+                local: routes.local,
+                remote: aliasEndpoint,
+                manual: routes.manual
+            )
+        }
+
+        if routes.local == nil {
+            return ShadowClientRemoteHostRoutes(
+                active: routes.active,
+                local: aliasEndpoint,
+                remote: routes.remote,
+                manual: routes.manual
+            )
+        }
+
+        return routes
     }
 
     private static func preferredRuntimeHostDescriptor(

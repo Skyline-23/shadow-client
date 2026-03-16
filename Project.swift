@@ -98,10 +98,11 @@ let project = Project(
             name: "ShadowClientiOSApp",
             destinations: .iOS,
             product: .app,
-            bundleId: "com.skyline23.shadowClient",
+            bundleId: "com.skyline23.shadowClient.ios",
             deploymentTargets: .iOS("17.0"),
             infoPlist: .extendingDefault(
                 with: [
+                    "CFBundleDisplayName": "Shadow",
                     "UILaunchScreen": [
                         "UIColorName": "",
                         "UIImageName": "",

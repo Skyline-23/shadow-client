@@ -1638,6 +1638,10 @@ enum ShadowClientGameStreamHTTPTransport {
 
         do {
             let connectionTargets = resolvedConnectionTargets(for: host)
+            let targetsSummary = connectionTargets.joined(separator: ",")
+            logger.notice(
+                "GameStream request targets stage=\(requestStageLabel, privacy: .public) host=\(host, privacy: .public) targets=\(targetsSummary, privacy: .public)"
+            )
             if scheme == ShadowClientGameStreamNetworkDefaults.httpsScheme {
                 return try await requestPinnedHTTPSXML(
                     url: url,
