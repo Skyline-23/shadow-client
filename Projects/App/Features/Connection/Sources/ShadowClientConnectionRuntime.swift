@@ -138,10 +138,11 @@ public actor NativeHostProbeConnectionClient: ShadowClientConnectionClient {
             throw ShadowClientConnectionFailure.invalidHost
         }
 
-        let probeResult = try await hostProbe(normalizedHost)
+        let probeTarget = parseProbeTarget(normalizedHost)
+        let probeResult = try await hostProbe(probeTarget.host)
         guard probeResult.hasReachableService else {
             throw ShadowClientConnectionFailure.connectRejected(
-                unavailableServiceMessage(for: normalizedHost)
+                unavailableServiceMessage(for: normalizedHost, ports: probeTarget.ports)
             )
         }
 
@@ -152,9 +153,27 @@ public actor NativeHostProbeConnectionClient: ShadowClientConnectionClient {
         connectedHost = nil
     }
 
-    private func unavailableServiceMessage(for host: String) -> String {
-        let ports = requiredPorts.map(String.init).joined(separator: ", ")
+    private func unavailableServiceMessage(for host: String, ports: [Int]) -> String {
+        let ports = ports.map(String.init).joined(separator: ", ")
         return "No stream services reachable on \(host). Checked TCP ports: \(ports)."
+    }
+
+    private func parseProbeTarget(_ host: String) -> (host: String, ports: [Int]) {
+        let candidate: String
+        if host.contains("://") {
+            candidate = host
+        } else {
+            candidate = "https://\(host)"
+        }
+        guard let url = URL(string: candidate), let parsedHost = url.host else {
+            return (host, requiredPorts)
+        }
+
+        if let port = url.port {
+            return (parsedHost, [port])
+        }
+
+        return (parsedHost, requiredPorts)
     }
 }
 

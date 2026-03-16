@@ -617,6 +617,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         }
 
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
+        let httpsEndpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPSPort)
         let uniqueID = await identityStore.uniqueID()
         // Build TLS credential first so any material recovery happens before stage1 uploads client cert.
         let tlsClientCredential = try await identityStore.tlsClientCertificateCredential()
@@ -808,7 +809,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             throw ShadowClientGameStreamControlError.challengeRejected
         }
 
-        let resolvedHTTPSPort = httpsPort ?? defaultHTTPSPort
+        let resolvedHTTPSPort = httpsPort ?? httpsEndpoint.port
         let stage5Parameters: [String: String] = [
             "devicename": "shadow-client",
             "updateState": "1",

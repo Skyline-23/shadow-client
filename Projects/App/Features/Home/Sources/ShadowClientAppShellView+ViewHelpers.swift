@@ -57,7 +57,9 @@ func discoveredHostRow(_ discoveredHost: ShadowClientDiscoveredHost) -> some Vie
             }
             Spacer(minLength: 8)
             Button(ShadowClientDiscoveredHostPresentationKit.useButtonTitle()) {
-                connectionHost = discoveredHost.host
+                connectionHost = ShadowClientHostEndpointKit.candidateString(
+                    for: .init(host: discoveredHost.host, httpsPort: discoveredHost.port)
+                )
                 refreshRemoteDesktopCatalog()
             }
             .buttonStyle(.bordered)

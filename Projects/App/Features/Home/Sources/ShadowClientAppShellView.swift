@@ -584,12 +584,12 @@ func cancelManualHostEntry() {
     @MainActor
 func presentHostSpotlight(for host: ShadowClientRemoteHostDescriptor) {
         let preferredRoute = normalizedConnectionHost
-        if !preferredRoute.isEmpty, preferredRoute != host.host.lowercased() {
+        if !preferredRoute.isEmpty, preferredRoute != host.hostCandidate {
             Task {
                 await remoteDesktopRuntime.rememberPreferredRoute(preferredRoute, forHostID: host.id)
             }
         }
-        connectionHost = host.host
+        connectionHost = host.hostCandidate
         remoteDesktopRuntime.selectHost(host.id)
         spotlightedHostSourceFrame = remoteDesktopHostFrames[host.id] ?? .zero
         hostSpotlightTask?.cancel()
@@ -716,7 +716,9 @@ func connectToHost(
 
     @MainActor
 func connectToDiscoveredHost(_ discoveredHost: ShadowClientDiscoveredHost) {
-        connectionHost = discoveredHost.host
+        connectionHost = ShadowClientHostEndpointKit.candidateString(
+            for: .init(host: discoveredHost.host, httpsPort: discoveredHost.port)
+        )
         connectToHost(autoLaunchAfterConnect: true)
     }
 

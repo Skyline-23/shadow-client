@@ -307,6 +307,58 @@ func metadataClientUsesHTTPSFirstForPinnedHosts() async throws {
     )
 }
 
+@Test("Metadata client uses explicit host port for pinned HTTPS serverinfo")
+func metadataClientUsesExplicitHostPortForPinnedHTTPSServerInfo() async throws {
+    let defaultsSuite = "shadow-client.metadata.serverinfo.pinned-explicit-port.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "stream-host.example.invalid")
+
+    let transport = ScriptedRequestTransport(
+        script: [
+            .init(
+                scheme: "https",
+                command: "serverinfo",
+                expectedPort: 48010,
+                result: .success(
+                    """
+                    <root status_code="200">
+                        <hostname>Example-PC</hostname>
+                        <PairStatus>1</PairStatus>
+                        <currentgame>0</currentgame>
+                        <state>SUNSHINE_SERVER_FREE</state>
+                        <HttpsPort>47984</HttpsPort>
+                    </root>
+                    """
+                )
+            ),
+        ]
+    )
+
+    let client = NativeGameStreamMetadataClient(
+        identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: pinnedStore,
+        transport: transport
+    )
+
+    let info = try await client.fetchServerInfo(host: "stream-host.example.invalid:48010")
+
+    #expect(info.host == "stream-host.example.invalid:48010")
+    #expect(info.manualHost == "stream-host.example.invalid:48010")
+    #expect(
+        await transport.callsWithPort() == [
+            .init(scheme: "https", command: "serverinfo", port: 48010),
+        ]
+    )
+}
+
 @Test("Metadata client synthesizes unpaired host when HTTPS is unauthorized and HTTP fallback is ATS blocked")
 func metadataClientReturnsUnpairedHostWhenHTTPFallbackIsBlockedByATS() async throws {
     let defaultsSuite = "shadow-client.metadata.applist.\(UUID().uuidString)"
@@ -585,6 +637,46 @@ func metadataClientKeepsAppListOnHTTPSWhenTransportFails() async {
     #expect(
         await transport.callsWithPort() == [
             .init(scheme: "https", command: "applist", port: 47984),
+        ]
+    )
+}
+
+@Test("Metadata client uses explicit host port for HTTPS app list when no override is supplied")
+func metadataClientUsesExplicitHostPortForHTTPSAppList() async throws {
+    let defaultsSuite = "shadow-client.metadata.applist.explicit-port.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "stream-host.example.invalid")
+
+    let transport = ScriptedRequestTransport(
+        script: [
+            .init(
+                scheme: "https",
+                command: "applist",
+                expectedPort: 48010,
+                result: .success(#"<root status_code="200" status_message="OK"></root>"#)
+            ),
+        ]
+    )
+
+    let client = NativeGameStreamMetadataClient(
+        identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: pinnedStore,
+        transport: transport
+    )
+
+    _ = try await client.fetchAppList(host: "stream-host.example.invalid:48010", httpsPort: nil)
+
+    #expect(
+        await transport.callsWithPort() == [
+            .init(scheme: "https", command: "applist", port: 48010),
         ]
     )
 }
@@ -1253,6 +1345,32 @@ func hostCatalogCachedCandidatesIncludeAllRouteEndpoints() {
     #expect(candidates.contains("desktop-lan.local"))
     #expect(candidates.contains("192.168.0.52"))
     #expect(candidates.contains("public-gateway.example.invalid"))
+}
+
+@Test("Host catalog cached candidates preserve explicit custom HTTPS ports")
+func hostCatalogCachedCandidatesPreserveExplicitCustomPorts() {
+    let descriptors = [
+        ShadowClientRemoteHostDescriptor(
+            host: "desktop-lan.local:48010",
+            displayName: "Example-PC",
+            pairStatus: .paired,
+            currentGameID: 0,
+            serverState: "SUNSHINE_SERVER_FREE",
+            httpsPort: 47984,
+            appVersion: "1.0",
+            gfeVersion: nil,
+            uniqueID: "HOST-123",
+            lastError: nil,
+            localHost: "192.168.0.52",
+            remoteHost: "public-gateway.example.invalid",
+            manualHost: "wan-gateway.example.invalid:48100"
+        ),
+    ]
+
+    let candidates = ShadowClientHostCatalogKit.cachedCandidateHosts(from: descriptors)
+
+    #expect(candidates.contains("desktop-lan.local:48010"))
+    #expect(candidates.contains("wan-gateway.example.invalid:48100"))
 }
 
 @Test("Remote desktop runtime remembers preferred route aliases for an existing host")

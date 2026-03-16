@@ -74,6 +74,31 @@ func nativeHostProbeConnectorTrimsHostAndCallsProbe() async throws {
     #expect(await capture.hosts() == ["192.168.1.30"])
 }
 
+@Test("Native host probe connector uses explicit port from host entry")
+func nativeHostProbeConnectorUsesExplicitPortFromHostEntry() async {
+    let capture = HostProbeCapture()
+    let client = NativeHostProbeConnectionClient(requiredPorts: [47984, 47989]) { host in
+        await capture.recordHost(host)
+        return ShadowClientHostProbeResult(reachablePorts: [])
+    }
+
+    var capturedFailure: ShadowClientConnectionFailure?
+    do {
+        try await client.connect(to: " stream-host.example.invalid:48010 ")
+    } catch let error as ShadowClientConnectionFailure {
+        capturedFailure = error
+    } catch {
+        Issue.record("Unexpected error: \(error)")
+    }
+
+    #expect(await capture.hosts() == ["stream-host.example.invalid"])
+    #expect(
+        capturedFailure == .connectRejected(
+            "No stream services reachable on stream-host.example.invalid:48010. Checked TCP ports: 48010."
+        )
+    )
+}
+
 @Test("Native host probe connector surfaces probe failure")
 func nativeHostProbeConnectorSurfacesProbeFailure() async {
     let client = NativeHostProbeConnectionClient(requiredPorts: [47984]) { _ in

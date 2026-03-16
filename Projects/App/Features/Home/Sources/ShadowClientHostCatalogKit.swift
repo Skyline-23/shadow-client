@@ -10,9 +10,7 @@ enum ShadowClientHostCatalogKit {
 
         for host in descriptors {
             for endpoint in host.routes.allEndpoints {
-                let normalizedHost = endpoint.host
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .lowercased()
+                let normalizedHost = ShadowClientHostEndpointKit.candidateString(for: endpoint)
                 guard !normalizedHost.isEmpty,
                       seen.insert(normalizedHost).inserted
                 else {
