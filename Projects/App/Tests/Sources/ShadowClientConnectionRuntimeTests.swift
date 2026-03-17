@@ -64,21 +64,22 @@ func simulatedConnectorEmitsTelemetryAfterConnect() async {
 @Test("Native host probe connector trims host and uses probe callback")
 func nativeHostProbeConnectorTrimsHostAndCallsProbe() async throws {
     let capture = HostProbeCapture()
-    let client = NativeHostProbeConnectionClient(requiredPorts: [47984]) { host in
-        await capture.recordHost(host)
+    let client = NativeHostProbeConnectionClient(requiredPorts: [47984]) { host, ports in
+        await capture.recordInvocation(host: host, ports: ports)
         return ShadowClientHostProbeResult(reachablePorts: [47984])
     }
 
     try await client.connect(to: " 192.168.1.30 ")
 
     #expect(await capture.hosts() == ["192.168.1.30"])
+    #expect(await capture.ports() == [[47984]])
 }
 
 @Test("Native host probe connector uses explicit port from host entry")
 func nativeHostProbeConnectorUsesExplicitPortFromHostEntry() async {
     let capture = HostProbeCapture()
-    let client = NativeHostProbeConnectionClient(requiredPorts: [47984, 47989]) { host in
-        await capture.recordHost(host)
+    let client = NativeHostProbeConnectionClient(requiredPorts: [47984, 47989]) { host, ports in
+        await capture.recordInvocation(host: host, ports: ports)
         return ShadowClientHostProbeResult(reachablePorts: [])
     }
 
@@ -92,6 +93,7 @@ func nativeHostProbeConnectorUsesExplicitPortFromHostEntry() async {
     }
 
     #expect(await capture.hosts() == ["stream-host.example.invalid"])
+    #expect(await capture.ports() == [[48010]])
     #expect(
         capturedFailure == .connectRejected(
             "No stream services reachable on stream-host.example.invalid:48010. Checked TCP ports: 48010."
@@ -99,9 +101,23 @@ func nativeHostProbeConnectorUsesExplicitPortFromHostEntry() async {
     )
 }
 
+@Test("Native host probe connector forwards explicit Apollo connect candidates without falling back to default ports")
+func nativeHostProbeConnectorForwardsExplicitApolloConnectCandidatePorts() async throws {
+    let capture = HostProbeCapture()
+    let client = NativeHostProbeConnectionClient(requiredPorts: [47984, 47989, 48010]) { host, ports in
+        await capture.recordInvocation(host: host, ports: ports)
+        return ShadowClientHostProbeResult(reachablePorts: [48989])
+    }
+
+    try await client.connect(to: "buseongs-macbook-pro-14.local:48989")
+
+    #expect(await capture.hosts() == ["buseongs-macbook-pro-14.local"])
+    #expect(await capture.ports() == [[48989]])
+}
+
 @Test("Native host probe connector surfaces probe failure")
 func nativeHostProbeConnectorSurfacesProbeFailure() async {
-    let client = NativeHostProbeConnectionClient(requiredPorts: [47984]) { _ in
+    let client = NativeHostProbeConnectionClient(requiredPorts: [47984]) { _, _ in
         throw ShadowClientConnectionFailure.connectRejected("Connection refused")
     }
 
@@ -121,7 +137,7 @@ func nativeHostProbeConnectorSurfacesProbeFailure() async {
 
 @Test("Native host probe connector fails when no stream service ports are reachable")
 func nativeHostProbeConnectorFailsWithoutReachablePorts() async {
-    let client = NativeHostProbeConnectionClient(requiredPorts: [47984, 47989]) { _ in
+    let client = NativeHostProbeConnectionClient(requiredPorts: [47984, 47989]) { _, _ in
         ShadowClientHostProbeResult(reachablePorts: [])
     }
 
@@ -143,13 +159,19 @@ func nativeHostProbeConnectorFailsWithoutReachablePorts() async {
 
 private actor HostProbeCapture {
     private var recordedHosts: [String] = []
+    private var recordedPorts: [[Int]] = []
 
-    func recordHost(_ host: String) {
+    func recordInvocation(host: String, ports: [Int]) {
         recordedHosts.append(host)
+        recordedPorts.append(ports)
     }
 
     func hosts() -> [String] {
         recordedHosts
+    }
+
+    func ports() -> [[Int]] {
+        recordedPorts
     }
 }
 

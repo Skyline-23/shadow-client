@@ -110,7 +110,7 @@ public actor ShadowClientConnectionRuntime {
 }
 
 public actor NativeHostProbeConnectionClient: ShadowClientConnectionClient {
-    public typealias HostProbe = @Sendable (String) async throws -> ShadowClientHostProbeResult
+    public typealias HostProbe = @Sendable (String, [Int]) async throws -> ShadowClientHostProbeResult
 
     private let hostProbe: HostProbe
     private let requiredPorts: [Int]
@@ -125,8 +125,8 @@ public actor NativeHostProbeConnectionClient: ShadowClientConnectionClient {
         if let hostProbe {
             self.hostProbe = hostProbe
         } else {
-            self.hostProbe = { host in
-                try await NativeTCPHostProbe.probe(host: host, ports: normalizedPorts)
+            self.hostProbe = { host, ports in
+                try await NativeTCPHostProbe.probe(host: host, ports: ports)
             }
         }
         connectedHost = nil
@@ -139,7 +139,7 @@ public actor NativeHostProbeConnectionClient: ShadowClientConnectionClient {
         }
 
         let probeTarget = parseProbeTarget(normalizedHost)
-        let probeResult = try await hostProbe(probeTarget.host)
+        let probeResult = try await hostProbe(probeTarget.host, probeTarget.ports)
         guard probeResult.hasReachableService else {
             throw ShadowClientConnectionFailure.connectRejected(
                 unavailableServiceMessage(for: normalizedHost, ports: probeTarget.ports)
