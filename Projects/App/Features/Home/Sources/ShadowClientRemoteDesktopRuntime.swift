@@ -1732,6 +1732,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @Published public private(set) var pairingState: ShadowClientRemotePairingState = .idle
     @Published public private(set) var launchState: ShadowClientRemoteLaunchState = .idle
     @Published public private(set) var activeSession: ShadowClientActiveRemoteSession?
+    @Published public private(set) var isClearingActiveSession = false
     @Published public private(set) var sessionIssue: ShadowClientRemoteSessionIssue?
     @Published public private(set) var selectedHostApolloAdminProfile: ShadowClientApolloAdminClientProfile?
     @Published public private(set) var selectedHostApolloAdminState: ShadowClientApolloAdminClientState = .idle
@@ -1758,6 +1759,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var refreshAppsTask: Task<Void, Never>?
     private var pairTask: Task<Void, Never>?
     private var launchTask: Task<Void, Never>?
+    private var activeSessionCancelTask: Task<Void, Never>?
     private var inputKeepAliveTask: Task<Void, Never>?
     private var clipboardSyncTask: Task<Void, Never>?
     private var latestHostCandidates: [String] = []
@@ -1868,6 +1870,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         refreshAppsTask?.cancel()
         pairTask?.cancel()
         launchTask?.cancel()
+        activeSessionCancelTask?.cancel()
         inputKeepAliveTask?.cancel()
         renderStateFailureObservation?.cancel()
     }
@@ -1990,7 +1993,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return
         }
 
-        if launchState.isTransitioning || activeSession != nil {
+        if isClearingActiveSession || launchState.isTransitioning || activeSession != nil {
             logger.notice(
                 "Skipping host metadata refresh while session transition is active"
             )
@@ -2811,7 +2814,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let previousLaunchTask = launchTask
         previousLaunchTask?.cancel()
         launchTask = nil
+        refreshHostsTask?.cancel()
+        refreshHostsTask = nil
+        refreshAppsTask?.cancel()
+        refreshAppsTask = nil
+        activeSessionCancelTask?.cancel()
+        activeSessionCancelTask = nil
         launchGeneration &+= 1
+        isClearingActiveSession = true
 
         activeSession = nil
         lastKnownSessionURL = nil
@@ -2839,9 +2849,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
         await inputSendQueue.clear()
         await sessionConnectionClient.disconnect()
+        var cancelRequest: (host: String, httpsPort: Int, refreshCandidates: [String])?
         if let selectedHost,
            selectedHost.currentGameID > 0,
-           let controlClient,
            let pairingRouteStore
         {
             let runtimeHost = await Self.preferredRuntimeHostDescriptor(
@@ -2849,21 +2859,41 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 latestResolvedHostDescriptors: latestResolvedHostDescriptors,
                 pairingRouteStore: pairingRouteStore
             )
-            try? await controlClient.cancelActiveSession(
-                host: runtimeHost.host,
-                httpsPort: runtimeHost.httpsPort
-            )
-            await MainActor.run { [weak self] in
-                guard let self else {
+            let candidates = latestHostCandidates.isEmpty
+                ? ShadowClientHostCatalogKit.cachedCandidateHosts(from: [selectedHost])
+                : latestHostCandidates
+            cancelRequest = (runtimeHost.host, runtimeHost.httpsPort, candidates)
+        }
+
+        await MainActor.run { [weak self] in
+            guard let self else {
+                return
+            }
+            self.isClearingActiveSession = false
+
+            guard let cancelRequest, let controlClient else {
+                return
+            }
+
+            self.activeSessionCancelTask?.cancel()
+            self.activeSessionCancelTask = Task { [weak self] in
+                try? await controlClient.cancelActiveSession(
+                    host: cancelRequest.host,
+                    httpsPort: cancelRequest.httpsPort
+                )
+                guard !Task.isCancelled else {
                     return
                 }
-                let candidates = latestHostCandidates.isEmpty
-                    ? ShadowClientHostCatalogKit.cachedCandidateHosts(from: [selectedHost])
-                    : latestHostCandidates
-                self.refreshHosts(
-                    candidates: candidates,
-                    preferredHost: runtimeHost.host
-                )
+                await MainActor.run { [weak self] in
+                    guard let self else {
+                        return
+                    }
+                    self.refreshHosts(
+                        candidates: cancelRequest.refreshCandidates,
+                        preferredHost: cancelRequest.host
+                    )
+                    self.activeSessionCancelTask = nil
+                }
             }
         }
     }
@@ -4256,7 +4286,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         appRefreshGeneration &+= 1
         let refreshGeneration = appRefreshGeneration
 
-        if launchState.isTransitioning || activeSession != nil {
+        if isClearingActiveSession || launchState.isTransitioning || activeSession != nil {
             logger.notice(
                 "Skipping app list refresh while session transition is active"
             )

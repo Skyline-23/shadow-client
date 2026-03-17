@@ -115,6 +115,9 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
         ZStack {
             backgroundGradient
             rootContentView
+            if remoteDesktopRuntime.isClearingActiveSession {
+                disconnectingSessionOverlay
+            }
         }
         .background(
             GeometryReader { geometry in
@@ -460,7 +463,10 @@ var canConnect: Bool {
     }
 
 var canInitiateSessionConnection: Bool {
-        ShadowClientConnectionPresentationKit.canInitiateSessionConnection(
+        guard !remoteDesktopRuntime.isClearingActiveSession else {
+            return false
+        }
+        return ShadowClientConnectionPresentationKit.canInitiateSessionConnection(
             state: connectionState
         )
     }
@@ -530,6 +536,9 @@ func startHostDiscovery() {
 
     @MainActor
 func refreshRemoteDesktopCatalog() {
+        guard !remoteDesktopRuntime.isClearingActiveSession else {
+            return
+        }
         let discoveredHosts = hostDiscoveryRuntime.hosts
         let candidates = ShadowClientHostCatalogKit.refreshCandidates(
             autoFindHosts: autoFindHosts,
@@ -707,6 +716,9 @@ func connectToHost(
         autoLaunchAfterConnect: Bool = false,
         preferredHostID: String? = nil
     ) {
+        guard !remoteDesktopRuntime.isClearingActiveSession else {
+            return
+        }
         let host = ShadowClientConnectionHostResolutionKit.resolvedConnectHost(
             requestedHost: normalizedConnectionHost,
             discoveredHosts: hostDiscoveryRuntime.hosts,
@@ -800,6 +812,9 @@ func autoLaunchPreferredRemoteApp(preferredHostID: String?) async {
 
     @MainActor
 func launchRemoteApp(_ app: ShadowClientRemoteAppDescriptor) {
+        guard !remoteDesktopRuntime.isClearingActiveSession else {
+            return
+        }
         let settings = resolvedLaunchSettings(
             hostApp: app,
             networkSignal: launchBitrateNetworkSignal,
@@ -989,6 +1004,16 @@ func launchDesktopFallbackIfNeeded() async {
     @MainActor
 func disconnectFromHost() {
         Task {
+            if remoteDesktopRuntime.activeSession != nil || remoteDesktopRuntime.isClearingActiveSession {
+                remoteDesktopRuntime.clearActiveSession()
+                for _ in 0..<ShadowClientUIRuntimeDefaults.launchStatePollingAttempts {
+                    if !remoteDesktopRuntime.isClearingActiveSession,
+                       remoteDesktopRuntime.activeSession == nil {
+                        break
+                    }
+                    try? await Task.sleep(for: ShadowClientUIRuntimeDefaults.pollingInterval)
+                }
+            }
             let state = await baseDependencies.connectionRuntime.disconnect()
             await MainActor.run {
                 connectionState = state
@@ -999,6 +1024,23 @@ func disconnectFromHost() {
                 refreshRemoteDesktopCatalog()
             }
         }
+    }
+
+    var disconnectingSessionOverlay: some View {
+        ZStack {
+            Color.black
+                .opacity(0.6)
+                .ignoresSafeArea()
+
+            playbackOverlayLabel(
+                "Disconnecting current session...",
+                symbol: "xmark.circle",
+                tone: .launching
+            )
+            .padding(.horizontal, 20)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .transition(.opacity)
     }
 }
 

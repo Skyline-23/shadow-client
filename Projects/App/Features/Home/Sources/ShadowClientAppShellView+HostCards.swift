@@ -828,6 +828,7 @@ var remoteDesktopHostCard: some View {
                         launchAccessibilityHint: ShadowClientHostAppLibraryPresentationKit.launchAccessibilityHint(),
                         launchAccessibilityIdentifier: "shadow.home.applist.launch.\(appIdentifier)",
                         launchDisabled: remoteDesktopRuntime.launchState.isTransitioning
+                            || remoteDesktopRuntime.isClearingActiveSession
                     ) {
                         launchRemoteApp(app)
                     }
@@ -1015,7 +1016,10 @@ var remoteDesktopHostCard: some View {
     }
 
     var canRefreshSelectedHostApps: Bool {
-        ShadowClientRemoteHostActionKit.canRefreshApps(
+        guard !remoteDesktopRuntime.isClearingActiveSession else {
+            return false
+        }
+        return ShadowClientRemoteHostActionKit.canRefreshApps(
             selectedHost: remoteDesktopRuntime.selectedHost
         )
     }

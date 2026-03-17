@@ -2532,6 +2532,67 @@ func remoteDesktopRuntimeDisconnectsSessionTransportOnClearActiveSession() async
     #expect(await sessionConnector.disconnectCalls() >= 1)
 }
 
+@Test("Remote desktop runtime finishes local session clear without waiting for host cancel")
+@MainActor
+func remoteDesktopRuntimeDoesNotWaitForHostCancelToFinishClearingSession() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.32": .init(
+                host: "192.168.0.32",
+                displayName: "Studio",
+                pairStatus: .paired,
+                currentGameID: 1,
+                serverState: "SUNSHINE_SERVER_BUSY",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-12"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.32": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.32:48010/session", verb: "resume"),
+        simulatedCancelDelay: .seconds(2)
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.32"], preferredHost: "192.168.0.32")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+
+    var didReturn = false
+    let clearTask = Task { @MainActor in
+        await runtime.suspendActiveSessionForAppLifecycle()
+        didReturn = true
+    }
+
+    await waitForSessionDisconnectCalls(sessionConnector, expectedCount: 1)
+    await waitForActiveSessionClearState(runtime, expected: false)
+    await waitForCondition {
+        didReturn
+    }
+
+    #expect(runtime.activeSession == nil)
+    #expect(runtime.isClearingActiveSession == false)
+    #expect(didReturn)
+    clearTask.cancel()
+}
+
 @Test("Remote desktop runtime clears in-flight launch and keeps session closed")
 @MainActor
 func remoteDesktopRuntimeClearsInFlightLaunch() async {
@@ -2649,6 +2710,7 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
     private var simulatedLaunchFailures: [any Error & Sendable]
     private let simulatedClipboardText: String?
     private let simulatedClipboardFailure: (any Error & Sendable)?
+    private let simulatedCancelDelay: Duration?
     private let defaultLaunchResult: ShadowClientGameStreamLaunchResult
     private let simulatedLaunchFailure: (any Error & Sendable)?
 
@@ -2659,6 +2721,7 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
         simulatedLaunchFailures: [any Error & Sendable] = [],
         simulatedClipboardText: String? = nil,
         simulatedClipboardFailure: (any Error & Sendable)? = nil,
+        simulatedCancelDelay: Duration? = nil,
         simulatedLaunchFailure: (any Error & Sendable)? = nil
     ) {
         self.simulatedPairFailures = simulatedPairFailures
@@ -2666,6 +2729,7 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
         self.simulatedLaunchFailures = simulatedLaunchFailures
         self.simulatedClipboardText = simulatedClipboardText
         self.simulatedClipboardFailure = simulatedClipboardFailure
+        self.simulatedCancelDelay = simulatedCancelDelay
         self.defaultLaunchResult = simulatedLaunchResult
         self.simulatedLaunchFailure = simulatedLaunchFailure
     }
@@ -2754,6 +2818,9 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
         httpsPort: Int
     ) async throws {
         recordedCancelCalls.append(.init(host: host, httpsPort: httpsPort))
+        if let simulatedCancelDelay {
+            try? await Task.sleep(for: simulatedCancelDelay)
+        }
     }
 
     func cancelCalls() -> [CancelCall] {
@@ -3292,6 +3359,35 @@ private func waitForSessionDisconnectCalls(
 ) async {
     for _ in 0..<maxAttempts {
         if await connector.disconnectCalls() >= expectedCount {
+            return
+        }
+
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+@MainActor
+private func waitForActiveSessionClearState(
+    _ runtime: ShadowClientRemoteDesktopRuntime,
+    expected: Bool,
+    maxAttempts: Int = 50
+) async {
+    for _ in 0..<maxAttempts {
+        if runtime.isClearingActiveSession == expected {
+            return
+        }
+
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+@MainActor
+private func waitForCondition(
+    maxAttempts: Int = 50,
+    _ predicate: @escaping @MainActor () -> Bool
+) async {
+    for _ in 0..<maxAttempts {
+        if predicate() {
             return
         }
 
