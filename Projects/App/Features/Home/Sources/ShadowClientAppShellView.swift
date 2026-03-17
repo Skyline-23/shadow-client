@@ -707,7 +707,11 @@ func connectToHost(
         autoLaunchAfterConnect: Bool = false,
         preferredHostID: String? = nil
     ) {
-        let host = normalizedConnectionHost
+        let host = ShadowClientConnectionHostResolutionKit.resolvedConnectHost(
+            requestedHost: normalizedConnectionHost,
+            discoveredHosts: hostDiscoveryRuntime.hosts,
+            knownHosts: remoteDesktopRuntime.hosts
+        )
         guard !host.isEmpty else {
             return
         }
