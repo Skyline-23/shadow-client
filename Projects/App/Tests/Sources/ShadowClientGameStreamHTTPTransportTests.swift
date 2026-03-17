@@ -116,6 +116,80 @@ func httpTransportRewritesURLForNumericIPv6Targets() throws {
     #expect(rewrittenURL.absoluteString == "https://[2001:db8::20]:47984/serverinfo")
 }
 
+@Test("HTTP transport computes response byte count from Content-Length")
+func httpTransportComputesExpectedResponseByteCount() {
+    let response = Data(
+        """
+        HTTP/1.1 200 OK\r
+        Content-Length: 27\r
+        Connection: keep-alive\r
+        \r
+        <root status_code=\"200\" />
+        """.utf8
+    )
+
+    let expectedByteCount = ShadowClientGameStreamHTTPTransport.expectedHTTPResponseByteCount(
+        from: response
+    )
+
+    #expect(expectedByteCount == response.count)
+}
+
+@Test("HTTP transport does not require EOF when Content-Length body is complete")
+func httpTransportDetectsCompleteHTTPResponseWithoutEOF() {
+    let partialResponse = Data(
+        """
+        HTTP/1.1 200 OK\r
+        Content-Length: 27\r
+        Connection: keep-alive\r
+        \r
+        <root status_code=\"200\" />
+        EXTRA
+        """.utf8
+    )
+
+    let expectedByteCount = ShadowClientGameStreamHTTPTransport.expectedHTTPResponseByteCount(
+        from: partialResponse
+    )
+
+    #expect(expectedByteCount == partialResponse.count - 5)
+}
+
+@Test("HTTP transport keeps PIN wait responses unbounded when timeout is disabled")
+func httpTransportLeavesPairResponseWaitUnboundedWhenTimeoutDisabled() {
+    let startedAt = ContinuousClock.now
+
+    let connectionTimeout = ShadowClientGameStreamHTTPTransport.connectionPhaseTimeout(
+        startedAt: startedAt,
+        overallTimeout: 0
+    )
+    let responseTimeout = ShadowClientGameStreamHTTPTransport.responsePhaseTimeout(
+        startedAt: startedAt,
+        overallTimeout: 0
+    )
+
+    #expect(connectionTimeout == 1.5)
+    #expect(responseTimeout == nil)
+}
+
+@Test("HTTP transport only caps connection setup timeout, not response wait timeout")
+func httpTransportSeparatesConnectionAndResponseTimeoutBudgets() {
+    let startedAt = ContinuousClock.now
+
+    let connectionTimeout = ShadowClientGameStreamHTTPTransport.connectionPhaseTimeout(
+        startedAt: startedAt,
+        overallTimeout: 45
+    )
+    let responseTimeout = ShadowClientGameStreamHTTPTransport.responsePhaseTimeout(
+        startedAt: startedAt,
+        overallTimeout: 45
+    )
+
+    #expect(connectionTimeout == 1.5)
+    #expect(responseTimeout != nil)
+    #expect(responseTimeout! > 40)
+}
+
 @Test("Launch parameter builder includes Apollo virtual display request when enabled")
 func launchParameterBuilderIncludesApolloVirtualDisplayRequest() {
     let parameters = NativeGameStreamControlClient.makeLaunchParameters(

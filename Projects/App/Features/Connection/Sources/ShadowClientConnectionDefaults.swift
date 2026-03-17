@@ -20,6 +20,34 @@ public enum ShadowClientGameStreamNetworkDefaults {
 
     public static let minimumPort = 1
     public static let maximumPort = Int(UInt16.max)
+    public static let httpsOffsetFromHTTPPort = defaultHTTPSPort - defaultHTTPPort
+    public static let webUIOffsetFromHTTPPort = 1
+    public static let rtspOffsetFromHTTPPort = 21
+    public static let streamUDPRangeOffset = 9...11
+
+    public static func mappedHTTPSPort(forHTTPPort httpPort: Int) -> Int? {
+        guard (minimumPort...maximumPort).contains(httpPort) else {
+            return nil
+        }
+
+        let candidate = httpPort + httpsOffsetFromHTTPPort
+        guard (minimumPort...maximumPort).contains(candidate) else {
+            return nil
+        }
+        return candidate
+    }
+
+    public static func mappedHTTPPort(forHTTPSPort httpsPort: Int) -> Int? {
+        guard (minimumPort...maximumPort).contains(httpsPort) else {
+            return nil
+        }
+
+        let candidate = httpsPort - httpsOffsetFromHTTPPort
+        guard (minimumPort...maximumPort).contains(candidate) else {
+            return nil
+        }
+        return candidate
+    }
 }
 
 public enum ShadowClientHostProbeDefaults {

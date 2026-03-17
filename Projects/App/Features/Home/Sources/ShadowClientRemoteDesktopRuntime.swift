@@ -50,6 +50,36 @@ enum ShadowClientHostEndpointKit {
         )
     }
 
+    static func parseApolloConnectCandidate(
+        _ candidate: String?,
+        fallbackHTTPSPort: Int
+    ) -> ShadowClientRemoteHostEndpoint? {
+        guard let endpoint = parseCandidate(candidate, fallbackHTTPSPort: fallbackHTTPSPort) else {
+            return nil
+        }
+
+        let trimmedCandidate = candidate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let urlCandidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(trimmedCandidate)
+        guard let parsed = URL(string: urlCandidate),
+              let explicitPort = parsed.port
+        else {
+            return endpoint
+        }
+
+        guard let mappedHTTPSPort = ShadowClientGameStreamNetworkDefaults.mappedHTTPSPort(
+            forHTTPPort: explicitPort
+        ),
+        mappedHTTPSPort == fallbackHTTPSPort
+        else {
+            return endpoint
+        }
+
+        return ShadowClientRemoteHostEndpoint(
+            host: endpoint.host,
+            httpsPort: fallbackHTTPSPort
+        )
+    }
+
     static func candidateString(
         for endpoint: ShadowClientRemoteHostEndpoint,
         defaultHTTPSPort: Int = ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
@@ -131,7 +161,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         remoteHost: String? = nil,
         manualHost: String? = nil
     ) {
-        let activeRoute = ShadowClientHostEndpointKit.parseCandidate(
+        let activeRoute = ShadowClientHostEndpointKit.parseApolloConnectCandidate(
             host,
             fallbackHTTPSPort: httpsPort
         ) ?? .init(host: host, httpsPort: httpsPort)
@@ -147,15 +177,15 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         self.lastError = lastError
         self.routes = ShadowClientRemoteHostRoutes(
             active: activeRoute,
-            local: ShadowClientHostEndpointKit.parseCandidate(
+            local: ShadowClientHostEndpointKit.parseApolloConnectCandidate(
                 localHost,
                 fallbackHTTPSPort: httpsPort
             ),
-            remote: ShadowClientHostEndpointKit.parseCandidate(
+            remote: ShadowClientHostEndpointKit.parseApolloConnectCandidate(
                 remoteHost,
                 fallbackHTTPSPort: httpsPort
             ),
-            manual: ShadowClientHostEndpointKit.parseCandidate(
+            manual: ShadowClientHostEndpointKit.parseApolloConnectCandidate(
                 manualHost,
                 fallbackHTTPSPort: httpsPort
             )
@@ -190,7 +220,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
 
     public var host: String { routes.active.host }
     public var httpsPort: Int { routes.active.httpsPort }
-    public var hostCandidate: String { ShadowClientHostEndpointKit.candidateString(for: routes.active) }
+    public var hostCandidate: String { ShadowClientPairRouteKit.candidateString(for: routes.active) }
 
     public var isReachable: Bool {
         lastError == nil
@@ -422,6 +452,16 @@ public struct ShadowClientGameStreamServerInfo: Equatable, Sendable {
     }
 }
 
+public struct ShadowClientGameStreamPortHint: Equatable, Sendable {
+    public let httpPort: Int?
+    public let httpsPort: Int?
+
+    public init(httpPort: Int?, httpsPort: Int?) {
+        self.httpPort = httpPort
+        self.httpsPort = httpsPort
+    }
+}
+
 enum ShadowClientServerCodecModeSupport {
     static let h264 = 0x00000001
     static let hevc = 0x00000100
@@ -440,8 +480,17 @@ enum ShadowClientServerCodecModeSupport {
 }
 
 public protocol ShadowClientGameStreamMetadataClient: Sendable {
-    func fetchServerInfo(host: String) async throws -> ShadowClientGameStreamServerInfo
+    func fetchServerInfo(
+        host: String,
+        portHint: ShadowClientGameStreamPortHint?
+    ) async throws -> ShadowClientGameStreamServerInfo
     func fetchAppList(host: String, httpsPort: Int?) async throws -> [ShadowClientRemoteAppDescriptor]
+}
+
+public extension ShadowClientGameStreamMetadataClient {
+    func fetchServerInfo(host: String) async throws -> ShadowClientGameStreamServerInfo {
+        try await fetchServerInfo(host: host, portHint: nil)
+    }
 }
 
 public protocol ShadowClientRemoteSessionConnectionClient: Sendable {
@@ -747,111 +796,141 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
     private let transport: any ShadowClientGameStreamRequestTransporting
     private let defaultHTTPPort: Int
     private let defaultHTTPSPort: Int
+    private let connectionTargetsResolver: @Sendable (String) -> [String]
+
+    public static func defaultConnectionTargetsResolver(_ host: String) -> [String] {
+        ShadowClientGameStreamHTTPTransport.connectionTargets(for: host)
+    }
 
     public init(
         identityStore: ShadowClientPairingIdentityStore = .shared,
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore = .shared,
         transport: any ShadowClientGameStreamRequestTransporting = NativeShadowClientGameStreamRequestTransport(),
         defaultHTTPPort: Int = ShadowClientGameStreamNetworkDefaults.defaultHTTPPort,
-        defaultHTTPSPort: Int = ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
+        defaultHTTPSPort: Int = ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort,
+        connectionTargetsResolver: @escaping @Sendable (String) -> [String] = NativeGameStreamMetadataClient.defaultConnectionTargetsResolver
     ) {
         self.identityStore = identityStore
         self.pinnedCertificateStore = pinnedCertificateStore
         self.transport = transport
         self.defaultHTTPPort = defaultHTTPPort
         self.defaultHTTPSPort = defaultHTTPSPort
+        self.connectionTargetsResolver = connectionTargetsResolver
     }
 
-    public func fetchServerInfo(host: String) async throws -> ShadowClientGameStreamServerInfo {
-        let httpEndpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
-        let httpsEndpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPSPort)
-        let requestedHost = ShadowClientHostEndpointKit.candidateString(
-            for: ShadowClientHostEndpointKit.parseCandidate(
-                host,
-                fallbackHTTPSPort: httpsEndpoint.port
-            ) ?? .init(host: httpsEndpoint.host, httpsPort: httpsEndpoint.port)
+    public func fetchServerInfo(
+        host: String,
+        portHint: ShadowClientGameStreamPortHint?
+    ) async throws -> ShadowClientGameStreamServerInfo {
+        let requestEndpoints = try Self.resolveServerInfoRequestEndpoints(
+            host: host,
+            portHint: portHint,
+            defaultHTTPPort: defaultHTTPPort,
+            defaultHTTPSPort: defaultHTTPSPort
         )
-        let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: httpsEndpoint.host)
+        let requestedHost = requestEndpoints.host
+        let connectionTargets = connectionTargetsResolver(requestEndpoints.host)
+        let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: requestEndpoints.host)
 
         if pinnedCertificateDER == nil {
             let httpXML = try await requestXML(
-                host: httpEndpoint.host,
-                port: httpEndpoint.port,
+                host: requestEndpoints.host,
+                port: requestEndpoints.httpPort,
                 scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
                 command: "serverinfo"
             )
 
-            return try ShadowClientGameStreamXMLParsers.parseServerInfo(
+            let serverInfo = try ShadowClientGameStreamXMLParsers.parseServerInfo(
                 xml: httpXML,
                 host: requestedHost,
-                fallbackHTTPSPort: httpsEndpoint.port
+                fallbackHTTPSPort: requestEndpoints.httpsPort
+            )
+            return Self.reconciledServerInfo(
+                serverInfo,
+                requestedHost: requestedHost,
+                connectionTargets: connectionTargets
             )
         }
 
         do {
             let httpsXML = try await requestXML(
-                host: httpsEndpoint.host,
-                port: httpsEndpoint.port,
+                host: requestEndpoints.host,
+                port: requestEndpoints.httpsPort,
                 scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
                 command: "serverinfo"
             )
 
-            return try ShadowClientGameStreamXMLParsers.parseServerInfo(
+            let serverInfo = try ShadowClientGameStreamXMLParsers.parseServerInfo(
                 xml: httpsXML,
                 host: requestedHost,
-                fallbackHTTPSPort: httpsEndpoint.port
+                fallbackHTTPSPort: requestEndpoints.httpsPort
+            )
+            return Self.reconciledServerInfo(
+                serverInfo,
+                requestedHost: requestedHost,
+                connectionTargets: connectionTargets
             )
         } catch let httpsError as ShadowClientGameStreamError {
             if Self.isUnauthorizedCertificateError(httpsError) {
-                if Self.shouldSkipPlainHTTPFallback(host: httpsEndpoint.host, httpsError: httpsError) {
+                if Self.shouldSkipPlainHTTPFallback(host: requestEndpoints.host, httpsError: httpsError) {
                     return Self.makeUnauthorizedServerInfo(
                         host: requestedHost,
-                        fallbackHTTPSPort: httpsEndpoint.port
+                        fallbackHTTPSPort: requestEndpoints.httpsPort
                     )
                 }
                 do {
                     let httpXML = try await requestXML(
-                        host: httpEndpoint.host,
-                        port: httpEndpoint.port,
+                        host: requestEndpoints.host,
+                        port: requestEndpoints.httpPort,
                         scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
                         command: "serverinfo"
                     )
 
-                    return try ShadowClientGameStreamXMLParsers.parseServerInfo(
+                    let serverInfo = try ShadowClientGameStreamXMLParsers.parseServerInfo(
                         xml: httpXML,
                         host: requestedHost,
-                        fallbackHTTPSPort: httpsEndpoint.port
+                        fallbackHTTPSPort: requestEndpoints.httpsPort
+                    )
+                    return Self.reconciledServerInfo(
+                        serverInfo,
+                        requestedHost: requestedHost,
+                        connectionTargets: connectionTargets
                     )
                 } catch let httpError as ShadowClientGameStreamError {
                     if Self.isAppTransportSecurityBlockedError(httpError) {
                         return Self.makeUnauthorizedServerInfo(
                             host: requestedHost,
-                            fallbackHTTPSPort: httpsEndpoint.port
+                            fallbackHTTPSPort: requestEndpoints.httpsPort
                         )
                     }
                 } catch {}
 
                 return Self.makeUnauthorizedServerInfo(
                     host: requestedHost,
-                    fallbackHTTPSPort: httpsEndpoint.port
+                    fallbackHTTPSPort: requestEndpoints.httpsPort
                 )
             }
 
-            if Self.shouldSkipPlainHTTPFallback(host: httpsEndpoint.host, httpsError: httpsError) {
+            if Self.shouldSkipPlainHTTPFallback(host: requestEndpoints.host, httpsError: httpsError) {
                 throw httpsError
             }
             do {
                 let httpXML = try await requestXML(
-                    host: httpEndpoint.host,
-                    port: httpEndpoint.port,
+                    host: requestEndpoints.host,
+                    port: requestEndpoints.httpPort,
                     scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
                     command: "serverinfo"
                 )
 
-                return try ShadowClientGameStreamXMLParsers.parseServerInfo(
+                let serverInfo = try ShadowClientGameStreamXMLParsers.parseServerInfo(
                     xml: httpXML,
                     host: requestedHost,
-                    fallbackHTTPSPort: httpsEndpoint.port
+                    fallbackHTTPSPort: requestEndpoints.httpsPort
+                )
+                return Self.reconciledServerInfo(
+                    serverInfo,
+                    requestedHost: requestedHost,
+                    connectionTargets: connectionTargets
                 )
             } catch let httpError as ShadowClientGameStreamError {
                 if Self.isAppTransportSecurityBlockedError(httpError) {
@@ -881,6 +960,144 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         )
 
         return try ShadowClientGameStreamXMLParsers.parseAppList(xml: httpsXML)
+    }
+
+    private static func resolveServerInfoRequestEndpoints(
+        host: String,
+        portHint: ShadowClientGameStreamPortHint?,
+        defaultHTTPPort: Int,
+        defaultHTTPSPort: Int
+    ) throws -> (host: String, httpPort: Int, httpsPort: Int) {
+        let resolvedHost = try parseHostEndpoint(host: host, fallbackPort: defaultHTTPSPort).host
+        let explicitPort = parseExplicitPort(from: host)
+
+        let httpPort = portHint?.httpPort ?? explicitPort ?? defaultHTTPPort
+        let httpsPort = portHint?.httpsPort ??
+            explicitPort.flatMap { ShadowClientGameStreamNetworkDefaults.mappedHTTPSPort(forHTTPPort: $0) } ??
+            explicitPort ??
+            defaultHTTPSPort
+
+        return (
+            host: resolvedHost,
+            httpPort: httpPort,
+            httpsPort: httpsPort
+        )
+    }
+
+    private static func reconciledServerInfo(
+        _ serverInfo: ShadowClientGameStreamServerInfo,
+        requestedHost: String,
+        connectionTargets: [String]
+    ) -> ShadowClientGameStreamServerInfo {
+        let reconciledLocalHost = preferredResolvedLocalRouteHost(
+            requestedHost: requestedHost,
+            connectionTargets: connectionTargets
+        ) ?? serverInfo.localHost
+
+        return ShadowClientGameStreamServerInfo(
+            host: serverInfo.host,
+            localHost: reconciledLocalHost,
+            remoteHost: serverInfo.remoteHost,
+            manualHost: serverInfo.manualHost,
+            displayName: serverInfo.displayName,
+            pairStatus: serverInfo.pairStatus,
+            currentGameID: serverInfo.currentGameID,
+            serverState: serverInfo.serverState,
+            httpsPort: serverInfo.httpsPort,
+            appVersion: serverInfo.appVersion,
+            gfeVersion: serverInfo.gfeVersion,
+            uniqueID: serverInfo.uniqueID,
+            serverCodecModeSupport: serverInfo.serverCodecModeSupport
+        )
+    }
+
+    private static func preferredResolvedLocalRouteHost(
+        requestedHost: String,
+        connectionTargets: [String]
+    ) -> String? {
+        let normalizedRequestedHost = requestedHost
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalizedRequestedHost.isEmpty, !isIPAddressLiteral(normalizedRequestedHost) else {
+            return nil
+        }
+
+        let candidates = connectionTargets
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty && $0 != normalizedRequestedHost }
+            .reduce(into: [String]()) { partialResult, candidate in
+                guard !partialResult.contains(candidate) else {
+                    return
+                }
+                partialResult.append(candidate)
+            }
+
+        return candidates.sorted { lhs, rhs in
+            let lhsRank = resolvedLocalRouteRank(lhs)
+            let rhsRank = resolvedLocalRouteRank(rhs)
+            if lhsRank == rhsRank {
+                return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+            }
+            return lhsRank < rhsRank
+        }.first
+    }
+
+    private static func resolvedLocalRouteRank(_ host: String) -> Int {
+        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else {
+            return 100
+        }
+
+        if isPrivateIPv4Literal(normalized) {
+            return 0
+        }
+        if normalized.hasPrefix("fd") || normalized.hasPrefix("fc") {
+            return 10
+        }
+        if isIPAddressLiteral(normalized) && !ShadowClientRemoteHostCandidateFilter.isLinkLocalHost(normalized) {
+            return 20
+        }
+        if ShadowClientRemoteHostCandidateFilter.isLinkLocalHost(normalized) {
+            return 30
+        }
+        if normalized.hasSuffix(".local") || !normalized.contains(".") {
+            return 40
+        }
+        return 50
+    }
+
+    private static func isIPAddressLiteral(_ host: String) -> Bool {
+        if host.contains(":") {
+            return true
+        }
+        return host.allSatisfy { $0.isNumber || $0 == "." }
+    }
+
+    private static func isPrivateIPv4Literal(_ host: String) -> Bool {
+        if host.hasPrefix("10.") || host.hasPrefix("192.168.") {
+            return true
+        }
+        if host.hasPrefix("172."),
+           let secondOctet = host.split(separator: ".").dropFirst().first,
+           let secondOctetValue = Int(secondOctet),
+           (16...31).contains(secondOctetValue)
+        {
+            return true
+        }
+        return false
+    }
+
+    private static func parseExplicitPort(from host: String) -> Int? {
+        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            return nil
+        }
+
+        let candidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(normalized)
+        guard let url = URL(string: candidate) else {
+            return nil
+        }
+        return url.port
     }
 
     private static func isUnauthorizedCertificateError(_ error: ShadowClientGameStreamError) -> Bool {
@@ -1232,7 +1449,11 @@ private actor ShadowClientRemoteInputSendQueue {
 }
 
 private enum ShadowClientRemoteDesktopCommand: Sendable {
-    case refreshHosts(candidates: [String], preferredHost: String?)
+    case refreshHosts(
+        candidates: [String],
+        preferredHost: String?,
+        portHintsByCandidate: [String: ShadowClientGameStreamPortHint]
+    )
     case pairSelectedHost
     case deleteHost(String)
     case syncClipboardIfNeeded
@@ -1274,12 +1495,55 @@ private struct ShadowClientPairHostCandidate: Equatable, Sendable {
     let httpsPort: Int
 
     init(host: String, httpsPort: Int) {
-        let endpoint = ShadowClientHostEndpointKit.parseCandidate(
-            host,
-            fallbackHTTPSPort: httpsPort
-        ) ?? ShadowClientRemoteHostEndpoint(host: host, httpsPort: httpsPort)
-        self.host = endpoint.host
-        self.httpsPort = endpoint.httpsPort
+        self.host = Self.normalizedCandidate(host)
+        self.httpsPort = httpsPort
+    }
+
+    private static func normalizedCandidate(_ host: String) -> String {
+        let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return ""
+        }
+
+        let candidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(trimmed)
+        guard let url = URL(string: candidate), let parsedHost = url.host?.lowercased() else {
+            return trimmed.lowercased()
+        }
+
+        if let port = url.port {
+            return "\(parsedHost):\(port)"
+        }
+
+        return parsedHost
+    }
+}
+
+private enum ShadowClientPairRouteKit {
+    static func candidateString(
+        for descriptor: ShadowClientRemoteHostDescriptor
+    ) -> String {
+        candidateString(for: descriptor.routes.active)
+    }
+
+    static func candidateString(
+        for endpoint: ShadowClientRemoteHostEndpoint
+    ) -> String {
+        let normalizedHost = endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedHost.isEmpty else {
+            return ""
+        }
+
+        guard let httpPort = ShadowClientGameStreamNetworkDefaults.mappedHTTPPort(
+            forHTTPSPort: endpoint.httpsPort
+        ) else {
+            return normalizedHost
+        }
+
+        if httpPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPPort {
+            return normalizedHost
+        }
+
+        return "\(normalizedHost):\(httpPort)"
     }
 }
 
@@ -1555,8 +1819,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @MainActor
     private func process(command: ShadowClientRemoteDesktopCommand) async {
         switch command {
-        case let .refreshHosts(candidates, preferredHost):
-            performRefreshHosts(candidates: candidates, preferredHost: preferredHost)
+        case let .refreshHosts(candidates, preferredHost, portHintsByCandidate):
+            performRefreshHosts(
+                candidates: candidates,
+                preferredHost: preferredHost,
+                portHintsByCandidate: portHintsByCandidate
+            )
         case .pairSelectedHost:
             performPairSelectedHost()
         case let .deleteHost(hostID):
@@ -1626,12 +1894,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @MainActor
     public func refreshHosts(
         candidates: [String],
-        preferredHost: String? = nil
+        preferredHost: String? = nil,
+        portHintsByCandidate: [String: ShadowClientGameStreamPortHint] = [:]
     ) {
         commandContinuation.yield(
             .refreshHosts(
                 candidates: candidates,
-                preferredHost: preferredHost
+                preferredHost: preferredHost,
+                portHintsByCandidate: portHintsByCandidate
             )
         )
     }
@@ -1639,9 +1909,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @MainActor
     private func performRefreshHosts(
         candidates: [String],
-        preferredHost: String? = nil
+        preferredHost: String? = nil,
+        portHintsByCandidate: [String: ShadowClientGameStreamPortHint] = [:]
     ) {
         let normalizedCandidates = Self.normalizedHostCandidates(candidates)
+        let normalizedPortHintsByCandidate = Self.normalizedPortHintsByCandidate(
+            portHintsByCandidate
+        )
         latestHostCandidates = normalizedCandidates
         guard !normalizedCandidates.isEmpty else {
             refreshHostsTask?.cancel()
@@ -1708,36 +1982,17 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 persistentPreferredRoutesByKey: persistentPreferredRoutes,
                 sessionPreferredRoutesByKey: sessionPreferredRoutes
             )
-            let storedAliasHostsByKey = Self.sanitizedAliasHostsByKey(
-                Self.aliasHostsByKey(
-                    knownHosts: knownHosts,
-                    preferredRoutesByKey: sessionPreferredRoutes
-                ),
-                knownHosts: knownHosts,
-                refreshCandidates: probeCandidates
-            )
-            let inferredAliasHostsByKey = Self.inferredAliasHostsByKey(
-                refreshCandidates: probeCandidates,
-                knownHosts: knownHosts,
-                preferredHost: preferredHost,
-                aliasHostsByKey: storedAliasHostsByKey
-            )
-            let aliasHostsByKey = Self.mergedAliasHostsByKey(
-                storedAliasHostsByKey,
-                inferredAliasHostsByKey
-            )
             let coalescedCandidates = Self.coalescedCandidatesUsingKnownHosts(
                 probeCandidates,
                 knownHosts: knownHosts,
                 preferredHost: preferredHost,
-                preferredRoutesByKey: preferredRoutes,
-                aliasHostsByKey: aliasHostsByKey
+                preferredRoutesByKey: preferredRoutes
             )
             if !knownHosts.isEmpty {
                 let summary = knownHosts
                     .map { host in
                         let key = Self.mergeKey(for: host)
-                        let endpoints = Self.knownHostSet(for: host, aliasHostsByKey: aliasHostsByKey)
+                        let endpoints = Self.knownHostSet(for: host)
                             .sorted()
                             .joined(separator: ",")
                         return "\(key)=\(endpoints)"
@@ -1745,13 +2000,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     .sorted()
                     .joined(separator: ";")
                 logger.notice("Host refresh known groups \(summary, privacy: .public)")
-            }
-            if !inferredAliasHostsByKey.isEmpty {
-                let summary = inferredAliasHostsByKey
-                    .map { "\($0.key)=\($0.value.sorted().joined(separator: ","))" }
-                    .sorted()
-                    .joined(separator: ";")
-                logger.notice("Host refresh inferred alias groups \(summary, privacy: .public)")
             }
             if coalescedCandidates != probeCandidates {
                 let originalCandidatesSummary = probeCandidates.joined(separator: ",")
@@ -1766,8 +2014,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 returning: [ShadowClientRemoteHostDescriptor].self
             ) { group in
                 for host in coalescedCandidates {
+                    let portHint = normalizedPortHintsByCandidate[host]
                     group.addTask {
-                        await Self.fetchHostDescriptor(host: host, metadataClient: metadataClient)
+                        await Self.fetchHostDescriptor(
+                            host: host,
+                            portHint: portHint,
+                            metadataClient: metadataClient
+                        )
                     }
                 }
 
@@ -1781,8 +2034,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             let hydratedDescriptors = Self.hydrateDescriptorsUsingKnownHosts(
                 descriptors,
                 knownHosts: knownHosts,
-                preferredRoutesByKey: preferredRoutes,
-                aliasHostsByKey: aliasHostsByKey
+                preferredRoutesByKey: preferredRoutes
             )
             let filteredDescriptors = Self.filterOutSelfHosts(
                 hydratedDescriptors,
@@ -2025,7 +2277,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         )
                     }
                     self.performRefreshSelectedHostApps()
-                    let candidates = self.latestHostCandidates.isEmpty ? self.hosts.map(\.host) : self.latestHostCandidates
+                    let candidates = self.latestHostCandidates.isEmpty
+                        ? ShadowClientHostCatalogKit.cachedCandidateHosts(from: self.hosts)
+                        : self.latestHostCandidates
                     self.refreshHosts(
                         candidates: candidates,
                         preferredHost: pairedHost ?? selectedHost.host
@@ -2548,7 +2802,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     return
                 }
                 let candidates = latestHostCandidates.isEmpty
-                    ? [selectedHost.host]
+                    ? ShadowClientHostCatalogKit.cachedCandidateHosts(from: [selectedHost])
                     : latestHostCandidates
                 self.refreshHosts(
                     candidates: candidates,
@@ -3854,18 +4108,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         let mergeKey = Self.mergeKey(for: matchedHost)
         let knownHosts = hosts.isEmpty ? latestResolvedHostDescriptors : hosts
-        let preferredRoutesByKey = await Self.effectivePreferredRouteOverrides(
-            for: knownHosts,
-            pairingRouteStore: pairingRouteStore
-        )
-        let aliasHostsByKey = Self.aliasHostsByKey(
-            knownHosts: knownHosts,
-            preferredRoutesByKey: preferredRoutesByKey
-        )
         let conflictingDescriptor = Self.bestKnownHost(
             matching: normalizedRouteHost,
-            in: knownHosts,
-            aliasHostsByKey: aliasHostsByKey
+            in: knownHosts
         ).flatMap { descriptor in
             Self.mergeKey(for: descriptor) == mergeKey ? nil : descriptor
         }
@@ -3877,16 +4122,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         let sessionRouteKey = Self.sessionRouteStoreKey(for: matchedHost)
-        hosts = Self.updatingHostDescriptors(
-            hosts,
-            matching: mergeKey,
-            aliasHost: normalizedRouteHost
-        )
-        latestResolvedHostDescriptors = Self.updatingHostDescriptors(
-            latestResolvedHostDescriptors,
-            matching: mergeKey,
-            aliasHost: normalizedRouteHost
-        )
         logger.notice(
             "Host route alias remembered mergeKey=\(mergeKey, privacy: .public) alias=\(normalizedRouteHost, privacy: .public)"
         )
@@ -4351,10 +4586,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     private static func fetchHostDescriptor(
         host: String,
+        portHint: ShadowClientGameStreamPortHint?,
         metadataClient: any ShadowClientGameStreamMetadataClient
     ) async -> ShadowClientRemoteHostDescriptor {
         do {
-            let info = try await metadataClient.fetchServerInfo(host: host)
+            let info = try await metadataClient.fetchServerInfo(
+                host: host,
+                portHint: portHint
+            )
             return ShadowClientRemoteHostDescriptor(
                 host: info.host,
                 displayName: info.displayName,
@@ -4381,7 +4620,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 pairStatus: .unknown,
                 currentGameID: 0,
                 serverState: "",
-                httpsPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort,
+                httpsPort: portHint?.httpsPort ?? ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort,
                 appVersion: nil,
                 gfeVersion: nil,
                 uniqueID: nil,
@@ -4536,15 +4775,23 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         preferredPairHost: String?
     ) -> [ShadowClientPairHostCandidate] {
         var candidates: [ShadowClientPairHostCandidate] = []
+        let selectedPairCandidate = ShadowClientPairRouteKit.candidateString(for: selectedHost)
+        let normalizedSelectedPairCandidate = normalizeCandidate(selectedPairCandidate)
+        let normalizedSelectedPairHost = normalizedCandidateHost(normalizedSelectedPairCandidate)
 
         if let preferredPairHost {
-            candidates.append(.init(host: preferredPairHost, httpsPort: selectedHost.httpsPort))
+            let normalizedPreferredPairHost = normalizeCandidate(preferredPairHost)
+            let normalizedPreferredPairHostOnly = normalizedCandidateHost(normalizedPreferredPairHost)
+            let canonicalPreferredPairHost = normalizedPreferredPairHostOnly == normalizedSelectedPairHost
+                ? selectedPairCandidate
+                : preferredPairHost
+            candidates.append(.init(host: canonicalPreferredPairHost, httpsPort: selectedHost.httpsPort))
         }
 
         if let uniqueID = selectedHost.uniqueID, !uniqueID.isEmpty {
             let matchingHosts = hosts.filter { $0.uniqueID == uniqueID }
             candidates.append(contentsOf: matchingHosts.map {
-                .init(host: $0.host, httpsPort: $0.httpsPort)
+                .init(host: ShadowClientPairRouteKit.candidateString(for: $0), httpsPort: $0.httpsPort)
             })
         }
 
@@ -4553,7 +4800,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 .init(host: $0, httpsPort: selectedHost.httpsPort)
             }
         )
-        candidates.append(.init(host: selectedHost.host, httpsPort: selectedHost.httpsPort))
+        candidates.append(
+            .init(
+                host: ShadowClientPairRouteKit.candidateString(for: selectedHost),
+                httpsPort: selectedHost.httpsPort
+            )
+        )
 
         var seen: Set<String> = []
         let deduplicated = candidates.filter { candidate in
@@ -4568,12 +4820,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         return deduplicated.sorted {
             let lhsRank = pairHostCandidateRank(
                 host: $0.host,
-                selectedHost: selectedHost.host,
+                selectedHost: selectedHost,
                 preferredPairHost: preferredPairHost
             )
             let rhsRank = pairHostCandidateRank(
                 host: $1.host,
-                selectedHost: selectedHost.host,
+                selectedHost: selectedHost,
                 preferredPairHost: preferredPairHost
             )
             if lhsRank == rhsRank {
@@ -4585,23 +4837,38 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     private static func pairHostCandidateRank(
         host: String,
-        selectedHost: String,
+        selectedHost: ShadowClientRemoteHostDescriptor,
         preferredPairHost: String?
     ) -> Int {
-        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if normalized == preferredPairHost?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-            return 0
+        let normalized = normalizeCandidate(host)
+            ?? host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedHostOnly = normalizedCandidateHost(normalized) ?? normalized
+        let normalizedPreferred = normalizeCandidate(preferredPairHost)
+            ?? preferredPairHost?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedPreferredHostOnly = normalizedCandidateHost(normalizedPreferred) ?? normalizedPreferred
+        let normalizedSelectedPairCandidate = normalizeCandidate(
+            ShadowClientPairRouteKit.candidateString(for: selectedHost)
+        )
+        let normalizedSelected = normalizeCandidate(selectedHost.hostCandidate)
+            ?? selectedHost.hostCandidate.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedSelectedHostOnly = normalizedCandidateHost(normalizedSelected) ?? normalizedSelected
+
+        if normalized == normalizedPreferred || normalizedHostOnly == normalizedPreferredHostOnly {
+            return runtimeRouteRank(normalizedHostOnly)
         }
-        if normalized == selectedHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-            return 1
+        if normalized == normalizedSelectedPairCandidate {
+            return 10 + runtimeRouteRank(normalizedHostOnly)
+        }
+        if normalized == normalizedSelected || normalizedHostOnly == normalizedSelectedHostOnly {
+            return 20 + runtimeRouteRank(normalizedHostOnly)
         }
         if !isLinkLocalRouteHost(normalized) {
-            return 2
+            return 30 + runtimeRouteRank(normalizedHostOnly)
         }
         if isLocalPairHost(normalized) {
-            return 3
+            return 40 + runtimeRouteRank(normalizedHostOnly)
         }
-        return 4
+        return 50 + runtimeRouteRank(normalizedHostOnly)
     }
 
     private static func persistentRouteStoreKey(for selectedHost: ShadowClientRemoteHostDescriptor) -> String? {
@@ -4622,7 +4889,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     private static func isIPAddressCandidate(_ host: String) -> Bool {
-        host.allSatisfy { $0.isNumber || $0 == "." || $0 == ":" }
+        if host.contains(":") {
+            return true
+        }
+        return host.allSatisfy { $0.isNumber || $0 == "." }
     }
 
     private static func isLinkLocalRouteHost(_ host: String) -> Bool {
@@ -4637,9 +4907,15 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return 100
         }
         if isLinkLocalRouteHost(normalized) {
-            return 10
+            return 30
         }
-        return isLocalPairHost(normalized) ? 1 : 0
+        if isIPAddressCandidate(normalized) {
+            return 20
+        }
+        if normalized.hasSuffix(".local") || !normalized.contains(".") {
+            return 0
+        }
+        return 10
     }
 
     private static func compareRuntimeEndpointCandidates(_ lhs: String, _ rhs: String) -> Bool {
@@ -4653,12 +4929,45 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         return lhsRank < rhsRank
     }
 
+    private static func runtimePreferredCandidate(
+        from candidates: [String],
+        preferredCandidate: String?
+    ) -> String? {
+        let normalizedCandidates = candidates.compactMap { normalizeProbeCandidate($0) }
+        guard !normalizedCandidates.isEmpty else {
+            return nil
+        }
+
+        let sortedCandidates = normalizedCandidates.sorted(by: compareRuntimeEndpointCandidates)
+        guard let preferredCandidate = normalizeProbeCandidate(preferredCandidate) else {
+            return nil
+        }
+
+        guard sortedCandidates.contains(preferredCandidate) else {
+            return nil
+        }
+
+        guard let bestCandidate = sortedCandidates.first else {
+            return preferredCandidate
+        }
+
+        let preferredHost = normalizedCandidateHost(preferredCandidate) ?? preferredCandidate
+        let bestHost = normalizedCandidateHost(bestCandidate) ?? bestCandidate
+        let preferredRank = runtimeRouteRank(preferredHost)
+        let bestRank = runtimeRouteRank(bestHost)
+        if bestRank < preferredRank {
+            return bestCandidate
+        }
+
+        return preferredCandidate
+    }
+
     private static func normalizedHostCandidates(_ candidates: [String]) -> [String] {
         var seen: Set<String> = []
         var results: [String] = []
 
         for candidate in candidates {
-            let normalized = normalizeCandidate(candidate)
+            let normalized = normalizeProbeCandidate(candidate)
             guard let normalized, !seen.contains(normalized) else {
                 continue
             }
@@ -4680,6 +4989,62 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             manualHost: nil,
             localInterfaceHosts: localInterfaceHosts
         )
+    }
+
+    private static func normalizedPortHintsByCandidate(
+        _ portHintsByCandidate: [String: ShadowClientGameStreamPortHint]
+    ) -> [String: ShadowClientGameStreamPortHint] {
+        var normalized: [String: ShadowClientGameStreamPortHint] = [:]
+        for (candidate, portHint) in portHintsByCandidate {
+            guard let normalizedCandidate = normalizeProbeCandidate(candidate) else {
+                continue
+            }
+            normalized[normalizedCandidate] = portHint
+        }
+        return normalized
+    }
+
+    private static func normalizeProbeCandidate(_ candidate: String?) -> String? {
+        guard let candidate else {
+            return nil
+        }
+
+        let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        let urlCandidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(trimmed)
+        guard let parsed = URL(string: urlCandidate),
+              let host = parsed.host?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !host.isEmpty
+        else {
+            return trimmed.lowercased()
+        }
+
+        guard let port = parsed.port else {
+            return host
+        }
+
+        if port == ShadowClientGameStreamNetworkDefaults.defaultHTTPPort {
+            return host
+        }
+
+        return "\(host):\(port)"
+    }
+
+    private static func normalizedProbeCandidateHost(_ candidate: String?) -> String? {
+        guard let normalized = normalizeProbeCandidate(candidate) else {
+            return nil
+        }
+
+        if let separatorIndex = normalized.lastIndex(of: ":"),
+           !normalized[..<separatorIndex].contains(":"),
+           Int(normalized[normalized.index(after: separatorIndex)...]) != nil {
+            return String(normalized[..<separatorIndex])
+        }
+
+        return normalized
     }
 
     private static func normalizeCandidate(_ candidate: String?) -> String? {
@@ -4711,7 +5076,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         _ candidate: String,
         knownHostSet: Set<String>
     ) -> Bool {
-        let normalizedCandidate = normalizeCandidate(candidate)
+        let normalizedCandidate = normalizeProbeCandidate(candidate)
             ?? candidate.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalizedCandidate.isEmpty else {
             return false
@@ -4721,7 +5086,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return true
         }
 
-        guard let normalizedHost = normalizedCandidateHost(normalizedCandidate) else {
+        guard let normalizedHost = normalizedProbeCandidateHost(normalizedCandidate) else {
             return false
         }
 
@@ -4756,10 +5121,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         _ candidates: [String],
         knownHosts: [ShadowClientRemoteHostDescriptor],
         preferredHost: String?,
-        preferredRoutesByKey: [String: String],
-        aliasHostsByKey: [String: Set<String>] = [:]
+        preferredRoutesByKey: [String: String]
     ) -> [String] {
-        let normalizedPreferredHost = normalizeCandidate(preferredHost)
+        let normalizedPreferredHost = normalizeProbeCandidate(preferredHost)
         var results: [String] = []
         var seenCandidates: Set<String> = []
         var seenKnownHostKeys: Set<String> = []
@@ -4768,8 +5132,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             if let matchedKnownHost = matchedKnownHostForProbeCandidate(
                 candidate,
                 knownHosts: knownHosts,
-                preferredRoutesByKey: preferredRoutesByKey,
-                aliasHostsByKey: aliasHostsByKey
+                preferredRoutesByKey: preferredRoutesByKey
             ) {
                 let hostKey = mergeKey(for: matchedKnownHost)
                 guard !seenKnownHostKeys.contains(hostKey) else {
@@ -4777,7 +5140,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
                 seenKnownHostKeys.insert(hostKey)
 
-                let matchedKnownHostSet = knownHostSet(for: matchedKnownHost, aliasHostsByKey: aliasHostsByKey)
+                let matchedKnownHostSet = knownHostSet(for: matchedKnownHost)
                 let groupedCandidates = candidates.filter { groupedCandidate in
                     knownHostSetContainsCandidate(groupedCandidate, knownHostSet: matchedKnownHostSet)
                 }
@@ -4785,7 +5148,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     from: groupedCandidates,
                     knownHost: matchedKnownHost,
                     preferredHost: normalizedPreferredHost,
-                    preferredRoute: normalizeCandidate(preferredRoutesByKey[hostKey])
+                    preferredRoute: normalizeProbeCandidate(preferredRoutesByKey[hostKey])
                 )
                 guard seenCandidates.insert(probeCandidate).inserted else {
                     continue
@@ -4806,27 +5169,25 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private static func matchedKnownHostForProbeCandidate(
         _ candidate: String,
         knownHosts: [ShadowClientRemoteHostDescriptor],
-        preferredRoutesByKey: [String: String],
-        aliasHostsByKey: [String: Set<String>] = [:]
+        preferredRoutesByKey: [String: String]
     ) -> ShadowClientRemoteHostDescriptor? {
         if let matchedKnownHost = bestKnownHost(
             matching: candidate,
-            in: knownHosts,
-            aliasHostsByKey: aliasHostsByKey
+            in: knownHosts
         ) {
             return matchedKnownHost
         }
 
-        guard let normalizedCandidate = normalizeCandidate(candidate),
-              let normalizedCandidateHostname = normalizedCandidateHost(normalizedCandidate)
+        guard let normalizedCandidate = normalizeProbeCandidate(candidate),
+              let normalizedCandidateHostname = normalizedProbeCandidateHost(normalizedCandidate)
         else {
             return nil
         }
 
         return knownHosts
             .filter { host in
-                guard let preferredRoute = normalizeCandidate(preferredRoutesByKey[mergeKey(for: host)]),
-                      let preferredRouteHost = normalizedCandidateHost(preferredRoute)
+                guard let preferredRoute = normalizeProbeCandidate(preferredRoutesByKey[mergeKey(for: host)]),
+                      let preferredRouteHost = normalizedProbeCandidateHost(preferredRoute)
                 else {
                     return false
                 }
@@ -4839,15 +5200,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private static func hydrateDescriptorsUsingKnownHosts(
         _ descriptors: [ShadowClientRemoteHostDescriptor],
         knownHosts: [ShadowClientRemoteHostDescriptor],
-        preferredRoutesByKey: [String: String],
-        aliasHostsByKey: [String: Set<String>] = [:]
+        preferredRoutesByKey: [String: String]
     ) -> [ShadowClientRemoteHostDescriptor] {
         descriptors.map { descriptor in
             hydrateDescriptorUsingKnownHosts(
                 descriptor,
                 knownHosts: knownHosts,
-                preferredRoutesByKey: preferredRoutesByKey,
-                aliasHostsByKey: aliasHostsByKey
+                preferredRoutesByKey: preferredRoutesByKey
             )
         }
     }
@@ -4855,8 +5214,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private static func hydrateDescriptorUsingKnownHosts(
         _ descriptor: ShadowClientRemoteHostDescriptor,
         knownHosts: [ShadowClientRemoteHostDescriptor],
-        preferredRoutesByKey: [String: String],
-        aliasHostsByKey: [String: Set<String>] = [:]
+        preferredRoutesByKey: [String: String]
     ) -> ShadowClientRemoteHostDescriptor {
         guard descriptor.lastError != nil, normalizedUniqueID(descriptor.uniqueID) == nil else {
             return descriptor
@@ -4869,21 +5227,18 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         guard let matchedHost = bestKnownHost(
             matching: normalizedHost,
-            in: knownHosts,
-            aliasHostsByKey: aliasHostsByKey
+            in: knownHosts
         ) else {
             return descriptor
         }
 
         let matchedHostKey = mergeKey(for: matchedHost)
-        let preferredRoute = normalizeCandidate(preferredRoutesByKey[matchedHostKey])
-        let hydratedRoutes = routesByAddingAlias(
-            matchedHost.routes,
-            aliasHost: preferredRoute,
-            httpsPort: descriptor.routes.active.httpsPort
-        )
+        let preferredRoute = normalizeProbeCandidate(preferredRoutesByKey[matchedHostKey])
+        let hydratedRoutes = matchedHost.routes
         let activeRoute = hydratedRoutes.allEndpoints.first(where: {
             $0.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedHost
+        }) ?? hydratedRoutes.allEndpoints.first(where: {
+            ShadowClientHostEndpointKit.candidateString(for: $0) == preferredRoute
         }) ?? descriptor.routes.active
         let routes = ShadowClientRemoteHostRoutes(
             active: activeRoute,
@@ -4915,8 +5270,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     private static func bestKnownHost(
         matching host: String,
-        in knownHosts: [ShadowClientRemoteHostDescriptor],
-        aliasHostsByKey: [String: Set<String>] = [:]
+        in knownHosts: [ShadowClientRemoteHostDescriptor]
     ) -> ShadowClientRemoteHostDescriptor? {
         let normalizedHost = normalizeCandidate(host)
             ?? host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -4928,7 +5282,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             .filter { knownHost in
                 knownHostSetContainsCandidate(
                     normalizedHost,
-                    knownHostSet: knownHostSet(for: knownHost, aliasHostsByKey: aliasHostsByKey)
+                    knownHostSet: knownHostSet(for: knownHost)
                 )
             }
             .sorted(by: compareKnownHostHydrationPriority)
@@ -5029,19 +5383,29 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         preferredHost: String?,
         preferredRoute: String?
     ) -> String {
-        if let preferredHost = normalizeCandidate(preferredHost),
-           groupedCandidates.contains(preferredHost) {
-            return preferredHost
+        let normalizedPreferredHost = normalizeProbeCandidate(preferredHost)
+        if let preferredHostCandidate = runtimePreferredCandidate(
+            from: groupedCandidates,
+            preferredCandidate: preferredHost
+        ),
+        preferredHostCandidate == normalizedPreferredHost {
+            return preferredHostCandidate
         }
 
-        if let preferredRoute = normalizeCandidate(preferredRoute),
-           groupedCandidates.contains(preferredRoute) {
-            return preferredRoute
+        let normalizedPreferredRoute = normalizeProbeCandidate(preferredRoute)
+        if let preferredRouteCandidate = runtimePreferredCandidate(
+            from: groupedCandidates,
+            preferredCandidate: preferredRoute
+        ),
+        preferredRouteCandidate == normalizedPreferredRoute {
+            return preferredRouteCandidate
         }
 
-        let activeCandidate = ShadowClientHostEndpointKit.candidateString(for: knownHost.routes.active)
-        if groupedCandidates.contains(activeCandidate) {
-            return activeCandidate
+        let normalizedGroupedCandidates = groupedCandidates.map {
+            normalizeProbeCandidate($0) ?? $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        if let bestGroupedCandidate = normalizedGroupedCandidates.sorted(by: compareRuntimeEndpointCandidates).first {
+            return bestGroupedCandidate
         }
 
         return groupedCandidates.sorted { lhs, rhs in
@@ -5299,142 +5663,15 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         Set(host.routes.allEndpoints.map { ShadowClientHostEndpointKit.candidateString(for: $0) })
     }
 
+    private static func probeCandidateSet(for host: ShadowClientRemoteHostDescriptor) -> Set<String> {
+        Set(host.routes.allEndpoints.map { ShadowClientPairRouteKit.candidateString(for: $0) })
+    }
+
     private static func knownHostSet(
-        for host: ShadowClientRemoteHostDescriptor,
-        aliasHostsByKey: [String: Set<String>]
+        for host: ShadowClientRemoteHostDescriptor
     ) -> Set<String> {
         routeHostSet(for: host)
-            .union(routeCandidateSet(for: host))
-            .union(aliasHostsByKey[mergeKey(for: host)] ?? [])
-    }
-
-    private static func aliasHostsByKey(
-        knownHosts: [ShadowClientRemoteHostDescriptor],
-        preferredRoutesByKey: [String: String]
-    ) -> [String: Set<String>] {
-        knownHosts.reduce(into: [String: Set<String>]()) { partialResult, host in
-            let key = mergeKey(for: host)
-            guard let preferredRoute = normalizeCandidate(preferredRoutesByKey[key]),
-                  !knownHostSet(for: host, aliasHostsByKey: [:]).contains(preferredRoute)
-            else {
-                return
-            }
-            partialResult[key, default: []].insert(preferredRoute)
-        }
-    }
-
-    private static func sanitizedAliasHostsByKey(
-        _ aliasHostsByKey: [String: Set<String>],
-        knownHosts: [ShadowClientRemoteHostDescriptor],
-        refreshCandidates: [String]
-    ) -> [String: Set<String>] {
-        let normalizedRefreshHosts = Set(refreshCandidates.compactMap(normalizedCandidateHost))
-        let routeHostsByKey = Dictionary(
-            uniqueKeysWithValues: knownHosts.map { (mergeKey(for: $0), routeHostSet(for: $0)) }
-        )
-
-        return aliasHostsByKey.reduce(into: [String: Set<String>]()) { partialResult, entry in
-            let key = entry.key
-            let ownRouteHosts = routeHostsByKey[key] ?? []
-            let sanitizedAliases = entry.value.filter { alias in
-                guard let aliasHost = normalizedCandidateHost(alias) else {
-                    return false
-                }
-                if ownRouteHosts.contains(aliasHost) {
-                    return true
-                }
-
-                let claimedByAnotherKnownHost = routeHostsByKey.contains { otherEntry in
-                    otherEntry.key != key && otherEntry.value.contains(aliasHost)
-                }
-                if claimedByAnotherKnownHost {
-                    return false
-                }
-
-                if normalizedRefreshHosts.contains(aliasHost) {
-                    return false
-                }
-
-                return true
-            }
-
-            guard !sanitizedAliases.isEmpty else {
-                return
-            }
-            partialResult[key] = sanitizedAliases
-        }
-    }
-
-    private static func mergedAliasHostsByKey(
-        _ lhs: [String: Set<String>],
-        _ rhs: [String: Set<String>]
-    ) -> [String: Set<String>] {
-        var merged = lhs
-        for (key, aliases) in rhs {
-            merged[key, default: []].formUnion(aliases)
-        }
-        return merged
-    }
-
-    private static func inferredAliasHostsByKey(
-        refreshCandidates: [String],
-        knownHosts: [ShadowClientRemoteHostDescriptor],
-        preferredHost: String?,
-        aliasHostsByKey: [String: Set<String>] = [:]
-    ) -> [String: Set<String>] {
-        guard let normalizedPreferredHost = normalizeCandidate(preferredHost),
-              refreshCandidates.contains(normalizedPreferredHost),
-              bestKnownHost(
-                matching: normalizedPreferredHost,
-                in: knownHosts,
-                aliasHostsByKey: aliasHostsByKey
-              ) == nil
-        else {
-            return [:]
-        }
-
-        let matchingKnownHostKeys = Set(
-            refreshCandidates
-                .filter { $0 != normalizedPreferredHost }
-                .compactMap { candidate in
-                    bestKnownHost(
-                        matching: candidate,
-                        in: knownHosts,
-                        aliasHostsByKey: aliasHostsByKey
-                    ).map(mergeKey(for:))
-                }
-        )
-
-        guard matchingKnownHostKeys.count == 1,
-              let matchingKnownHostKey = matchingKnownHostKeys.first
-        else {
-            return [:]
-        }
-
-        let matchedRouteHosts = routeHostsByKey(
-            knownHosts: knownHosts,
-            aliasHostsByKey: aliasHostsByKey
-        )[matchingKnownHostKey] ?? []
-        guard let normalizedPreferredHostOnly = normalizedCandidateHost(normalizedPreferredHost),
-              matchedRouteHosts.contains(normalizedPreferredHostOnly)
-        else {
-            return [:]
-        }
-
-        return [matchingKnownHostKey: [normalizedPreferredHost]]
-    }
-
-    private static func routeHostsByKey(
-        knownHosts: [ShadowClientRemoteHostDescriptor],
-        aliasHostsByKey: [String: Set<String>] = [:]
-    ) -> [String: Set<String>] {
-        Dictionary(
-            uniqueKeysWithValues: knownHosts.map { host in
-                let key = mergeKey(for: host)
-                let aliasHosts = Set((aliasHostsByKey[key] ?? []).compactMap(normalizedCandidateHost))
-                return (key, routeHostSet(for: host).union(aliasHosts))
-            }
-        )
+            .union(probeCandidateSet(for: host))
     }
 
     private static func normalizedUniqueID(_ uniqueID: String?) -> String? {
@@ -5453,9 +5690,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         preferredHost: String?,
         preferredRoute: String?
     ) -> ShadowClientRemoteHostRoutes {
-        let local = group.compactMap(\.routes.local).first
-        let remote = group.compactMap(\.routes.remote).first
-        let manual = group.compactMap(\.routes.manual).first
         let candidateRoutes = group
             .flatMap { $0.routes.allEndpoints }
             .reduce(into: [ShadowClientRemoteHostEndpoint]()) { partialResult, endpoint in
@@ -5489,18 +5723,38 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let selectedReachableCandidate = group.first(where: {
             $0.id == selectedHostID && $0.isReachable
         }).map { ShadowClientHostEndpointKit.candidateString(for: $0.routes.active) }
+        let preferredActiveCandidate = runtimePreferredCandidate(
+            from: rankedActiveRouteCandidates.map { ShadowClientHostEndpointKit.candidateString(for: $0) },
+            preferredCandidate: normalizedPreferredHost
+        )
+        let preferredStoredCandidate = runtimePreferredCandidate(
+            from: rankedActiveRouteCandidates.map { ShadowClientHostEndpointKit.candidateString(for: $0) },
+            preferredCandidate: normalizedPreferredRoute
+        )
+        let preferredSelectedCandidate = runtimePreferredCandidate(
+            from: rankedActiveRouteCandidates.map { ShadowClientHostEndpointKit.candidateString(for: $0) },
+            preferredCandidate: selectedReachableCandidate
+        )
 
         let active = rankedActiveRouteCandidates.first(where: {
-            ShadowClientHostEndpointKit.candidateString(for: $0) == normalizedPreferredHost
+            ShadowClientHostEndpointKit.candidateString(for: $0) == preferredActiveCandidate
         }) ?? rankedActiveRouteCandidates.first(where: {
-            ShadowClientHostEndpointKit.candidateString(for: $0) == normalizedPreferredRoute
+            ShadowClientHostEndpointKit.candidateString(for: $0) == preferredStoredCandidate
         }) ?? rankedActiveRouteCandidates.first(where: {
-            ShadowClientHostEndpointKit.candidateString(for: $0) == selectedReachableCandidate
+            ShadowClientHostEndpointKit.candidateString(for: $0) == preferredSelectedCandidate
         }) ?? rankedActiveRouteCandidates.first(where: {
             $0.host.lowercased() == reachableLocalHost && !isLinkLocalRouteHost($0.host)
         }) ?? rankedActiveRouteCandidates.first(where: {
             isLocalPairHost($0.host)
         }) ?? rankedActiveRouteCandidates.first ?? fallbackPrimary.routes.active
+
+        let local = preferredLocalSupplementalRoute(
+            active: active,
+            candidateRoutes: candidateRoutes,
+            explicitLocalRoutes: group.compactMap(\.routes.local)
+        )
+        let remote = preferredSupplementalRoute(group.compactMap(\.routes.remote))
+        let manual = preferredSupplementalRoute(group.compactMap(\.routes.manual))
 
         let routes = ShadowClientRemoteHostRoutes(
             active: active,
@@ -5508,85 +5762,66 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             remote: remote,
             manual: manual
         )
-        return routesByAddingAlias(routes, aliasHost: preferredRoute, httpsPort: active.httpsPort)
-    }
-
-    private static func updatingHostDescriptors(
-        _ descriptors: [ShadowClientRemoteHostDescriptor],
-        matching mergeKey: String,
-        aliasHost: String
-    ) -> [ShadowClientRemoteHostDescriptor] {
-        descriptors.map { descriptor in
-            guard Self.mergeKey(for: descriptor) == mergeKey else {
-                return descriptor
-            }
-
-            let routes = routesByAddingAlias(
-                descriptor.routes,
-                aliasHost: aliasHost,
-                httpsPort: descriptor.routes.active.httpsPort
-            )
-            return ShadowClientRemoteHostDescriptor(
-                activeRoute: routes.active,
-                displayName: descriptor.displayName,
-                pairStatus: descriptor.pairStatus,
-                currentGameID: descriptor.currentGameID,
-                serverState: descriptor.serverState,
-                appVersion: descriptor.appVersion,
-                gfeVersion: descriptor.gfeVersion,
-                uniqueID: descriptor.uniqueID,
-                serverCodecModeSupport: descriptor.serverCodecModeSupport,
-                lastError: descriptor.lastError,
-                routes: routes
-            )
-        }
-    }
-
-    private static func routesByAddingAlias(
-        _ routes: ShadowClientRemoteHostRoutes,
-        aliasHost: String?,
-        httpsPort: Int
-    ) -> ShadowClientRemoteHostRoutes {
-        guard let aliasHost = normalizeCandidate(aliasHost),
-              !routes.allEndpoints.contains(where: {
-                  ShadowClientHostEndpointKit.candidateString(for: $0) == aliasHost
-              })
-        else {
-            return routes
-        }
-
-        let aliasEndpoint = ShadowClientHostEndpointKit.parseCandidate(
-            aliasHost,
-            fallbackHTTPSPort: httpsPort
-        ) ?? ShadowClientRemoteHostEndpoint(host: aliasHost, httpsPort: httpsPort)
-        if routes.manual == nil {
-            return ShadowClientRemoteHostRoutes(
-                active: routes.active,
-                local: routes.local,
-                remote: routes.remote,
-                manual: aliasEndpoint
-            )
-        }
-
-        if routes.remote == nil {
-            return ShadowClientRemoteHostRoutes(
-                active: routes.active,
-                local: routes.local,
-                remote: aliasEndpoint,
-                manual: routes.manual
-            )
-        }
-
-        if routes.local == nil {
-            return ShadowClientRemoteHostRoutes(
-                active: routes.active,
-                local: aliasEndpoint,
-                remote: routes.remote,
-                manual: routes.manual
-            )
-        }
-
         return routes
+    }
+
+    private static func preferredSupplementalRoute(
+        _ endpoints: [ShadowClientRemoteHostEndpoint]
+    ) -> ShadowClientRemoteHostEndpoint? {
+        endpoints.sorted { lhs, rhs in
+            let lhsRank = runtimeRouteRank(lhs.host)
+            let rhsRank = runtimeRouteRank(rhs.host)
+            if lhsRank == rhsRank {
+                return lhs.host.localizedCaseInsensitiveCompare(rhs.host) == .orderedAscending
+            }
+            return lhsRank < rhsRank
+        }.first
+    }
+
+    private static func preferredLocalSupplementalRoute(
+        active: ShadowClientRemoteHostEndpoint,
+        candidateRoutes: [ShadowClientRemoteHostEndpoint],
+        explicitLocalRoutes: [ShadowClientRemoteHostEndpoint]
+    ) -> ShadowClientRemoteHostEndpoint? {
+        func isCandidateLocalNetworkHost(_ host: String) -> Bool {
+            let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if normalized.hasSuffix(".local") {
+                return true
+            }
+            if normalized.hasPrefix("10.") || normalized.hasPrefix("192.168.") || normalized.hasPrefix("169.254.") {
+                return true
+            }
+            if normalized.hasPrefix("fe80:") || normalized.hasPrefix("fd") || normalized.hasPrefix("fc") {
+                return true
+            }
+            if normalized.hasPrefix("172."),
+               let secondOctet = normalized.split(separator: ".").dropFirst().first,
+               let secondOctetValue = Int(secondOctet),
+               (16...31).contains(secondOctetValue)
+            {
+                return true
+            }
+            return false
+        }
+
+        let activeHost = active.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let candidateLocalRoutes = candidateRoutes.filter { endpoint in
+            let normalizedHost = endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalizedHost.isEmpty, normalizedHost != activeHost else {
+                return false
+            }
+            return isCandidateLocalNetworkHost(normalizedHost)
+        }
+
+        let combined = (explicitLocalRoutes + candidateLocalRoutes).reduce(into: [ShadowClientRemoteHostEndpoint]()) {
+            partialResult, endpoint in
+            guard !partialResult.contains(where: { $0 == endpoint }) else {
+                return
+            }
+            partialResult.append(endpoint)
+        }
+
+        return preferredSupplementalRoute(combined)
     }
 
     private static func preferredRuntimeHostDescriptor(

@@ -646,7 +646,9 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             parameters: stage1Parameters,
             uniqueID: uniqueID,
             pinnedServerCertificateDER: nil,
-            timeout: pairingPINEntryTimeout
+            // Match Moonlight/Apollo: stage 1 waits for human PIN confirmation and should not
+            // inherit the short per-request transport timeout used for normal control requests.
+            timeout: 0
         )
 
         let stage1Doc = try parsePairStageXML(stage1XML, stage: "getservercert")
@@ -1638,7 +1640,7 @@ enum ShadowClientGameStreamHTTPTransport {
         )
 
         do {
-            let connectionTargets = resolvedConnectionTargets(for: host)
+            let connectionTargets = connectionTargets(for: host)
             let targetsSummary = connectionTargets.joined(separator: ",")
             logger.notice(
                 "GameStream request targets stage=\(requestStageLabel, privacy: .public) host=\(host, privacy: .public) targets=\(targetsSummary, privacy: .public)"
@@ -1743,7 +1745,7 @@ enum ShadowClientGameStreamHTTPTransport {
             do {
                 try await waitForReady(
                     connection,
-                    timeout: remainingPerTargetTimeout(
+                    timeout: connectionPhaseTimeout(
                         startedAt: startedAt,
                         overallTimeout: timeout
                     )
@@ -1769,7 +1771,7 @@ enum ShadowClientGameStreamHTTPTransport {
                 try await send(requestData, over: connection)
                 let responseData = try await receiveHTTPResponse(
                     over: connection,
-                    timeout: remainingPerTargetTimeout(
+                    timeout: responsePhaseTimeout(
                         startedAt: startedAt,
                         overallTimeout: timeout
                     )
@@ -1806,7 +1808,7 @@ enum ShadowClientGameStreamHTTPTransport {
         let startedAt = ContinuousClock.now
         var failures: [Error] = []
 
-        for connectionTarget in resolvedConnectionTargets(for: host) {
+        for connectionTarget in connectionTargets(for: host) {
             do {
                 let connectURL = try urlByReplacingHost(url, with: connectionTarget)
                 return try await ShadowClientSecureHTTPStreamTransport.requestData(
@@ -1975,7 +1977,7 @@ enum ShadowClientGameStreamHTTPTransport {
         return candidates.isEmpty ? [normalizedHost] : candidates
     }
 
-    private static func resolvedConnectionTargets(for host: String) -> [String] {
+    static func connectionTargets(for host: String) -> [String] {
         connectionTargetCandidates(
             for: host,
             resolvedHosts: resolveNumericHosts(for: host)
@@ -2106,11 +2108,33 @@ enum ShadowClientGameStreamHTTPTransport {
         startedAt: ContinuousClock.Instant,
         overallTimeout: TimeInterval
     ) -> TimeInterval {
+        connectionPhaseTimeout(startedAt: startedAt, overallTimeout: overallTimeout)
+    }
+
+    static func connectionPhaseTimeout(
+        startedAt: ContinuousClock.Instant,
+        overallTimeout: TimeInterval
+    ) -> TimeInterval {
+        let elapsed = startedAt.duration(to: ContinuousClock.now)
+        let elapsedSeconds = Double(elapsed.components.seconds) +
+            (Double(elapsed.components.attoseconds) / 1_000_000_000_000_000_000)
+        let remaining = overallTimeout > 0 ? overallTimeout - elapsedSeconds : 1.5
+        return max(0.75, min(1.5, remaining))
+    }
+
+    static func responsePhaseTimeout(
+        startedAt: ContinuousClock.Instant,
+        overallTimeout: TimeInterval
+    ) -> TimeInterval? {
+        guard overallTimeout > 0 else {
+            return nil
+        }
+
         let elapsed = startedAt.duration(to: ContinuousClock.now)
         let elapsedSeconds = Double(elapsed.components.seconds) +
             (Double(elapsed.components.attoseconds) / 1_000_000_000_000_000_000)
         let remaining = overallTimeout - elapsedSeconds
-        return max(0.75, min(1.5, remaining))
+        return max(0.75, remaining)
     }
 
     private static func urlByReplacingHost(_ url: URL, with host: String) throws -> URL {
@@ -2235,6 +2259,41 @@ enum ShadowClientGameStreamHTTPTransport {
         return responseData[separatorRange.upperBound...]
     }
 
+    static func expectedHTTPResponseByteCount(from responseData: Data) -> Int? {
+        guard let separatorRange = responseData.range(of: Data("\r\n\r\n".utf8)) else {
+            return nil
+        }
+
+        let headerTerminatorUpperBound = separatorRange.upperBound
+        let headerData = responseData[..<headerTerminatorUpperBound]
+        guard let headerText = String(data: headerData, encoding: .utf8),
+              let contentLength = contentLength(from: headerText)
+        else {
+            return nil
+        }
+
+        return headerTerminatorUpperBound + contentLength
+    }
+
+    static func contentLength(from headerText: String) -> Int? {
+        for line in headerText.components(separatedBy: "\r\n") {
+            let parts = line.split(separator: ":", maxSplits: 1)
+            guard parts.count == 2 else {
+                continue
+            }
+
+            let key = parts[0].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard key == "content-length" else {
+                continue
+            }
+
+            let value = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            return Int(value)
+        }
+
+        return nil
+    }
+
     private static func waitForReady(
         _ connection: NWConnection,
         timeout: TimeInterval
@@ -2299,7 +2358,7 @@ enum ShadowClientGameStreamHTTPTransport {
 
     private static func receiveHTTPResponse(
         over connection: NWConnection,
-        timeout: TimeInterval
+        timeout: TimeInterval?
     ) async throws -> Data {
         final class ResumeGate: @unchecked Sendable {
             private let lock = NSLock()
@@ -2316,7 +2375,6 @@ enum ShadowClientGameStreamHTTPTransport {
 
         let gate = ResumeGate()
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
-            let deadline = DispatchTime.now() + timeout
             var responseData = Data()
 
             @Sendable func resume(_ result: Result<Data, Error>) {
@@ -2335,6 +2393,13 @@ enum ShadowClientGameStreamHTTPTransport {
                         responseData.append(content)
                     }
 
+                    if let expectedResponseByteCount = expectedHTTPResponseByteCount(from: responseData),
+                       responseData.count >= expectedResponseByteCount
+                    {
+                        resume(.success(responseData))
+                        return
+                    }
+
                     if isComplete {
                         resume(.success(responseData))
                         return
@@ -2345,8 +2410,11 @@ enum ShadowClientGameStreamHTTPTransport {
             }
 
             receiveNext()
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: deadline) {
-                resume(.failure(URLError(.timedOut)))
+            if let timeout {
+                let deadline = DispatchTime.now() + timeout
+                DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: deadline) {
+                    resume(.failure(URLError(.timedOut)))
+                }
             }
         }
     }
@@ -2691,7 +2759,9 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
             headerTerminatorUpperBound = separatorRange.upperBound
             let headerData = responseData[..<separatorRange.upperBound]
             if let headerText = String(data: headerData, encoding: .utf8) {
-                expectedResponseBodyLength = Self.contentLength(from: headerText)
+                expectedResponseBodyLength = ShadowClientGameStreamHTTPTransport.contentLength(
+                    from: headerText
+                )
             }
         }
 
@@ -2719,22 +2789,6 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         } catch {
             finish(.failure(error))
         }
-    }
-
-    private static func contentLength(from headerText: String) -> Int? {
-        for line in headerText.components(separatedBy: "\r\n") {
-            let parts = line.split(separator: ":", maxSplits: 1)
-            guard parts.count == 2 else {
-                continue
-            }
-            let key = parts[0].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard key == "content-length" else {
-                continue
-            }
-            let value = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-            return Int(value)
-        }
-        return nil
     }
 
     private func finish(_ result: Result<Data, Error>) {

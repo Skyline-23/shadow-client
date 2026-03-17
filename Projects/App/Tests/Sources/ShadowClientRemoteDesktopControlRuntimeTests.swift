@@ -176,6 +176,47 @@ func remoteDesktopRuntimeDoesNotRetryCertificateRequiredFailure() async {
     }
 }
 
+@Test("Remote desktop runtime pairs Apollo hosts using the computed Moonlight connect port family")
+@MainActor
+func remoteDesktopRuntimePairsApolloHostUsingComputedConnectPortFamily() async {
+    let defaultsSuite = "shadow-client.runtime.apollo-pair-port-family.\(UUID().uuidString)"
+    let pairingRouteStore = ShadowClientPairingRouteStore(defaultsSuiteName: defaultsSuite)
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "apollo-host.local:48989": .init(
+                host: "apollo-host.local",
+                displayName: "Apollo Mac",
+                pairStatus: .notPaired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-APOLLO"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let control = FakeControlClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        pinProvider: FixedPairingPINProvider(pin: "1234"),
+        pairingRouteStore: pairingRouteStore
+    )
+
+    await pairingRouteStore.setSessionPreferredHost("apollo-host.local", for: "uniqueid:host-apollo")
+    runtime.refreshHosts(candidates: ["apollo-host.local:48989"], preferredHost: "apollo-host.local:48989")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.pairSelectedHost()
+    await waitForPairingState(runtime)
+
+    #expect(await control.pairCalls() == [
+        .init(host: "apollo-host.local:48989", pin: "1234", appVersion: "7.0.0", httpsPort: 48984),
+    ])
+}
+
 @Test("Remote desktop runtime applies pending host selection after host catalog load")
 @MainActor
 func remoteDesktopRuntimeAppliesPendingHostSelectionAfterCatalogLoad() async {
@@ -2555,7 +2596,10 @@ private actor FakeControlTestMetadataClient: ShadowClientGameStreamMetadataClien
         self.appListByHost = appListByHost
     }
 
-    func fetchServerInfo(host: String) async throws -> ShadowClientGameStreamServerInfo {
+    func fetchServerInfo(
+        host: String,
+        portHint _: ShadowClientGameStreamPortHint?
+    ) async throws -> ShadowClientGameStreamServerInfo {
         guard let info = serverInfoByHost[host] else {
             throw ShadowClientGameStreamError.requestFailed("missing host")
         }

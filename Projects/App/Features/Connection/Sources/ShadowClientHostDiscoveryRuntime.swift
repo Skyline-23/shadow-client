@@ -14,11 +14,23 @@ public struct ShadowClientDiscoveredHost: Identifiable, Equatable, Sendable {
         port: Int,
         serviceType: String
     ) {
-        self.id = host.lowercased()
+        self.id = Self.probeCandidate(host: host, port: port)
         self.name = Self.sanitizedDisplayName(name, fallbackHost: host)
         self.host = host
         self.port = port
         self.serviceType = serviceType
+    }
+
+    public var probeCandidate: String {
+        Self.probeCandidate(host: host, port: port)
+    }
+
+    private static func probeCandidate(host: String, port: Int) -> String {
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedHost.isEmpty else {
+            return ""
+        }
+        return "\(normalizedHost):\(port)"
     }
 
     private static func sanitizedDisplayName(_ rawName: String, fallbackHost: String) -> String {
@@ -77,7 +89,7 @@ struct ShadowClientDiscoveredHostCatalog {
             guard let host = hostsByServiceKey[key] else {
                 continue
             }
-            let hostKey = host.host.lowercased()
+            let hostKey = host.probeCandidate
             if deduplicatedByHost[hostKey] == nil {
                 deduplicatedByHost[hostKey] = host
             }

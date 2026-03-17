@@ -307,9 +307,9 @@ func metadataClientUsesHTTPSFirstForPinnedHosts() async throws {
     )
 }
 
-@Test("Metadata client uses explicit host port for pinned HTTPS serverinfo")
-func metadataClientUsesExplicitHostPortForPinnedHTTPSServerInfo() async throws {
-    let defaultsSuite = "shadow-client.metadata.serverinfo.pinned-explicit-port.\(UUID().uuidString)"
+@Test("Metadata client derives Apollo HTTPS serverinfo port from explicit connect port")
+func metadataClientDerivesApolloHTTPSServerInfoPortFromExplicitConnectPort() async throws {
+    let defaultsSuite = "shadow-client.metadata.serverinfo.pinned-apollo-connect-port.\(UUID().uuidString)"
     guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
         Issue.record("Expected isolated defaults suite")
         return
@@ -319,22 +319,22 @@ func metadataClientUsesExplicitHostPortForPinnedHTTPSServerInfo() async throws {
     }
 
     let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
-    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "stream-host.example.invalid")
+    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "apollo-host.local")
 
     let transport = ScriptedRequestTransport(
         script: [
             .init(
                 scheme: "https",
                 command: "serverinfo",
-                expectedPort: 48010,
+                expectedPort: 48984,
                 result: .success(
                     """
                     <root status_code="200">
-                        <hostname>Example-PC</hostname>
+                        <hostname>Apollo</hostname>
                         <PairStatus>1</PairStatus>
                         <currentgame>0</currentgame>
                         <state>SUNSHINE_SERVER_FREE</state>
-                        <HttpsPort>47984</HttpsPort>
+                        <HttpsPort>48984</HttpsPort>
                     </root>
                     """
                 )
@@ -348,15 +348,127 @@ func metadataClientUsesExplicitHostPortForPinnedHTTPSServerInfo() async throws {
         transport: transport
     )
 
-    let info = try await client.fetchServerInfo(host: "stream-host.example.invalid:48010")
+    let info = try await client.fetchServerInfo(host: "apollo-host.local:48989")
 
-    #expect(info.host == "stream-host.example.invalid:48010")
-    #expect(info.manualHost == "stream-host.example.invalid:48010")
+    #expect(info.host == "apollo-host.local")
+    #expect(info.httpsPort == 48984)
+    #expect(info.manualHost == "apollo-host.local")
     #expect(
         await transport.callsWithPort() == [
-            .init(scheme: "https", command: "serverinfo", port: 48010),
+            .init(scheme: "https", command: "serverinfo", port: 48984),
         ]
     )
+}
+
+@Test("Metadata client uses discovery port hint for HTTP and derived HTTPS ports")
+func metadataClientUsesDiscoveryPortHintForCustomBasePort() async throws {
+    let defaultsSuite = "shadow-client.metadata.serverinfo.discovery-port-hint.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "apollo-host.local")
+
+    let transport = ScriptedRequestTransport(
+        script: [
+            .init(
+                scheme: "https",
+                command: "serverinfo",
+                expectedPort: 48984,
+                result: .success(
+                    """
+                    <root status_code="200">
+                        <hostname>Apollo</hostname>
+                        <PairStatus>1</PairStatus>
+                        <currentgame>0</currentgame>
+                        <state>SUNSHINE_SERVER_FREE</state>
+                        <HttpsPort>48984</HttpsPort>
+                    </root>
+                    """
+                )
+            ),
+        ]
+    )
+
+    let client = NativeGameStreamMetadataClient(
+        identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: pinnedStore,
+        transport: transport
+    )
+
+    let info = try await client.fetchServerInfo(
+        host: "apollo-host.local:48989",
+        portHint: .init(httpPort: 48989, httpsPort: 48984)
+    )
+
+    #expect(info.host == "apollo-host.local")
+    #expect(info.httpsPort == 48984)
+    #expect(
+        await transport.callsWithPort() == [
+            .init(scheme: "https", command: "serverinfo", port: 48984),
+        ]
+    )
+}
+
+@Test("Metadata client prefers resolved private LAN target over serverinfo link-local LocalIP for hostname requests")
+func metadataClientPrefersResolvedPrivateLANHostOverLinkLocalServerInfoLocalIP() async throws {
+    let defaultsSuite = "shadow-client.metadata.serverinfo.resolved-local-route.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let transport = ScriptedRequestTransport(
+        script: [
+            .init(
+                scheme: "http",
+                command: "serverinfo",
+                expectedPort: 48989,
+                result: .success(
+                    """
+                    <root status_code="200">
+                        <hostname>Apollo Mac</hostname>
+                        <PairStatus>1</PairStatus>
+                        <currentgame>0</currentgame>
+                        <state>SUNSHINE_SERVER_FREE</state>
+                        <HttpsPort>48984</HttpsPort>
+                        <LocalIP>169.254.244.165</LocalIP>
+                    </root>
+                    """
+                )
+            ),
+        ]
+    )
+
+    let client = NativeGameStreamMetadataClient(
+        identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: .init(defaultsSuiteName: defaultsSuite),
+        transport: transport,
+        connectionTargetsResolver: { _ in
+            [
+                "169.254.244.165",
+                "192.168.0.50",
+                "fdaf:7bd4:8418:463e:1c47:71fb:db43:1f94",
+            ]
+        }
+    )
+
+    let info = try await client.fetchServerInfo(
+        host: "buseongs-macbook-pro-14.local:48989",
+        portHint: .init(httpPort: 48989, httpsPort: 48984)
+    )
+
+    #expect(info.host == "buseongs-macbook-pro-14.local")
+    #expect(info.localHost == "192.168.0.50")
+    #expect(info.manualHost == "buseongs-macbook-pro-14.local")
 }
 
 @Test("Metadata client synthesizes unpaired host when HTTPS is unauthorized and HTTP fallback is ATS blocked")
@@ -1373,6 +1485,249 @@ func hostCatalogCachedCandidatesPreserveExplicitCustomPorts() {
     #expect(candidates.contains("wan-gateway.example.invalid:48100"))
 }
 
+@Test("Remote host descriptor keeps Apollo HTTPS route when seeded from connect candidate")
+func remoteHostDescriptorMapsApolloConnectCandidateToHTTPSRoute() {
+    let descriptor = ShadowClientRemoteHostDescriptor(
+        host: "apollo-host.local:48989",
+        displayName: "Apollo",
+        pairStatus: .paired,
+        currentGameID: 0,
+        serverState: "SUNSHINE_SERVER_FREE",
+        httpsPort: 48984,
+        appVersion: "1.0",
+        gfeVersion: nil,
+        uniqueID: "HOST-APOLLO",
+        lastError: nil,
+        localHost: "192.168.0.50:48989",
+        remoteHost: nil,
+        manualHost: nil
+    )
+
+    #expect(descriptor.host == "apollo-host.local")
+    #expect(descriptor.httpsPort == 48984)
+    #expect(descriptor.hostCandidate == "apollo-host.local:48989")
+    #expect(descriptor.routes.local?.httpsPort == 48984)
+}
+
+@Test("Remote desktop runtime coalesces Apollo HTTPS endpoint aliases back to connect probe candidates")
+@MainActor
+func remoteDesktopRuntimeCoalescesApolloHTTPProbeCandidates() async {
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "apollo-host.local:48989": .init(
+                host: "apollo-host.local",
+                displayName: "Apollo Mac",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48_984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-APOLLO"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient()
+    )
+
+    runtime.refreshHosts(candidates: ["apollo-host.local:48989"])
+    await waitForHostCatalogReady(runtime)
+
+    runtime.refreshHosts(
+        candidates: ["apollo-host.local:48989", "apollo-host.local:48984"]
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(await metadataClient.serverInfoRequests() == [
+        "apollo-host.local:48989",
+        "apollo-host.local:48989",
+    ])
+    #expect(runtime.hosts.count == 1)
+    #expect(runtime.hosts.first?.host == "apollo-host.local")
+    #expect(runtime.hosts.first?.httpsPort == 48_984)
+}
+
+@Test("Remote desktop runtime prefers Bonjour hostname over IP for Apollo probe candidates in the same host group")
+@MainActor
+func remoteDesktopRuntimePrefersBonjourHostnameOverIPProbeCandidate() async {
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.50:48989": .init(
+                host: "192.168.0.50",
+                displayName: "Apollo Mac",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48_984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-APOLLO"
+            ),
+            "buseongs-macbook-pro-14.local:48989": .init(
+                host: "buseongs-macbook-pro-14.local",
+                displayName: "Apollo Mac",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48_984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-APOLLO"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient()
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.50:48989"])
+    await waitForHostCatalogReady(runtime)
+
+    runtime.refreshHosts(
+        candidates: ["192.168.0.50:48989", "buseongs-macbook-pro-14.local:48989"]
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(await metadataClient.serverInfoRequests() == [
+        "192.168.0.50:48989",
+        "buseongs-macbook-pro-14.local:48989",
+    ])
+    #expect(runtime.hosts.count == 1)
+    #expect(runtime.hosts.first?.host == "buseongs-macbook-pro-14.local")
+    #expect(runtime.hosts.first?.hostCandidate == "buseongs-macbook-pro-14.local:48989")
+}
+
+@Test("Remote desktop runtime prefers Bonjour hostname over remembered IP alias when pairing Apollo host")
+@MainActor
+func remoteDesktopRuntimePrefersBonjourHostnameOverRememberedIPAliasWhenPairingApolloHost() async {
+    let defaultsSuite = "shadow-client.runtime.apollo-pair-hostname.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let pairingRouteStore = ShadowClientPairingRouteStore(defaultsSuiteName: defaultsSuite)
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.50:48989": .init(
+                host: "192.168.0.50",
+                displayName: "Apollo Mac",
+                pairStatus: .notPaired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48_984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-APOLLO"
+            ),
+            "buseongs-macbook-pro-14.local:48989": .init(
+                host: "buseongs-macbook-pro-14.local",
+                displayName: "Apollo Mac",
+                pairStatus: .notPaired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48_984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-APOLLO"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let controlClient = RecordingGameStreamControlClient(
+        successfulHosts: ["buseongs-macbook-pro-14.local:48989"]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: controlClient,
+        pairingRouteStore: pairingRouteStore,
+        defaults: defaults
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.50:48989"])
+    await waitForHostCatalogReady(runtime)
+
+    guard let hostID = runtime.hosts.first?.id else {
+        Issue.record("Expected seeded Apollo host")
+        return
+    }
+
+    await runtime.rememberPreferredRoute("192.168.0.50:48989", forHostID: hostID)
+
+    runtime.refreshHosts(
+        candidates: ["192.168.0.50:48989", "buseongs-macbook-pro-14.local:48989"]
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(runtime.hosts.first?.hostCandidate == "buseongs-macbook-pro-14.local:48989")
+
+    runtime.pairSelectedHost()
+    await waitForPairingState(runtime)
+
+    #expect(runtime.pairingState == .paired("Paired"))
+    #expect(await controlClient.pairRequests() == ["buseongs-macbook-pro-14.local:48989"])
+}
+
+@Test("Remote desktop runtime preserves routable local route over link-local Apollo route in merged host")
+@MainActor
+func remoteDesktopRuntimePreservesRoutableLocalRouteOverLinkLocalApolloRoute() async {
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.50:48989": .init(
+                host: "192.168.0.50",
+                localHost: "169.254.244.165",
+                remoteHost: nil,
+                manualHost: nil,
+                displayName: "Apollo Mac",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48_984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-APOLLO"
+            ),
+            "buseongs-macbook-pro-14.local:48989": .init(
+                host: "buseongs-macbook-pro-14.local",
+                localHost: "169.254.244.165",
+                remoteHost: nil,
+                manualHost: nil,
+                displayName: "Apollo Mac",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48_984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-APOLLO"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient()
+    )
+
+    runtime.refreshHosts(
+        candidates: ["192.168.0.50:48989", "buseongs-macbook-pro-14.local:48989"]
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(runtime.hosts.count == 1)
+    #expect(runtime.hosts.first?.host == "buseongs-macbook-pro-14.local")
+    #expect(runtime.hosts.first?.routes.local?.host == "192.168.0.50")
+    #expect(runtime.hosts.first?.routes.allEndpoints.map(\.host).contains("169.254.244.165") == false)
+}
+
 @Test("Remote desktop runtime only restores active route from cached host persistence")
 @MainActor
 func remoteDesktopRuntimeOnlyRestoresActiveRouteFromCachedPersistence() async {
@@ -1478,7 +1833,7 @@ func remoteDesktopRuntimeRemembersPreferredRouteAliasForExistingHost() async {
 
     await runtime.rememberPreferredRoute("public-gateway.example.invalid", forHostID: hostID)
 
-    #expect(runtime.hosts.first?.routes.allEndpoints.map(\.host).contains("public-gateway.example.invalid") == true)
+    #expect(runtime.hosts.first?.routes.allEndpoints.map(\.host).contains("public-gateway.example.invalid") == false)
     #expect(
         await pairingRouteStore.sessionPreferredHost(for: "uniqueid:host-123") == "public-gateway.example.invalid"
     )
@@ -1706,6 +2061,65 @@ func remoteDesktopRuntimeRewritesStaleCustomPortAliasToReachableRoute() async {
     #expect(await pairingRouteStore.preferredHost(for: "uniqueid:host-123") == "wifi.example.invalid")
     #expect(runtime.hosts.count == 1)
     #expect(runtime.hosts.first?.host == "wifi.example.invalid")
+}
+
+@Test("Remote desktop runtime does not treat session preferred aliases as host identity evidence")
+@MainActor
+func remoteDesktopRuntimeDoesNotPromoteSessionPreferredAliasesIntoKnownGroups() async {
+    let defaultsSuite = "shadow-client.runtime.session-alias-grouping.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let pairingRouteStore = ShadowClientPairingRouteStore(defaultsSuiteName: defaultsSuite)
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "pc-lan.local": .init(
+                host: "pc-lan.local",
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-PC"
+            ),
+            "macbook.local": .init(
+                host: "macbook.local",
+                displayName: "Example-Mac",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-MAC"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient(),
+        pairingRouteStore: pairingRouteStore,
+        defaults: defaults
+    )
+
+    runtime.refreshHosts(candidates: ["pc-lan.local", "macbook.local"])
+    await waitForHostCatalogReady(runtime)
+    await pairingRouteStore.setSessionPreferredHost("macbook.local", for: "uniqueid:host-pc")
+
+    runtime.refreshHosts(candidates: ["pc-lan.local", "macbook.local"], preferredHost: "macbook.local")
+    await waitForHostCatalogReady(runtime)
+
+    #expect(runtime.hosts.count == 2)
+    #expect(Set(runtime.hosts.compactMap(\.uniqueID)) == ["HOST-PC", "HOST-MAC"])
+    #expect(runtime.hosts.first(where: { $0.uniqueID == "HOST-PC" })?.routes.allEndpoints.map(\.host).contains("macbook.local") == false)
 }
 
 @Test("Remote desktop runtime clears stale custom port aliases claimed by another host")
@@ -2149,7 +2563,10 @@ private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient
         self.appListFailureByHost = appListFailureByHost
     }
 
-    func fetchServerInfo(host: String) async throws -> ShadowClientGameStreamServerInfo {
+    func fetchServerInfo(
+        host: String,
+        portHint _: ShadowClientGameStreamPortHint?
+    ) async throws -> ShadowClientGameStreamServerInfo {
         recordedServerInfoHosts.append(host)
         if let info = serverInfoByHost[host] {
             return info

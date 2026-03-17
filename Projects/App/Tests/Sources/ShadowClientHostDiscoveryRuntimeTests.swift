@@ -28,6 +28,34 @@ func hostDiscoveryCatalogDeduplicatesHosts() {
     #expect(hosts.first?.host == "192.168.0.20")
 }
 
+@Test("Host discovery catalog preserves same host discovered on different ports")
+func hostDiscoveryCatalogPreservesDistinctPorts() {
+    var catalog = ShadowClientDiscoveredHostCatalog()
+    catalog.upsert(
+        serviceKey: "a",
+        host: .init(
+            name: "Buseong-Mac",
+            host: "buseongs-macbook-pro-14.local",
+            port: 47989,
+            serviceType: "_moonlight._tcp"
+        )
+    )
+    catalog.upsert(
+        serviceKey: "b",
+        host: .init(
+            name: "Buseong-Mac",
+            host: "buseongs-macbook-pro-14.local",
+            port: 48989,
+            serviceType: "_sunshine._tcp"
+        )
+    )
+
+    let hosts = catalog.hosts
+    #expect(hosts.count == 2)
+    #expect(hosts.map(\.probeCandidate).contains("buseongs-macbook-pro-14.local:47989"))
+    #expect(hosts.map(\.probeCandidate).contains("buseongs-macbook-pro-14.local:48989"))
+}
+
 @Test("Host discovery catalog removes host when service disappears")
 func hostDiscoveryCatalogRemovesHostWhenServiceRemoved() {
     var catalog = ShadowClientDiscoveredHostCatalog()

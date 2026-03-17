@@ -189,9 +189,15 @@ var remoteDesktopHostCard: some View {
                             .textFieldStyle(.plain)
                             .foregroundStyle(.white)
                             .autocorrectionDisabled(true)
+                            .focused($isManualPortFieldFocused)
                             .accessibilityIdentifier("shadow.home.hosts.manual-port")
                             .accessibilityLabel("Remote host HTTPS port")
-                            .onSubmit(addManualHostToCatalog)
+                            .submitLabel(.done)
+                            .onSubmit {
+                                isManualHostFieldFocused = false
+                                isManualPortFieldFocused = false
+                                addManualHostToCatalog()
+                            }
 #if os(iOS) || os(tvOS)
                             .textInputAutocapitalization(.never)
                             .keyboardType(.numberPad)
@@ -236,6 +242,17 @@ var remoteDesktopHostCard: some View {
                     .buttonStyle(.bordered)
                 }
             }
+        }
+        .toolbar {
+#if os(iOS) || os(tvOS)
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    isManualHostFieldFocused = false
+                    isManualPortFieldFocused = false
+                }
+            }
+#endif
         }
     }
 
@@ -731,12 +748,6 @@ var remoteDesktopHostCard: some View {
     @ViewBuilder
     func selectedHostPrimaryActionButton(for host: ShadowClientRemoteHostDescriptor) -> some View {
         Button("Go") {
-            let preferredRoute = normalizedConnectionHost
-            if !preferredRoute.isEmpty, preferredRoute != host.hostCandidate {
-                Task {
-                    await remoteDesktopRuntime.rememberPreferredRoute(preferredRoute, forHostID: host.id)
-                }
-            }
             connectionHost = host.hostCandidate
             connectToHost(autoLaunchAfterConnect: true, preferredHostID: host.id)
         }
@@ -757,12 +768,6 @@ var remoteDesktopHostCard: some View {
         if canPairSelectedHost {
             Button("Pair") {
                 if let selectedHost = remoteDesktopRuntime.selectedHost {
-                    let preferredRoute = normalizedConnectionHost
-                    if !preferredRoute.isEmpty, preferredRoute != selectedHost.hostCandidate {
-                        Task {
-                            await remoteDesktopRuntime.rememberPreferredRoute(preferredRoute, forHostID: selectedHost.id)
-                        }
-                    }
                     connectionHost = selectedHost.hostCandidate
                 }
                 remoteDesktopRuntime.pairSelectedHost()

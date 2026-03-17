@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import ShadowClientFeatureConnection
 
 enum ShadowClientHostCatalogKit {
     static func cachedCandidateHosts(
@@ -10,13 +11,13 @@ enum ShadowClientHostCatalogKit {
 
         for host in descriptors {
             for endpoint in host.routes.allEndpoints {
-                let normalizedHost = ShadowClientHostEndpointKit.candidateString(for: endpoint)
-                guard !normalizedHost.isEmpty,
-                      seen.insert(normalizedHost).inserted
+                let connectCandidate = connectCandidateString(for: endpoint)
+                guard !connectCandidate.isEmpty,
+                      seen.insert(connectCandidate).inserted
                 else {
                     continue
                 }
-                results.append(normalizedHost)
+                results.append(connectCandidate)
             }
         }
 
@@ -30,11 +31,111 @@ enum ShadowClientHostCatalogKit {
         manualHost: String?
     ) -> [String] {
         let candidates = (autoFindHosts ? discoveredHosts : []) + cachedHosts
-        return ShadowClientRemoteHostCandidateFilter.filteredCandidates(
+        let filteredCandidates = ShadowClientRemoteHostCandidateFilter.filteredCandidates(
             discoveredHosts: candidates,
             manualHost: manualHost,
             localInterfaceHosts: currentMachineInterfaceHosts()
         )
+        return canonicalizedConnectCandidates(filteredCandidates)
+    }
+
+    private static func connectCandidateString(for endpoint: ShadowClientRemoteHostEndpoint) -> String {
+        let normalizedHost = endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedHost.isEmpty else {
+            return ""
+        }
+
+        guard let connectPort = ShadowClientGameStreamNetworkDefaults.mappedHTTPPort(
+            forHTTPSPort: endpoint.httpsPort
+        ) else {
+            return ShadowClientHostEndpointKit.candidateString(for: endpoint)
+        }
+
+        if connectPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPPort {
+            return normalizedHost
+        }
+
+        return "\(normalizedHost):\(connectPort)"
+    }
+
+    private static func canonicalizedConnectCandidates(_ candidates: [String]) -> [String] {
+        struct ParsedCandidate {
+            let original: String
+            let host: String
+            let explicitPort: Int?
+        }
+
+        let parsedCandidates = candidates.compactMap { candidate -> ParsedCandidate? in
+            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                return nil
+            }
+
+            let urlCandidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(trimmed)
+            guard let url = URL(string: urlCandidate), let host = url.host?.lowercased() else {
+                return ParsedCandidate(original: trimmed.lowercased(), host: trimmed.lowercased(), explicitPort: nil)
+            }
+
+            return ParsedCandidate(
+                original: trimmed.lowercased(),
+                host: host,
+                explicitPort: url.port
+            )
+        }
+
+        var preferredExplicitCandidateByHost: [String: String] = [:]
+        var explicitPortsByHost: [String: Set<Int>] = [:]
+        for candidate in parsedCandidates {
+            guard let explicitPort = candidate.explicitPort,
+                  explicitPort != ShadowClientGameStreamNetworkDefaults.defaultHTTPPort
+            else {
+                continue
+            }
+
+            explicitPortsByHost[candidate.host, default: []].insert(explicitPort)
+            let explicitCandidate = "\(candidate.host):\(explicitPort)"
+            let existing = preferredExplicitCandidateByHost[candidate.host]
+            if existing == nil || explicitCandidate.localizedCaseInsensitiveCompare(existing!) == .orderedAscending {
+                preferredExplicitCandidateByHost[candidate.host] = explicitCandidate
+            }
+        }
+
+        let apolloPortDelta = abs(ShadowClientGameStreamNetworkDefaults.httpsOffsetFromHTTPPort)
+        for (host, explicitPorts) in explicitPortsByHost {
+            let sortedPorts = explicitPorts.sorted()
+            guard sortedPorts.count > 1 else {
+                continue
+            }
+
+            var preferredConnectPort: Int?
+            for port in sortedPorts {
+                let pairedHTTPSPort = port + ShadowClientGameStreamNetworkDefaults.httpsOffsetFromHTTPPort
+                if explicitPorts.contains(pairedHTTPSPort) {
+                    preferredConnectPort = max(preferredConnectPort ?? port, port)
+                    continue
+                }
+
+                if explicitPorts.contains(port - apolloPortDelta) {
+                    preferredConnectPort = max(preferredConnectPort ?? port, port)
+                }
+            }
+
+            if let preferredConnectPort {
+                preferredExplicitCandidateByHost[host] = "\(host):\(preferredConnectPort)"
+            }
+        }
+
+        var seen: Set<String> = []
+        var results: [String] = []
+        for candidate in parsedCandidates {
+            let canonicalCandidate = preferredExplicitCandidateByHost[candidate.host] ?? candidate.original
+            guard seen.insert(canonicalCandidate).inserted else {
+                continue
+            }
+            results.append(canonicalCandidate)
+        }
+
+        return results
     }
 
     static func currentMachineInterfaceHosts() -> Set<String> {

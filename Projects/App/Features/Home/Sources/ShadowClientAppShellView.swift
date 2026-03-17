@@ -74,6 +74,7 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @State var manualHostDraft = ""
     @State var manualPortDraft = ""
     @FocusState var isManualHostFieldFocused: Bool
+    @FocusState var isManualPortFieldFocused: Bool
     @State var settingsTelemetryTask: Task<Void, Never>?
     @State var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
     @State var sessionDiagnosticsHistory = ShadowClientSessionDiagnosticsHistory(
@@ -529,16 +530,47 @@ func startHostDiscovery() {
 
     @MainActor
 func refreshRemoteDesktopCatalog() {
+        let discoveredHosts = hostDiscoveryRuntime.hosts
         let candidates = ShadowClientHostCatalogKit.refreshCandidates(
             autoFindHosts: autoFindHosts,
-            discoveredHosts: hostDiscoveryRuntime.hosts.map(\.host),
+            discoveredHosts: discoveredHosts.map(\.probeCandidate),
             cachedHosts: ShadowClientHostCatalogKit.cachedCandidateHosts(from: remoteDesktopRuntime.hosts),
             manualHost: normalizedConnectionHost.isEmpty ? nil : normalizedConnectionHost
         )
 
+        var discoveredPortHints = [String: ShadowClientGameStreamPortHint](
+            uniqueKeysWithValues: discoveredHosts.compactMap { host in
+                guard let httpsPort = ShadowClientGameStreamNetworkDefaults.mappedHTTPSPort(forHTTPPort: host.port) else {
+                    return nil
+                }
+                return (
+                    host.probeCandidate,
+                    ShadowClientGameStreamPortHint(
+                        httpPort: host.port,
+                        httpsPort: httpsPort
+                    )
+                )
+            }
+        )
+
+        let manualHostCandidate = normalizedConnectionHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        let manualHostURL = URL(
+            string: ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(manualHostCandidate)
+        )
+        if let manualHostURL,
+           let manualHost = manualHostURL.host?.lowercased(),
+           let manualHTTPPort = manualHostURL.port,
+           let httpsPort = ShadowClientGameStreamNetworkDefaults.mappedHTTPSPort(forHTTPPort: manualHTTPPort) {
+            discoveredPortHints["\(manualHost):\(manualHTTPPort)"] = .init(
+                httpPort: manualHTTPPort,
+                httpsPort: httpsPort
+            )
+        }
+
         remoteDesktopRuntime.refreshHosts(
             candidates: candidates,
-            preferredHost: normalizedConnectionHost.isEmpty ? nil : normalizedConnectionHost
+            preferredHost: normalizedConnectionHost.isEmpty ? nil : normalizedConnectionHost,
+            portHintsByCandidate: discoveredPortHints
         )
     }
 
@@ -550,14 +582,20 @@ func stopHostDiscovery() {
     @MainActor
 func presentManualHostEntry() {
         isManualHostFieldFocused = false
+        isManualPortFieldFocused = false
         manualHostDraft = ""
         manualPortDraft = ""
         isShowingManualHostEntry = true
+        Task { @MainActor in
+            await Task.yield()
+            isManualHostFieldFocused = true
+        }
     }
 
     @MainActor
 func cancelManualHostEntry() {
         isManualHostFieldFocused = false
+        isManualPortFieldFocused = false
         manualHostDraft = ""
         manualPortDraft = ""
         isShowingManualHostEntry = false
@@ -574,6 +612,7 @@ func cancelManualHostEntry() {
         refreshRemoteDesktopCatalog()
         remoteDesktopRuntime.selectHost(host.lowercased())
         isManualHostFieldFocused = false
+        isManualPortFieldFocused = false
         manualHostDraft = ""
         manualPortDraft = ""
         isShowingManualHostEntry = false
@@ -590,12 +629,6 @@ func cancelManualHostEntry() {
 
     @MainActor
 func presentHostSpotlight(for host: ShadowClientRemoteHostDescriptor) {
-        let preferredRoute = normalizedConnectionHost
-        if !preferredRoute.isEmpty, preferredRoute != host.hostCandidate {
-            Task {
-                await remoteDesktopRuntime.rememberPreferredRoute(preferredRoute, forHostID: host.id)
-            }
-        }
         connectionHost = host.hostCandidate
         remoteDesktopRuntime.selectHost(host.id)
         spotlightedHostSourceFrame = remoteDesktopHostFrames[host.id] ?? .zero
@@ -723,9 +756,7 @@ func connectToHost(
 
     @MainActor
 func connectToDiscoveredHost(_ discoveredHost: ShadowClientDiscoveredHost) {
-        connectionHost = ShadowClientHostEndpointKit.candidateString(
-            for: .init(host: discoveredHost.host, httpsPort: discoveredHost.port)
-        )
+        connectionHost = discoveredHost.probeCandidate
         connectToHost(autoLaunchAfterConnect: true)
     }
 
