@@ -1,0 +1,97 @@
+import Foundation
+import CoreGraphics
+
+#if os(macOS)
+import AppKit
+#elseif os(iOS) || os(tvOS)
+import UIKit
+#endif
+
+enum ShadowClientApolloClientDisplayGamut: String, Sendable {
+    case sRGB = "srgb"
+    case displayP3 = "display-p3"
+    case rec2020 = "rec2020"
+}
+
+enum ShadowClientApolloClientDisplayTransfer: String, Sendable {
+    case sdr
+    case pq
+    case hlg
+}
+
+struct ShadowClientApolloClientDisplayCharacteristics: Sendable {
+    let gamut: ShadowClientApolloClientDisplayGamut
+    let transfer: ShadowClientApolloClientDisplayTransfer
+}
+
+enum ShadowClientApolloClientDisplayCharacteristicsResolver {
+    @MainActor
+    static func current(hdrEnabled: Bool) -> ShadowClientApolloClientDisplayCharacteristics {
+        #if os(macOS)
+        let colorSpace = currentMacScreen()?.colorSpace?.cgColorSpace
+        let gamut = gamut(for: colorSpace)
+        let transfer = transfer(for: colorSpace, hdrEnabled: hdrEnabled)
+        return .init(gamut: gamut, transfer: transfer)
+        #elseif os(iOS) || os(tvOS)
+        let screen = currentUIKitScreen() ?? UIScreen.main
+        let gamut = gamut(for: screen.traitCollection.displayGamut)
+        let transfer: ShadowClientApolloClientDisplayTransfer = hdrEnabled ? .pq : .sdr
+        return .init(gamut: gamut, transfer: transfer)
+        #else
+        return .init(gamut: .sRGB, transfer: hdrEnabled ? .pq : .sdr)
+        #endif
+    }
+
+    #if os(macOS)
+    @MainActor
+    private static func currentMacScreen() -> NSScreen? {
+        NSApp.keyWindow?.screen ?? NSApp.mainWindow?.screen ?? NSScreen.main
+    }
+
+    private static func gamut(for colorSpace: CGColorSpace?) -> ShadowClientApolloClientDisplayGamut {
+        switch colorSpace?.name {
+        case CGColorSpace.displayP3:
+            return .displayP3
+        case CGColorSpace.itur_2020, CGColorSpace.itur_2100_PQ, CGColorSpace.itur_2100_HLG:
+            return .rec2020
+        default:
+            return .sRGB
+        }
+    }
+
+    private static func transfer(
+        for colorSpace: CGColorSpace?,
+        hdrEnabled: Bool
+    ) -> ShadowClientApolloClientDisplayTransfer {
+        guard hdrEnabled else {
+            return .sdr
+        }
+        switch colorSpace?.name {
+        case CGColorSpace.itur_2100_HLG:
+            return .hlg
+        case CGColorSpace.itur_2100_PQ:
+            return .pq
+        default:
+            return .pq
+        }
+    }
+    #elseif os(iOS) || os(tvOS)
+    @MainActor
+    private static func currentUIKitScreen() -> UIScreen? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)?
+            .screen
+    }
+
+    private static func gamut(for displayGamut: UIDisplayGamut) -> ShadowClientApolloClientDisplayGamut {
+        switch displayGamut {
+        case .P3:
+            return .displayP3
+        default:
+            return .sRGB
+        }
+    }
+    #endif
+}

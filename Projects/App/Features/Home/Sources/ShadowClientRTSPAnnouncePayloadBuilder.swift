@@ -7,7 +7,8 @@ enum ShadowClientRTSPAnnouncePayloadBuilder {
         codec: ShadowClientVideoCodec,
         videoPort: UInt16,
         moonlightFeatureFlags: UInt32,
-        encryptionEnabledFlags: UInt32
+        encryptionEnabledFlags: UInt32,
+        clientDisplayCharacteristics: ShadowClientApolloClientDisplayCharacteristics
     ) -> Data {
         let safeHost = hostAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? ShadowClientRTSPAnnounceProfile.fallbackHostAddress
@@ -73,6 +74,8 @@ enum ShadowClientRTSPAnnouncePayloadBuilder {
             ("x-nv-audio.surround.AudioQuality", ShadowClientRTSPAnnounceProfile.surroundAudioQuality(surroundEnabled: surroundEnabled)),
             ("x-nv-aqos.packetDuration", ShadowClientRTSPAnnounceProfile.aqosPacketDuration),
             ("x-nv-video[0].encoderCscMode", ShadowClientRTSPAnnounceProfile.encoderCSCMode),
+            ("x-apollo-video[0].clientDisplayGamut", clientDisplayCharacteristics.gamut.rawValue),
+            ("x-apollo-video[0].clientDisplayTransfer", clientDisplayCharacteristics.transfer.rawValue),
         ]
         if reliableUDPMode == ShadowClientRTSPAnnounceProfile.reliableUDPModeStandard {
             attributes.append(

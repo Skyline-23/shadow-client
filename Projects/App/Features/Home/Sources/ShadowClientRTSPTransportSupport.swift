@@ -813,13 +813,17 @@ actor ShadowClientRTSPInterleavedClient {
             "RTSP negotiation session-id-v1=\(handshakeNegotiation.supportsSessionIdentifierV1, privacy: .public) ml-flags=\(handshakeNegotiation.moonlightFeatureFlags, privacy: .public) ss-feature-flags=\(hostFeatureFlags, privacy: .public) encryption-supported=\(encryptionSupportedFlags, privacy: .public) encryption-requested=\(encryptionRequestedFlags, privacy: .public) encryption-enabled=\(handshakeNegotiation.encryptionEnabledFlags, privacy: .public) control-mode=\(controlModeLabel, privacy: .public) audio-mode=\(audioEncryptionLabel, privacy: .public)"
         )
 
+        let clientDisplayCharacteristics = await ShadowClientApolloClientDisplayCharacteristicsResolver.current(
+            hdrEnabled: videoConfiguration.enableHDR
+        )
         let announcePayload = ShadowClientRTSPAnnouncePayloadBuilder.build(
             hostAddress: host,
             videoConfiguration: videoConfiguration,
             codec: track.codec,
             videoPort: videoServerPort?.rawValue ?? ShadowClientRealtimeSessionDefaults.fallbackVideoPort,
             moonlightFeatureFlags: handshakeNegotiation.moonlightFeatureFlags,
-            encryptionEnabledFlags: handshakeNegotiation.encryptionEnabledFlags
+            encryptionEnabledFlags: handshakeNegotiation.encryptionEnabledFlags,
+            clientDisplayCharacteristics: clientDisplayCharacteristics
         )
         let announceTargets = announceURLCandidates(
             sessionURL: normalizedURL.absoluteString,

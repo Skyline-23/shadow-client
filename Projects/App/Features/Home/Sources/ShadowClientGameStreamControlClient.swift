@@ -888,13 +888,17 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let isSurround = settings.enableSurroundAudio && !settings.lowLatencyMode
         let surroundAudioInfo = isSurround ? 393_279 : 131_075
         let localAudioPlayMode = settings.playAudioOnHost ? "1" : "0"
+        let clientDisplayCharacteristics = await ShadowClientApolloClientDisplayCharacteristicsResolver.current(
+            hdrEnabled: settings.enableHDR
+        )
         var parameters = Self.makeLaunchParameters(
             appID: appID,
             settings: settings,
             remoteInputKey: remoteInputKey,
             remoteInputKeyID: keyID,
             surroundAudioInfo: surroundAudioInfo,
-            localAudioPlayMode: localAudioPlayMode
+            localAudioPlayMode: localAudioPlayMode,
+            clientDisplayCharacteristics: clientDisplayCharacteristics
         )
 
         let resolvedCodecPreference = Self.resolvedLaunchCodecPreference(
@@ -1082,7 +1086,8 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         remoteInputKey: Data,
         remoteInputKeyID: UInt32,
         surroundAudioInfo: Int,
-        localAudioPlayMode: String
+        localAudioPlayMode: String,
+        clientDisplayCharacteristics: ShadowClientApolloClientDisplayCharacteristics
     ) -> [String: String] {
         var parameters: [String: String] = [
             "appid": "\(appID)",
@@ -1097,6 +1102,8 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             "gcmap": "1",
             "gcpersist": "0",
             "bitrate": "\(settings.bitrateKbps)",
+            "clientDisplayGamut": clientDisplayCharacteristics.gamut.rawValue,
+            "clientDisplayTransfer": clientDisplayCharacteristics.transfer.rawValue,
         ]
 
         if settings.preferVirtualDisplay {

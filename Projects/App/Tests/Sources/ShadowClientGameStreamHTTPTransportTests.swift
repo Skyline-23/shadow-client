@@ -222,7 +222,8 @@ func launchParameterBuilderIncludesApolloVirtualDisplayRequest() {
         remoteInputKey: Data([0x01, 0x02, 0x03, 0x04]),
         remoteInputKeyID: 7,
         surroundAudioInfo: 131_075,
-        localAudioPlayMode: "0"
+        localAudioPlayMode: "0",
+        clientDisplayCharacteristics: .init(gamut: .displayP3, transfer: .sdr)
     )
 
     #expect(parameters["virtualDisplay"] == "1")
@@ -245,7 +246,8 @@ func launchParameterBuilderOmitsApolloVirtualDisplayRequestByDefault() {
         remoteInputKey: Data([0xAA]),
         remoteInputKeyID: 9,
         surroundAudioInfo: 131_075,
-        localAudioPlayMode: "1"
+        localAudioPlayMode: "1",
+        clientDisplayCharacteristics: .init(gamut: .displayP3, transfer: .sdr)
     )
 
     #expect(parameters["virtualDisplay"] == nil)
@@ -269,8 +271,34 @@ func launchParameterBuilderIncludesApolloScaleFactor() {
         remoteInputKey: Data([0xAA]),
         remoteInputKeyID: 9,
         surroundAudioInfo: 131_075,
-        localAudioPlayMode: "1"
+        localAudioPlayMode: "1",
+        clientDisplayCharacteristics: .init(gamut: .displayP3, transfer: .sdr)
     )
 
     #expect(parameters["scaleFactor"] == "200")
+}
+
+@Test("Launch parameter builder includes Apollo display metadata")
+func launchParameterBuilderIncludesApolloDisplayMetadata() {
+    let parameters = NativeGameStreamControlClient.makeLaunchParameters(
+        appID: 1,
+        settings: .init(
+            width: 2560,
+            height: 1440,
+            fps: 120,
+            bitrateKbps: 35_000,
+            preferredCodec: .h265,
+            enableHDR: true,
+            enableSurroundAudio: false,
+            lowLatencyMode: false
+        ),
+        remoteInputKey: Data([0xAA]),
+        remoteInputKeyID: 9,
+        surroundAudioInfo: 131_075,
+        localAudioPlayMode: "1",
+        clientDisplayCharacteristics: .init(gamut: .rec2020, transfer: .pq)
+    )
+
+    #expect(parameters["clientDisplayGamut"] == "rec2020")
+    #expect(parameters["clientDisplayTransfer"] == "pq")
 }
