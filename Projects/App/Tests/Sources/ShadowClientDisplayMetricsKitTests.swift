@@ -40,8 +40,8 @@ func displayMetricsKitPrefersViewportMetricsWhenAvailable() {
     #expect(geometry.scalePercent == 200)
 }
 
-@Test("Retina auto launch settings use pixel size without a second iOS scale factor")
-func retinaAutoLaunchSettingsUsePixelSizeWithoutExtraScaleFactor() {
+@Test("Retina auto launch settings keep logical iOS render size and expose scale factor")
+func retinaAutoLaunchSettingsExposeIOSScaleFactor() {
     let settings = ShadowClientLaunchSettingsKit.resolvedLaunchSettings(
         currentSettings: ShadowClientAppSettings(
             resolution: .retinaAuto,
@@ -61,9 +61,9 @@ func retinaAutoLaunchSettingsUsePixelSizeWithoutExtraScaleFactor() {
         )
     )
 
-    #expect(settings.width == 2096)
-    #expect(settings.height == 1940)
-    #expect(settings.resolutionScalePercent == 100)
+    #expect(settings.width == 1048)
+    #expect(settings.height == 970)
+    #expect(settings.resolutionScalePercent == 200)
 }
 
 @Test("Display metrics kit preserves fallback safe area insets when the viewport has not been laid out yet")
