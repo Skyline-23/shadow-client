@@ -746,6 +746,19 @@ public struct NativeShadowClientRemoteSessionConnectionClient: ShadowClientRemot
 }
 
 public protocol ShadowClientGameStreamRequestTransporting: Sendable {
+    func requestXMLResponse(
+        host: String,
+        port: Int,
+        scheme: String,
+        command: String,
+        parameters: [String: String],
+        uniqueID: String,
+        pinnedServerCertificateDER: Data?,
+        clientCertificateCredential: URLCredential?,
+        clientCertificates: [SecCertificate]?,
+        clientCertificateIdentity: SecIdentity?
+    ) async throws -> ShadowClientGameStreamXMLResponse
+
     func requestXML(
         host: String,
         port: Int,
@@ -760,10 +773,8 @@ public protocol ShadowClientGameStreamRequestTransporting: Sendable {
     ) async throws -> String
 }
 
-public struct NativeShadowClientGameStreamRequestTransport: ShadowClientGameStreamRequestTransporting {
-    public init() {}
-
-    public func requestXML(
+public extension ShadowClientGameStreamRequestTransporting {
+    func requestXML(
         host: String,
         port: Int,
         scheme: String,
@@ -775,7 +786,47 @@ public struct NativeShadowClientGameStreamRequestTransport: ShadowClientGameStre
         clientCertificates: [SecCertificate]?,
         clientCertificateIdentity: SecIdentity?
     ) async throws -> String {
-        try await ShadowClientGameStreamHTTPTransport.requestXML(
+        try await requestXMLResponse(
+            host: host,
+            port: port,
+            scheme: scheme,
+            command: command,
+            parameters: parameters,
+            uniqueID: uniqueID,
+            pinnedServerCertificateDER: pinnedServerCertificateDER,
+            clientCertificateCredential: clientCertificateCredential,
+            clientCertificates: clientCertificates,
+            clientCertificateIdentity: clientCertificateIdentity
+        ).xml
+    }
+}
+
+public struct ShadowClientGameStreamXMLResponse: Equatable, Sendable {
+    public let xml: String
+    public let usedConnectHost: String?
+
+    public init(xml: String, usedConnectHost: String? = nil) {
+        self.xml = xml
+        self.usedConnectHost = usedConnectHost
+    }
+}
+
+public struct NativeShadowClientGameStreamRequestTransport: ShadowClientGameStreamRequestTransporting {
+    public init() {}
+
+    public func requestXMLResponse(
+        host: String,
+        port: Int,
+        scheme: String,
+        command: String,
+        parameters: [String: String],
+        uniqueID: String,
+        pinnedServerCertificateDER: Data?,
+        clientCertificateCredential: URLCredential?,
+        clientCertificates: [SecCertificate]?,
+        clientCertificateIdentity: SecIdentity?
+    ) async throws -> ShadowClientGameStreamXMLResponse {
+        try await ShadowClientGameStreamHTTPTransport.requestXMLResponse(
             host: host,
             port: port,
             scheme: scheme,
@@ -833,7 +884,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: requestEndpoints.host)
 
         if pinnedCertificateDER == nil {
-            let httpXML = try await requestXML(
+            let httpResponse = try await requestXML(
                 host: requestEndpoints.host,
                 port: requestEndpoints.httpPort,
                 scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
@@ -841,19 +892,20 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             )
 
             let serverInfo = try ShadowClientGameStreamXMLParsers.parseServerInfo(
-                xml: httpXML,
+                xml: httpResponse.xml,
                 host: requestedHost,
                 fallbackHTTPSPort: requestEndpoints.httpsPort
             )
             return Self.reconciledServerInfo(
                 serverInfo,
                 requestedHost: requestedHost,
-                connectionTargets: connectionTargets
+                connectionTargets: connectionTargets,
+                usedConnectHost: httpResponse.usedConnectHost
             )
         }
 
         do {
-            let httpsXML = try await requestXML(
+            let httpsResponse = try await requestXML(
                 host: requestEndpoints.host,
                 port: requestEndpoints.httpsPort,
                 scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
@@ -861,14 +913,15 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             )
 
             let serverInfo = try ShadowClientGameStreamXMLParsers.parseServerInfo(
-                xml: httpsXML,
+                xml: httpsResponse.xml,
                 host: requestedHost,
                 fallbackHTTPSPort: requestEndpoints.httpsPort
             )
             return Self.reconciledServerInfo(
                 serverInfo,
                 requestedHost: requestedHost,
-                connectionTargets: connectionTargets
+                connectionTargets: connectionTargets,
+                usedConnectHost: httpsResponse.usedConnectHost
             )
         } catch let httpsError as ShadowClientGameStreamError {
             if Self.isUnauthorizedCertificateError(httpsError) {
@@ -879,7 +932,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                     )
                 }
                 do {
-                    let httpXML = try await requestXML(
+                    let httpResponse = try await requestXML(
                         host: requestEndpoints.host,
                         port: requestEndpoints.httpPort,
                         scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
@@ -887,14 +940,15 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                     )
 
                     let serverInfo = try ShadowClientGameStreamXMLParsers.parseServerInfo(
-                        xml: httpXML,
+                        xml: httpResponse.xml,
                         host: requestedHost,
                         fallbackHTTPSPort: requestEndpoints.httpsPort
                     )
                     return Self.reconciledServerInfo(
                         serverInfo,
                         requestedHost: requestedHost,
-                        connectionTargets: connectionTargets
+                        connectionTargets: connectionTargets,
+                        usedConnectHost: httpResponse.usedConnectHost
                     )
                 } catch let httpError as ShadowClientGameStreamError {
                     if Self.isAppTransportSecurityBlockedError(httpError) {
@@ -915,7 +969,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                 throw httpsError
             }
             do {
-                let httpXML = try await requestXML(
+                let httpResponse = try await requestXML(
                     host: requestEndpoints.host,
                     port: requestEndpoints.httpPort,
                     scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
@@ -923,14 +977,15 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                 )
 
                 let serverInfo = try ShadowClientGameStreamXMLParsers.parseServerInfo(
-                    xml: httpXML,
+                    xml: httpResponse.xml,
                     host: requestedHost,
                     fallbackHTTPSPort: requestEndpoints.httpsPort
                 )
                 return Self.reconciledServerInfo(
                     serverInfo,
                     requestedHost: requestedHost,
-                    connectionTargets: connectionTargets
+                    connectionTargets: connectionTargets,
+                    usedConnectHost: httpResponse.usedConnectHost
                 )
             } catch let httpError as ShadowClientGameStreamError {
                 if Self.isAppTransportSecurityBlockedError(httpError) {
@@ -952,14 +1007,14 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             )
         }
 
-        let httpsXML = try await requestXML(
+        let httpsResponse = try await requestXML(
             host: endpoint.host,
             port: resolvedHTTPSPort,
             scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
             command: "applist"
         )
 
-        return try ShadowClientGameStreamXMLParsers.parseAppList(xml: httpsXML)
+        return try ShadowClientGameStreamXMLParsers.parseAppList(xml: httpsResponse.xml)
     }
 
     private static func resolveServerInfoRequestEndpoints(
@@ -987,7 +1042,8 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
     private static func reconciledServerInfo(
         _ serverInfo: ShadowClientGameStreamServerInfo,
         requestedHost: String,
-        connectionTargets: [String]
+        connectionTargets: [String],
+        usedConnectHost: String?
     ) -> ShadowClientGameStreamServerInfo {
         let reconciledLocalHost = preferredResolvedLocalRouteHost(
             requestedHost: requestedHost,
@@ -1200,7 +1256,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         port: Int,
         scheme: String,
         command: String
-    ) async throws -> String {
+    ) async throws -> ShadowClientGameStreamXMLResponse {
         let uniqueID = await identityStore.uniqueID()
         let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: host)
         let clientCertificateCredential: URLCredential?
@@ -1215,7 +1271,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             clientCertificates = nil
             clientCertificateIdentity = nil
         }
-        return try await transport.requestXML(
+        return try await transport.requestXMLResponse(
             host: host,
             port: port,
             scheme: scheme,

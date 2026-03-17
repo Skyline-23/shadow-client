@@ -416,7 +416,7 @@ func metadataClientUsesDiscoveryPortHintForCustomBasePort() async throws {
 }
 
 @Test("Metadata client prefers resolved private LAN target over serverinfo link-local LocalIP for hostname requests")
-func metadataClientPrefersResolvedPrivateLANHostOverLinkLocalServerInfoLocalIP() async throws {
+func metadataClientPrefersResolvedPrivateLANOverLinkLocalServerInfoLocalIP() async throws {
     let defaultsSuite = "shadow-client.metadata.serverinfo.resolved-local-route.\(UUID().uuidString)"
     guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
         Issue.record("Expected isolated defaults suite")
@@ -2482,17 +2482,20 @@ private actor ScriptedRequestTransport: ShadowClientGameStreamRequestTransportin
         let scheme: String
         let command: String
         let expectedPort: Int?
+        let usedConnectHost: String?
         let result: Result<String, ShadowClientGameStreamError>
 
         init(
             scheme: String,
             command: String,
             expectedPort: Int? = nil,
+            usedConnectHost: String? = nil,
             result: Result<String, ShadowClientGameStreamError>
         ) {
             self.scheme = scheme
             self.command = command
             self.expectedPort = expectedPort
+            self.usedConnectHost = usedConnectHost
             self.result = result
         }
     }
@@ -2505,7 +2508,7 @@ private actor ScriptedRequestTransport: ShadowClientGameStreamRequestTransportin
         self.script = script
     }
 
-    func requestXML(
+    func requestXMLResponse(
         host: String,
         port: Int,
         scheme: String,
@@ -2516,7 +2519,7 @@ private actor ScriptedRequestTransport: ShadowClientGameStreamRequestTransportin
         clientCertificateCredential: URLCredential?,
         clientCertificates: [SecCertificate]?,
         clientCertificateIdentity: SecIdentity?
-    ) async throws -> String {
+    ) async throws -> ShadowClientGameStreamXMLResponse {
         recordedCalls.append(.init(scheme: scheme, command: command))
         recordedCallsWithPort.append(.init(scheme: scheme, command: command, port: port))
         guard !script.isEmpty else {
@@ -2535,7 +2538,10 @@ private actor ScriptedRequestTransport: ShadowClientGameStreamRequestTransportin
             )
         }
 
-        return try step.result.get()
+        return try .init(
+            xml: step.result.get(),
+            usedConnectHost: step.usedConnectHost
+        )
     }
 
     func calls() -> [Call] {

@@ -1614,6 +1614,34 @@ enum ShadowClientGameStreamHTTPTransport {
         clientCertificateIdentity: SecIdentity? = nil,
         timeout: TimeInterval = ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
     ) async throws -> String {
+        try await requestXMLResponse(
+            host: host,
+            port: port,
+            scheme: scheme,
+            command: command,
+            parameters: parameters,
+            uniqueID: uniqueID,
+            pinnedServerCertificateDER: pinnedServerCertificateDER,
+            clientCertificateCredential: clientCertificateCredential,
+            clientCertificates: clientCertificates,
+            clientCertificateIdentity: clientCertificateIdentity,
+            timeout: timeout
+        ).xml
+    }
+
+    static func requestXMLResponse(
+        host: String,
+        port: Int,
+        scheme: String,
+        command: String,
+        parameters: [String: String],
+        uniqueID: String,
+        pinnedServerCertificateDER: Data?,
+        clientCertificateCredential: URLCredential? = nil,
+        clientCertificates: [SecCertificate]? = nil,
+        clientCertificateIdentity: SecIdentity? = nil,
+        timeout: TimeInterval = ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
+    ) async throws -> ShadowClientGameStreamXMLResponse {
         var components = URLComponents()
         components.scheme = scheme
         components.host = host
@@ -1727,7 +1755,7 @@ enum ShadowClientGameStreamHTTPTransport {
         requestHost: String,
         connectionTargets: [String],
         timeout: TimeInterval
-    ) async throws -> String {
+    ) async throws -> ShadowClientGameStreamXMLResponse {
         guard let port = NWEndpoint.Port(rawValue: UInt16(url.port ?? 80))
         else {
             throw ShadowClientGameStreamError.invalidURL
@@ -1780,7 +1808,10 @@ enum ShadowClientGameStreamHTTPTransport {
                 guard let xml = String(data: body, encoding: .utf8), !xml.isEmpty else {
                     throw ShadowClientGameStreamError.malformedXML
                 }
-                return xml
+                return ShadowClientGameStreamXMLResponse(
+                    xml: xml,
+                    usedConnectHost: connectionTarget
+                )
             } catch let urlError as URLError where urlError.code == .timedOut {
                 logger.error(
                     "Plain HTTP response receive timed out host=\(requestHost, privacy: .public) connect-host=\(connectionTarget, privacy: .public) port=\(port.rawValue, privacy: .public)"
@@ -1840,7 +1871,7 @@ enum ShadowClientGameStreamHTTPTransport {
         clientCertificates: [SecCertificate]?,
         clientCertificateIdentity: SecIdentity?,
         timeout: TimeInterval
-    ) async throws -> String {
+    ) async throws -> ShadowClientGameStreamXMLResponse {
         guard url.host != nil else {
             throw ShadowClientGameStreamError.invalidURL
         }
@@ -1854,7 +1885,7 @@ enum ShadowClientGameStreamHTTPTransport {
         for connectionTarget in connectionTargets {
             do {
                 let connectURL = try urlByReplacingHost(url, with: connectionTarget)
-                return try await requestPinnedHTTPSXMLUsingURLSession(
+                let xml = try await requestPinnedHTTPSXMLUsingURLSession(
                     url: connectURL,
                     requestHost: requestHost,
                     connectHost: connectionTarget,
@@ -1864,6 +1895,10 @@ enum ShadowClientGameStreamHTTPTransport {
                         startedAt: startedAt,
                         overallTimeout: timeout
                     )
+                )
+                return ShadowClientGameStreamXMLResponse(
+                    xml: xml,
+                    usedConnectHost: connectionTarget
                 )
             } catch {
                 failures.append(error)
