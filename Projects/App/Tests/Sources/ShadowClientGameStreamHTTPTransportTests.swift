@@ -106,6 +106,20 @@ func httpTransportConnectionTargetsKeepLoopbackForLocalhost() {
     #expect(targets == ["::1", "127.0.0.1"])
 }
 
+@Test("HTTP transport defers link-local IPv4 behind routable LAN targets")
+func httpTransportConnectionTargetsDeferLinkLocalIPv4() {
+    let targets = ShadowClientGameStreamHTTPTransport.connectionTargetCandidates(
+        for: "desktop.local",
+        resolvedHosts: [
+            "169.254.179.131",
+            "192.168.0.50",
+            "fdaf:7bd4:8418:463e:1c47:71fb:db43:1f94",
+        ]
+    )
+
+    #expect(targets == ["192.168.0.50", "fdaf:7bd4:8418:463e:1c47:71fb:db43:1f94", "169.254.179.131"])
+}
+
 @Test("HTTP transport rewrites HTTPS URLs for numeric IPv6 targets")
 func httpTransportRewritesURLForNumericIPv6Targets() throws {
     let rewrittenURL = try ShadowClientGameStreamHTTPTransport.urlForConnectionTarget(

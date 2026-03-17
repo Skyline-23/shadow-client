@@ -2000,7 +2000,7 @@ enum ShadowClientGameStreamHTTPTransport {
                 continue
             }
 
-            if isLinkLocalIPv6Host(trimmedCandidate) {
+            if isLinkLocalIPv6Host(trimmedCandidate) || isLinkLocalIPv4Host(trimmedCandidate) {
                 deferred.append(trimmedCandidate)
                 continue
             }
@@ -2208,6 +2208,17 @@ enum ShadowClientGameStreamHTTPTransport {
 
     private static func isScopedLinkLocalIPv6Host(_ host: String) -> Bool {
         isLinkLocalIPv6Host(host) && host.contains("%")
+    }
+
+    private static func isLinkLocalIPv4Host(_ host: String) -> Bool {
+        guard let parsed = parseIPv4Literal(host) else {
+            return false
+        }
+
+        let address = UInt32(bigEndian: parsed.s_addr)
+        let firstOctet = UInt8((address >> 24) & 0xFF)
+        let secondOctet = UInt8((address >> 16) & 0xFF)
+        return firstOctet == 169 && secondOctet == 254
     }
 
     private static func parseIPv4Literal(_ host: String) -> in_addr? {
