@@ -4463,6 +4463,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             )
         }
 
+        let normalizedError = lastError
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if normalizedError.contains("certificate mismatch") {
+            return nil
+        }
+
         guard let preferredDescriptor = relatedDescriptor(
             forHostCandidate: candidateHost,
             existingHosts: existingHosts,
