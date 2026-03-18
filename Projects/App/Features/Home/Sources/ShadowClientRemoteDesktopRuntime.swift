@@ -4352,24 +4352,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         Logger(subsystem: "com.skyline23.shadow-client", category: "RemoteDesktopRuntime").notice(
             "Host descriptor fetch start candidate=\(host, privacy: .public)"
         )
-        if await pinnedCertificateStore.isRejectedHost(parsedCandidateRoute(host)?.host ?? host) {
-            let message = "Server certificate mismatch"
-            Logger(subsystem: "com.skyline23.shadow-client", category: "RemoteDesktopRuntime").notice(
-                "Host descriptor fetch skipped rejected candidate=\(host, privacy: .public)"
-            )
-            if let preservedDescriptor = preservedDescriptor(
-                forFailedHostCandidate: host,
-                existingHosts: existingHosts,
-                preferredRoutesByKey: preferredRoutesByKey,
-                preferredHost: preferredHost,
-                preferredAnchorHost: preferredAnchorHost,
-                hostAliasesByHost: hostAliasesByHost,
-                lastError: message
-            ) {
-                return preservedDescriptor
-            }
-        }
-
         do {
             let pinnedCertificateDER = await pinnedCertificate(
                 forHostCandidate: host,

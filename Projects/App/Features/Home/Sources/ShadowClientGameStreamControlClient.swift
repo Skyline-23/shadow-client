@@ -529,21 +529,18 @@ public actor ShadowClientPinnedHostCertificateStore {
         static let pinnedCertificates = "pairing.pinned.serverCertificates"
         static let pinnedMachineCertificates = "pairing.pinned.machineCertificates"
         static let hostMachineBindings = "pairing.pinned.hostMachineBindings"
-        static let rejectedHosts = "pairing.pinned.rejectedHosts"
     }
 
     private let defaults: UserDefaults
     private var cachedHostCertificates: [String: String]
     private var cachedMachineCertificates: [String: String]
     private var cachedHostMachineBindings: [String: String]
-    private var cachedRejectedHosts: Set<String>
-
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.cachedHostCertificates = defaults.dictionary(forKey: DefaultsKeys.pinnedCertificates) as? [String: String] ?? [:]
         self.cachedMachineCertificates = defaults.dictionary(forKey: DefaultsKeys.pinnedMachineCertificates) as? [String: String] ?? [:]
         self.cachedHostMachineBindings = defaults.dictionary(forKey: DefaultsKeys.hostMachineBindings) as? [String: String] ?? [:]
-        self.cachedRejectedHosts = Set(defaults.array(forKey: DefaultsKeys.rejectedHosts) as? [String] ?? [])
+        defaults.removeObject(forKey: "pairing.pinned.rejectedHosts")
     }
 
     public init(defaultsSuiteName: String) {
@@ -552,14 +549,11 @@ public actor ShadowClientPinnedHostCertificateStore {
         self.cachedHostCertificates = suiteDefaults.dictionary(forKey: DefaultsKeys.pinnedCertificates) as? [String: String] ?? [:]
         self.cachedMachineCertificates = suiteDefaults.dictionary(forKey: DefaultsKeys.pinnedMachineCertificates) as? [String: String] ?? [:]
         self.cachedHostMachineBindings = suiteDefaults.dictionary(forKey: DefaultsKeys.hostMachineBindings) as? [String: String] ?? [:]
-        self.cachedRejectedHosts = Set(suiteDefaults.array(forKey: DefaultsKeys.rejectedHosts) as? [String] ?? [])
+        suiteDefaults.removeObject(forKey: "pairing.pinned.rejectedHosts")
     }
 
     public func certificateDER(forHost host: String) -> Data? {
         let key = normalizedHost(host)
-        if cachedRejectedHosts.contains(key) {
-            return nil
-        }
         if let machineID = cachedHostMachineBindings[key],
            let machineCertificate = certificateDER(forMachineID: machineID) {
             return machineCertificate
@@ -618,33 +612,21 @@ public actor ShadowClientPinnedHostCertificateStore {
     }
 
     public func isRejectedHost(_ host: String) -> Bool {
-        cachedRejectedHosts.contains(normalizedHost(host))
+        false
     }
 
     public func markRejectedHost(_ host: String) {
-        let key = normalizedHost(host)
-        guard !key.isEmpty else {
-            return
-        }
-        cachedRejectedHosts.insert(key)
-        cachedHostCertificates.removeValue(forKey: key)
-        persist()
+        let _ = host
     }
 
     public func clearRejectedHost(_ host: String) {
-        let key = normalizedHost(host)
-        guard !key.isEmpty else {
-            return
-        }
-        cachedRejectedHosts.remove(key)
-        persist()
+        let _ = host
     }
 
     public func removeCertificate(forHost host: String) {
         let key = normalizedHost(host)
         cachedHostCertificates.removeValue(forKey: key)
         cachedHostMachineBindings.removeValue(forKey: key)
-        cachedRejectedHosts.remove(key)
         persist()
     }
 
@@ -677,7 +659,7 @@ public actor ShadowClientPinnedHostCertificateStore {
         defaults.set(cachedHostCertificates, forKey: DefaultsKeys.pinnedCertificates)
         defaults.set(cachedMachineCertificates, forKey: DefaultsKeys.pinnedMachineCertificates)
         defaults.set(cachedHostMachineBindings, forKey: DefaultsKeys.hostMachineBindings)
-        defaults.set(Array(cachedRejectedHosts).sorted(), forKey: DefaultsKeys.rejectedHosts)
+        defaults.removeObject(forKey: "pairing.pinned.rejectedHosts")
     }
 }
 
