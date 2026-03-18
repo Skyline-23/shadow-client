@@ -2622,15 +2622,27 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         case let .disconnected(message):
         if let hostTerminationIssue = ShadowClientRemoteSessionIssueKit.hostTerminationSessionIssue(message: message) {
             sessionIssue = hostTerminationIssue
-        }
+            }
             return
         case let .failed(message):
+            if Self.shouldTearDownSessionAfterRTSPTimeout(failureMessage: message) {
+                performLocalActiveSessionTeardown()
+                return
+            }
             if attemptRuntimeStreamReconnect(afterFailureMessage: message) {
                 return
             }
             attemptRuntimeCodecRecovery(afterFailureMessage: message)
         case .idle, .connecting, .waitingForFirstFrame, .rendering:
             return
+        }
+    }
+
+    @MainActor
+    private func performLocalActiveSessionTeardown() {
+        let previousLaunchTask = prepareActiveSessionClear()
+        Task {
+            await completeActiveSessionClear(previousLaunchTask: previousLaunchTask)
         }
     }
 
@@ -3222,10 +3234,28 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         knownHosts: Set<String> = [],
         localRouteHosts: Set<String> = []
     ) -> String {
-        _ = runtimeHost
-        _ = knownHosts
-        _ = localRouteHosts
-        return sessionURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = sessionURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: trimmed),
+              let sessionHost = components.host
+        else {
+            return trimmed
+        }
+
+        let normalizedSessionHost = sessionHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard shouldRewriteSessionURLHost(normalizedSessionHost) else {
+            return trimmed
+        }
+
+        guard let rewrittenHost = preferredSessionRouteHost(
+            runtimeHost: runtimeHost,
+            knownHosts: knownHosts,
+            localRouteHosts: localRouteHosts
+        ) else {
+            return trimmed
+        }
+
+        components.host = rewrittenHost
+        return components.string ?? trimmed
     }
 
     private static func shouldRetryForcedLaunch(
@@ -3265,6 +3295,60 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         ]
 
         return retrySignatures.contains(where: normalized.contains)
+    }
+
+    private static func shouldTearDownSessionAfterRTSPTimeout(failureMessage: String) -> Bool {
+        let normalized = failureMessage
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty else {
+            return false
+        }
+
+        let teardownSignatures = [
+            "rtsp udp video timeout",
+            "timed out waiting for first frame",
+            "transport connection timed out",
+            "no message available on stream",
+        ]
+        return teardownSignatures.contains(where: normalized.contains)
+    }
+
+    private static func shouldRewriteSessionURLHost(_ host: String) -> Bool {
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalizedHost.contains("%") {
+            return true
+        }
+
+        return ShadowClientRemoteHostCandidateFilter.isLoopbackHost(normalizedHost) ||
+            ShadowClientRemoteHostCandidateFilter.isLinkLocalHost(normalizedHost)
+    }
+
+    private static func preferredSessionRouteHost(
+        runtimeHost: String,
+        knownHosts: Set<String>,
+        localRouteHosts: Set<String>
+    ) -> String? {
+        let normalizedRuntimeHost = runtimeHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalizedRuntimeHost.isEmpty,
+           !shouldRewriteSessionURLHost(normalizedRuntimeHost.lowercased())
+        {
+            return normalizedRuntimeHost
+        }
+
+        let localCandidates = localRouteHosts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .sorted()
+        if let candidate = localCandidates.first(where: { !shouldRewriteSessionURLHost($0.lowercased()) }) {
+            return candidate
+        }
+
+        let knownCandidates = knownHosts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .sorted()
+        return knownCandidates.first(where: { !shouldRewriteSessionURLHost($0.lowercased()) })
     }
 
     private static func connectWithCodecFallback(

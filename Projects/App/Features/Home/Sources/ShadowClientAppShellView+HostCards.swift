@@ -717,20 +717,27 @@ var remoteDesktopHostCard: some View {
 
     @ViewBuilder
     func selectedHostPrimaryActionButton(for host: ShadowClientRemoteHostDescriptor) -> some View {
-        Button("Go") {
+        Button(host.currentGameID > 0 ? "Stop" : "Go") {
+            if host.currentGameID > 0 {
+                remoteDesktopRuntime.clearActiveSession()
+                return
+            }
             connectionHost = connectionCandidate(for: host)
             connectToHost(autoLaunchAfterConnect: true, preferredHostID: host.id)
         }
         .accessibilityIdentifier("shadow.home.hosts.go-selected")
-        .accessibilityLabel("Go to selected host")
+        .accessibilityLabel(host.currentGameID > 0 ? "Stop selected host session" : "Go to selected host")
         .accessibilityHint(
-            ShadowClientHostAppLibraryPresentationKit.primaryActionHint(
-                hostTitle: hostDisplayTitle(host),
-                canConnect: hostCanConnect(host)
-            )
+            host.currentGameID > 0
+                ? "Stops the active streaming session on the selected host."
+                : ShadowClientHostAppLibraryPresentationKit.primaryActionHint(
+                    hostTitle: hostDisplayTitle(host),
+                    canConnect: hostCanConnect(host)
+                )
         )
         .buttonStyle(.borderedProminent)
-        .disabled(!hostCanConnect(host))
+        .tint(host.currentGameID > 0 ? .red : nil)
+        .disabled(host.currentGameID > 0 ? false : !hostCanConnect(host))
     }
 
     @ViewBuilder

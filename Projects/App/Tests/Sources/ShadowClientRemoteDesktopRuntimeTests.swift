@@ -2069,6 +2069,18 @@ func remoteDesktopRuntimePreservesHostProvidedLaunchSessionURLForLocalRuntimeHos
     #expect(rewritten == "rtsp://192.168.0.52:48010")
 }
 
+@Test("Remote desktop runtime rewrites link-local launch session URLs to the runtime host")
+func remoteDesktopRuntimeRewritesLinkLocalLaunchSessionURLToRuntimeHost() {
+    let rewritten = ShadowClientRemoteDesktopRuntime.rewrittenSessionURL(
+        "rtsp://[fe80::4453:7fff:fedf:44ba%25en12]:49010/session",
+        runtimeHost: "buseongs-macbook-pro-14.local",
+        knownHosts: ["buseongs-macbook-pro-14.local"],
+        localRouteHosts: ["buseongs-macbook-pro-14.local"]
+    )
+
+    #expect(rewritten == "rtsp://buseongs-macbook-pro-14.local:49010/session")
+}
+
 private struct FailingIdentityProvider: ShadowClientPairingIdentityProviding {
     func loadIdentityMaterial() throws -> ShadowClientPairingIdentityMaterial {
         throw ShadowClientGameStreamControlError.invalidKeyMaterial

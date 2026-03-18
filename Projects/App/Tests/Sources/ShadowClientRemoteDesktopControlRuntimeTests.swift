@@ -2654,6 +2654,58 @@ func remoteDesktopRuntimeDisconnectsSessionTransportOnClearActiveSession() async
     #expect(await sessionConnector.disconnectCalls() >= 1)
 }
 
+@Test("Remote desktop runtime tears down the local session on RTSP timeout failures")
+@MainActor
+func remoteDesktopRuntimeTearsDownLocalSessionOnRTSPTimeoutFailure() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.30": .init(
+                host: "192.168.0.30",
+                displayName: "Studio-Desk",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-RTSP-TIMEOUT"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.30": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.30:48010/session", verb: "launch")
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.30"], preferredHost: "192.168.0.30")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+
+    runtime.handleSessionRenderStateTransition(
+        .failed("RTSP UDP video timeout: no video datagram received")
+    )
+
+    await waitForSessionDisconnectCalls(sessionConnector, expectedCount: 1)
+    #expect(runtime.activeSession == nil)
+    #expect(runtime.launchState == .idle)
+    #expect(await sessionConnector.disconnectCalls() >= 1)
+}
+
 @Test("Remote desktop runtime clears in-flight launch and keeps session closed")
 @MainActor
 func remoteDesktopRuntimeClearsInFlightLaunch() async {
