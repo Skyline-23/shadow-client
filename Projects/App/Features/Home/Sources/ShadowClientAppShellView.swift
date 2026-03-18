@@ -627,7 +627,7 @@ func cancelManualHostEntry() {
 
     @MainActor
 func presentHostSpotlight(for host: ShadowClientRemoteHostDescriptor) {
-        connectionHost = host.host
+        connectionHost = connectionCandidate(for: host)
         remoteDesktopRuntime.selectHost(host.id)
         spotlightedHostSourceFrame = remoteDesktopHostFrames[host.id] ?? .zero
         hostSpotlightTask?.cancel()

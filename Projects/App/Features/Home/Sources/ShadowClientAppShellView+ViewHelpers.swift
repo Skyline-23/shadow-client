@@ -6,6 +6,14 @@ import SwiftUI
 import ShadowUIFoundation
 
 extension ShadowClientAppShellView {
+func connectionCandidate(for host: ShadowClientRemoteHostDescriptor) -> String {
+        let endpoint = host.routes.active
+        if endpoint.httpsPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort {
+            return endpoint.host
+        }
+        return "\(endpoint.host):\(endpoint.httpsPort)"
+    }
+
 func settingsSection<Content: View>(
         title: String,
         @ViewBuilder content: () -> Content

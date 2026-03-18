@@ -718,7 +718,7 @@ var remoteDesktopHostCard: some View {
     @ViewBuilder
     func selectedHostPrimaryActionButton(for host: ShadowClientRemoteHostDescriptor) -> some View {
         Button("Go") {
-            connectionHost = host.host
+            connectionHost = connectionCandidate(for: host)
             connectToHost(autoLaunchAfterConnect: true, preferredHostID: host.id)
         }
         .accessibilityIdentifier("shadow.home.hosts.go-selected")
@@ -738,7 +738,7 @@ var remoteDesktopHostCard: some View {
         if canPairSelectedHost {
             Button("Pair") {
                 if let selectedHost = remoteDesktopRuntime.selectedHost {
-                    connectionHost = selectedHost.host
+                    connectionHost = connectionCandidate(for: selectedHost)
                 }
                 remoteDesktopRuntime.pairSelectedHost()
             }
