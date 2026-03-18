@@ -749,7 +749,7 @@ func connectToHost(
 
     @MainActor
 func connectToDiscoveredHost(_ discoveredHost: ShadowClientDiscoveredHost) {
-        connectionHost = discoveredHost.host
+        connectionHost = discoveredHost.probeCandidate
         connectToHost(autoLaunchAfterConnect: true)
     }
 
