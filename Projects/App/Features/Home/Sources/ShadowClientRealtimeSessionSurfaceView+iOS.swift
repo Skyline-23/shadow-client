@@ -3,6 +3,7 @@ import SwiftUI
 #if os(iOS) || os(tvOS)
 import CoreVideo
 import Foundation
+@preconcurrency import Metal
 @preconcurrency import MetalKit
 import os
 import UIKit
@@ -59,10 +60,12 @@ struct ShadowClientRealtimeSessionSurfaceRepresentable: UIViewRepresentable {
 
 @MainActor
 final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate {
-    private struct RenderTargetSignature: Equatable {
-        let pixelFormat: MTLPixelFormat
-        let prefersExtendedDynamicRange: Bool
-        let outputColorSpaceName: String?
+    private final class SampledTextureBox: @unchecked Sendable {
+        let texture: any MTLTexture
+
+        init(texture: any MTLTexture) {
+            self.texture = texture
+        }
     }
 
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "SurfaceView.iOS")
@@ -76,11 +79,9 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         revision: 0
     )
     private var lastRenderedFrameRevision: UInt64 = .max
-    private var lastRenderedColorConfigurationRevision: UInt64 = .max
     private var lastRenderedDrawableSize: CGSize = .zero
     private var hasDumpedCurrentSessionDrawableSample = false
     private var hasLoggedRenderPathForCurrentSession = false
-    private var lastAppliedRenderTargetSignature: RenderTargetSignature?
 
     init?(
         device: MTLDevice,
@@ -116,9 +117,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     func draw(in view: MTKView) {
         let snapshot = latestSnapshot
         let drawableSize = view.drawableSize
-        let colorConfigurationRevision = surfaceContext.colorConfigurationRevision
         if snapshot.revision == lastRenderedFrameRevision,
-           colorConfigurationRevision == lastRenderedColorConfigurationRevision,
            drawableSize == lastRenderedDrawableSize
         {
             return
@@ -128,7 +127,6 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         if pixelBuffer == nil {
             hasDumpedCurrentSessionDrawableSample = false
             hasLoggedRenderPathForCurrentSession = false
-            lastAppliedRenderTargetSignature = nil
         }
         let colorConfiguration = pixelBuffer.map {
             ShadowClientRealtimeSessionColorPipeline.configuration(
@@ -144,19 +142,12 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             )
         }
 
-        if let renderTargetConfiguration, let pixelBuffer {
-            let renderTargetSignature = Self.renderTargetSignature(for: renderTargetConfiguration)
-            let didResetDrawablePool = applyColorConfiguration(
+        if let renderTargetConfiguration, pixelBuffer != nil {
+            applyColorConfiguration(
                 renderTargetConfiguration,
-                signature: renderTargetSignature,
                 to: view,
                 supportsExtendedDynamicRange: supportsExtendedDynamicRangeDisplay(for: view)
             )
-            if didResetDrawablePool {
-                hasDumpedCurrentSessionDrawableSample = false
-                logger.notice("Surface render target changed; released drawable pool before rendering next frame")
-                return
-            }
         }
 
         guard let drawable = view.currentDrawable,
@@ -193,7 +184,6 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 commandBuffer.commit()
                 surfaceContext.recordPresentedVideoFrame()
                 lastRenderedFrameRevision = snapshot.revision
-                lastRenderedColorConfigurationRevision = colorConfigurationRevision
                 lastRenderedDrawableSize = drawableSize
                 return
             }
@@ -220,62 +210,24 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             surfaceContext.recordPresentedVideoFrame()
         }
         lastRenderedFrameRevision = snapshot.revision
-        lastRenderedColorConfigurationRevision = colorConfigurationRevision
         lastRenderedDrawableSize = drawableSize
     }
 
     private func applyColorConfiguration(
         _ renderTargetConfiguration: ShadowClientSurfaceRenderTargetConfiguration,
-        signature: RenderTargetSignature,
         to view: MTKView,
         supportsExtendedDynamicRange _: Bool
-    ) -> Bool {
-        var requiresDrawableReset = false
-
+    ) {
         if view.colorPixelFormat != renderTargetConfiguration.targetPixelFormat {
             view.colorPixelFormat = renderTargetConfiguration.targetPixelFormat
-            requiresDrawableReset = true
         }
 
         if #available(iOS 16.0, tvOS 16.0, *),
            let metalLayer = view.layer as? CAMetalLayer
         {
-            let outputColorSpaceName = renderTargetConfiguration.outputColorSpace.name as String?
-            let currentColorSpaceName = metalLayer.colorspace?.name as String?
-            if currentColorSpaceName != outputColorSpaceName {
-                requiresDrawableReset = true
-            }
-            if metalLayer.wantsExtendedDynamicRangeContent != renderTargetConfiguration.prefersExtendedDynamicRange {
-                requiresDrawableReset = true
-            }
             metalLayer.colorspace = renderTargetConfiguration.outputColorSpace
             metalLayer.wantsExtendedDynamicRangeContent = renderTargetConfiguration.prefersExtendedDynamicRange
-            #if !os(tvOS)
-            metalLayer.edrMetadata = edrMetadata(
-                for: renderTargetConfiguration,
-                hdrMetadata: surfaceContext.activeHDRMetadata,
-                currentHeadroom: currentExtendedDynamicRangeHeadroom(for: view)
-            )
-            #endif
         }
-
-        let didChangeRenderTarget = lastAppliedRenderTargetSignature != signature
-        lastAppliedRenderTargetSignature = signature
-        if requiresDrawableReset || didChangeRenderTarget {
-            view.releaseDrawables()
-            return true
-        }
-        return false
-    }
-
-    private static func renderTargetSignature(
-        for renderTargetConfiguration: ShadowClientSurfaceRenderTargetConfiguration
-    ) -> RenderTargetSignature {
-        .init(
-            pixelFormat: renderTargetConfiguration.targetPixelFormat,
-            prefersExtendedDynamicRange: renderTargetConfiguration.prefersExtendedDynamicRange,
-            outputColorSpaceName: renderTargetConfiguration.outputColorSpace.name as String?
-        )
     }
 
     private func supportsExtendedDynamicRangeDisplay(for view: MTKView) -> Bool {
@@ -284,52 +236,6 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         }
         let screen = view.window?.screen ?? UIScreen.main
         return screen.potentialEDRHeadroom > 1.0
-    }
-
-    @available(iOS 16.0, *)
-    private func currentExtendedDynamicRangeHeadroom(for view: MTKView) -> CGFloat {
-        let screen = view.window?.screen ?? UIScreen.main
-        return max(screen.currentEDRHeadroom, 1.0)
-    }
-
-    @available(iOS 16.0, *)
-    private func edrMetadata(
-        for renderTargetConfiguration: ShadowClientSurfaceRenderTargetConfiguration,
-        hdrMetadata: ShadowClientHDRMetadata?,
-        currentHeadroom: CGFloat
-    ) -> CAEDRMetadata? {
-        guard renderTargetConfiguration.prefersExtendedDynamicRange else {
-            return nil
-        }
-        guard renderTargetConfiguration.outputColorSpace.name == CGColorSpace.itur_2100_PQ else {
-            return nil
-        }
-
-        if let hdrMetadata {
-            let displayInfo = hdrMetadata.displayPrimaries.allSatisfy({ $0.x == 0 && $0.y == 0 }) &&
-                hdrMetadata.whitePoint.x == 0 &&
-                hdrMetadata.whitePoint.y == 0 &&
-                hdrMetadata.maxDisplayLuminance == 0 &&
-                hdrMetadata.minDisplayLuminance == 0
-                ? nil
-                : hdrMetadata.hdr10DisplayInfoData
-            let contentInfo = hdrMetadata.maxContentLightLevel == 0 &&
-                hdrMetadata.maxFrameAverageLightLevel == 0
-                ? nil
-                : hdrMetadata.hdr10ContentInfoData
-            return CAEDRMetadata.hdr10(
-                displayInfo: displayInfo,
-                contentInfo: contentInfo,
-                opticalOutputScale: 10_000.0
-            )
-        }
-
-        let peakLuminance = Float(max(currentHeadroom, 1.0) * 100.0)
-        return CAEDRMetadata.hdr10(
-            minLuminance: 0.0001,
-            maxLuminance: peakLuminance,
-            opticalOutputScale: 100.0
-        )
     }
 
     private func scheduleDrawableTextureSampleIfNeeded(
@@ -356,6 +262,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         }
 
         hasDumpedCurrentSessionDrawableSample = true
+        let sampledTextureBox = SampledTextureBox(texture: stagingTexture)
         guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else {
             logger.error("Drawable sample blit encoder allocation failed")
             return
@@ -374,12 +281,12 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         )
         blitEncoder.endEncoding()
 
-        commandBuffer.addCompletedHandler { [weak self] _ in
+        commandBuffer.addCompletedHandler { [weak self, sampledTextureBox] _ in
             guard let self else {
                 return
             }
 
-            let sampledRGBA = Self.sampleDrawableTextureRGBA(stagingTexture)
+            let sampledRGBA = Self.sampleDrawableTextureRGBA(sampledTextureBox.texture)
             guard let sampledRGBA else {
                 self.logger.error("Drawable texture sample failed")
                 return
