@@ -2241,6 +2241,55 @@ func remoteDesktopRuntimeCancelsHostSessionWhenClearingActiveSession() async {
     ])
 }
 
+@Test("Remote desktop runtime still cancels the active host session when metadata already reports no running game")
+@MainActor
+func remoteDesktopRuntimeCancelsHostSessionWhenMetadataAlreadyLooksIdle() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.29": .init(
+                host: "192.168.0.29",
+                displayName: "Loft-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-CANCEL-2"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.29": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.29:48010/session", verb: "launch")
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.29"], preferredHost: "192.168.0.29")
+    await waitForControlHostLoaded(runtime)
+    runtime.launchSelectedApp(
+        appID: 1,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+
+    runtime.clearActiveSession()
+    await waitForCancelCalls(control, expectedCount: 1)
+
+    #expect(await control.cancelCalls() == [
+        .init(host: "192.168.0.29", httpsPort: 47984),
+    ])
+}
+
 @Test("Remote desktop runtime does not fall back to text input when Apollo clipboard action fails")
 @MainActor
 func remoteDesktopRuntimeDoesNotFallbackToTextInputWhenClipboardActionFails() async {
