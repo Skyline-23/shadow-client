@@ -42,3 +42,28 @@ func remoteDesktopRuntimeKeepsSurroundLaunchSettingsWhenOutputSupportsIt() {
     #expect(normalized.enableSurroundAudio == true)
     #expect(normalized.preferredSurroundChannelCount == 6)
 }
+
+@Test("Remote desktop runtime keeps display scale intent while normalizing audio launch settings")
+func remoteDesktopRuntimeKeepsDisplayScaleIntentWhileNormalizingAudioLaunchSettings() {
+    let normalized = ShadowClientRemoteDesktopRuntime.normalizeAudioLaunchSettings(
+        .init(
+            width: 1920,
+            height: 1080,
+            fps: 60,
+            bitrateKbps: 15_000,
+            preferredCodec: .auto,
+            enableHDR: true,
+            enableSurroundAudio: true,
+            preferredSurroundChannelCount: 8,
+            lowLatencyMode: false,
+            resolutionScalePercent: 200,
+            requestHiDPI: true
+        ),
+        maximumOutputChannels: 2
+    )
+
+    #expect(normalized.enableSurroundAudio == false)
+    #expect(normalized.preferredSurroundChannelCount == 2)
+    #expect(normalized.resolutionScalePercent == 200)
+    #expect(normalized.requestHiDPI)
+}

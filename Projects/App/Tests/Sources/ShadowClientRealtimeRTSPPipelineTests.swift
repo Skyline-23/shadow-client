@@ -2945,6 +2945,31 @@ private func makeMultiFecBlocks(currentBlock: UInt8, lastBlock: UInt8) -> UInt8 
     ((currentBlock & 0x03) << 4) | ((lastBlock & 0x03) << 6)
 }
 
+@Test("RTSP runtime preserves Apollo display scale contract when resolving runtime video configuration")
+func rtspRuntimePreservesApolloDisplayScaleContract() {
+    let configuration = ShadowClientRemoteSessionVideoConfiguration(
+        width: 3456,
+        height: 2234,
+        fps: 120,
+        bitrateKbps: 41_000,
+        preferredCodec: .h265,
+        enableHDR: true,
+        enableSurroundAudio: true,
+        preferredSurroundChannelCount: 6,
+        enableYUV444: false,
+        displayScalePercent: 200,
+        requestHiDPI: true
+    )
+
+    let resolved = ShadowClientRealtimeRTSPSessionRuntime.resolvedRuntimeVideoConfiguration(configuration)
+
+    #expect(resolved.width == 3456)
+    #expect(resolved.height == 2234)
+    #expect(resolved.preferredSurroundChannelCount == 6)
+    #expect(resolved.displayScalePercent == 200)
+    #expect(resolved.requestHiDPI)
+}
+
 private func moonlightFrameHeader(
     lastPayloadLength: UInt16,
     frameHeaderSize: UInt16 = moonlightFrameHeaderSize,

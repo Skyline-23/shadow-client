@@ -1775,16 +1775,28 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private func resolveRuntimeVideoConfiguration(
         _ configuration: ShadowClientRemoteSessionVideoConfiguration
     ) -> ShadowClientRemoteSessionVideoConfiguration {
-        let resolvedCodecPreference = videoCodecSupport.resolvePreferredCodec(
-            configuration.preferredCodec,
-            enableHDR: configuration.enableHDR,
-            enableYUV444: configuration.enableYUV444
+        let resolvedConfiguration = Self.resolvedRuntimeVideoConfiguration(
+            configuration,
+            videoCodecSupport: videoCodecSupport
         )
+        let resolvedCodecPreference = resolvedConfiguration.preferredCodec
         if resolvedCodecPreference != configuration.preferredCodec {
             logger.notice(
                 "RTSP runtime codec auto-resolution requested=\(configuration.preferredCodec.rawValue, privacy: .public) resolved=\(resolvedCodecPreference.rawValue, privacy: .public) hdr=\(configuration.enableHDR, privacy: .public) yuv444=\(configuration.enableYUV444, privacy: .public) reason=local-decoder-capability"
             )
         }
+        return resolvedConfiguration
+    }
+
+    public static func resolvedRuntimeVideoConfiguration(
+        _ configuration: ShadowClientRemoteSessionVideoConfiguration,
+        videoCodecSupport: ShadowClientVideoCodecSupport = .init()
+    ) -> ShadowClientRemoteSessionVideoConfiguration {
+        let resolvedCodecPreference = videoCodecSupport.resolvePreferredCodec(
+            configuration.preferredCodec,
+            enableHDR: configuration.enableHDR,
+            enableYUV444: configuration.enableYUV444
+        )
         return .init(
             width: configuration.width,
             height: configuration.height,
@@ -1793,7 +1805,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             preferredCodec: resolvedCodecPreference,
             enableHDR: configuration.enableHDR,
             enableSurroundAudio: configuration.enableSurroundAudio,
+            preferredSurroundChannelCount: configuration.preferredSurroundChannelCount,
             enableYUV444: configuration.enableYUV444,
+            displayScalePercent: configuration.displayScalePercent,
+            requestHiDPI: configuration.requestHiDPI,
             remoteInputKey: configuration.remoteInputKey,
             remoteInputKeyID: configuration.remoteInputKeyID,
             serverAppVersion: configuration.serverAppVersion
