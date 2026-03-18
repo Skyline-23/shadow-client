@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import OSLog
 
 public struct ShadowClientDiscoveredHost: Identifiable, Equatable, Sendable {
     public let id: String
@@ -159,6 +160,11 @@ private actor ShadowClientHostDiscoveryEventReducer {
 }
 
 public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject {
+    private static let logger = Logger(
+        subsystem: "com.skyline23.shadow-client",
+        category: "HostDiscovery"
+    )
+
     public static let defaultBonjourServiceTypes = [
         "_nvstream._tcp",
         "_sunshine._tcp",
@@ -215,6 +221,10 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
         }
 
         emit(.startDiscovering(resetCatalog: true))
+        let serviceTypes = bonjourServiceTypes.joined(separator: ",")
+        Self.logger.notice(
+            "Bonjour discovery start service-types=\(serviceTypes, privacy: .public)"
+        )
 
         for type in bonjourServiceTypes {
             let browser = NetServiceBrowser()
@@ -238,6 +248,7 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
         services.removeAll()
 
         emit(.stopDiscovering)
+        Self.logger.notice("Bonjour discovery stopped")
     }
 
     public func refresh() {
@@ -296,6 +307,9 @@ extension ShadowClientHostDiscoveryRuntime: NetServiceBrowserDelegate {
         didFind service: NetService,
         moreComing _: Bool
     ) {
+        Self.logger.notice(
+            "Bonjour service found name=\(service.name, privacy: .public) type=\(service.type, privacy: .public) domain=\(service.domain, privacy: .public)"
+        )
         let key = serviceKey(for: service)
         services[key] = service
         service.delegate = self
@@ -317,6 +331,9 @@ extension ShadowClientHostDiscoveryRuntime: NetServiceBrowserDelegate {
 extension ShadowClientHostDiscoveryRuntime: NetServiceDelegate {
     public func netServiceDidResolveAddress(_ sender: NetService) {
         guard let hostName = resolvedHostName(from: sender) else {
+            Self.logger.error(
+                "Bonjour service resolved without hostname name=\(sender.name, privacy: .public) type=\(sender.type, privacy: .public)"
+            )
             return
         }
 
@@ -327,6 +344,9 @@ extension ShadowClientHostDiscoveryRuntime: NetServiceDelegate {
             host: hostName,
             port: sender.port,
             serviceType: serviceType
+        )
+        Self.logger.notice(
+            "Bonjour service resolved host=\(discoveredHost.host, privacy: .public) port=\(discoveredHost.port, privacy: .public) name=\(discoveredHost.name, privacy: .public) type=\(discoveredHost.serviceType, privacy: .public)"
         )
 
         emit(
@@ -340,6 +360,9 @@ extension ShadowClientHostDiscoveryRuntime: NetServiceDelegate {
     public func netService(_ sender: NetService, didNotResolve _: [String: NSNumber]) {
         let key = serviceKey(for: sender)
         services.removeValue(forKey: key)
+        Self.logger.error(
+            "Bonjour service failed to resolve name=\(sender.name, privacy: .public) type=\(sender.type, privacy: .public)"
+        )
         emit(.serviceDidNotResolve(serviceKey: key))
     }
 }

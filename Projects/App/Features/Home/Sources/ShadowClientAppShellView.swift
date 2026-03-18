@@ -1,5 +1,6 @@
 import ShadowClientStreaming
 import ShadowClientUI
+import OSLog
 import SwiftUI
 import ShadowUIFoundation
 import ShadowClientFeatureConnection
@@ -9,6 +10,11 @@ import ShadowClientFeatureSession
 #endif
 
 public struct ShadowClientAppShellView: View {
+    private static let catalogLogger = Logger(
+        subsystem: "com.skyline23.shadow-client",
+        category: "HostCatalog"
+    )
+
 enum AppTab: Hashable {
         case home
         case settings
@@ -563,6 +569,11 @@ func refreshRemoteDesktopCatalog(force: Bool = false) {
             manualHost: normalizedConnectionHost.isEmpty ? nil : normalizedConnectionHost
         )
         let preferredHost = normalizedConnectionHost.isEmpty ? nil : normalizedConnectionHost
+        let discoveredProbeCandidates = hostDiscoveryRuntime.hosts.map(\.probeCandidate).joined(separator: ",")
+        let candidateSummary = candidates.joined(separator: ",")
+        Self.catalogLogger.notice(
+            "Catalog refresh auto-find=\(autoFindHosts, privacy: .public) discovered=\(discoveredProbeCandidates, privacy: .public) candidates=\(candidateSummary, privacy: .public) preferred=\((preferredHost ?? "nil"), privacy: .public)"
+        )
         let signature = "\(candidates.joined(separator: "|"))||\(preferredHost ?? "")"
         if !force, signature == lastRemoteDesktopCatalogSignature {
             return

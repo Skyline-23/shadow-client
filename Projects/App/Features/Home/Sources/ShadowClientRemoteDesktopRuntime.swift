@@ -1698,6 +1698,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             candidates: normalizedCandidates,
             preferredHost: Self.normalizeCandidate(preferredHost)
         )
+        logger.notice(
+            "Host refresh scheduled candidates=\(normalizedCandidates.joined(separator: ","), privacy: .public) preferred=\((request.preferredHost ?? "nil"), privacy: .public)"
+        )
         latestHostCandidates = normalizedCandidates
         guard !normalizedCandidates.isEmpty else {
             refreshHostsTask?.cancel()
@@ -4346,8 +4349,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         hostAliasesByHost: [String: Set<String>],
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
     ) async -> ShadowClientRemoteHostDescriptor {
+        Logger(subsystem: "com.skyline23.shadow-client", category: "RemoteDesktopRuntime").notice(
+            "Host descriptor fetch start candidate=\(host, privacy: .public)"
+        )
         if await pinnedCertificateStore.isRejectedHost(parsedCandidateRoute(host)?.host ?? host) {
             let message = "Server certificate mismatch"
+            Logger(subsystem: "com.skyline23.shadow-client", category: "RemoteDesktopRuntime").notice(
+                "Host descriptor fetch skipped rejected candidate=\(host, privacy: .public)"
+            )
             if let preservedDescriptor = preservedDescriptor(
                 forFailedHostCandidate: host,
                 existingHosts: existingHosts,
@@ -4375,6 +4384,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 host: host,
                 pinnedServerCertificateDER: pinnedCertificateDER
             )
+            Logger(subsystem: "com.skyline23.shadow-client", category: "RemoteDesktopRuntime").notice(
+                "Host descriptor fetch succeeded candidate=\(host, privacy: .public) resolved-host=\(info.host, privacy: .public) https-port=\(info.httpsPort, privacy: .public)"
+            )
             return ShadowClientRemoteHostDescriptor(
                 host: info.host,
                 displayName: info.displayName,
@@ -4395,6 +4407,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             let message = error.localizedDescription.isEmpty
                 ? "Could not query host serverinfo"
                 : error.localizedDescription
+            Logger(subsystem: "com.skyline23.shadow-client", category: "RemoteDesktopRuntime").error(
+                "Host descriptor fetch failed candidate=\(host, privacy: .public) error=\(message, privacy: .public)"
+            )
             if let preservedDescriptor = preservedDescriptor(
                 forFailedHostCandidate: host,
                 existingHosts: existingHosts,
