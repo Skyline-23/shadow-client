@@ -40,7 +40,7 @@ func displayMetricsKitPrefersViewportMetricsWhenAvailable() {
     #expect(geometry.scalePercent == 200)
 }
 
-@Test("Retina auto launch settings keep logical render size and expose scale intent")
+@Test("Retina auto launch settings use physical iOS mode and expose scale intent")
 func retinaAutoLaunchSettingsExposeScaleIntent() {
     let settings = ShadowClientLaunchSettingsKit.resolvedLaunchSettings(
         currentSettings: ShadowClientAppSettings(
@@ -61,14 +61,14 @@ func retinaAutoLaunchSettingsExposeScaleIntent() {
         )
     )
 
-    #expect(settings.width == 1048)
-    #expect(settings.height == 970)
+    #expect(settings.width == 2096)
+    #expect(settings.height == 1940)
     #expect(settings.resolutionScalePercent == 200)
     #expect(settings.requestHiDPI)
 }
 
-@Test("Retina auto launch settings keep logical macOS render size instead of physical mode")
-func retinaAutoLaunchSettingsKeepLogicalMacOSRenderSize() {
+@Test("Retina auto launch settings use physical macOS mode and expose HiDPI intent")
+func retinaAutoLaunchSettingsUsePhysicalMacOSMode() {
     let settings = ShadowClientLaunchSettingsKit.resolvedLaunchSettings(
         currentSettings: ShadowClientAppSettings(
             resolution: .retinaAuto,
@@ -88,8 +88,8 @@ func retinaAutoLaunchSettingsKeepLogicalMacOSRenderSize() {
         )
     )
 
-    #expect(settings.width == 1728)
-    #expect(settings.height == 1116)
+    #expect(settings.width == 3456)
+    #expect(settings.height == 2234)
     #expect(settings.resolutionScalePercent == 200)
     #expect(settings.requestHiDPI)
 }

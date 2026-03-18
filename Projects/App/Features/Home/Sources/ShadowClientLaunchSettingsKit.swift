@@ -25,7 +25,9 @@ enum ShadowClientLaunchSettingsKit {
             viewportMetrics: viewportMetrics,
             displayMetrics: displayMetrics
         )
-        let launchSize = launchGeometry.renderSize
+        let launchSize = ShadowClientDisplayMetricsPlatformKit.launchRequestSize(
+            from: launchGeometry
+        )
         let launchScalePercent = ShadowClientDisplayMetricsPlatformKit.launchRequestScalePercent(
             from: launchGeometry
         )
