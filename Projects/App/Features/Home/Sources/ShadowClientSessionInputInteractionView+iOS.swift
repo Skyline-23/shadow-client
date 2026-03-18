@@ -77,7 +77,15 @@ struct ShadowClientIOSIndirectPointerTouchTransition: Equatable {
                 capturesDragLocation: false,
                 nextPrimaryButtonHeld: false
             )
-        case .moved, .regionEntered, .regionMoved, .regionExited, .stationary:
+        case .moved:
+            return .init(
+                shouldRequestFocus: false,
+                shouldEmitAbsolutePosition: true,
+                buttonEvent: nil,
+                capturesDragLocation: true,
+                nextPrimaryButtonHeld: isPrimaryButtonHeld
+            )
+        case .regionEntered, .regionMoved, .regionExited, .stationary:
             return .init(
                 shouldRequestFocus: false,
                 shouldEmitAbsolutePosition: false,
@@ -100,7 +108,9 @@ struct ShadowClientIOSIndirectPointerTouchTransition: Equatable {
 struct ShadowClientSessionInputInteractionPlatformView: UIViewRepresentable {
     let referenceVideoSize: CGSize?
     let visiblePointerRegions: [CGRect]
+    let captureHardwareKeyboard: Bool
     let onInputEvent: @MainActor (ShadowClientRemoteInputEvent) -> Void
+    let onSoftwareKeyboardToggleCommand: @MainActor () -> Void
     let onSessionTerminateCommand: @MainActor () -> Void
     let onCopyClipboardCommand: @MainActor () -> Void
     let onPasteClipboardCommand: @MainActor () -> Void
@@ -109,7 +119,9 @@ struct ShadowClientSessionInputInteractionPlatformView: UIViewRepresentable {
         let view = ShadowClientIOSSessionInputCaptureView()
         view.referenceVideoSize = referenceVideoSize
         view.visiblePointerRegions = visiblePointerRegions
+        view.setHardwareKeyboardCaptureEnabled(captureHardwareKeyboard)
         view.onInputEvent = onInputEvent
+        view.onSoftwareKeyboardToggleCommand = onSoftwareKeyboardToggleCommand
         view.onSessionTerminateCommand = onSessionTerminateCommand
         view.onCopyClipboardCommand = onCopyClipboardCommand
         view.onPasteClipboardCommand = onPasteClipboardCommand
@@ -119,40 +131,13 @@ struct ShadowClientSessionInputInteractionPlatformView: UIViewRepresentable {
     func updateUIView(_ uiView: ShadowClientIOSSessionInputCaptureView, context: Context) {
         uiView.referenceVideoSize = referenceVideoSize
         uiView.visiblePointerRegions = visiblePointerRegions
+        uiView.setHardwareKeyboardCaptureEnabled(captureHardwareKeyboard)
         uiView.onInputEvent = onInputEvent
+        uiView.onSoftwareKeyboardToggleCommand = onSoftwareKeyboardToggleCommand
         uiView.onSessionTerminateCommand = onSessionTerminateCommand
         uiView.onCopyClipboardCommand = onCopyClipboardCommand
         uiView.onPasteClipboardCommand = onPasteClipboardCommand
-        uiView.requestInputFocusIfNeeded()
         uiView.invalidatePointerSuppressionRegions()
-    }
-}
-
-private final class ShadowClientIOSSoftwareKeyboardInputView: UIView, UIKeyInput, UITextInputTraits {
-    var onInsertText: ((String) -> Void)?
-    var onDeleteBackwardWhenEmpty: (() -> Void)?
-
-    var keyboardType: UIKeyboardType = .default
-    var keyboardAppearance: UIKeyboardAppearance = .default
-    var returnKeyType: UIReturnKeyType = .default
-    var autocorrectionType: UITextAutocorrectionType = .no
-    var autocapitalizationType: UITextAutocapitalizationType = .none
-    var smartDashesType: UITextSmartDashesType = .no
-    var smartQuotesType: UITextSmartQuotesType = .no
-    var smartInsertDeleteType: UITextSmartInsertDeleteType = .no
-    var spellCheckingType: UITextSpellCheckingType = .no
-
-    override var canBecomeFirstResponder: Bool { true }
-    override var intrinsicContentSize: CGSize { .zero }
-
-    var hasText: Bool { false }
-
-    func insertText(_ text: String) {
-        onInsertText?(text)
-    }
-
-    func deleteBackward() {
-        onDeleteBackwardWhenEmpty?()
     }
 }
 
@@ -165,11 +150,11 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
     var referenceVideoSize: CGSize?
     var visiblePointerRegions: [CGRect] = []
     var onInputEvent: (@MainActor (ShadowClientRemoteInputEvent) -> Void)?
+    var onSoftwareKeyboardToggleCommand: (@MainActor () -> Void)?
     var onSessionTerminateCommand: (@MainActor () -> Void)?
     var onCopyClipboardCommand: (@MainActor () -> Void)?
     var onPasteClipboardCommand: (@MainActor () -> Void)?
 
-    private let softwareKeyboardInputView = ShadowClientIOSSoftwareKeyboardInputView(frame: .zero)
     private var directPanGestureRecognizer: UIPanGestureRecognizer?
     private var indirectPointerPanGestureRecognizer: UIPanGestureRecognizer?
     private var indirectPrimaryTapGestureRecognizer: UITapGestureRecognizer?
@@ -177,7 +162,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
     private var pointerInteractionRef: UIPointerInteraction?
     private var isPrimaryButtonHeld = false
     private var lastPrimaryDragLocation: CGPoint?
-    private var keyboardCaptureRequested = false
+    private var hardwareKeyboardCaptureEnabled = true
     private var locallyHandledKeyCodes = Set<UInt16>()
 
     override var canBecomeFirstResponder: Bool { true }
@@ -186,7 +171,6 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         super.init(frame: frame)
         isMultipleTouchEnabled = true
         backgroundColor = .clear
-        setupSoftwareKeyboardInputView()
         setupPointerInteractionIfNeeded()
         setupGestures()
     }
@@ -195,21 +179,8 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         super.init(coder: coder)
         isMultipleTouchEnabled = true
         backgroundColor = .clear
-        setupSoftwareKeyboardInputView()
         setupPointerInteractionIfNeeded()
         setupGestures()
-    }
-
-    private func setupSoftwareKeyboardInputView() {
-        softwareKeyboardInputView.alpha = 0.01
-        softwareKeyboardInputView.backgroundColor = .clear
-        softwareKeyboardInputView.onInsertText = { [weak self] text in
-            self?.emitSoftwareKeyboardText(text)
-        }
-        softwareKeyboardInputView.onDeleteBackwardWhenEmpty = { [weak self] in
-            self?.emitSoftwareKeyboardText("\u{08}")
-        }
-        addSubview(softwareKeyboardInputView)
     }
 
     private func setupPointerInteractionIfNeeded() {
@@ -222,15 +193,14 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         pointerInteractionRef?.invalidate()
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        softwareKeyboardInputView.frame = CGRect(x: 8, y: 8, width: 1, height: 1)
+    func setHardwareKeyboardCaptureEnabled(_ enabled: Bool) {
+        hardwareKeyboardCaptureEnabled = enabled
+        requestInputFocusIfNeeded()
     }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
         guard window != nil else {
-            softwareKeyboardInputView.resignFirstResponder()
             resignFirstResponder()
             return
         }
@@ -242,10 +212,10 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
             return
         }
 
-        if keyboardCaptureRequested {
-            requestSoftwareKeyboardFirstResponder()
-        } else {
+        if hardwareKeyboardCaptureEnabled {
             requestHardwareKeyboardFirstResponder()
+        } else if isFirstResponder {
+            resignFirstResponder()
         }
     }
 
@@ -257,25 +227,10 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
             return
         }
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.window != nil, !self.keyboardCaptureRequested else {
+            guard let self, self.window != nil, self.hardwareKeyboardCaptureEnabled else {
                 return
             }
             _ = self.becomeFirstResponder()
-        }
-    }
-
-    private func requestSoftwareKeyboardFirstResponder() {
-        guard softwareKeyboardInputView.isFirstResponder == false else {
-            return
-        }
-        if softwareKeyboardInputView.becomeFirstResponder() {
-            return
-        }
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.window != nil, self.keyboardCaptureRequested else {
-                return
-            }
-            _ = self.softwareKeyboardInputView.becomeFirstResponder()
         }
     }
 
@@ -508,8 +463,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         guard recognizer.state == .ended else {
             return
         }
-        keyboardCaptureRequested.toggle()
-        requestInputFocusIfNeeded()
+        onSoftwareKeyboardToggleCommand?()
     }
 
     @objc
@@ -707,24 +661,6 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
                 referenceHeight: pointerState.referenceHeight
             )
         )
-    }
-
-    private func emitSoftwareKeyboardText(_ text: String) {
-        for scalar in text.unicodeScalars {
-            let character = String(scalar)
-            emit(
-                .keyDown(
-                    keyCode: ShadowClientRemoteInputEvent.softwareKeyboardSyntheticKeyCode,
-                    characters: character
-                )
-            )
-            emit(
-                .keyUp(
-                    keyCode: ShadowClientRemoteInputEvent.softwareKeyboardSyntheticKeyCode,
-                    characters: character
-                )
-            )
-        }
     }
 
     private func emit(_ event: ShadowClientRemoteInputEvent) {

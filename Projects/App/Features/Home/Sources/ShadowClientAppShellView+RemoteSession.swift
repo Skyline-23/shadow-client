@@ -2,6 +2,9 @@ import ShadowClientStreaming
 import ShadowClientUI
 import SwiftUI
 import ShadowUIFoundation
+#if os(iOS)
+import GameController
+#endif
 
 extension ShadowClientAppShellView {
     @ViewBuilder
@@ -61,9 +64,25 @@ var remoteSessionFlowView: some View {
 
                     ShadowClientSessionInputInteractionView(
                         referenceVideoSize: sessionSurfaceContext.videoPresentationSize,
-                        visiblePointerRegions: sessionVisiblePointerRegions
+                        visiblePointerRegions: sessionVisiblePointerRegions,
+                        captureHardwareKeyboard: !isRemoteSessionKeyboardPresented
                     ) { event in
                         remoteDesktopRuntime.sendInput(event)
+                    } onSoftwareKeyboardToggleCommand: {
+                        #if os(iOS)
+                        guard GCKeyboard.coalesced == nil else {
+                            return
+                        }
+                        #endif
+                        isRemoteSessionKeyboardPresented.toggle()
+                        if isRemoteSessionKeyboardPresented {
+                            DispatchQueue.main.async {
+                                isRemoteSessionKeyboardFocused = true
+                            }
+                        } else {
+                            isRemoteSessionKeyboardFocused = false
+                            remoteSessionKeyboardText = ""
+                        }
                     } onSessionTerminateCommand: {
                         remoteDesktopRuntime.clearActiveSession()
                     } onCopyClipboardCommand: {
@@ -120,8 +139,83 @@ var remoteSessionFlowView: some View {
             .ignoresSafeArea()
             .coordinateSpace(name: "shadow.remote.session.root")
             .onPreferenceChange(ShadowClientSessionPointerVisibleRegionsPreferenceKey.self) { regions in
+                guard regions != sessionVisiblePointerRegions else {
+                    return
+                }
                 sessionVisiblePointerRegions = regions
             }
+            .overlay(alignment: .bottomLeading) {
+                remoteSessionSoftwareKeyboardProxy
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var remoteSessionSoftwareKeyboardProxy: some View {
+        ShadowClientPlatformTextField(
+            text: $remoteSessionKeyboardText,
+            placeholder: "",
+            isFocused: Binding(
+                get: { isRemoteSessionKeyboardFocused },
+                set: { isRemoteSessionKeyboardFocused = $0 }
+            ),
+            submitAction: {
+                isRemoteSessionKeyboardFocused = false
+                isRemoteSessionKeyboardPresented = false
+                remoteSessionKeyboardText = ""
+            }
+        )
+            .frame(width: 1, height: 1)
+            .opacity(isRemoteSessionKeyboardPresented ? 0.01 : 0.0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .onChange(of: remoteSessionKeyboardText, initial: false) { oldValue, newValue in
+                sendRemoteSessionSoftwareKeyboardDelta(from: oldValue, to: newValue)
+            }
+    }
+
+    @MainActor
+    private func sendRemoteSessionSoftwareKeyboardDelta(from oldValue: String, to newValue: String) {
+        let oldScalars = Array(oldValue.unicodeScalars)
+        let newScalars = Array(newValue.unicodeScalars)
+
+        var prefixCount = 0
+        while prefixCount < oldScalars.count,
+              prefixCount < newScalars.count,
+              oldScalars[prefixCount] == newScalars[prefixCount] {
+            prefixCount += 1
+        }
+
+        var oldSuffixIndex = oldScalars.count
+        var newSuffixIndex = newScalars.count
+        while oldSuffixIndex > prefixCount,
+              newSuffixIndex > prefixCount,
+              oldScalars[oldSuffixIndex - 1] == newScalars[newSuffixIndex - 1] {
+            oldSuffixIndex -= 1
+            newSuffixIndex -= 1
+        }
+
+        let deletedCount = oldSuffixIndex - prefixCount
+        if deletedCount > 0 {
+            for _ in 0..<deletedCount {
+                remoteDesktopRuntime.sendInput(
+                    .keyDown(
+                        keyCode: ShadowClientRemoteInputEvent.softwareKeyboardSyntheticKeyCode,
+                        characters: "\u{08}"
+                    )
+                )
+                remoteDesktopRuntime.sendInput(
+                    .keyUp(
+                        keyCode: ShadowClientRemoteInputEvent.softwareKeyboardSyntheticKeyCode,
+                        characters: "\u{08}"
+                    )
+                )
+            }
+        }
+
+        let inserted = String(String.UnicodeScalarView(newScalars[prefixCount..<newSuffixIndex]))
+        if !inserted.isEmpty {
+            remoteDesktopRuntime.sendInput(.text(inserted))
         }
     }
 
