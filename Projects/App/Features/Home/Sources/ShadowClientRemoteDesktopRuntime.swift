@@ -2057,10 +2057,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         )
                     }
                     self.performRefreshSelectedHostApps()
-                    let candidates = self.latestHostCandidates.isEmpty ? self.hosts.map(\.host) : self.latestHostCandidates
+                    let candidates = self.latestHostCandidates.isEmpty
+                        ? self.hosts.map(Self.activeRouteCandidate(for:))
+                        : self.latestHostCandidates
                     self.refreshHosts(
                         candidates: candidates,
-                        preferredHost: pairedHost ?? selectedHost.host
+                        preferredHost: pairedHost ?? Self.activeRouteCandidate(for: selectedHost)
                     )
                 }
             } catch {
@@ -2599,11 +2601,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     return
                 }
                 let candidates = latestHostCandidates.isEmpty
-                    ? [selectedHost.host]
+                    ? [Self.activeRouteCandidate(for: selectedHost)]
                     : latestHostCandidates
                 self.refreshHosts(
                     candidates: candidates,
-                    preferredHost: runtimeHost.host
+                    preferredHost: Self.activeRouteCandidate(for: runtimeHost)
                 )
             }
         }
@@ -4325,7 +4327,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     self.clearSelectedHostApolloAdminState()
                     self.performRefreshHosts(
                         candidates: self.latestHostCandidates,
-                        preferredHost: selectedHost.host
+                        preferredHost: Self.activeRouteCandidate(for: selectedHost)
                     )
                 }
             } catch {
@@ -5181,6 +5183,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return normalizedHost
         }
         return "\(normalizedHost):\(endpoint.httpsPort)"
+    }
+
+    private static func activeRouteCandidate(
+        for descriptor: ShadowClientRemoteHostDescriptor
+    ) -> String {
+        serializedHostCandidate(for: descriptor.routes.active)
     }
 
     private static func normalizeCandidate(_ candidate: String?) -> String? {
