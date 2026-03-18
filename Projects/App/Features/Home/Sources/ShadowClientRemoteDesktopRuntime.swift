@@ -2582,7 +2582,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         await inputSendQueue.clear()
         await sessionConnectionClient.disconnect()
         if let selectedHost,
-           selectedHost.currentGameID > 0,
            let controlClient,
            let pairingRouteStore
         {
@@ -6037,6 +6036,10 @@ enum ShadowClientGameStreamXMLParsers {
         }
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
+            return nil
+        }
+        let normalized = trimmed.lowercased()
+        guard !ShadowClientRemoteHostCandidateFilter.isLoopbackHost(normalized) else {
             return nil
         }
         return trimmed
