@@ -4,7 +4,7 @@ import Testing
 @Test("Remote desktop runtime removes hosts that share a self-host unique ID alias")
 func remoteDesktopRuntimeRemovesSelfHostAliasesByUniqueID() {
     let localHost = ShadowClientRemoteHostDescriptor(
-        host: "10.0.0.50",
+        host: "192.168.0.50",
         displayName: "Local Apollo",
         pairStatus: .paired,
         currentGameID: 0,
@@ -14,11 +14,11 @@ func remoteDesktopRuntimeRemovesSelfHostAliasesByUniqueID() {
         gfeVersion: nil,
         uniqueID: "local-host-uuid",
         lastError: nil,
-        localHost: "10.0.0.50",
-        remoteHost: "198.18.0.176"
+        localHost: "192.168.0.50",
+        remoteHost: "169.254.15.176"
     )
     let aliasHost = ShadowClientRemoteHostDescriptor(
-        host: "apollo-host.local",
+        host: "local-stream-host.local",
         displayName: "Local Apollo Alias",
         pairStatus: .paired,
         currentGameID: 0,
@@ -30,7 +30,7 @@ func remoteDesktopRuntimeRemovesSelfHostAliasesByUniqueID() {
         lastError: nil
     )
     let remoteHost = ShadowClientRemoteHostDescriptor(
-        host: "desktop-lan.local",
+        host: "second-stream-host.local",
         displayName: "Remote Host",
         pairStatus: .paired,
         currentGameID: 0,
@@ -44,10 +44,10 @@ func remoteDesktopRuntimeRemovesSelfHostAliasesByUniqueID() {
 
     let filtered = ShadowClientRemoteDesktopRuntime.filterOutSelfHosts(
         [localHost, aliasHost, remoteHost],
-        localInterfaceHosts: ["10.0.0.50"]
+        localInterfaceHosts: ["192.168.0.50"]
     )
 
-    #expect(filtered.map(\.host) == ["desktop-lan.local"])
+    #expect(filtered.map(\.host) == ["second-stream-host.local"])
 }
 
 @Test("Remote desktop runtime treats startup video datagram failures as transport recovery signals")

@@ -8,8 +8,8 @@ import ShadowClientFeatureSession
 func remoteDesktopRuntimePairsSelectedHost() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
-            "10.0.0.20": .init(
-                host: "10.0.0.20",
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
                 displayName: "LivingRoom-PC",
                 pairStatus: .notPaired,
                 currentGameID: 0,
@@ -29,14 +29,14 @@ func remoteDesktopRuntimePairsSelectedHost() async {
         pinProvider: FixedPairingPINProvider(pin: "1234")
     )
 
-    runtime.refreshHosts(candidates: ["10.0.0.20"], preferredHost: "10.0.0.20")
+    runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
     await waitForControlHostLoaded(runtime)
 
     runtime.pairSelectedHost()
     await waitForPairingState(runtime)
 
     #expect(await control.pairCalls() == [
-        .init(host: "10.0.0.20", pin: "1234", appVersion: "7.0.0", httpsPort: 47984),
+        .init(host: "192.168.0.20", pin: "1234", appVersion: "7.0.0", httpsPort: 47984),
     ])
 
     if case .paired = runtime.pairingState {
@@ -176,47 +176,6 @@ func remoteDesktopRuntimeDoesNotRetryCertificateRequiredFailure() async {
     }
 }
 
-@Test("Remote desktop runtime pairs Apollo hosts using the computed Moonlight connect port family")
-@MainActor
-func remoteDesktopRuntimePairsApolloHostUsingComputedConnectPortFamily() async {
-    let defaultsSuite = "shadow-client.runtime.apollo-pair-port-family.\(UUID().uuidString)"
-    let pairingRouteStore = ShadowClientPairingRouteStore(defaultsSuiteName: defaultsSuite)
-    let metadata = FakeControlTestMetadataClient(
-        serverInfoByHost: [
-            "apollo-host.local:48989": .init(
-                host: "apollo-host.local",
-                displayName: "Apollo Mac",
-                pairStatus: .notPaired,
-                currentGameID: 0,
-                serverState: "SUNSHINE_SERVER_FREE",
-                httpsPort: 48984,
-                appVersion: "7.0.0",
-                gfeVersion: nil,
-                uniqueID: "HOST-APOLLO"
-            ),
-        ],
-        appListByHost: [:]
-    )
-    let control = FakeControlClient()
-    let runtime = ShadowClientRemoteDesktopRuntime(
-        metadataClient: metadata,
-        controlClient: control,
-        pinProvider: FixedPairingPINProvider(pin: "1234"),
-        pairingRouteStore: pairingRouteStore
-    )
-
-    await pairingRouteStore.setSessionPreferredHost("apollo-host.local", for: "uniqueid:host-apollo")
-    runtime.refreshHosts(candidates: ["apollo-host.local:48989"], preferredHost: "apollo-host.local:48989")
-    await waitForControlHostLoaded(runtime)
-
-    runtime.pairSelectedHost()
-    await waitForPairingState(runtime)
-
-    #expect(await control.pairCalls() == [
-        .init(host: "apollo-host.local:48989", pin: "1234", appVersion: "7.0.0", httpsPort: 48984),
-    ])
-}
-
 @Test("Remote desktop runtime applies pending host selection after host catalog load")
 @MainActor
 func remoteDesktopRuntimeAppliesPendingHostSelectionAfterCatalogLoad() async {
@@ -249,7 +208,7 @@ func remoteDesktopRuntimeAppliesPendingHostSelectionAfterCatalogLoad() async {
     runtime.refreshHosts(candidates: ["stream-host.example.invalid"])
     await waitForControlHostLoaded(runtime)
 
-    #expect(runtime.selectedHostID == "stream-host.example.invalid")
+    #expect(runtime.selectedHostID == "uniqueid:host-12")
     #expect(runtime.selectedHost?.host == "stream-host.example.invalid")
 }
 
@@ -258,8 +217,8 @@ func remoteDesktopRuntimeAppliesPendingHostSelectionAfterCatalogLoad() async {
 func remoteDesktopRuntimeLaunchesSelectedApp() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
-            "10.0.0.20": .init(
-                host: "10.0.0.20",
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
                 displayName: "LivingRoom-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -271,7 +230,7 @@ func remoteDesktopRuntimeLaunchesSelectedApp() async {
             ),
         ],
         appListByHost: [
-            "10.0.0.20": [
+            "192.168.0.20": [
                 .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
         ]
@@ -279,7 +238,7 @@ func remoteDesktopRuntimeLaunchesSelectedApp() async {
     let control = FakeControlClient()
     let runtime = ShadowClientRemoteDesktopRuntime(metadataClient: metadata, controlClient: control)
 
-    runtime.refreshHosts(candidates: ["10.0.0.20"], preferredHost: "10.0.0.20")
+    runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
     await waitForControlHostLoaded(runtime)
 
     runtime.launchSelectedApp(
@@ -290,7 +249,7 @@ func remoteDesktopRuntimeLaunchesSelectedApp() async {
 
     let calls = await control.launchCalls()
     #expect(calls.count == 1)
-    #expect(calls.first?.host == "10.0.0.20")
+    #expect(calls.first?.host == "192.168.0.20")
     #expect(calls.first?.httpsPort == 47984)
     #expect(calls.first?.appID == 1)
     #expect(calls.first?.forceLaunch == false)
@@ -302,13 +261,70 @@ func remoteDesktopRuntimeLaunchesSelectedApp() async {
     }
 }
 
+@Test("Remote desktop runtime prefers local route for app queries when a manual route is also present")
+@MainActor
+func remoteDesktopRuntimePrefersLocalRouteForAppQueries() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "wifi-route.example.invalid": .init(
+                host: "wifi-route.example.invalid",
+                localHost: "192.168.0.20",
+                remoteHost: "wifi-route.example.invalid",
+                manualHost: "wifi-route.example.invalid",
+                displayName: "LivingRoom-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-LOCAL-FIRST"
+            ),
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
+                localHost: "192.168.0.20",
+                remoteHost: "wifi-route.example.invalid",
+                manualHost: "wifi-route.example.invalid",
+                displayName: "LivingRoom-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-LOCAL-FIRST"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.20": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: FakeControlClient()
+    )
+
+    runtime.refreshHosts(
+        candidates: ["wifi-route.example.invalid", "192.168.0.20"],
+        preferredHost: "wifi-route.example.invalid"
+    )
+    await waitForControlHostLoaded(runtime)
+    runtime.refreshSelectedHostApps()
+    await waitForAppCatalogLoaded(runtime)
+
+    #expect(runtime.selectedHost?.host == "192.168.0.20")
+    #expect(await metadata.recordedAppListHosts().last == "192.168.0.20")
+}
+
 @Test("Remote desktop runtime loads Apollo admin profile for the selected host")
 @MainActor
 func remoteDesktopRuntimeLoadsApolloAdminProfileForSelectedHost() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
-            "10.0.0.20": .init(
-                host: "10.0.0.20",
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
                 displayName: "LivingRoom-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -320,7 +336,7 @@ func remoteDesktopRuntimeLoadsApolloAdminProfileForSelectedHost() async {
             ),
         ],
         appListByHost: [
-            "10.0.0.20": [
+            "192.168.0.20": [
                 .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
         ]
@@ -343,7 +359,7 @@ func remoteDesktopRuntimeLoadsApolloAdminProfileForSelectedHost() async {
         apolloAdminClient: adminClient
     )
 
-    runtime.refreshHosts(candidates: ["10.0.0.20"], preferredHost: "10.0.0.20")
+    runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
     await waitForControlHostLoaded(runtime)
 
     runtime.refreshSelectedHostApolloAdmin(username: "apollo", password: "secret")
@@ -369,8 +385,8 @@ func remoteDesktopRuntimeLoadsApolloAdminProfileForSelectedHost() async {
 func remoteDesktopRuntimeUpdatesApolloAdminProfileForSelectedHost() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
-            "10.0.0.20": .init(
-                host: "10.0.0.20",
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
                 displayName: "LivingRoom-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -382,7 +398,7 @@ func remoteDesktopRuntimeUpdatesApolloAdminProfileForSelectedHost() async {
             ),
         ],
         appListByHost: [
-            "10.0.0.20": [
+            "192.168.0.20": [
                 .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
         ]
@@ -404,7 +420,7 @@ func remoteDesktopRuntimeUpdatesApolloAdminProfileForSelectedHost() async {
         apolloAdminClient: adminClient
     )
 
-    runtime.refreshHosts(candidates: ["10.0.0.20"], preferredHost: "10.0.0.20")
+    runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
     await waitForControlHostLoaded(runtime)
 
     runtime.refreshSelectedHostApolloAdmin(username: "apollo", password: "secret")
@@ -439,8 +455,8 @@ func remoteDesktopRuntimeUpdatesApolloAdminProfileForSelectedHost() async {
 func remoteDesktopRuntimeDisconnectsSelectedApolloClient() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
-            "10.0.0.20": .init(
-                host: "10.0.0.20",
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
                 displayName: "LivingRoom-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -452,7 +468,7 @@ func remoteDesktopRuntimeDisconnectsSelectedApolloClient() async {
             ),
         ],
         appListByHost: [
-            "10.0.0.20": [
+            "192.168.0.20": [
                 .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
         ]
@@ -474,7 +490,7 @@ func remoteDesktopRuntimeDisconnectsSelectedApolloClient() async {
         apolloAdminClient: adminClient
     )
 
-    runtime.refreshHosts(candidates: ["10.0.0.20"], preferredHost: "10.0.0.20")
+    runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
     await waitForControlHostLoaded(runtime)
     runtime.refreshSelectedHostApolloAdmin(username: "apollo", password: "secret")
     await waitForApolloAdminState(runtime)
@@ -491,8 +507,8 @@ func remoteDesktopRuntimeDisconnectsSelectedApolloClient() async {
 func remoteDesktopRuntimeUnpairsSelectedApolloClient() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
-            "10.0.0.20": .init(
-                host: "10.0.0.20",
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
                 displayName: "LivingRoom-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -504,7 +520,7 @@ func remoteDesktopRuntimeUnpairsSelectedApolloClient() async {
             ),
         ],
         appListByHost: [
-            "10.0.0.20": [
+            "192.168.0.20": [
                 .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
         ]
@@ -526,7 +542,7 @@ func remoteDesktopRuntimeUnpairsSelectedApolloClient() async {
         apolloAdminClient: adminClient
     )
 
-    runtime.refreshHosts(candidates: ["10.0.0.20"], preferredHost: "10.0.0.20")
+    runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
     await waitForControlHostLoaded(runtime)
     runtime.refreshSelectedHostApolloAdmin(username: "apollo", password: "secret")
     await waitForApolloAdminState(runtime)
@@ -542,8 +558,8 @@ func remoteDesktopRuntimeUnpairsSelectedApolloClient() async {
 func remoteDesktopRuntimeSurfacesApolloLaunchPermissionDenial() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
-            "10.0.0.20": .init(
-                host: "10.0.0.20",
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
                 displayName: "LivingRoom-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -555,7 +571,7 @@ func remoteDesktopRuntimeSurfacesApolloLaunchPermissionDenial() async {
             ),
         ],
         appListByHost: [
-            "10.0.0.20": [
+            "192.168.0.20": [
                 .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
         ]
@@ -568,7 +584,7 @@ func remoteDesktopRuntimeSurfacesApolloLaunchPermissionDenial() async {
     )
     let runtime = ShadowClientRemoteDesktopRuntime(metadataClient: metadata, controlClient: control)
 
-    runtime.refreshHosts(candidates: ["10.0.0.20"], preferredHost: "10.0.0.20")
+    runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
     await waitForControlHostLoaded(runtime)
 
     runtime.launchSelectedApp(
@@ -741,9 +757,9 @@ func remoteDesktopRuntimeForwardsRemoteInputKeyToSessionConfiguration() async {
     #expect(capturedConfiguration?.remoteInputKeyID == remoteInputKeyID)
 }
 
-@Test("Remote desktop runtime preserves host-provided session URL without app-side host rewrite")
+@Test("Remote desktop runtime rewrites private host-provided session URL to the active WAN host")
 @MainActor
-func remoteDesktopRuntimePreservesHostProvidedSessionURL() async {
+func remoteDesktopRuntimeRewritesPrivateHostProvidedSessionURLForWANRoute() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
             "stream-host.example.invalid": .init(
@@ -765,7 +781,7 @@ func remoteDesktopRuntimePreservesHostProvidedSessionURL() async {
         ]
     )
     let control = FakeControlClient(
-        simulatedLaunchResult: .init(sessionURL: "rtsp://10.0.0.52:48010", verb: "resume")
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.52:48010", verb: "resume")
     )
     let sessionConnector = FakeSessionConnectionClient()
     let runtime = ShadowClientRemoteDesktopRuntime(
@@ -783,73 +799,12 @@ func remoteDesktopRuntimePreservesHostProvidedSessionURL() async {
     )
     await waitForLaunchState(runtime)
 
-    #expect(await sessionConnector.connectCalls() == ["rtsp://10.0.0.52:48010"])
-    #expect(runtime.activeSession?.sessionURL == "rtsp://10.0.0.52:48010")
+    #expect(await sessionConnector.connectCalls() == ["rtsp://stream-host.example.invalid:48010"])
+    #expect(runtime.activeSession?.sessionURL == "rtsp://stream-host.example.invalid:48010")
     if case .launched = runtime.launchState {
         #expect(true)
     } else {
         Issue.record("Expected launched state, got \(runtime.launchState)")
-    }
-}
-
-@Test("Remote desktop runtime cold-starts local state before resume reconnect")
-@MainActor
-func remoteDesktopRuntimeColdStartsLocalStateBeforeResumeReconnect() async {
-    let metadata = FakeControlTestMetadataClient(
-        serverInfoByHost: [
-            "stream-host.example.invalid": .init(
-                host: "stream-host.example.invalid",
-                displayName: "Example-PC",
-                pairStatus: .paired,
-                currentGameID: 881_448_767,
-                serverState: "SUNSHINE_SERVER_BUSY",
-                httpsPort: 47984,
-                appVersion: "7.0.0",
-                gfeVersion: nil,
-                uniqueID: "HOST-RESUME-COLDSTART"
-            ),
-        ],
-        appListByHost: [
-            "stream-host.example.invalid": [
-                .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
-            ],
-        ]
-    )
-    let sessionURL = "rtsp://10.0.0.52:48010/resume"
-    let control = FakeControlClient(
-        simulatedLaunchResults: [
-            .init(sessionURL: sessionURL, verb: "resume"),
-            .init(sessionURL: sessionURL, verb: "resume"),
-        ]
-    )
-    let sessionConnector = BlockNthSessionConnectionClient(blockedConnectCall: 2)
-    let runtime = ShadowClientRemoteDesktopRuntime(
-        metadataClient: metadata,
-        controlClient: control,
-        sessionConnectionClient: sessionConnector
-    )
-
-    runtime.refreshHosts(candidates: ["stream-host.example.invalid"], preferredHost: "stream-host.example.invalid")
-    await waitForControlHostLoaded(runtime)
-
-    runtime.launchSelectedApp(
-        appID: 881_448_767,
-        settings: .init(enableHDR: false, enableSurroundAudio: true, lowLatencyMode: false)
-    )
-    await waitForLaunchState(runtime)
-    #expect(runtime.activeSession?.sessionURL == sessionURL)
-
-    runtime.launchSelectedApp(
-        appID: 881_448_767,
-        settings: .init(enableHDR: false, enableSurroundAudio: true, lowLatencyMode: false)
-    )
-    await waitForSessionConnectCalls(sessionConnector, expectedCount: 2)
-
-    #expect(runtime.activeSession == nil)
-    if case .launching = runtime.launchState {
-        #expect(true)
-    } else {
-        Issue.record("Expected launching state during resume reconnect, got \(runtime.launchState)")
     }
 }
 
@@ -876,8 +831,8 @@ func remoteDesktopRuntimeRetriesForceLaunchAfterResumeConnectTimeout() async {
             ],
         ]
     )
-    let resumeSessionURL = "rtsp://10.0.0.52:48010/resume"
-    let forcedLaunchSessionURL = "rtsp://10.0.0.52:48010/launch"
+    let resumeSessionURL = "rtsp://192.168.0.52:48010/resume"
+    let forcedLaunchSessionURL = "rtsp://192.168.0.52:48010/launch"
     let control = FakeControlClient(
         simulatedLaunchResult: .init(sessionURL: forcedLaunchSessionURL, verb: "launch"),
         simulatedLaunchResults: [
@@ -919,6 +874,73 @@ func remoteDesktopRuntimeRetriesForceLaunchAfterResumeConnectTimeout() async {
     }
 }
 
+@Test("Remote desktop runtime preserves raw RTSP session URL while connecting through the active route")
+@MainActor
+func remoteDesktopRuntimePreservesRawRTSPSessionURLWhileConnectingThroughActiveRoute() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "wifi.skyline23.com": .init(
+                host: "wifi.skyline23.com",
+                localHost: "192.168.0.52",
+                remoteHost: "wifi.skyline23.com",
+                manualHost: "wifi.skyline23.com",
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-RTSP-ROUTE"
+            ),
+            "192.168.0.52": .init(
+                host: "192.168.0.52",
+                localHost: "192.168.0.52",
+                remoteHost: "wifi.skyline23.com",
+                manualHost: "wifi.skyline23.com",
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-RTSP-ROUTE"
+            ),
+        ],
+        appListByHost: [
+            "wifi.skyline23.com": [
+                .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.52:48010", verb: "launch")
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(
+        candidates: ["wifi.skyline23.com", "192.168.0.52"],
+        preferredHost: "wifi.skyline23.com"
+    )
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 881_448_767,
+        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
+    )
+    await waitForLaunchState(runtime)
+
+    #expect(await sessionConnector.connectCalls() == ["rtsp://192.168.0.52:48010"])
+    #expect(await sessionConnector.connectHosts() == ["wifi.skyline23.com"])
+    #expect(runtime.activeSession?.sessionURL == "rtsp://192.168.0.52:48010")
+}
+
 @Test("Remote desktop runtime does not forceLaunch retry for deterministic RTSP setup 404 failure")
 @MainActor
 func remoteDesktopRuntimeDoesNotForceLaunchRetryForRTSPSetup404() async {
@@ -942,7 +964,7 @@ func remoteDesktopRuntimeDoesNotForceLaunchRetryForRTSPSetup404() async {
             ],
         ]
     )
-    let resumeSessionURL = "rtsp://10.0.0.52:48010/resume"
+    let resumeSessionURL = "rtsp://192.168.0.52:48010/resume"
     let control = FakeControlClient(
         simulatedLaunchResult: .init(sessionURL: resumeSessionURL, verb: "resume")
     )
@@ -1113,8 +1135,8 @@ func remoteDesktopRuntimeFallsBackCodecAfterAv1RuntimeRecoveryFailure() async {
 func remoteDesktopRuntimeRetriesLaunchOnReachableLocalRoute() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
-            "public-gateway.example.invalid": .init(
-                host: "public-gateway.example.invalid",
+            "external-route.example.invalid": .init(
+                host: "external-route.example.invalid",
                 displayName: "Example-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -1124,8 +1146,8 @@ func remoteDesktopRuntimeRetriesLaunchOnReachableLocalRoute() async {
                 gfeVersion: nil,
                 uniqueID: "HOST-ROUTE"
             ),
-            "10.0.0.52": .init(
-                host: "10.0.0.52",
+            "192.168.0.52": .init(
+                host: "192.168.0.52",
                 displayName: "Example-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -1137,16 +1159,16 @@ func remoteDesktopRuntimeRetriesLaunchOnReachableLocalRoute() async {
             ),
         ],
         appListByHost: [
-            "public-gateway.example.invalid": [
+            "external-route.example.invalid": [
                 .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
-            "10.0.0.52": [
+            "192.168.0.52": [
                 .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
         ]
     )
     let control = FakeControlClient(
-        simulatedLaunchResult: .init(sessionURL: "rtsp://10.0.0.52:48010/session", verb: "launch"),
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.52:48010/session", verb: "launch"),
         simulatedLaunchFailures: [
             ShadowClientGameStreamError.requestFailed("Connection refused")
         ]
@@ -1155,7 +1177,7 @@ func remoteDesktopRuntimeRetriesLaunchOnReachableLocalRoute() async {
     let pairingRouteStore = ShadowClientPairingRouteStore(
         defaultsSuiteName: "shadow-client.control.route-fallback.\(UUID().uuidString)"
     )
-    await pairingRouteStore.setPreferredHost("public-gateway.example.invalid", for: "uniqueid:host-route")
+    await pairingRouteStore.setPreferredHost("external-route.example.invalid", for: "uniqueid:host-route")
 
     let runtime = ShadowClientRemoteDesktopRuntime(
         metadataClient: metadata,
@@ -1165,8 +1187,8 @@ func remoteDesktopRuntimeRetriesLaunchOnReachableLocalRoute() async {
     )
 
     runtime.refreshHosts(
-        candidates: ["public-gateway.example.invalid", "10.0.0.52"],
-        preferredHost: "public-gateway.example.invalid"
+        candidates: ["external-route.example.invalid", "192.168.0.52"],
+        preferredHost: "external-route.example.invalid"
     )
     await waitForControlHostLoaded(runtime)
 
@@ -1178,8 +1200,8 @@ func remoteDesktopRuntimeRetriesLaunchOnReachableLocalRoute() async {
 
     let launchCalls = await control.launchCalls()
     #expect(launchCalls.count == 2)
-    #expect(launchCalls[0].host == "public-gateway.example.invalid")
-    #expect(launchCalls[1].host == "10.0.0.52")
+    #expect(launchCalls[0].host == "external-route.example.invalid")
+    #expect(launchCalls[1].host == "192.168.0.52")
     if case .launched = runtime.launchState {
         #expect(true)
     } else {
@@ -1192,8 +1214,8 @@ func remoteDesktopRuntimeRetriesLaunchOnReachableLocalRoute() async {
 func remoteDesktopRuntimeAutoRelaunchesCodecAfterPostLaunchDecoderFailure() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
-            "10.0.0.133": .init(
-                host: "10.0.0.133",
+            "192.168.0.133": .init(
+                host: "192.168.0.133",
                 displayName: "Codec-Recovery-Host",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -1205,12 +1227,12 @@ func remoteDesktopRuntimeAutoRelaunchesCodecAfterPostLaunchDecoderFailure() asyn
             ),
         ],
         appListByHost: [
-            "10.0.0.133": [
+            "192.168.0.133": [
                 .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
         ]
     )
-    let sessionURL = "rtsp://10.0.0.133:48010/session"
+    let sessionURL = "rtsp://192.168.0.133:48010/session"
     let control = FakeControlClient(
         simulatedLaunchResult: .init(sessionURL: sessionURL, verb: "launch")
     )
@@ -1221,7 +1243,7 @@ func remoteDesktopRuntimeAutoRelaunchesCodecAfterPostLaunchDecoderFailure() asyn
         sessionConnectionClient: sessionConnector
     )
 
-    runtime.refreshHosts(candidates: ["10.0.0.133"], preferredHost: "10.0.0.133")
+    runtime.refreshHosts(candidates: ["192.168.0.133"], preferredHost: "192.168.0.133")
     await waitForControlHostLoaded(runtime)
 
     runtime.launchSelectedApp(
@@ -1480,8 +1502,8 @@ func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterResumeDecoderFailures(
             ],
         ]
     )
-    let resumeSessionURL = "rtsp://10.0.0.52:48010/resume"
-    let forcedLaunchSessionURL = "rtsp://10.0.0.52:48010/launch"
+    let resumeSessionURL = "rtsp://192.168.0.52:48010/resume"
+    let forcedLaunchSessionURL = "rtsp://192.168.0.52:48010/launch"
     let control = FakeControlClient(
         simulatedLaunchResult: .init(sessionURL: forcedLaunchSessionURL, verb: "launch"),
         simulatedLaunchResults: [
@@ -1561,8 +1583,8 @@ func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterResumeFirstFrameTimeou
             ],
         ]
     )
-    let resumeSessionURL = "rtsp://10.0.0.52:48010/resume"
-    let forcedLaunchSessionURL = "rtsp://10.0.0.52:48010/launch"
+    let resumeSessionURL = "rtsp://192.168.0.52:48010/resume"
+    let forcedLaunchSessionURL = "rtsp://192.168.0.52:48010/launch"
     let control = FakeControlClient(
         simulatedLaunchResult: .init(sessionURL: forcedLaunchSessionURL, verb: "launch"),
         simulatedLaunchResults: [
@@ -2010,6 +2032,57 @@ func remoteDesktopRuntimeSerializesRelaunchAfterCancellingPriorLaunch() async {
     #expect(disconnectCountsAtConnectStart[1] >= 3)
     #expect(await sessionConnector.disconnectCalls() >= 3)
     #expect(runtime.activeSession?.appID == 2)
+}
+
+@Test("Remote desktop runtime ignores duplicate launch requests while launch is already transitioning")
+@MainActor
+func remoteDesktopRuntimeIgnoresDuplicateLaunchRequestWhileTransitioning() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.37": .init(
+                host: "192.168.0.37",
+                displayName: "Den-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-13"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.37": [
+                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.37:48010/session", verb: "launch")
+    )
+    let sessionConnector = BlockingFirstSessionConnectionClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.37"], preferredHost: "192.168.0.37")
+    await waitForControlHostLoaded(runtime)
+
+    let settings = ShadowClientGameStreamLaunchSettings(
+        enableHDR: true,
+        enableSurroundAudio: true,
+        lowLatencyMode: false
+    )
+    runtime.launchSelectedApp(appID: 1, settings: settings)
+    await waitForSessionConnectCalls(sessionConnector, expectedCount: 1)
+
+    runtime.launchSelectedApp(appID: 1, settings: settings)
+    try? await Task.sleep(for: .milliseconds(200))
+
+    #expect(await control.launchCalls().count == 1)
+    #expect(await sessionConnector.connectCalls().count == 1)
 }
 
 @Test("Remote desktop runtime forwards captured input events to active session input client")
@@ -2532,67 +2605,6 @@ func remoteDesktopRuntimeDisconnectsSessionTransportOnClearActiveSession() async
     #expect(await sessionConnector.disconnectCalls() >= 1)
 }
 
-@Test("Remote desktop runtime finishes local session clear without waiting for host cancel")
-@MainActor
-func remoteDesktopRuntimeDoesNotWaitForHostCancelToFinishClearingSession() async {
-    let metadata = FakeControlTestMetadataClient(
-        serverInfoByHost: [
-            "192.168.0.32": .init(
-                host: "192.168.0.32",
-                displayName: "Studio",
-                pairStatus: .paired,
-                currentGameID: 1,
-                serverState: "SUNSHINE_SERVER_BUSY",
-                httpsPort: 47984,
-                appVersion: "7.0.0",
-                gfeVersion: nil,
-                uniqueID: "HOST-12"
-            ),
-        ],
-        appListByHost: [
-            "192.168.0.32": [
-                .init(id: 1, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
-            ],
-        ]
-    )
-    let control = FakeControlClient(
-        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.32:48010/session", verb: "resume"),
-        simulatedCancelDelay: .seconds(2)
-    )
-    let sessionConnector = FakeSessionConnectionClient()
-    let runtime = ShadowClientRemoteDesktopRuntime(
-        metadataClient: metadata,
-        controlClient: control,
-        sessionConnectionClient: sessionConnector
-    )
-
-    runtime.refreshHosts(candidates: ["192.168.0.32"], preferredHost: "192.168.0.32")
-    await waitForControlHostLoaded(runtime)
-
-    runtime.launchSelectedApp(
-        appID: 1,
-        settings: .init(enableHDR: true, enableSurroundAudio: true, lowLatencyMode: false)
-    )
-    await waitForLaunchState(runtime)
-
-    var didReturn = false
-    let clearTask = Task { @MainActor in
-        await runtime.suspendActiveSessionForAppLifecycle()
-        didReturn = true
-    }
-
-    await waitForSessionDisconnectCalls(sessionConnector, expectedCount: 1)
-    await waitForActiveSessionClearState(runtime, expected: false)
-    await waitForCondition {
-        didReturn
-    }
-
-    #expect(runtime.activeSession == nil)
-    #expect(runtime.isClearingActiveSession == false)
-    #expect(didReturn)
-    clearTask.cancel()
-}
-
 @Test("Remote desktop runtime clears in-flight launch and keeps session closed")
 @MainActor
 func remoteDesktopRuntimeClearsInFlightLaunch() async {
@@ -2648,6 +2660,7 @@ func remoteDesktopRuntimeClearsInFlightLaunch() async {
 private actor FakeControlTestMetadataClient: ShadowClientGameStreamMetadataClient {
     private let serverInfoByHost: [String: ShadowClientGameStreamServerInfo]
     private let appListByHost: [String: [ShadowClientRemoteAppDescriptor]]
+    private var appListHosts: [String] = []
 
     init(
         serverInfoByHost: [String: ShadowClientGameStreamServerInfo],
@@ -2657,10 +2670,7 @@ private actor FakeControlTestMetadataClient: ShadowClientGameStreamMetadataClien
         self.appListByHost = appListByHost
     }
 
-    func fetchServerInfo(
-        host: String,
-        portHint _: ShadowClientGameStreamPortHint?
-    ) async throws -> ShadowClientGameStreamServerInfo {
+    func fetchServerInfo(host: String) async throws -> ShadowClientGameStreamServerInfo {
         guard let info = serverInfoByHost[host] else {
             throw ShadowClientGameStreamError.requestFailed("missing host")
         }
@@ -2669,7 +2679,12 @@ private actor FakeControlTestMetadataClient: ShadowClientGameStreamMetadataClien
     }
 
     func fetchAppList(host: String, httpsPort: Int?) async throws -> [ShadowClientRemoteAppDescriptor] {
-        appListByHost[host] ?? []
+        appListHosts.append(host)
+        return appListByHost[host] ?? []
+    }
+
+    func recordedAppListHosts() -> [String] {
+        appListHosts
     }
 }
 
@@ -2710,7 +2725,6 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
     private var simulatedLaunchFailures: [any Error & Sendable]
     private let simulatedClipboardText: String?
     private let simulatedClipboardFailure: (any Error & Sendable)?
-    private let simulatedCancelDelay: Duration?
     private let defaultLaunchResult: ShadowClientGameStreamLaunchResult
     private let simulatedLaunchFailure: (any Error & Sendable)?
 
@@ -2721,7 +2735,6 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
         simulatedLaunchFailures: [any Error & Sendable] = [],
         simulatedClipboardText: String? = nil,
         simulatedClipboardFailure: (any Error & Sendable)? = nil,
-        simulatedCancelDelay: Duration? = nil,
         simulatedLaunchFailure: (any Error & Sendable)? = nil
     ) {
         self.simulatedPairFailures = simulatedPairFailures
@@ -2729,7 +2742,6 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
         self.simulatedLaunchFailures = simulatedLaunchFailures
         self.simulatedClipboardText = simulatedClipboardText
         self.simulatedClipboardFailure = simulatedClipboardFailure
-        self.simulatedCancelDelay = simulatedCancelDelay
         self.defaultLaunchResult = simulatedLaunchResult
         self.simulatedLaunchFailure = simulatedLaunchFailure
     }
@@ -2818,9 +2830,6 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
         httpsPort: Int
     ) async throws {
         recordedCancelCalls.append(.init(host: host, httpsPort: httpsPort))
-        if let simulatedCancelDelay {
-            try? await Task.sleep(for: simulatedCancelDelay)
-        }
     }
 
     func cancelCalls() -> [CancelCall] {
@@ -2935,6 +2944,7 @@ private actor FakeSessionConnectionClient: ShadowClientRemoteSessionConnectionCl
     nonisolated let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init()
 
     private var recordedConnectCalls: [String] = []
+    private var recordedConnectHosts: [String] = []
     private var recordedVideoConfigurations: [ShadowClientRemoteSessionVideoConfiguration] = []
     private var disconnectCallCount = 0
     private var simulatedFailures: [any Error & Sendable]
@@ -2956,6 +2966,7 @@ private actor FakeSessionConnectionClient: ShadowClientRemoteSessionConnectionCl
         videoConfiguration: ShadowClientRemoteSessionVideoConfiguration
     ) async throws {
         recordedConnectCalls.append(sessionURL)
+        recordedConnectHosts.append(host)
         recordedVideoConfigurations.append(videoConfiguration)
 
         if !simulatedFailures.isEmpty {
@@ -2970,6 +2981,10 @@ private actor FakeSessionConnectionClient: ShadowClientRemoteSessionConnectionCl
 
     func connectCalls() -> [String] {
         recordedConnectCalls
+    }
+
+    func connectHosts() -> [String] {
+        recordedConnectHosts
     }
 
     func disconnectCalls() -> Int {
@@ -3001,44 +3016,6 @@ private actor BlockingFirstSessionConnectionClient: ShadowClientRemoteSessionCon
         recordedConnectCalls.append(sessionURL)
 
         if recordedConnectCalls.count == 1 {
-            try await Task.sleep(for: .seconds(30))
-        }
-    }
-
-    func disconnect() async {
-        disconnectCallCount += 1
-    }
-
-    func connectCalls() -> [String] {
-        recordedConnectCalls
-    }
-
-    func disconnectCalls() -> Int {
-        disconnectCallCount
-    }
-}
-
-private actor BlockNthSessionConnectionClient: ShadowClientRemoteSessionConnectionClient {
-    let presentationMode: ShadowClientRemoteSessionPresentationMode = .embeddedPlayer
-    nonisolated let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext = .init()
-
-    private let blockedConnectCall: Int
-    private var recordedConnectCalls: [String] = []
-    private var disconnectCallCount = 0
-
-    init(blockedConnectCall: Int) {
-        self.blockedConnectCall = blockedConnectCall
-    }
-
-    func connect(
-        to sessionURL: String,
-        host: String,
-        appTitle: String,
-        videoConfiguration: ShadowClientRemoteSessionVideoConfiguration
-    ) async throws {
-        recordedConnectCalls.append(sessionURL)
-
-        if recordedConnectCalls.count == blockedConnectCall {
             try await Task.sleep(for: .seconds(30))
         }
     }
@@ -3182,6 +3159,20 @@ private func waitForLaunchState(
     }
 }
 
+@MainActor
+private func waitForAppCatalogLoaded(
+    _ runtime: ShadowClientRemoteDesktopRuntime,
+    maxAttempts: Int = 50
+) async {
+    for _ in 0..<maxAttempts {
+        if runtime.appState == .loaded {
+            return
+        }
+
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+}
+
 private func waitForSessionConnectCalls(
     _ connector: BlockingFirstSessionConnectionClient,
     expectedCount: Int,
@@ -3203,20 +3194,6 @@ private func waitForSessionConnectCalls(
 ) async {
     for _ in 0..<maxAttempts {
         if await connector.connectCalls() >= expectedCount {
-            return
-        }
-
-        try? await Task.sleep(for: .milliseconds(20))
-    }
-}
-
-private func waitForSessionConnectCalls(
-    _ connector: BlockNthSessionConnectionClient,
-    expectedCount: Int,
-    maxAttempts: Int = 50
-) async {
-    for _ in 0..<maxAttempts {
-        if await connector.connectCalls().count >= expectedCount {
             return
         }
 
@@ -3359,35 +3336,6 @@ private func waitForSessionDisconnectCalls(
 ) async {
     for _ in 0..<maxAttempts {
         if await connector.disconnectCalls() >= expectedCount {
-            return
-        }
-
-        try? await Task.sleep(for: .milliseconds(20))
-    }
-}
-
-@MainActor
-private func waitForActiveSessionClearState(
-    _ runtime: ShadowClientRemoteDesktopRuntime,
-    expected: Bool,
-    maxAttempts: Int = 50
-) async {
-    for _ in 0..<maxAttempts {
-        if runtime.isClearingActiveSession == expected {
-            return
-        }
-
-        try? await Task.sleep(for: .milliseconds(20))
-    }
-}
-
-@MainActor
-private func waitForCondition(
-    maxAttempts: Int = 50,
-    _ predicate: @escaping @MainActor () -> Bool
-) async {
-    for _ in 0..<maxAttempts {
-        if predicate() {
             return
         }
 

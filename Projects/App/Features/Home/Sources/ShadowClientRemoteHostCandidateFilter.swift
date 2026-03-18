@@ -1,4 +1,5 @@
 import Foundation
+import ShadowClientFeatureConnection
 
 enum ShadowClientRemoteHostCandidateFilter {
     static func filteredCandidates(
@@ -43,7 +44,12 @@ enum ShadowClientRemoteHostCandidateFilter {
             return candidate.lowercased()
         }
         if let port = url.port {
-            return "\(host):\(port)"
+            let canonicalPort = ShadowClientGameStreamNetworkDefaults.canonicalHTTPSPort(
+                fromCandidatePort: port
+            )
+            if canonicalPort != ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort {
+                return "\(host):\(canonicalPort)"
+            }
         }
         return host
     }

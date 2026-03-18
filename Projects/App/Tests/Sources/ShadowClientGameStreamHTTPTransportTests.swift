@@ -58,10 +58,10 @@ func pairchallengeDoesNotPinServerCertificateDuringPairing() {
 
 @Test("HTTP request builder includes method headers and body length")
 func httpRequestBuilderIncludesMethodHeadersAndBodyLength() {
-    let url = URL(string: "https://desktop-lan.local:47984/actions/clipboard?type=text")!
+    let url = URL(string: "https://second-stream-host.local:47984/actions/clipboard?type=text")!
     let requestData = ShadowClientGameStreamHTTPTransport.makeHTTPRequestData(
         url: url,
-        host: "desktop-lan.local",
+        host: "second-stream-host.local",
         method: "POST",
         headers: [
             "Content-Type": "text/plain; charset=utf-8",
@@ -71,137 +71,10 @@ func httpRequestBuilderIncludesMethodHeadersAndBodyLength() {
 
     let requestText = String(decoding: requestData, as: UTF8.self)
     #expect(requestText.contains("POST /actions/clipboard?type=text HTTP/1.1"))
-    #expect(requestText.contains("Host: desktop-lan.local:47984"))
+    #expect(requestText.contains("Host: second-stream-host.local:47984"))
     #expect(requestText.contains("Content-Type: text/plain; charset=utf-8"))
     #expect(requestText.contains("Content-Length: 5"))
     #expect(requestText.hasSuffix("\r\n\r\nhello"))
-}
-
-@Test("HTTP transport keeps dual-stack targets while skipping loopback and scoped link-local fallbacks")
-func httpTransportConnectionTargetsPreferUsableRemoteAddresses() {
-    let targets = ShadowClientGameStreamHTTPTransport.connectionTargetCandidates(
-        for: "desktop.local",
-        resolvedHosts: [
-            "fe80::1%bridge100",
-            "::1",
-            "2001:db8::20",
-            "10.0.0.20",
-            "10.0.0.20",
-        ]
-    )
-
-    #expect(targets == ["2001:db8::20", "10.0.0.20"])
-}
-
-@Test("HTTP transport preserves loopback targets for localhost requests")
-func httpTransportConnectionTargetsKeepLoopbackForLocalhost() {
-    let targets = ShadowClientGameStreamHTTPTransport.connectionTargetCandidates(
-        for: "localhost",
-        resolvedHosts: [
-            "::1",
-            "127.0.0.1",
-        ]
-    )
-
-    #expect(targets == ["::1", "127.0.0.1"])
-}
-
-@Test("HTTP transport defers link-local IPv4 behind routable LAN targets")
-func httpTransportConnectionTargetsDeferLinkLocalIPv4() {
-    let targets = ShadowClientGameStreamHTTPTransport.connectionTargetCandidates(
-        for: "desktop.local",
-        resolvedHosts: [
-            "169.254.179.131",
-            "192.168.0.50",
-            "fdaf:7bd4:8418:463e:1c47:71fb:db43:1f94",
-        ]
-    )
-
-    #expect(targets == ["192.168.0.50", "fdaf:7bd4:8418:463e:1c47:71fb:db43:1f94", "169.254.179.131"])
-}
-
-@Test("HTTP transport rewrites HTTPS URLs for numeric IPv6 targets")
-func httpTransportRewritesURLForNumericIPv6Targets() throws {
-    let rewrittenURL = try ShadowClientGameStreamHTTPTransport.urlForConnectionTarget(
-        URL(string: "https://desktop.local:47984/serverinfo")!,
-        host: "2001:db8::20"
-    )
-
-    #expect(rewrittenURL.absoluteString == "https://[2001:db8::20]:47984/serverinfo")
-}
-
-@Test("HTTP transport computes response byte count from Content-Length")
-func httpTransportComputesExpectedResponseByteCount() {
-    let response = Data(
-        """
-        HTTP/1.1 200 OK\r
-        Content-Length: 27\r
-        Connection: keep-alive\r
-        \r
-        <root status_code=\"200\" />
-        """.utf8
-    )
-
-    let expectedByteCount = ShadowClientGameStreamHTTPTransport.expectedHTTPResponseByteCount(
-        from: response
-    )
-
-    #expect(expectedByteCount == response.count)
-}
-
-@Test("HTTP transport does not require EOF when Content-Length body is complete")
-func httpTransportDetectsCompleteHTTPResponseWithoutEOF() {
-    let partialResponse = Data(
-        """
-        HTTP/1.1 200 OK\r
-        Content-Length: 27\r
-        Connection: keep-alive\r
-        \r
-        <root status_code=\"200\" />
-        EXTRA
-        """.utf8
-    )
-
-    let expectedByteCount = ShadowClientGameStreamHTTPTransport.expectedHTTPResponseByteCount(
-        from: partialResponse
-    )
-
-    #expect(expectedByteCount == partialResponse.count - 5)
-}
-
-@Test("HTTP transport keeps PIN wait responses unbounded when timeout is disabled")
-func httpTransportLeavesPairResponseWaitUnboundedWhenTimeoutDisabled() {
-    let startedAt = ContinuousClock.now
-
-    let connectionTimeout = ShadowClientGameStreamHTTPTransport.connectionPhaseTimeout(
-        startedAt: startedAt,
-        overallTimeout: 0
-    )
-    let responseTimeout = ShadowClientGameStreamHTTPTransport.responsePhaseTimeout(
-        startedAt: startedAt,
-        overallTimeout: 0
-    )
-
-    #expect(connectionTimeout == 1.5)
-    #expect(responseTimeout == nil)
-}
-
-@Test("HTTP transport only caps connection setup timeout, not response wait timeout")
-func httpTransportSeparatesConnectionAndResponseTimeoutBudgets() {
-    let startedAt = ContinuousClock.now
-
-    let connectionTimeout = ShadowClientGameStreamHTTPTransport.connectionPhaseTimeout(
-        startedAt: startedAt,
-        overallTimeout: 45
-    )
-    let responseTimeout = ShadowClientGameStreamHTTPTransport.responsePhaseTimeout(
-        startedAt: startedAt,
-        overallTimeout: 45
-    )
-
-    #expect(connectionTimeout == 1.5)
-    #expect(responseTimeout != nil)
-    #expect(responseTimeout! > 40)
 }
 
 @Test("Launch parameter builder includes Apollo virtual display request when enabled")
@@ -222,8 +95,7 @@ func launchParameterBuilderIncludesApolloVirtualDisplayRequest() {
         remoteInputKey: Data([0x01, 0x02, 0x03, 0x04]),
         remoteInputKeyID: 7,
         surroundAudioInfo: 131_075,
-        localAudioPlayMode: "0",
-        clientDisplayCharacteristics: .init(gamut: .displayP3, transfer: .sdr)
+        localAudioPlayMode: "0"
     )
 
     #expect(parameters["virtualDisplay"] == "1")
@@ -246,8 +118,7 @@ func launchParameterBuilderOmitsApolloVirtualDisplayRequestByDefault() {
         remoteInputKey: Data([0xAA]),
         remoteInputKeyID: 9,
         surroundAudioInfo: 131_075,
-        localAudioPlayMode: "1",
-        clientDisplayCharacteristics: .init(gamut: .displayP3, transfer: .sdr)
+        localAudioPlayMode: "1"
     )
 
     #expect(parameters["virtualDisplay"] == nil)
@@ -271,34 +142,8 @@ func launchParameterBuilderIncludesApolloScaleFactor() {
         remoteInputKey: Data([0xAA]),
         remoteInputKeyID: 9,
         surroundAudioInfo: 131_075,
-        localAudioPlayMode: "1",
-        clientDisplayCharacteristics: .init(gamut: .displayP3, transfer: .sdr)
+        localAudioPlayMode: "1"
     )
 
     #expect(parameters["scaleFactor"] == "200")
-}
-
-@Test("Launch parameter builder includes Apollo display metadata")
-func launchParameterBuilderIncludesApolloDisplayMetadata() {
-    let parameters = NativeGameStreamControlClient.makeLaunchParameters(
-        appID: 1,
-        settings: .init(
-            width: 2560,
-            height: 1440,
-            fps: 120,
-            bitrateKbps: 35_000,
-            preferredCodec: .h265,
-            enableHDR: true,
-            enableSurroundAudio: false,
-            lowLatencyMode: false
-        ),
-        remoteInputKey: Data([0xAA]),
-        remoteInputKeyID: 9,
-        surroundAudioInfo: 131_075,
-        localAudioPlayMode: "1",
-        clientDisplayCharacteristics: .init(gamut: .rec2020, transfer: .pq)
-    )
-
-    #expect(parameters["clientDisplayGamut"] == "rec2020")
-    #expect(parameters["clientDisplayTransfer"] == "pq")
 }

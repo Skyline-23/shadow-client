@@ -7,6 +7,7 @@ public enum ShadowClientGameStreamNetworkDefaults {
 
     public static let defaultHTTPPort = 47_989
     public static let defaultHTTPSPort = 47_984
+    public static let httpHTTPSPortOffset = defaultHTTPPort - defaultHTTPSPort
     public static let defaultServicePorts: [Int] = [
         defaultHTTPSPort,
         defaultHTTPPort,
@@ -20,33 +21,33 @@ public enum ShadowClientGameStreamNetworkDefaults {
 
     public static let minimumPort = 1
     public static let maximumPort = Int(UInt16.max)
-    public static let httpsOffsetFromHTTPPort = defaultHTTPSPort - defaultHTTPPort
-    public static let webUIOffsetFromHTTPPort = 1
-    public static let rtspOffsetFromHTTPPort = 21
-    public static let streamUDPRangeOffset = 9...11
 
-    public static func mappedHTTPSPort(forHTTPPort httpPort: Int) -> Int? {
-        guard (minimumPort...maximumPort).contains(httpPort) else {
-            return nil
-        }
-
-        let candidate = httpPort + httpsOffsetFromHTTPPort
-        guard (minimumPort...maximumPort).contains(candidate) else {
-            return nil
-        }
-        return candidate
+    public static func httpPort(forHTTPSPort httpsPort: Int) -> Int {
+        httpsPort + httpHTTPSPortOffset
     }
 
-    public static func mappedHTTPPort(forHTTPSPort httpsPort: Int) -> Int? {
-        guard (minimumPort...maximumPort).contains(httpsPort) else {
-            return nil
-        }
+    public static func httpsPort(forHTTPPort httpPort: Int) -> Int {
+        httpPort - httpHTTPSPortOffset
+    }
 
-        let candidate = httpsPort - httpsOffsetFromHTTPPort
-        guard (minimumPort...maximumPort).contains(candidate) else {
-            return nil
+    public static func canonicalHTTPSPort(fromCandidatePort port: Int) -> Int {
+        guard isLikelyHTTPPort(port) else {
+            return port
         }
-        return candidate
+        let httpsPort = httpsPort(forHTTPPort: port)
+        guard (minimumPort...maximumPort).contains(httpsPort) else {
+            return port
+        }
+        return httpsPort
+    }
+
+    public static func isLikelyHTTPPort(_ port: Int) -> Bool {
+        guard (minimumPort...maximumPort).contains(port),
+              port > httpHTTPSPortOffset
+        else {
+            return false
+        }
+        return port == defaultHTTPPort || port % 100 == defaultHTTPPort % 100
     }
 }
 
