@@ -4713,6 +4713,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 continue
             }
 
+            let normalizedError = host.lastError?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if normalizedError?.contains("certificate mismatch") == true {
+                resolvedHosts.append(host)
+                continue
+            }
+
             var boundMachineID: String?
             for endpoint in host.routes.allEndpoints {
                 if let machineID = await pinnedCertificateStore.machineID(forHost: endpoint.host) {
