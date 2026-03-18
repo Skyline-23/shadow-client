@@ -1634,6 +1634,64 @@ func remoteDesktopRuntimePropagatesPinnedCertificatesAcrossDiscoveredRoutes() as
     )
 }
 
+@Test("Remote desktop runtime does not reuse an unrelated pinned certificate for a preferred custom Apollo route")
+@MainActor
+func remoteDesktopRuntimeDoesNotReusePinnedCertificateForUnrelatedPreferredApolloRoute() async {
+    let certificateStore = ShadowClientPinnedHostCertificateStore(
+        defaultsSuiteName: "shadow-client.runtime.unrelated-preferred-apollo-cert.\(UUID().uuidString)"
+    )
+    let pcCertificate = Data([0xDE, 0xAD, 0xBE, 0xEF])
+    await certificateStore.setCertificateDER(pcCertificate, forHost: "192.168.0.52")
+
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.52": .init(
+                host: "192.168.0.52",
+                displayName: "Skyline23-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "PC-HOST"
+            ),
+            "buseongs-macbook-pro-14.local:48984": .init(
+                host: "buseongs-macbook-pro-14.local",
+                displayName: "Buseong's MacBook Pro 14",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "APOLLO-HOST"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient(),
+        pinnedCertificateStore: certificateStore
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.52"], preferredHost: "192.168.0.52")
+    await waitForHostCatalogReady(runtime)
+
+    runtime.refreshHosts(
+        candidates: ["192.168.0.52", "buseongs-macbook-pro-14.local:48984"],
+        preferredHost: "buseongs-macbook-pro-14.local:48984"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    let apolloRequest = await metadataClient.recordedServerInfoRequests().last(where: {
+        $0.host == "buseongs-macbook-pro-14.local:48984"
+    })
+
+    #expect(apolloRequest?.pinnedServerCertificateDER == nil)
+}
+
 @Test("Remote desktop runtime skips probing routes rejected for certificate mismatch on subsequent refreshes")
 @MainActor
 func remoteDesktopRuntimeSkipsRejectedCertificateRoutesOnRefresh() async {
@@ -2057,10 +2115,16 @@ private actor ScriptedRequestTransport: ShadowClientGameStreamRequestTransportin
 }
 
 private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient {
+    struct ServerInfoRequest: Equatable {
+        let host: String
+        let pinnedServerCertificateDER: Data?
+    }
+
     private let serverInfoByHost: [String: ShadowClientGameStreamServerInfo]
     private let appListByHost: [String: [ShadowClientRemoteAppDescriptor]]
     private let appListFailureByHost: [String: ShadowClientGameStreamError]
     private var serverInfoHosts: [String] = []
+    private var serverInfoRequests: [ServerInfoRequest] = []
 
     init(
         serverInfoByHost: [String: ShadowClientGameStreamServerInfo],
@@ -2073,7 +2137,17 @@ private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient
     }
 
     func fetchServerInfo(host: String) async throws -> ShadowClientGameStreamServerInfo {
+        try await fetchServerInfo(host: host, pinnedServerCertificateDER: nil)
+    }
+
+    func fetchServerInfo(
+        host: String,
+        pinnedServerCertificateDER: Data?
+    ) async throws -> ShadowClientGameStreamServerInfo {
         serverInfoHosts.append(host)
+        serverInfoRequests.append(
+            .init(host: host, pinnedServerCertificateDER: pinnedServerCertificateDER)
+        )
         if let info = serverInfoByHost[host] {
             return info
         }
@@ -2090,6 +2164,10 @@ private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient
 
     func recordedServerInfoHosts() -> [String] {
         serverInfoHosts
+    }
+
+    func recordedServerInfoRequests() -> [ServerInfoRequest] {
+        serverInfoRequests
     }
 }
 

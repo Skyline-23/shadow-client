@@ -4576,6 +4576,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         if let preferredAnchorHost,
            let normalizedPreferredHost = normalizeCandidate(preferredHost),
+           normalizedPreferredHost != normalizedCandidate,
            hostAliases(
             for: normalizedPreferredHost,
             hostAliasesByHost: hostAliasesByHost
