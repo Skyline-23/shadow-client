@@ -1740,7 +1740,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let pairingRouteStore = pairingRouteStore
         let pinnedCertificateStore = self.pinnedCertificateStore
         let hostAliasResolver = self.hostAliasResolver
-        let localInterfaceHosts = ShadowClientHostCatalogKit.currentMachineInterfaceHosts()
         refreshHostsTask = Task { [weak self] in
             let hostAliasesByHost = await hostAliasResolver(
                 normalizedCandidates + existingHosts.flatMap { descriptor in
@@ -1782,12 +1781,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 return resolved
             }
 
-            let filteredDescriptors = Self.filterOutSelfHosts(
-                descriptors,
-                localInterfaceHosts: localInterfaceHosts
-            )
             let machineBoundDescriptors = await Self.descriptorsWithBoundMachineIdentity(
-                filteredDescriptors,
+                descriptors,
                 pinnedCertificateStore: pinnedCertificateStore
             )
             let sorted = machineBoundDescriptors.sorted(by: Self.compareHosts)
