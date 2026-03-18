@@ -76,6 +76,8 @@ enum ShadowClientRTSPAnnouncePayloadBuilder {
             ("x-nv-video[0].encoderCscMode", ShadowClientRTSPAnnounceProfile.encoderCSCMode),
             ("x-apollo-video[0].clientDisplayGamut", clientDisplayCharacteristics.gamut.rawValue),
             ("x-apollo-video[0].clientDisplayTransfer", clientDisplayCharacteristics.transfer.rawValue),
+            ("x-apollo-video[0].clientDisplayScalePercent", "\(clientDisplayCharacteristics.scalePercent)"),
+            ("x-apollo-video[0].clientDisplayHiDPI", clientDisplayCharacteristics.hiDPIEnabled ? "1" : "0"),
         ]
         if reliableUDPMode == ShadowClientRTSPAnnounceProfile.reliableUDPModeStandard {
             attributes.append(

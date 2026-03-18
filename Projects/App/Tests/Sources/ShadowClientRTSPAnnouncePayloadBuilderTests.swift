@@ -20,7 +20,7 @@ func rtspAnnouncePayloadUsesPropagatedBitrateValues() {
         videoPort: 47_998,
         moonlightFeatureFlags: 3,
         encryptionEnabledFlags: 0,
-        clientDisplayCharacteristics: .init(gamut: .displayP3, transfer: .sdr)
+        clientDisplayCharacteristics: .init(gamut: .displayP3, transfer: .sdr, scalePercent: 100, hiDPIEnabled: false)
     )
 
     let attributes = rtspAnnounceAttributes(from: payload)
@@ -50,7 +50,7 @@ func rtspAnnouncePayloadMapsHdrAndYUV444() {
         videoPort: 47_998,
         moonlightFeatureFlags: 3,
         encryptionEnabledFlags: 0,
-        clientDisplayCharacteristics: .init(gamut: .rec2020, transfer: .pq)
+        clientDisplayCharacteristics: .init(gamut: .rec2020, transfer: .pq, scalePercent: 100, hiDPIEnabled: false)
     )
 
     let sdr420Payload = ShadowClientRTSPAnnouncePayloadBuilder.build(
@@ -69,7 +69,7 @@ func rtspAnnouncePayloadMapsHdrAndYUV444() {
         videoPort: 47_998,
         moonlightFeatureFlags: 3,
         encryptionEnabledFlags: 0,
-        clientDisplayCharacteristics: .init(gamut: .sRGB, transfer: .sdr)
+        clientDisplayCharacteristics: .init(gamut: .sRGB, transfer: .sdr, scalePercent: 100, hiDPIEnabled: false)
     )
 
     let hdrYuvAttributes = rtspAnnounceAttributes(from: hdrYuvPayload)
@@ -99,7 +99,7 @@ func rtspAnnouncePayloadMapsSurroundAudio() {
         videoPort: 47_998,
         moonlightFeatureFlags: 3,
         encryptionEnabledFlags: 0,
-        clientDisplayCharacteristics: .init(gamut: .displayP3, transfer: .sdr)
+        clientDisplayCharacteristics: .init(gamut: .displayP3, transfer: .sdr, scalePercent: 100, hiDPIEnabled: false)
     )
 
     let stereoPayload = ShadowClientRTSPAnnouncePayloadBuilder.build(
@@ -118,7 +118,7 @@ func rtspAnnouncePayloadMapsSurroundAudio() {
         videoPort: 47_998,
         moonlightFeatureFlags: 3,
         encryptionEnabledFlags: 0,
-        clientDisplayCharacteristics: .init(gamut: .sRGB, transfer: .sdr)
+        clientDisplayCharacteristics: .init(gamut: .sRGB, transfer: .sdr, scalePercent: 100, hiDPIEnabled: false)
     )
 
     let surroundAttributes = rtspAnnounceAttributes(from: surroundPayload)
@@ -152,7 +152,7 @@ func rtspAnnouncePayloadIncludesLegacyControlChannelHint() {
         videoPort: 47_998,
         moonlightFeatureFlags: 3,
         encryptionEnabledFlags: 0,
-        clientDisplayCharacteristics: .init(gamut: .displayP3, transfer: .sdr)
+        clientDisplayCharacteristics: .init(gamut: .displayP3, transfer: .sdr, scalePercent: 100, hiDPIEnabled: false)
     )
 
     let attributes = rtspAnnounceAttributes(from: payload)
@@ -180,7 +180,7 @@ func rtspAnnouncePayloadOmitsLegacyControlChannelHintWhenEncryptedControlIsEnabl
         videoPort: 47_998,
         moonlightFeatureFlags: 3,
         encryptionEnabledFlags: 0x01,
-        clientDisplayCharacteristics: .init(gamut: .displayP3, transfer: .sdr)
+        clientDisplayCharacteristics: .init(gamut: .displayP3, transfer: .sdr, scalePercent: 100, hiDPIEnabled: false)
     )
 
     let attributes = rtspAnnounceAttributes(from: payload)
@@ -207,13 +207,15 @@ func rtspAnnouncePayloadIncludesApolloDisplayMetadata() {
         videoPort: 47_998,
         moonlightFeatureFlags: 3,
         encryptionEnabledFlags: 0,
-        clientDisplayCharacteristics: .init(gamut: .rec2020, transfer: .pq)
+        clientDisplayCharacteristics: .init(gamut: .rec2020, transfer: .pq, scalePercent: 200, hiDPIEnabled: true)
     )
 
     let attributes = rtspAnnounceAttributes(from: payload)
 
     #expect(attributes["x-apollo-video[0].clientDisplayGamut"] == "rec2020")
     #expect(attributes["x-apollo-video[0].clientDisplayTransfer"] == "pq")
+    #expect(attributes["x-apollo-video[0].clientDisplayScalePercent"] == "200")
+    #expect(attributes["x-apollo-video[0].clientDisplayHiDPI"] == "1")
 }
 
 private func rtspAnnounceAttributes(from payload: Data) -> [String: String] {

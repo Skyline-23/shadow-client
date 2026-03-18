@@ -428,6 +428,8 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
     public let enableSurroundAudio: Bool
     public let preferredSurroundChannelCount: Int
     public let enableYUV444: Bool
+    public let displayScalePercent: Int
+    public let requestHiDPI: Bool
     public let remoteInputKey: Data?
     public let remoteInputKeyID: UInt32?
     public let serverAppVersion: String?
@@ -442,6 +444,8 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
         enableSurroundAudio: Bool = false,
         preferredSurroundChannelCount: Int = 6,
         enableYUV444: Bool = false,
+        displayScalePercent: Int = 100,
+        requestHiDPI: Bool = false,
         remoteInputKey: Data? = nil,
         remoteInputKeyID: UInt32? = nil,
         serverAppVersion: String? = nil
@@ -458,6 +462,8 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
         self.enableSurroundAudio = enableSurroundAudio
         self.preferredSurroundChannelCount = max(2, min(8, preferredSurroundChannelCount))
         self.enableYUV444 = enableYUV444
+        self.displayScalePercent = max(20, min(200, displayScalePercent))
+        self.requestHiDPI = requestHiDPI
         self.remoteInputKey = remoteInputKey
         self.remoteInputKeyID = remoteInputKeyID
         self.serverAppVersion = serverAppVersion
@@ -3654,6 +3660,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             unlockBitrateLimit: settings.unlockBitrateLimit,
             forceHardwareDecoding: settings.forceHardwareDecoding,
             resolutionScalePercent: settings.resolutionScalePercent,
+            requestHiDPI: settings.requestHiDPI,
             preferVirtualDisplay: settings.preferVirtualDisplay,
             optimizeGameSettingsForStreaming: settings.optimizeGameSettingsForStreaming,
             quitAppOnHostAfterStreamEnds: settings.quitAppOnHostAfterStreamEnds,
@@ -3819,6 +3826,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             enableSurroundAudio: settings.enableSurroundAudio,
             preferredSurroundChannelCount: settings.preferredSurroundChannelCount,
             enableYUV444: settings.enableYUV444,
+            displayScalePercent: settings.resolutionScalePercent,
+            requestHiDPI: settings.requestHiDPI,
             remoteInputKey: remoteInputKey,
             remoteInputKeyID: remoteInputKeyID,
             serverAppVersion: serverAppVersion

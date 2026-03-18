@@ -339,6 +339,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             unlockBitrateLimit: unlockBitrateLimit,
             forceHardwareDecoding: videoDecoder != .software,
             resolutionScalePercent: 100,
+            requestHiDPI: false,
             preferVirtualDisplay: preferVirtualDisplay,
             optimizeGameSettingsForStreaming: optimizeGameSettingsForStreaming,
             quitAppOnHostAfterStreamEnds: quitAppOnHostAfterStream,

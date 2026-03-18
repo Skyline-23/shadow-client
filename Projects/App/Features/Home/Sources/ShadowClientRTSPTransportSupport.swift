@@ -814,7 +814,9 @@ actor ShadowClientRTSPInterleavedClient {
         )
 
         let clientDisplayCharacteristics = await ShadowClientApolloClientDisplayCharacteristicsResolver.current(
-            hdrEnabled: videoConfiguration.enableHDR
+            hdrEnabled: videoConfiguration.enableHDR,
+            scalePercent: videoConfiguration.displayScalePercent,
+            hiDPIEnabled: videoConfiguration.requestHiDPI
         )
         let announcePayload = ShadowClientRTSPAnnouncePayloadBuilder.build(
             hostAddress: host,

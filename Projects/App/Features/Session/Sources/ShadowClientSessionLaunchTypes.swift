@@ -70,6 +70,7 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
     public let unlockBitrateLimit: Bool
     public let forceHardwareDecoding: Bool
     public let resolutionScalePercent: Int
+    public let requestHiDPI: Bool
     public let preferVirtualDisplay: Bool
     public let optimizeGameSettingsForStreaming: Bool
     public let quitAppOnHostAfterStreamEnds: Bool
@@ -91,6 +92,7 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
         unlockBitrateLimit: Bool = false,
         forceHardwareDecoding: Bool = true,
         resolutionScalePercent: Int = 100,
+        requestHiDPI: Bool = false,
         preferVirtualDisplay: Bool = false,
         optimizeGameSettingsForStreaming: Bool = true,
         quitAppOnHostAfterStreamEnds: Bool = false,
@@ -114,6 +116,7 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
         self.unlockBitrateLimit = unlockBitrateLimit
         self.forceHardwareDecoding = forceHardwareDecoding
         self.resolutionScalePercent = max(20, min(200, resolutionScalePercent))
+        self.requestHiDPI = requestHiDPI
         self.preferVirtualDisplay = preferVirtualDisplay
         self.optimizeGameSettingsForStreaming = optimizeGameSettingsForStreaming
         self.quitAppOnHostAfterStreamEnds = quitAppOnHostAfterStreamEnds

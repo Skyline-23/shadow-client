@@ -124,8 +124,8 @@ func launchParameterBuilderOmitsApolloVirtualDisplayRequestByDefault() {
     #expect(parameters["virtualDisplay"] == nil)
 }
 
-@Test("Launch parameter builder includes Apollo scale factor when requested")
-func launchParameterBuilderIncludesApolloScaleFactor() {
+@Test("Launch parameter builder includes Apollo display scale contract when requested")
+func launchParameterBuilderIncludesApolloDisplayScaleContract() {
     let parameters = NativeGameStreamControlClient.makeLaunchParameters(
         appID: 1,
         settings: .init(
@@ -137,7 +137,8 @@ func launchParameterBuilderIncludesApolloScaleFactor() {
             enableHDR: false,
             enableSurroundAudio: false,
             lowLatencyMode: false,
-            resolutionScalePercent: 200
+            resolutionScalePercent: 200,
+            requestHiDPI: true
         ),
         remoteInputKey: Data([0xAA]),
         remoteInputKeyID: 9,
@@ -146,4 +147,6 @@ func launchParameterBuilderIncludesApolloScaleFactor() {
     )
 
     #expect(parameters["scaleFactor"] == "200")
+    #expect(parameters["clientDisplayScalePercent"] == "200")
+    #expect(parameters["clientDisplayHiDPI"] == "1")
 }

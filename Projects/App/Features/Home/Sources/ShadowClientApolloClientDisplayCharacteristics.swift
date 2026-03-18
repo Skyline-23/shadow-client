@@ -22,23 +22,44 @@ enum ShadowClientApolloClientDisplayTransfer: String, Sendable {
 struct ShadowClientApolloClientDisplayCharacteristics: Sendable {
     let gamut: ShadowClientApolloClientDisplayGamut
     let transfer: ShadowClientApolloClientDisplayTransfer
+    let scalePercent: Int
+    let hiDPIEnabled: Bool
 }
 
 enum ShadowClientApolloClientDisplayCharacteristicsResolver {
     @MainActor
-    static func current(hdrEnabled: Bool) -> ShadowClientApolloClientDisplayCharacteristics {
+    static func current(
+        hdrEnabled: Bool,
+        scalePercent: Int,
+        hiDPIEnabled: Bool
+    ) -> ShadowClientApolloClientDisplayCharacteristics {
         #if os(macOS)
         let colorSpace = currentMacScreen()?.colorSpace?.cgColorSpace
         let gamut = gamut(for: colorSpace)
         let transfer = transfer(for: colorSpace, hdrEnabled: hdrEnabled)
-        return .init(gamut: gamut, transfer: transfer)
+        return .init(
+            gamut: gamut,
+            transfer: transfer,
+            scalePercent: scalePercent,
+            hiDPIEnabled: hiDPIEnabled
+        )
         #elseif os(iOS) || os(tvOS)
         let screen = currentUIKitScreen() ?? UIScreen.main
         let gamut = gamut(for: screen.traitCollection.displayGamut)
         let transfer: ShadowClientApolloClientDisplayTransfer = hdrEnabled ? .pq : .sdr
-        return .init(gamut: gamut, transfer: transfer)
+        return .init(
+            gamut: gamut,
+            transfer: transfer,
+            scalePercent: scalePercent,
+            hiDPIEnabled: hiDPIEnabled
+        )
         #else
-        return .init(gamut: .sRGB, transfer: hdrEnabled ? .pq : .sdr)
+        return .init(
+            gamut: .sRGB,
+            transfer: hdrEnabled ? .pq : .sdr,
+            scalePercent: scalePercent,
+            hiDPIEnabled: hiDPIEnabled
+        )
         #endif
     }
 

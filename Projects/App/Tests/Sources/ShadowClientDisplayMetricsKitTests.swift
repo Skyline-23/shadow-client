@@ -40,8 +40,8 @@ func displayMetricsKitPrefersViewportMetricsWhenAvailable() {
     #expect(geometry.scalePercent == 200)
 }
 
-@Test("Retina auto launch settings keep logical iOS render size and expose scale factor")
-func retinaAutoLaunchSettingsExposeIOSScaleFactor() {
+@Test("Retina auto launch settings keep logical render size and expose scale intent")
+func retinaAutoLaunchSettingsExposeScaleIntent() {
     let settings = ShadowClientLaunchSettingsKit.resolvedLaunchSettings(
         currentSettings: ShadowClientAppSettings(
             resolution: .retinaAuto,
@@ -64,6 +64,34 @@ func retinaAutoLaunchSettingsExposeIOSScaleFactor() {
     #expect(settings.width == 1048)
     #expect(settings.height == 970)
     #expect(settings.resolutionScalePercent == 200)
+    #expect(settings.requestHiDPI)
+}
+
+@Test("Retina auto launch settings keep logical macOS render size instead of physical mode")
+func retinaAutoLaunchSettingsKeepLogicalMacOSRenderSize() {
+    let settings = ShadowClientLaunchSettingsKit.resolvedLaunchSettings(
+        currentSettings: ShadowClientAppSettings(
+            resolution: .retinaAuto,
+            frameRate: .fps60,
+            bitrateKbps: 18_000
+        ),
+        selectedResolution: .retinaAuto,
+        hostApp: nil,
+        networkSignal: nil,
+        localHDRDisplayAvailable: false,
+        viewportMetrics: .init(logicalSize: CGSize(width: 1728, height: 1117), safeAreaInsets: .init()),
+        displayMetrics: .init(
+            scale: 2.0,
+            pixelSize: CGSize(width: 3456, height: 2234),
+            logicalSize: CGSize(width: 1728, height: 1117),
+            safeAreaInsets: .init()
+        )
+    )
+
+    #expect(settings.width == 1728)
+    #expect(settings.height == 1116)
+    #expect(settings.resolutionScalePercent == 200)
+    #expect(settings.requestHiDPI)
 }
 
 @Test("Display metrics kit preserves fallback safe area insets when the viewport has not been laid out yet")

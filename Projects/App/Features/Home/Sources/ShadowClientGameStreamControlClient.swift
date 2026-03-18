@@ -1198,6 +1198,8 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         if settings.preferVirtualDisplay {
             parameters["virtualDisplay"] = "1"
         }
+        parameters["clientDisplayScalePercent"] = "\(settings.resolutionScalePercent)"
+        parameters["clientDisplayHiDPI"] = settings.requestHiDPI ? "1" : "0"
         if settings.resolutionScalePercent != 100 {
             parameters["scaleFactor"] = "\(settings.resolutionScalePercent)"
         }
