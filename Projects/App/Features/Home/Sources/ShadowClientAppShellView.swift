@@ -551,7 +551,7 @@ func refreshRemoteDesktopCatalog(force: Bool = false) {
         }
         let candidates = ShadowClientHostCatalogKit.refreshCandidates(
             autoFindHosts: autoFindHosts,
-            discoveredHosts: hostDiscoveryRuntime.hosts.map(\.host),
+            discoveredHosts: hostDiscoveryRuntime.hosts.map(\.probeCandidate),
             cachedHosts: remoteDesktopRuntime.hosts.flatMap { descriptor in
                 descriptor.routes.allEndpoints.map { endpoint in
                     if endpoint.httpsPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort {
