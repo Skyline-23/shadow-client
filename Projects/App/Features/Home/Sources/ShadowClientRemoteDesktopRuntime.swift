@@ -5410,16 +5410,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private static func shouldPublishHostDescriptor(
         _ descriptor: ShadowClientRemoteHostDescriptor
     ) -> Bool {
-        guard normalizedUniqueID(descriptor.uniqueID) == nil,
-              let lastError = descriptor.lastError?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased(),
-              lastError.contains("certificate mismatch")
-        else {
-            return true
-        }
-
-        return false
+        return true
     }
 
     private static func normalizedPersistedHosts(

@@ -1692,6 +1692,48 @@ func remoteDesktopRuntimeDoesNotReusePinnedCertificateForUnrelatedPreferredApoll
     #expect(apolloRequest?.pinnedServerCertificateDER == nil)
 }
 
+@Test("Remote desktop runtime still publishes hosts that fail with a certificate mismatch during discovery")
+@MainActor
+func remoteDesktopRuntimePublishesCertificateMismatchHosts() async {
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.52": .init(
+                host: "192.168.0.52",
+                displayName: "Skyline23-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "PC-HOST"
+            ),
+        ],
+        appListByHost: [:],
+        serverInfoFailureByHost: [
+            "buseongs-macbook-pro-14.local:48984": .responseRejected(
+                code: 401,
+                message: "Server certificate mismatch"
+            ),
+        ]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient()
+    )
+
+    runtime.refreshHosts(
+        candidates: ["192.168.0.52", "buseongs-macbook-pro-14.local:48984"],
+        preferredHost: "buseongs-macbook-pro-14.local:48984"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(runtime.hosts.count == 2)
+    let apolloHost = runtime.hosts.first(where: { $0.host == "buseongs-macbook-pro-14.local" })
+    #expect(apolloHost?.httpsPort == 48984)
+    #expect(apolloHost?.lastError == "Host rejected request (401): Server certificate mismatch")
+}
+
 @Test("Remote desktop runtime skips probing routes rejected for certificate mismatch on subsequent refreshes")
 @MainActor
 func remoteDesktopRuntimeSkipsRejectedCertificateRoutesOnRefresh() async {
@@ -2122,6 +2164,7 @@ private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient
 
     private let serverInfoByHost: [String: ShadowClientGameStreamServerInfo]
     private let appListByHost: [String: [ShadowClientRemoteAppDescriptor]]
+    private let serverInfoFailureByHost: [String: ShadowClientGameStreamError]
     private let appListFailureByHost: [String: ShadowClientGameStreamError]
     private var serverInfoHosts: [String] = []
     private var serverInfoRequests: [ServerInfoRequest] = []
@@ -2129,10 +2172,12 @@ private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient
     init(
         serverInfoByHost: [String: ShadowClientGameStreamServerInfo],
         appListByHost: [String: [ShadowClientRemoteAppDescriptor]],
+        serverInfoFailureByHost: [String: ShadowClientGameStreamError] = [:],
         appListFailureByHost: [String: ShadowClientGameStreamError] = [:]
     ) {
         self.serverInfoByHost = serverInfoByHost
         self.appListByHost = appListByHost
+        self.serverInfoFailureByHost = serverInfoFailureByHost
         self.appListFailureByHost = appListFailureByHost
     }
 
@@ -2148,6 +2193,9 @@ private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient
         serverInfoRequests.append(
             .init(host: host, pinnedServerCertificateDER: pinnedServerCertificateDER)
         )
+        if let error = serverInfoFailureByHost[host] {
+            throw error
+        }
         if let info = serverInfoByHost[host] {
             return info
         }
