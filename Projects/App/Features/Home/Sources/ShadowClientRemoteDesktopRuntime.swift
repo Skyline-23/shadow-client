@@ -752,7 +752,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             let info = try ShadowClientGameStreamXMLParsers.parseServerInfo(
                 xml: httpXML,
                 host: endpoint.host,
-                fallbackHTTPSPort: defaultHTTPSPort
+                fallbackHTTPSPort: endpoint.port
             )
             await registerServerIdentity(
                 info: info,
@@ -765,7 +765,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         do {
             let httpsXML = try await requestXML(
                 host: endpoint.host,
-                port: defaultHTTPSPort,
+                port: endpoint.port,
                 scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
                 command: "serverinfo",
                 overridePinnedCertificateDER: pinnedCertificateDER
@@ -774,7 +774,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             let info = try ShadowClientGameStreamXMLParsers.parseServerInfo(
                 xml: httpsXML,
                 host: endpoint.host,
-                fallbackHTTPSPort: defaultHTTPSPort
+                fallbackHTTPSPort: endpoint.port
             )
             await registerServerIdentity(
                 info: info,
@@ -793,7 +793,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                 if Self.shouldSkipPlainHTTPFallback(host: endpoint.host, httpsError: httpsError) {
                     return Self.makeUnauthorizedServerInfo(
                         host: endpoint.host,
-                        fallbackHTTPSPort: defaultHTTPSPort
+                        fallbackHTTPSPort: endpoint.port
                     )
                 }
                 do {
@@ -808,7 +808,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                     let info = try ShadowClientGameStreamXMLParsers.parseServerInfo(
                         xml: httpXML,
                         host: endpoint.host,
-                        fallbackHTTPSPort: defaultHTTPSPort
+                        fallbackHTTPSPort: endpoint.port
                     )
                     await registerServerIdentity(
                         info: info,
@@ -820,14 +820,14 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                     if Self.isAppTransportSecurityBlockedError(httpError) {
                         return Self.makeUnauthorizedServerInfo(
                             host: endpoint.host,
-                            fallbackHTTPSPort: defaultHTTPSPort
+                            fallbackHTTPSPort: endpoint.port
                         )
                     }
                 } catch {}
 
                 return Self.makeUnauthorizedServerInfo(
                     host: endpoint.host,
-                    fallbackHTTPSPort: defaultHTTPSPort
+                    fallbackHTTPSPort: endpoint.port
                 )
             }
 
@@ -846,7 +846,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                 let info = try ShadowClientGameStreamXMLParsers.parseServerInfo(
                     xml: httpXML,
                     host: endpoint.host,
-                    fallbackHTTPSPort: defaultHTTPSPort
+                    fallbackHTTPSPort: endpoint.port
                 )
                 await registerServerIdentity(
                     info: info,
@@ -4411,13 +4411,17 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             ) {
                 return preservedDescriptor
             }
+            let parsedRoute = parsedCandidateRoute(host)
+            let fallbackHost = parsedRoute?.host ?? host
+            let fallbackHTTPSPort = parsedRoute?.port
+                ?? ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
             return ShadowClientRemoteHostDescriptor(
-                host: host,
-                displayName: host,
+                host: fallbackHost,
+                displayName: fallbackHost,
                 pairStatus: .unknown,
                 currentGameID: 0,
                 serverState: "",
-                httpsPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort,
+                httpsPort: fallbackHTTPSPort,
                 appVersion: nil,
                 gfeVersion: nil,
                 uniqueID: nil,
@@ -4889,7 +4893,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         var candidates: [ShadowClientPairHostCandidate] = []
 
         if let preferredPairHost {
-            candidates.append(.init(host: preferredPairHost, httpsPort: selectedHost.httpsPort))
+            let parsedRoute = parsedCandidateRoute(preferredPairHost)
+            candidates.append(
+                .init(
+                    host: parsedRoute?.host ?? preferredPairHost,
+                    httpsPort: parsedRoute?.port ?? selectedHost.httpsPort
+                )
+            )
         }
 
         if let uniqueID = selectedHost.uniqueID, !uniqueID.isEmpty {
@@ -4901,7 +4911,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         candidates.append(
             contentsOf: latestHostCandidates.map {
-                .init(host: $0, httpsPort: selectedHost.httpsPort)
+                let parsedRoute = parsedCandidateRoute($0)
+                return .init(
+                    host: parsedRoute?.host ?? $0,
+                    httpsPort: parsedRoute?.port ?? selectedHost.httpsPort
+                )
             }
         )
         candidates.append(.init(host: selectedHost.host, httpsPort: selectedHost.httpsPort))

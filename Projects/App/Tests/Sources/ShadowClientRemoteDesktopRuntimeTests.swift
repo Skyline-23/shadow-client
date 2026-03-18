@@ -307,6 +307,57 @@ func metadataClientUsesHTTPSFirstForPinnedHosts() async throws {
     )
 }
 
+@Test("Metadata client preserves explicit custom HTTPS ports for pinned hosts")
+func metadataClientUsesExplicitCustomHTTPSPortsForPinnedHosts() async throws {
+    let defaultsSuite = "shadow-client.metadata.serverinfo.custom-https-port.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "apollo-host.example.invalid")
+
+    let transport = ScriptedRequestTransport(
+        script: [
+            .init(
+                scheme: "https",
+                command: "serverinfo",
+                expectedPort: 48984,
+                result: .success(
+                    """
+                    <root status_code="200">
+                        <hostname>Apollo-Mac</hostname>
+                        <PairStatus>1</PairStatus>
+                        <currentgame>0</currentgame>
+                        <state>SUNSHINE_SERVER_FREE</state>
+                        <HttpsPort>48984</HttpsPort>
+                    </root>
+                    """
+                )
+            ),
+        ]
+    )
+
+    let client = NativeGameStreamMetadataClient(
+        identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: pinnedStore,
+        transport: transport
+    )
+
+    let info = try await client.fetchServerInfo(host: "apollo-host.example.invalid:48984")
+    #expect(info.displayName == "Apollo-Mac")
+    #expect(info.httpsPort == 48984)
+    #expect(
+        await transport.callsWithPort() == [
+            .init(scheme: "https", command: "serverinfo", port: 48984),
+        ]
+    )
+}
+
 @Test("Metadata client keeps pinned HTTPS authorization failures on HTTPS without HTTP fallback")
 func metadataClientKeepsPinnedUnauthorizedServerInfoFailuresOnHTTPS() async throws {
     let defaultsSuite = "shadow-client.metadata.applist.\(UUID().uuidString)"
