@@ -2879,21 +2879,23 @@ func realtimeRuntimeTransientDecoderErrorsDoNotAbortRecovery() {
     )
 }
 
-@Test("Realtime runtime video presentation delay uses current audio route drain budget")
-func realtimeRuntimeVideoPresentationDelayUsesCurrentAudioRouteDrainBudget() {
+@Test("Realtime runtime diagnostics input latency uses the current frame interval budget")
+func realtimeRuntimeDiagnosticsInputLatencyUsesCurrentFrameIntervalBudget() {
     let timingBudget = ShadowClientAudioOutputTimingBudget(
         outputLatencySeconds: 0.163,
         ioBufferDurationSeconds: 0.005
     )
 
-    let delay = ShadowClientRealtimeRTSPSessionRuntime.videoPresentationDelaySeconds(
-        timingBudget: timingBudget,
-        audioPendingDurationSeconds: 0,
+    let estimatedLatency = ShadowClientSessionDiagnosticsPresentationKit.estimatedInputLatencyMs(
+        controlRoundTripMs: 0,
+        targetBufferMs: 0,
+        audioPendingDurationMs: 0,
         estimatedVideoFPS: 60,
-        defaultVideoFPS: 60
+        defaultFPS: 60,
+        timingBudget: timingBudget,
     )
 
-    #expect(delay == 0)
+    #expect(estimatedLatency == 17)
 }
 
 private let nvVideoPacketFlagContainsPicData: UInt8 = 0x01

@@ -635,14 +635,12 @@ func audioReadyPacketsAreRequeuedForPendingOutputPressure() {
     let shouldRequeue = ShadowClientRealtimeAudioSessionRuntime
         .shouldRequeueReadyPacketsForPendingOutputPressure(
             pendingOutputDurationMs: 121,
-            realtimePendingDurationCapMs: 120,
-            isStartupPressureGraceActive: false
+            realtimePendingDurationCapMs: 120
         )
     let shouldNotRequeue = ShadowClientRealtimeAudioSessionRuntime
         .shouldRequeueReadyPacketsForPendingOutputPressure(
             pendingOutputDurationMs: 120,
-            realtimePendingDurationCapMs: 120,
-            isStartupPressureGraceActive: false
+            realtimePendingDurationCapMs: 120
         )
 
     #expect(shouldRequeue)
@@ -653,13 +651,11 @@ func audioReadyPacketsAreRequeuedForPendingOutputPressure() {
 func audioReadyPacketsAreRequeuedWhenOutputSlotsUnavailable() {
     let shouldRequeue = ShadowClientRealtimeAudioSessionRuntime
         .shouldRequeueReadyPacketsForUnavailableOutputSlots(
-            availableOutputSlots: 0,
-            isStartupPressureGraceActive: false
+            availableOutputSlots: 0
         )
     let shouldNotRequeue = ShadowClientRealtimeAudioSessionRuntime
         .shouldRequeueReadyPacketsForUnavailableOutputSlots(
-            availableOutputSlots: 1,
-            isStartupPressureGraceActive: false
+            availableOutputSlots: 1
         )
 
     #expect(shouldRequeue)
@@ -674,8 +670,7 @@ func audioDecodeCooldownGateRequiresBurstThresholdInsideWindow() {
             firstOutputQueuePressureDropUptime: 9.4,
             outputQueuePressureDropCount: 8,
             dropWindowSeconds: 1.0,
-            burstThreshold: 8,
-            isStartupPressureGraceActive: false
+            burstThreshold: 8
         )
     )
     #expect(
@@ -684,8 +679,7 @@ func audioDecodeCooldownGateRequiresBurstThresholdInsideWindow() {
             firstOutputQueuePressureDropUptime: 9.4,
             outputQueuePressureDropCount: 7,
             dropWindowSeconds: 1.0,
-            burstThreshold: 8,
-            isStartupPressureGraceActive: false
+            burstThreshold: 8
         )
     )
 }
@@ -698,35 +692,31 @@ func audioDecodeCooldownGateSuppressesStaleBursts() {
             firstOutputQueuePressureDropUptime: 8.5,
             outputQueuePressureDropCount: 12,
             dropWindowSeconds: 1.0,
-            burstThreshold: 8,
-            isStartupPressureGraceActive: false
+            burstThreshold: 8
         )
     )
 }
 
-@Test("Audio startup pressure grace suppresses drop and cooldown gates")
-func audioStartupPressureGraceSuppressesDropAndCooldownGates() {
+@Test("Audio pending pressure and cooldown gates remain deterministic without startup grace overrides")
+func audioPendingPressureAndCooldownGatesRemainDeterministic() {
     #expect(
-        !ShadowClientRealtimeAudioSessionRuntime.shouldRequeueReadyPacketsForPendingOutputPressure(
+        ShadowClientRealtimeAudioSessionRuntime.shouldRequeueReadyPacketsForPendingOutputPressure(
             pendingOutputDurationMs: 240,
-            realtimePendingDurationCapMs: 30,
-            isStartupPressureGraceActive: true
+            realtimePendingDurationCapMs: 30
         )
     )
     #expect(
-        !ShadowClientRealtimeAudioSessionRuntime.shouldRequeueReadyPacketsForUnavailableOutputSlots(
-            availableOutputSlots: 0,
-            isStartupPressureGraceActive: true
+        ShadowClientRealtimeAudioSessionRuntime.shouldRequeueReadyPacketsForUnavailableOutputSlots(
+            availableOutputSlots: 0
         )
     )
     #expect(
-        !ShadowClientRealtimeAudioSessionRuntime.shouldActivateAudioDecodeCooldown(
+        ShadowClientRealtimeAudioSessionRuntime.shouldActivateAudioDecodeCooldown(
             now: 10.0,
             firstOutputQueuePressureDropUptime: 9.4,
             outputQueuePressureDropCount: 12,
             dropWindowSeconds: 1.0,
-            burstThreshold: 8,
-            isStartupPressureGraceActive: true
+            burstThreshold: 8
         )
     )
 }
