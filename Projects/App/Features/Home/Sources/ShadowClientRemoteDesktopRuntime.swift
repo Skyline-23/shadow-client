@@ -4972,6 +4972,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         host.allSatisfy { $0.isNumber || $0 == "." || $0 == ":" }
     }
 
+    private static func isLoopbackRouteHost(_ host: String) -> Bool {
+        ShadowClientRemoteHostCandidateFilter.isLoopbackHost(
+            host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        )
+    }
+
     private static func isLinkLocalRouteHost(_ host: String) -> Bool {
         ShadowClientRemoteHostCandidateFilter.isLinkLocalHost(
             host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -4984,6 +4990,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     ) -> Int {
         let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalized.isEmpty else {
+            return 100
+        }
+        if isLoopbackRouteHost(normalized) {
             return 100
         }
         if isLinkLocalRouteHost(normalized) {
@@ -5165,6 +5174,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     private static func serializedHostCandidate(for endpoint: ShadowClientRemoteHostEndpoint) -> String {
         let normalizedHost = endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !ShadowClientRemoteHostCandidateFilter.isLoopbackHost(normalizedHost.lowercased()) else {
+            return ""
+        }
         guard endpoint.httpsPort != ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort else {
             return normalizedHost
         }
@@ -5184,6 +5196,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let urlCandidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(trimmed)
         guard let parsed = URL(string: urlCandidate), let host = parsed.host else {
             return trimmed.lowercased()
+        }
+        guard !ShadowClientRemoteHostCandidateFilter.isLoopbackHost(host.lowercased()) else {
+            return nil
         }
 
         if let port = parsed.port {
@@ -5670,6 +5685,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         hostAliasesByHost: [String: Set<String>] = [:]
     ) -> Set<String> {
         host.routes.allEndpoints.reduce(into: Set<String>()) { partialResult, endpoint in
+            guard !isLoopbackRouteHost(endpoint.host) else {
+                return
+            }
             partialResult.formUnion(hostAliases(for: endpoint.host, hostAliasesByHost: hostAliasesByHost))
         }
     }
@@ -5691,12 +5709,15 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         preferredRoute: String?,
         hostAliasesByHost: [String: Set<String>]
     ) -> ShadowClientRemoteHostRoutes {
-        let local = group.compactMap(\.routes.local).first
+        let local = group.compactMap(\.routes.local).first(where: { !isLoopbackRouteHost($0.host) })
         let remote = group.compactMap(\.routes.remote).first
         let manual = group.compactMap(\.routes.manual).first
         let candidateRoutes = group
             .flatMap { $0.routes.allEndpoints }
             .reduce(into: [ShadowClientRemoteHostEndpoint]()) { partialResult, endpoint in
+                guard !isLoopbackRouteHost(endpoint.host) else {
+                    return
+                }
                 guard !partialResult.contains(where: { $0 == endpoint }) else {
                     return
                 }
