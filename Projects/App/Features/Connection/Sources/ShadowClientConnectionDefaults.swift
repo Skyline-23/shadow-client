@@ -8,6 +8,7 @@ public enum ShadowClientGameStreamNetworkDefaults {
     public static let defaultHTTPPort = 47_989
     public static let defaultHTTPSPort = 47_984
     public static let httpHTTPSPortOffset = defaultHTTPPort - defaultHTTPSPort
+    public static let httpsOffsetFromHTTPPort = defaultHTTPSPort - defaultHTTPPort
     public static let defaultServicePorts: [Int] = [
         defaultHTTPSPort,
         defaultHTTPPort,
@@ -26,8 +27,24 @@ public enum ShadowClientGameStreamNetworkDefaults {
         httpsPort + httpHTTPSPortOffset
     }
 
+    public static func mappedHTTPPort(forHTTPSPort httpsPort: Int) -> Int? {
+        let mappedPort = httpPort(forHTTPSPort: httpsPort)
+        guard (minimumPort...maximumPort).contains(mappedPort) else {
+            return nil
+        }
+        return mappedPort
+    }
+
     public static func httpsPort(forHTTPPort httpPort: Int) -> Int {
         httpPort - httpHTTPSPortOffset
+    }
+
+    public static func mappedHTTPSPort(forHTTPPort httpPort: Int) -> Int? {
+        let mappedPort = httpsPort(forHTTPPort: httpPort)
+        guard (minimumPort...maximumPort).contains(mappedPort) else {
+            return nil
+        }
+        return mappedPort
     }
 
     public static func canonicalHTTPSPort(fromCandidatePort port: Int) -> Int {

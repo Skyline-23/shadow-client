@@ -115,7 +115,7 @@ var remoteSessionFlowView: some View {
                                 )
                         }
                         .buttonStyle(.plain)
-                        .disabled(remoteDesktopRuntime.isClearingActiveSession)
+                        .disabled(remoteDesktopRuntime.launchState.isTransitioning)
                         .accessibilityIdentifier("shadow.remote.session.terminate")
                         .accessibilityLabel("Terminate Remote Session")
                         .background(

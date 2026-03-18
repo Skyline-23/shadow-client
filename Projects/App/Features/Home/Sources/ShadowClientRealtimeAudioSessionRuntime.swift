@@ -56,6 +56,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         category: "RealtimeAudio"
     )
     private let stateDidChange: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)?
+    private let pendingDurationDidChange: (@Sendable (Double) async -> Void)?
     private let connectionQueue = DispatchQueue(
         label: "com.skyline23.shadowclient.realtime-audio.connection"
     )
@@ -75,9 +76,11 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     private var state: ShadowClientRealtimeAudioOutputState = .idle
 
     public init(
-        stateDidChange: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)? = nil
+        stateDidChange: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)? = nil,
+        pendingDurationDidChange: (@Sendable (Double) async -> Void)? = nil
     ) {
         self.stateDidChange = stateDidChange
+        self.pendingDurationDidChange = pendingDurationDidChange
     }
 
     deinit {
@@ -91,7 +94,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         preferredLocalPort: UInt16?,
         track: ShadowClientRTSPAudioTrackDescriptor?,
         pingPayload: Data?,
-        encryption: ShadowClientRealtimeAudioEncryptionConfiguration? = nil
+        encryption: ShadowClientRealtimeAudioEncryptionConfiguration? = nil,
+        existingConnection: NWConnection? = nil
     ) async throws {
         stop()
         updateState(.starting)
@@ -177,7 +181,8 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 remoteHost: remoteHost,
                 remotePort: remotePort,
                 localHost: localHost,
-                preferredLocalPort: preferredLocalPort
+                preferredLocalPort: preferredLocalPort,
+                existingConnection: existingConnection
             )
             connection = udpConnection
             jitterBuffer.reset(preferredPayloadType: resolvedTrack.rtpPayloadType)
@@ -282,9 +287,14 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         decoder = nil
         payloadDecryptor = nil
         jitterBuffer.reset(preferredPayloadType: nil)
+        notifyPendingDurationChanged(0)
         if emitIdleState {
             updateState(.idle)
         }
+    }
+
+    func updateVideoRenderingState(isRendering: Bool) {
+        output?.updateVideoRenderingState(isRendering: isRendering)
     }
 
     private func startDecodeLoop(
@@ -958,8 +968,17 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         remoteHost: NWEndpoint.Host,
         remotePort: NWEndpoint.Port,
         localHost: NWEndpoint.Host?,
-        preferredLocalPort: UInt16?
+        preferredLocalPort: UInt16?,
+        existingConnection: NWConnection?
     ) async throws -> NWConnection {
+        if let existingConnection {
+            logLocalEndpoint(
+                existingConnection,
+                messagePrefix: "Audio UDP socket reused"
+            )
+            return existingConnection
+        }
+
         func makeParameters(localPort: UInt16?) -> NWParameters {
             let parameters = NWParameters.udp
             if let localHost {
@@ -1132,6 +1151,15 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         }
         Task {
             await stateDidChange(nextState)
+        }
+    }
+
+    private func notifyPendingDurationChanged(_ pendingDurationMs: Double) {
+        guard let pendingDurationDidChange else {
+            return
+        }
+        Task {
+            await pendingDurationDidChange(pendingDurationMs)
         }
     }
 
@@ -2186,6 +2214,11 @@ protocol ShadowClientRealtimeAudioOutput: AnyObject, Sendable {
     func recoverPlaybackUnderPressure() -> Bool
     var usesSystemManagedBuffering: Bool { get }
     var debugFormatDescription: String { get }
+    func updateVideoRenderingState(isRendering: Bool)
+}
+
+extension ShadowClientRealtimeAudioOutput {
+    func updateVideoRenderingState(isRendering _: Bool) {}
 }
 
 private protocol ShadowClientRealtimeAudioPacketDecoding {
@@ -2574,710 +2607,6 @@ private final class ShadowClientRealtimeG711AudioDecoder: ShadowClientRealtimeAu
         return Int16(sign * magnitude)
     }
 }
-
-#if os(iOS) || os(tvOS) || os(macOS)
-// Safety invariant: sample-buffer rendering state is confined to `rendererQueue`,
-// while backpressure accounting is actor-isolated in `BudgetState`.
-final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, ShadowClientRealtimeAudioOutput {
-    private static let logger = Logger(
-        subsystem: "com.skyline23.shadow-client",
-        category: "RealtimeSampleBufferAudio"
-    )
-    private static let millisecondsPerSecond = 1_000.0
-
-    private actor BudgetState {
-        private let sampleRate: Double
-        private let nominalFramesPerBuffer: Double
-        private let maximumQueuedFrameEstimate: Double
-        private var queuedFrameEstimate: Double = 0
-        private var lastObservedTime: CMTime?
-
-        init(
-            sampleRate: Double,
-            nominalFramesPerBuffer: Double,
-            maximumQueuedFrameEstimate: Double
-        ) {
-            self.sampleRate = sampleRate
-            self.nominalFramesPerBuffer = nominalFramesPerBuffer
-            self.maximumQueuedFrameEstimate = maximumQueuedFrameEstimate
-        }
-
-        func reserve(
-            incomingFrameCount: Double,
-            currentTime: CMTime
-        ) -> Bool {
-            advance(to: currentTime)
-            guard queuedFrameEstimate + incomingFrameCount <= maximumQueuedFrameEstimate else {
-                return false
-            }
-            queuedFrameEstimate += incomingFrameCount
-            return true
-        }
-
-        func rollback(incomingFrameCount: Double) {
-            queuedFrameEstimate = max(0, queuedFrameEstimate - incomingFrameCount)
-        }
-
-        func pendingDurationMs(currentTime: CMTime) -> Double {
-            advance(to: currentTime)
-            guard sampleRate > 0 else {
-                return 0
-            }
-            return (queuedFrameEstimate / sampleRate) * 1_000.0
-        }
-
-        func availableEnqueueSlots(currentTime: CMTime) -> Int {
-            advance(to: currentTime)
-            let remainingFrames = max(0, maximumQueuedFrameEstimate - queuedFrameEstimate)
-            return max(0, Int((remainingFrames / nominalFramesPerBuffer).rounded(.down)))
-        }
-
-        func hasCapacity(currentTime: CMTime) -> Bool {
-            advance(to: currentTime)
-            return queuedFrameEstimate < maximumQueuedFrameEstimate
-        }
-
-        func reset(currentTime: CMTime?) {
-            queuedFrameEstimate = 0
-            lastObservedTime = currentTime
-        }
-
-        private func advance(to currentTime: CMTime) {
-            guard currentTime.isValid, currentTime.isNumeric else {
-                lastObservedTime = nil
-                return
-            }
-            guard let lastObservedTime,
-                  lastObservedTime.isValid,
-                  lastObservedTime.isNumeric
-            else {
-                self.lastObservedTime = currentTime
-                return
-            }
-            let delta = CMTimeGetSeconds(currentTime) - CMTimeGetSeconds(lastObservedTime)
-            guard delta > 0 else {
-                self.lastObservedTime = currentTime
-                return
-            }
-            queuedFrameEstimate = max(0, queuedFrameEstimate - (delta * sampleRate))
-            self.lastObservedTime = currentTime
-        }
-    }
-
-    private struct PendingSampleBuffer {
-        let sampleBuffer: CMSampleBuffer
-    }
-
-    private let inputFormat: AVAudioFormat
-    private let renderFormat: AVAudioFormat
-    private let rendererQueue = DispatchQueue(
-        label: "com.skyline23.shadow-client.audio-sample-buffer-renderer",
-        qos: .userInitiated
-    )
-    private let renderer = AVSampleBufferAudioRenderer()
-    private let synchronizer = AVSampleBufferRenderSynchronizer()
-    private let formatDescription: CMAudioFormatDescription
-    private let budgetState: BudgetState
-    private let nominalFramesPerBufferEstimate: Double
-    private var pendingSampleBuffers: [PendingSampleBuffer] = []
-    private var nextPresentationTime: CMTime = .zero
-    private var hasStartedTimeline = false
-    private var isTerminated = false
-    private var hasLoggedFirstQueuedSample = false
-    private var hasLoggedFirstRendererEnqueue = false
-    private var flushTask: Task<Void, Never>?
-    private var outputConfigurationTask: Task<Void, Never>?
-
-    init(
-        format: AVAudioFormat,
-        maximumQueuedBufferCount: Int,
-        nominalFramesPerBuffer: AVAudioFrameCount,
-        maximumPendingDurationMs: Double,
-        prefersSpatialHeadphoneRendering _: Bool
-    ) throws {
-        inputFormat = format
-        renderFormat = try Self.makeRendererFormat(from: format)
-        let nominalFrames = max(1, Double(nominalFramesPerBuffer))
-        let boundedMaximumPendingDurationMs = max(1, maximumPendingDurationMs)
-        let maximumPendingFramesFromDuration = max(
-            nominalFrames,
-            (renderFormat.sampleRate * boundedMaximumPendingDurationMs / 1_000.0).rounded(.up)
-        )
-        let maximumPendingFramesFromCount = nominalFrames * Double(max(1, maximumQueuedBufferCount))
-        let maximumQueuedFrameEstimate = min(
-            maximumPendingFramesFromCount,
-            max(nominalFrames, maximumPendingFramesFromDuration)
-        )
-        nominalFramesPerBufferEstimate = nominalFrames
-        budgetState = BudgetState(
-            sampleRate: renderFormat.sampleRate,
-            nominalFramesPerBuffer: nominalFrames,
-            maximumQueuedFrameEstimate: maximumQueuedFrameEstimate
-        )
-        formatDescription = try Self.makeFormatDescription(for: renderFormat)
-
-        renderer.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
-        renderer.volume = 1
-        renderer.isMuted = false
-        synchronizer.addRenderer(renderer)
-        synchronizer.delaysRateChangeUntilHasSufficientMediaData = false
-        synchronizer.rate = 0
-
-        rendererQueue.sync {
-            startFeedingLocked()
-            logRendererDiagnosticsLocked(reason: "configured")
-        }
-        startRendererNotificationMonitoring()
-        Self.logger.notice(
-            "Sample buffer audio backend configured routes=[\(Self.currentRouteSummary(), privacy: .public)] spatial-formats=\(String(describing: self.renderer.allowedAudioSpatializationFormats), privacy: .public)"
-        )
-    }
-
-    deinit {
-        stop()
-    }
-
-    func enqueue(pcmBuffer: AVAudioPCMBuffer) async -> Bool {
-        let frameCount = max(1, Double(pcmBuffer.frameLength))
-        let currentTime = rendererQueue.sync { currentSynchronizerTimeLocked() }
-        guard await budgetState.reserve(
-            incomingFrameCount: frameCount,
-            currentTime: currentTime
-        ) else {
-            return false
-        }
-
-        let queued = rendererQueue.sync {
-            guard !isTerminated else {
-                return false
-            }
-            guard let sampleBuffer = makeSampleBuffer(
-                from: pcmBuffer,
-                formatDescription: formatDescription,
-                presentationTimeStamp: nextPresentationTime
-            ) else {
-                Self.logger.error(
-                    "Sample buffer audio enqueue failed to create CMSampleBuffer frames=\(pcmBuffer.frameLength, privacy: .public)"
-                )
-                return false
-            }
-
-            if !hasLoggedFirstQueuedSample {
-                hasLoggedFirstQueuedSample = true
-                Self.logger.notice(
-                    "Sample buffer audio queued first sample pts=\(CMTimeGetSeconds(self.nextPresentationTime), privacy: .public)s frames=\(pcmBuffer.frameLength, privacy: .public) renderer-ready=\(self.renderer.isReadyForMoreMediaData, privacy: .public) sample-ready=\(CMSampleBufferDataIsReady(sampleBuffer), privacy: .public)"
-                )
-                logRendererDiagnosticsLocked(reason: "first-queued-sample")
-            }
-            pendingSampleBuffers.append(PendingSampleBuffer(sampleBuffer: sampleBuffer))
-            nextPresentationTime = CMTimeAdd(
-                nextPresentationTime,
-                CMTime(
-                    value: CMTimeValue(pcmBuffer.frameLength),
-                    timescale: CMTimeScale(max(1, Int32(renderFormat.sampleRate.rounded())))
-                )
-            )
-            startFeedingLocked()
-            drainPendingSampleBuffersLocked()
-            startTimelineIfNeededLocked()
-            return true
-        }
-
-        if !queued {
-            await budgetState.rollback(incomingFrameCount: frameCount)
-        }
-        return queued
-    }
-
-    func hasEnqueueCapacity() async -> Bool {
-        let currentTime = rendererQueue.sync { currentSynchronizerTimeLocked() }
-        return await budgetState.hasCapacity(currentTime: currentTime)
-    }
-
-    func pendingDurationMs() async -> Double {
-        let currentTime = rendererQueue.sync { currentSynchronizerTimeLocked() }
-        return await budgetState.pendingDurationMs(currentTime: currentTime)
-    }
-
-    func availableEnqueueSlots() async -> Int {
-        let currentTime = rendererQueue.sync { currentSynchronizerTimeLocked() }
-        return await budgetState.availableEnqueueSlots(currentTime: currentTime)
-    }
-
-    func stop() {
-        flushTask?.cancel()
-        outputConfigurationTask?.cancel()
-        flushTask = nil
-        outputConfigurationTask = nil
-
-        rendererQueue.sync {
-            guard !isTerminated else {
-                return
-            }
-            isTerminated = true
-            renderer.stopRequestingMediaData()
-            renderer.flush()
-            pendingSampleBuffers.removeAll(keepingCapacity: true)
-            synchronizer.rate = 0
-        }
-
-        let budgetState = self.budgetState
-        Task {
-            await budgetState.reset(currentTime: nil)
-        }
-    }
-
-    func recoverPlaybackUnderPressure() -> Bool {
-        rendererQueue.sync {
-            guard !isTerminated else {
-                return false
-            }
-            renderer.stopRequestingMediaData()
-            renderer.flush()
-            pendingSampleBuffers.removeAll(keepingCapacity: true)
-            nextPresentationTime = currentSynchronizerTimeLocked()
-            hasStartedTimeline = synchronizer.rate != 0
-            startFeedingLocked()
-            let budgetState = self.budgetState
-            let currentTime = nextPresentationTime
-            Task {
-                await budgetState.reset(currentTime: currentTime)
-            }
-            return true
-        }
-    }
-
-    var debugFormatDescription: String {
-        let interleaving = renderFormat.isInterleaved ? "interleaved" : "planar"
-        return "AVSampleBufferAudioRenderer/\(String(describing: renderFormat.commonFormat))/\(renderFormat.channelCount)ch/\(Int(renderFormat.sampleRate))Hz/\(interleaving)"
-    }
-
-    var usesSystemManagedBuffering: Bool {
-        true
-    }
-
-    private func startRendererNotificationMonitoring() {
-        flushTask = Task { [weak self] in
-            guard let self else {
-                return
-            }
-            for await notification in NotificationCenter.default.notifications(
-                named: .AVSampleBufferAudioRendererWasFlushedAutomatically,
-                object: renderer
-            ) {
-                guard !Task.isCancelled else {
-                    return
-                }
-                let flushTimeValue = notification.userInfo?[AVSampleBufferAudioRendererFlushTimeKey] as? NSValue
-                let flushTime = flushTimeValue?.timeValue ?? .invalid
-                rendererQueue.async { [weak self] in
-                    self?.handleAutomaticFlushLocked(flushTime: flushTime)
-                }
-            }
-        }
-
-        outputConfigurationTask = Task { [weak self] in
-            guard let self else {
-                return
-            }
-            for await _ in NotificationCenter.default.notifications(
-                named: .AVSampleBufferAudioRendererOutputConfigurationDidChange,
-                object: renderer
-            ) {
-                guard !Task.isCancelled else {
-                    return
-                }
-                rendererQueue.async { [weak self] in
-                    self?.handleOutputConfigurationChangeLocked()
-                }
-            }
-        }
-    }
-
-    private func handleAutomaticFlushLocked(flushTime: CMTime) {
-        guard !isTerminated else {
-            return
-        }
-        renderer.stopRequestingMediaData()
-        renderer.flush()
-        pendingSampleBuffers.removeAll(keepingCapacity: true)
-        let resetTime = flushTime.isValid && flushTime.isNumeric ? flushTime : currentSynchronizerTimeLocked()
-        nextPresentationTime = resetTime
-        hasStartedTimeline = synchronizer.rate != 0
-        startFeedingLocked()
-        let budgetState = self.budgetState
-        Task {
-            await budgetState.reset(currentTime: resetTime)
-        }
-        Self.logger.notice(
-            "Sample buffer audio renderer auto-flushed; resetting at \(CMTimeGetSeconds(resetTime), privacy: .public)s routes=[\(Self.currentRouteSummary(), privacy: .public)]"
-        )
-        logRendererDiagnosticsLocked(reason: "auto-flush")
-    }
-
-    private func handleOutputConfigurationChangeLocked() {
-        guard !isTerminated else {
-            return
-        }
-        renderer.stopRequestingMediaData()
-        renderer.flush()
-        pendingSampleBuffers.removeAll(keepingCapacity: true)
-        let currentTime = currentSynchronizerTimeLocked()
-        nextPresentationTime = currentTime
-        hasStartedTimeline = synchronizer.rate != 0
-        startFeedingLocked()
-        let budgetState = self.budgetState
-        Task {
-            await budgetState.reset(currentTime: currentTime)
-        }
-        Self.logger.notice(
-            "Sample buffer audio output configuration changed; resetting renderer routes=[\(Self.currentRouteSummary(), privacy: .public)]"
-        )
-        logRendererDiagnosticsLocked(reason: "output-configuration-changed")
-    }
-
-    private func startFeedingLocked() {
-        renderer.requestMediaDataWhenReady(on: rendererQueue) { [weak self] in
-            self?.drainPendingSampleBuffersLocked()
-        }
-    }
-
-    private func drainPendingSampleBuffersLocked() {
-        guard !isTerminated else {
-            renderer.stopRequestingMediaData()
-            return
-        }
-        while renderer.isReadyForMoreMediaData,
-              !pendingSampleBuffers.isEmpty
-        {
-            let pendingSampleBuffer = pendingSampleBuffers.removeFirst()
-            renderer.enqueue(pendingSampleBuffer.sampleBuffer)
-            if !hasLoggedFirstRendererEnqueue {
-                hasLoggedFirstRendererEnqueue = true
-                Self.logger.notice(
-                    "Sample buffer audio renderer accepted first sample status=\(String(describing: self.renderer.status), privacy: .public) rate=\(self.synchronizer.rate, privacy: .public) pending=\(self.pendingSampleBuffers.count, privacy: .public)"
-                )
-                logRendererDiagnosticsLocked(reason: "first-renderer-enqueue")
-            }
-            startTimelineIfNeededLocked()
-        }
-    }
-
-    private func startTimelineIfNeededLocked() {
-        let currentTime = currentSynchronizerTimeLocked()
-        let queuedDuration = CMTimeSubtract(nextPresentationTime, currentTime)
-        let startupThreshold = Self.startupThresholdDuration(
-            outputFormat: renderFormat,
-            nominalFramesPerBuffer: nominalFramesPerBufferEstimate
-        )
-        let queuedDurationMeetsStartupThreshold =
-            queuedDuration.isValid &&
-            queuedDuration.isNumeric &&
-            CMTimeCompare(queuedDuration, startupThreshold) >= 0
-        let rendererReadyForStartup = renderer.hasSufficientMediaDataForReliablePlaybackStart ||
-            queuedDurationMeetsStartupThreshold
-        guard rendererReadyForStartup else {
-            return
-        }
-        guard !hasStartedTimeline else {
-            if synchronizer.rate == 0 {
-                synchronizer.setRate(1, time: currentTime)
-            }
-            return
-        }
-        synchronizer.setRate(1, time: currentTime)
-        Self.logger.notice(
-            "Sample buffer audio timeline started rate=\(self.synchronizer.rate, privacy: .public) time=\(CMTimeGetSeconds(currentTime), privacy: .public)s pending=\(self.pendingSampleBuffers.count, privacy: .public) renderer-preroll=\(self.renderer.hasSufficientMediaDataForReliablePlaybackStart, privacy: .public) queued-preroll-ms=\(CMTimeGetSeconds(queuedDuration) * Self.millisecondsPerSecond, privacy: .public) startup-threshold-ms=\(CMTimeGetSeconds(startupThreshold) * Self.millisecondsPerSecond, privacy: .public)"
-        )
-        logRendererDiagnosticsLocked(reason: "timeline-started")
-        hasStartedTimeline = true
-    }
-
-    private func logRendererDiagnosticsLocked(reason: StaticString) {
-        let errorDescription = renderer.error?.localizedDescription ?? "nil"
-        #if os(macOS)
-        let outputDevice = renderer.audioOutputDeviceUniqueID ?? "nil"
-        #else
-        let outputDevice = "unavailable"
-        #endif
-        Self.logger.notice(
-            "Sample buffer renderer diagnostics reason=\(reason, privacy: .public) status=\(String(describing: self.renderer.status), privacy: .public) muted=\(self.renderer.isMuted, privacy: .public) volume=\(self.renderer.volume, privacy: .public) device=\(outputDevice, privacy: .public) error=\(errorDescription, privacy: .public) rendering=[\(Self.currentRenderingSummary(), privacy: .public)] routes=[\(Self.currentRouteSummary(), privacy: .public)]"
-        )
-    }
-
-    private func currentSynchronizerTimeLocked() -> CMTime {
-        let currentTime = synchronizer.currentTime()
-        if currentTime.isValid, currentTime.isNumeric {
-            return currentTime
-        }
-        return nextPresentationTime
-    }
-
-    private static func makeFormatDescription(
-        for format: AVAudioFormat
-    ) throws -> CMAudioFormatDescription {
-        let streamDescription = format.streamDescription
-        var asbd = streamDescription.pointee
-        var formatDescription: CMAudioFormatDescription?
-        let channelLayout = format.channelLayout
-        let layoutSize = channelLayout.map { audioChannelLayoutSize(for: $0) } ?? 0
-        let status = CMAudioFormatDescriptionCreate(
-            allocator: kCFAllocatorDefault,
-            asbd: &asbd,
-            layoutSize: layoutSize,
-            layout: channelLayout?.layout,
-            magicCookieSize: 0,
-            magicCookie: nil,
-            extensions: nil,
-            formatDescriptionOut: &formatDescription
-        )
-        guard status == noErr, let formatDescription else {
-            throw NSError(
-                domain: "ShadowClientRealtimeSampleBufferAudioOutput",
-                code: Int(status),
-                userInfo: [NSLocalizedDescriptionKey: "Failed to create audio format description (\(status))."]
-            )
-        }
-        return formatDescription
-    }
-
-    private static func makeRendererFormat(
-        from format: AVAudioFormat
-    ) throws -> AVAudioFormat {
-        if format.channelCount <= 2,
-           let layout = AVAudioChannelLayout(
-               layoutTag: format.channelCount == 1
-                   ? kAudioChannelLayoutTag_Mono
-                   : kAudioChannelLayoutTag_Stereo
-           ) {
-            let rendererFormat = AVAudioFormat(
-                commonFormat: .pcmFormatFloat32,
-                sampleRate: format.sampleRate,
-                interleaved: true,
-                channelLayout: layout
-            )
-            return rendererFormat
-        }
-
-        let channelLayoutData = format.channelLayout.map {
-            Data(
-                bytes: $0.layout,
-                count: audioChannelLayoutSize(for: $0)
-            )
-        } ?? Self.channelLayoutData(for: Int(format.channelCount))
-
-        guard let channelLayoutData else {
-            Self.logger.error(
-                "Sample buffer renderer format missing channel layout inputChannels=\(format.channelCount, privacy: .public) sampleRate=\(Int(format.sampleRate), privacy: .public)"
-            )
-            throw NSError(
-                domain: "ShadowClientRealtimeSampleBufferAudioOutput",
-                code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "Missing channel layout for renderer format."]
-            )
-        }
-
-        let isFloat = format.commonFormat == .pcmFormatFloat32
-        let bitDepth = isFloat ? 32 : 16
-        guard let rendererFormat = AVAudioFormat(settings: [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: format.sampleRate,
-            AVNumberOfChannelsKey: Int(format.channelCount),
-            AVLinearPCMBitDepthKey: bitDepth,
-            AVLinearPCMIsFloatKey: isFloat,
-            AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsNonInterleaved: false,
-            AVChannelLayoutKey: channelLayoutData,
-        ]) else {
-            throw NSError(
-                domain: "ShadowClientRealtimeSampleBufferAudioOutput",
-                code: 3,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to create renderer LPCM format."]
-            )
-        }
-
-        return rendererFormat
-    }
-
-    private func makeSampleBuffer(
-        from pcmBuffer: AVAudioPCMBuffer,
-        formatDescription: CMAudioFormatDescription,
-        presentationTimeStamp: CMTime
-    ) -> CMSampleBuffer? {
-        guard let renderBuffer = makeRenderPCMBuffer(pcmBuffer) else {
-            return nil
-        }
-        var sampleBuffer: CMSampleBuffer?
-        let createStatus = CMAudioSampleBufferCreateWithPacketDescriptions(
-            allocator: kCFAllocatorDefault,
-            dataBuffer: nil,
-            dataReady: false,
-            makeDataReadyCallback: nil,
-            refcon: nil,
-            formatDescription: formatDescription,
-            sampleCount: CMItemCount(renderBuffer.frameLength),
-            presentationTimeStamp: presentationTimeStamp,
-            packetDescriptions: nil,
-            sampleBufferOut: &sampleBuffer
-        )
-        guard createStatus == noErr, let sampleBuffer else {
-            return nil
-        }
-        let dataStatus = CMSampleBufferSetDataBufferFromAudioBufferList(
-            sampleBuffer,
-            blockBufferAllocator: kCFAllocatorDefault,
-            blockBufferMemoryAllocator: kCFAllocatorDefault,
-            flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
-            bufferList: renderBuffer.audioBufferList
-        )
-        guard dataStatus == noErr else {
-            return nil
-        }
-        let readyStatus = CMSampleBufferSetDataReady(sampleBuffer)
-        guard readyStatus == noErr else {
-            return nil
-        }
-        return sampleBuffer
-    }
-
-    private func makeRenderPCMBuffer(_ pcmBuffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        if pcmBuffer.format == renderFormat {
-            return pcmBuffer
-        }
-
-        guard let convertedBuffer = AVAudioPCMBuffer(
-            pcmFormat: renderFormat,
-            frameCapacity: pcmBuffer.frameLength
-        ) else {
-            return nil
-        }
-        convertedBuffer.frameLength = pcmBuffer.frameLength
-
-        let frameCount = Int(pcmBuffer.frameLength)
-        let channelCount = Int(min(pcmBuffer.format.channelCount, renderFormat.channelCount))
-        guard frameCount > 0, channelCount > 0 else {
-            return nil
-        }
-
-        let outputList = UnsafeMutableAudioBufferListPointer(convertedBuffer.mutableAudioBufferList)
-        switch (renderFormat.commonFormat, pcmBuffer.format.commonFormat) {
-        case (.pcmFormatFloat32, .pcmFormatFloat32):
-            guard let outputBaseAddress = outputList.first?.mData?.assumingMemoryBound(to: Float.self) else {
-                return nil
-            }
-            if pcmBuffer.format.isInterleaved {
-                guard let inputBaseAddress = pcmBuffer.audioBufferList.pointee.mBuffers.mData?.assumingMemoryBound(to: Float.self) else {
-                    return nil
-                }
-                memcpy(outputBaseAddress, inputBaseAddress, frameCount * channelCount * MemoryLayout<Float>.size)
-            } else {
-                guard let inputChannels = pcmBuffer.floatChannelData else {
-                    return nil
-                }
-                for frame in 0 ..< frameCount {
-                    for channel in 0 ..< channelCount {
-                        outputBaseAddress[(frame * channelCount) + channel] = inputChannels[channel][frame]
-                    }
-                }
-            }
-        case (.pcmFormatInt16, .pcmFormatFloat32):
-            guard let outputBaseAddress = outputList.first?.mData?.assumingMemoryBound(to: Int16.self),
-                  let inputChannels = pcmBuffer.floatChannelData else {
-                return nil
-            }
-            for frame in 0 ..< frameCount {
-                for channel in 0 ..< channelCount {
-                    let sample = inputChannels[channel][frame]
-                    let clamped = max(-1.0, min(1.0, sample))
-                    outputBaseAddress[(frame * channelCount) + channel] = Int16(clamped * Float(Int16.max))
-                }
-            }
-        case (.pcmFormatInt16, .pcmFormatInt16):
-            guard let outputBaseAddress = outputList.first?.mData?.assumingMemoryBound(to: Int16.self) else {
-                return nil
-            }
-            if pcmBuffer.format.isInterleaved {
-                guard let inputBaseAddress = pcmBuffer.audioBufferList.pointee.mBuffers.mData?.assumingMemoryBound(to: Int16.self) else {
-                    return nil
-                }
-                memcpy(outputBaseAddress, inputBaseAddress, frameCount * channelCount * MemoryLayout<Int16>.size)
-            } else {
-                guard let inputChannels = pcmBuffer.int16ChannelData else {
-                    return nil
-                }
-                for frame in 0 ..< frameCount {
-                    for channel in 0 ..< channelCount {
-                        outputBaseAddress[(frame * channelCount) + channel] = inputChannels[channel][frame]
-                    }
-                }
-            }
-        default:
-            return nil
-        }
-
-        return convertedBuffer
-    }
-
-    private static func audioChannelLayoutSize(for channelLayout: AVAudioChannelLayout) -> Int {
-        let descriptionCount = max(0, Int(channelLayout.layout.pointee.mNumberChannelDescriptions) - 1)
-        return MemoryLayout<AudioChannelLayout>.size +
-            (descriptionCount * MemoryLayout<AudioChannelDescription>.size)
-    }
-
-    private static func channelLayoutData(for channels: Int) -> Data? {
-        let layoutTag: AudioChannelLayoutTag = switch channels {
-        case 1:
-            kAudioChannelLayoutTag_Mono
-        case 2:
-            kAudioChannelLayoutTag_Stereo
-        case 6:
-            kAudioChannelLayoutTag_MPEG_5_1_D
-        case 8:
-            kAudioChannelLayoutTag_MPEG_7_1_C
-        default:
-            kAudioChannelLayoutTag_DiscreteInOrder | AudioChannelLayoutTag(channels)
-        }
-
-        guard let channelLayout = AVAudioChannelLayout(layoutTag: layoutTag) else {
-            return nil
-        }
-
-        return Data(
-            bytes: channelLayout.layout,
-            count: MemoryLayout<AudioChannelLayout>.size
-        )
-    }
-
-    private static func currentRouteSummary() -> String {
-        ShadowClientAudioOutputCapabilityKit.currentRouteSummary()
-    }
-
-    private static func currentRenderingSummary() -> String {
-        ShadowClientAudioOutputCapabilityKit.currentRenderingSummary()
-    }
-
-    private static func startupThresholdDuration(
-        outputFormat: AVAudioFormat,
-        nominalFramesPerBuffer: Double
-    ) -> CMTime {
-        let packetDurationSeconds = nominalFramesPerBuffer / max(1, outputFormat.sampleRate)
-        #if os(iOS) || os(tvOS)
-        let session = AVAudioSession.sharedInstance()
-        let thresholdSeconds = max(
-            packetDurationSeconds,
-            session.outputLatency + session.ioBufferDuration + packetDurationSeconds
-        )
-        #else
-        let thresholdSeconds = packetDurationSeconds
-        #endif
-        let timescale = CMTimeScale(max(1, Int32(Self.millisecondsPerSecond.rounded())))
-        return CMTime(
-            seconds: thresholdSeconds,
-            preferredTimescale: timescale
-        )
-    }
-}
-#endif
 
 // Safety invariant: mutable audio engine graph state is confined to `engineQueue`,
 // while queued-buffer accounting is actor-isolated in `QueuedBufferState`.

@@ -48,7 +48,10 @@ enum ShadowClientHostCatalogKit {
         guard let connectPort = ShadowClientGameStreamNetworkDefaults.mappedHTTPPort(
             forHTTPSPort: endpoint.httpsPort
         ) else {
-            return ShadowClientHostEndpointKit.candidateString(for: endpoint)
+            if endpoint.httpsPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort {
+                return normalizedHost
+            }
+            return "\(normalizedHost):\(endpoint.httpsPort)"
         }
 
         if connectPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPPort {
