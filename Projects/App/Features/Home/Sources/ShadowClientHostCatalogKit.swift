@@ -200,37 +200,6 @@ enum ShadowClientHostCatalogKit {
             values.insert(normalized)
         }
 
-        values.formUnion(currentMachineHostNames())
         return values
-    }
-
-    private static func currentMachineHostNames() -> Set<String> {
-        var values = Set<String>()
-        let reportedHostNames = [currentMachineHostName(), ProcessInfo.processInfo.hostName]
-
-        for reportedHostName in reportedHostNames {
-            let normalizedHostName = reportedHostName
-                .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-                .lowercased()
-            guard !normalizedHostName.isEmpty else {
-                continue
-            }
-            values.insert(normalizedHostName)
-
-            if let shortHostName = normalizedHostName.split(separator: ".").first,
-               !shortHostName.isEmpty {
-                values.insert(String(shortHostName))
-            }
-        }
-
-        return values
-    }
-
-    private static func currentMachineHostName() -> String {
-        var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-        guard gethostname(&buffer, buffer.count) == 0 else {
-            return ""
-        }
-        return String(cString: buffer)
     }
 }
