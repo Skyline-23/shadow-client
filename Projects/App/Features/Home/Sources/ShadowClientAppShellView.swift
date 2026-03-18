@@ -72,9 +72,9 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @State var hostSpotlightTask: Task<Void, Never>?
     @State var isShowingManualHostEntry = false
     @State var manualHostDraft = ""
-    @State var manualPortDraft = ""
-    @FocusState var isManualHostFieldFocused: Bool
-    @FocusState var isManualPortFieldFocused: Bool
+    @State var manualHostPortDraft = ""
+    @FocusState var manualHostFocusedField: ShadowClientManualHostAddressField.FocusField?
+    @State var lastRemoteDesktopCatalogSignature = ""
     @State var settingsTelemetryTask: Task<Void, Never>?
     @State var settingsDiagnosticsModel: SettingsDiagnosticsHUDModel?
     @State var sessionDiagnosticsHistory = ShadowClientSessionDiagnosticsHistory(
@@ -87,6 +87,9 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @State var isLaunchFailureAlertPresented = false
     @State var gamepadInputRuntime = ShadowClientGamepadInputPassthroughRuntime()
     @State var sessionVisiblePointerRegions: [CGRect] = []
+    @State var isRemoteSessionKeyboardPresented = false
+    @State var remoteSessionKeyboardText = ""
+    @FocusState var isRemoteSessionKeyboardFocused: Bool
     @State var activeSessionReconfigurationTask: Task<Void, Never>?
     @State var lastActiveSessionReconfigurationSettings: ShadowClientGameStreamLaunchSettings?
     @State var launchViewportMetrics = ShadowClientLaunchViewportMetrics(
@@ -115,9 +118,6 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
         ZStack {
             backgroundGradient
             rootContentView
-            if remoteDesktopRuntime.isClearingActiveSession {
-                disconnectingSessionOverlay
-            }
         }
         .background(
             GeometryReader { geometry in
@@ -140,7 +140,7 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
         .task {
             await syncConnectionStateFromRuntime()
             startHostDiscovery()
-            refreshRemoteDesktopCatalog()
+            refreshRemoteDesktopCatalog(force: true)
         }
         .task(id: currentSettings.streamingIdentityKey) {
             restartSettingsTelemetrySubscription(for: currentSettings)
@@ -182,11 +182,18 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
                 sessionDiagnosticsHistory = .init(
                     maxSamples: ShadowClientUIRuntimeDefaults.diagnosticsHUDSampleHistoryLimit
                 )
+                isRemoteSessionKeyboardPresented = false
+                isRemoteSessionKeyboardFocused = false
+                remoteSessionKeyboardText = ""
                 activeSessionReconfigurationTask?.cancel()
                 activeSessionReconfigurationTask = nil
                 lastActiveSessionReconfigurationSettings = nil
             } else {
+                lastActiveSessionReconfigurationSettings = activeSessionLaunchSettings()
                 Task { @MainActor in
+                    guard remoteDesktopRuntime.activeSession != nil else {
+                        return
+                    }
                     lastActiveSessionReconfigurationSettings = await activeSessionNegotiatedLaunchSettings()
                 }
             }
@@ -450,8 +457,8 @@ var normalizedConnectionHost: String {
 
 var normalizedManualHostDraft: String {
         ShadowClientManualHostEntryKit.normalizedDraft(
-            hostDraft: manualHostDraft,
-            portDraft: manualPortDraft
+            manualHostDraft,
+            portDraft: manualHostPortDraft
         )
     }
 
@@ -463,10 +470,7 @@ var canConnect: Bool {
     }
 
 var canInitiateSessionConnection: Bool {
-        guard !remoteDesktopRuntime.isClearingActiveSession else {
-            return false
-        }
-        return ShadowClientConnectionPresentationKit.canInitiateSessionConnection(
+        ShadowClientConnectionPresentationKit.canInitiateSessionConnection(
             state: connectionState
         )
     }
@@ -535,51 +539,39 @@ func startHostDiscovery() {
     }
 
     @MainActor
-func refreshRemoteDesktopCatalog() {
-        guard !remoteDesktopRuntime.isClearingActiveSession else {
+func refreshRemoteDesktopCatalog(force: Bool = false) {
+        if !force,
+           (remoteDesktopRuntime.launchState.isTransitioning || remoteDesktopRuntime.activeSession != nil) {
             return
         }
-        let discoveredHosts = hostDiscoveryRuntime.hosts
+        if !force,
+           isShowingManualHostEntry,
+           (manualHostFocusedField != nil || !manualHostDraft.isEmpty || !manualHostPortDraft.isEmpty) {
+            return
+        }
         let candidates = ShadowClientHostCatalogKit.refreshCandidates(
             autoFindHosts: autoFindHosts,
-            discoveredHosts: discoveredHosts.map(\.probeCandidate),
-            cachedHosts: ShadowClientHostCatalogKit.cachedCandidateHosts(from: remoteDesktopRuntime.hosts),
+            discoveredHosts: hostDiscoveryRuntime.hosts.map(\.host),
+            cachedHosts: remoteDesktopRuntime.hosts.flatMap { descriptor in
+                descriptor.routes.allEndpoints.map { endpoint in
+                    if endpoint.httpsPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort {
+                        return endpoint.host
+                    }
+                    return "\(endpoint.host):\(endpoint.httpsPort)"
+                }
+            },
             manualHost: normalizedConnectionHost.isEmpty ? nil : normalizedConnectionHost
         )
-
-        var discoveredPortHints = [String: ShadowClientGameStreamPortHint](
-            uniqueKeysWithValues: discoveredHosts.compactMap { host in
-                guard let httpsPort = ShadowClientGameStreamNetworkDefaults.mappedHTTPSPort(forHTTPPort: host.port) else {
-                    return nil
-                }
-                return (
-                    host.probeCandidate,
-                    ShadowClientGameStreamPortHint(
-                        httpPort: host.port,
-                        httpsPort: httpsPort
-                    )
-                )
-            }
-        )
-
-        let manualHostCandidate = normalizedConnectionHost.trimmingCharacters(in: .whitespacesAndNewlines)
-        let manualHostURL = URL(
-            string: ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(manualHostCandidate)
-        )
-        if let manualHostURL,
-           let manualHost = manualHostURL.host?.lowercased(),
-           let manualHTTPPort = manualHostURL.port,
-           let httpsPort = ShadowClientGameStreamNetworkDefaults.mappedHTTPSPort(forHTTPPort: manualHTTPPort) {
-            discoveredPortHints["\(manualHost):\(manualHTTPPort)"] = .init(
-                httpPort: manualHTTPPort,
-                httpsPort: httpsPort
-            )
+        let preferredHost = normalizedConnectionHost.isEmpty ? nil : normalizedConnectionHost
+        let signature = "\(candidates.joined(separator: "|"))||\(preferredHost ?? "")"
+        if !force, signature == lastRemoteDesktopCatalogSignature {
+            return
         }
+        lastRemoteDesktopCatalogSignature = signature
 
         remoteDesktopRuntime.refreshHosts(
             candidates: candidates,
-            preferredHost: normalizedConnectionHost.isEmpty ? nil : normalizedConnectionHost,
-            portHintsByCandidate: discoveredPortHints
+            preferredHost: preferredHost
         )
     }
 
@@ -588,25 +580,19 @@ func stopHostDiscovery() {
         hostDiscoveryRuntime.stop()
     }
 
-    @MainActor
+@MainActor
 func presentManualHostEntry() {
-        isManualHostFieldFocused = false
-        isManualPortFieldFocused = false
+        manualHostFocusedField = nil
         manualHostDraft = ""
-        manualPortDraft = ""
+        manualHostPortDraft = ""
         isShowingManualHostEntry = true
-        Task { @MainActor in
-            await Task.yield()
-            isManualHostFieldFocused = true
-        }
     }
 
     @MainActor
 func cancelManualHostEntry() {
-        isManualHostFieldFocused = false
-        isManualPortFieldFocused = false
+        manualHostFocusedField = nil
         manualHostDraft = ""
-        manualPortDraft = ""
+        manualHostPortDraft = ""
         isShowingManualHostEntry = false
     }
 
@@ -617,14 +603,17 @@ func cancelManualHostEntry() {
             return
         }
 
-        connectionHost = host
-        refreshRemoteDesktopCatalog()
-        remoteDesktopRuntime.selectHost(host.lowercased())
-        isManualHostFieldFocused = false
-        isManualPortFieldFocused = false
+        manualHostFocusedField = nil
         manualHostDraft = ""
-        manualPortDraft = ""
+        manualHostPortDraft = ""
         isShowingManualHostEntry = false
+
+        Task { @MainActor [host] in
+            await remoteDesktopRuntime.rememberPreferredHostRoute(host)
+            connectionHost = host
+            refreshRemoteDesktopCatalog(force: true)
+            remoteDesktopRuntime.selectHost(host.lowercased())
+        }
     }
 
     @MainActor
@@ -638,7 +627,7 @@ func cancelManualHostEntry() {
 
     @MainActor
 func presentHostSpotlight(for host: ShadowClientRemoteHostDescriptor) {
-        connectionHost = host.hostCandidate
+        connectionHost = host.host
         remoteDesktopRuntime.selectHost(host.id)
         spotlightedHostSourceFrame = remoteDesktopHostFrames[host.id] ?? .zero
         hostSpotlightTask?.cancel()
@@ -716,19 +705,12 @@ func connectToHost(
         autoLaunchAfterConnect: Bool = false,
         preferredHostID: String? = nil
     ) {
-        guard !remoteDesktopRuntime.isClearingActiveSession else {
-            return
-        }
-        let host = ShadowClientConnectionHostResolutionKit.resolvedConnectHost(
-            requestedHost: normalizedConnectionHost,
-            discoveredHosts: hostDiscoveryRuntime.hosts,
-            knownHosts: remoteDesktopRuntime.hosts
-        )
+        let host = normalizedConnectionHost
         guard !host.isEmpty else {
             return
         }
 
-        refreshRemoteDesktopCatalog()
+        refreshRemoteDesktopCatalog(force: true)
 
         let normalizedTargetHost = host.lowercased()
         let alreadyConnectedToTarget: Bool = {
@@ -753,14 +735,9 @@ func connectToHost(
             let state = await baseDependencies.connectionRuntime.connect(to: host)
             await MainActor.run {
                 connectionState = state
-                if let preferredHostID, !host.isEmpty {
-                    Task {
-                        await remoteDesktopRuntime.rememberPreferredRoute(host, forHostID: preferredHostID)
-                    }
-                }
                 if let connectedHost = state.host, !connectedHost.isEmpty {
                     connectionHost = connectedHost
-                    refreshRemoteDesktopCatalog()
+                    refreshRemoteDesktopCatalog(force: true)
                 }
             }
 
@@ -772,7 +749,7 @@ func connectToHost(
 
     @MainActor
 func connectToDiscoveredHost(_ discoveredHost: ShadowClientDiscoveredHost) {
-        connectionHost = discoveredHost.probeCandidate
+        connectionHost = discoveredHost.host
         connectToHost(autoLaunchAfterConnect: true)
     }
 
@@ -812,9 +789,6 @@ func autoLaunchPreferredRemoteApp(preferredHostID: String?) async {
 
     @MainActor
 func launchRemoteApp(_ app: ShadowClientRemoteAppDescriptor) {
-        guard !remoteDesktopRuntime.isClearingActiveSession else {
-            return
-        }
         let settings = resolvedLaunchSettings(
             hostApp: app,
             networkSignal: launchBitrateNetworkSignal,
@@ -836,7 +810,9 @@ func launchDesktopFallbackIfNeeded() async {
         guard selectedHost.pairStatus == .paired else {
             return
         }
-        guard remoteDesktopRuntime.launchState != .launching else {
+        guard !remoteDesktopRuntime.launchState.isTransitioning,
+              remoteDesktopRuntime.activeSession == nil
+        else {
             return
         }
 
@@ -918,6 +894,10 @@ func launchDesktopFallbackIfNeeded() async {
         guard let proposedSettings = activeSessionLaunchSettings() else {
             return
         }
+        if lastActiveSessionReconfigurationSettings == nil {
+            lastActiveSessionReconfigurationSettings = proposedSettings
+            return
+        }
         guard ShadowClientSessionReconfigurationKit.shouldRelaunchActiveSession(
             hasActiveSession: remoteDesktopRuntime.activeSession != nil,
             isLaunching: remoteDesktopRuntime.launchState.isTransitioning,
@@ -962,6 +942,10 @@ func launchDesktopFallbackIfNeeded() async {
         guard let proposedSettings = await activeSessionNegotiatedLaunchSettings() else {
             return
         }
+        if lastActiveSessionReconfigurationSettings == nil {
+            lastActiveSessionReconfigurationSettings = proposedSettings
+            return
+        }
         guard ShadowClientSessionReconfigurationKit.shouldRelaunchActiveSession(
             hasActiveSession: remoteDesktopRuntime.activeSession != nil,
             isLaunching: remoteDesktopRuntime.launchState.isTransitioning,
@@ -1004,16 +988,6 @@ func launchDesktopFallbackIfNeeded() async {
     @MainActor
 func disconnectFromHost() {
         Task {
-            if remoteDesktopRuntime.activeSession != nil || remoteDesktopRuntime.isClearingActiveSession {
-                remoteDesktopRuntime.clearActiveSession()
-                for _ in 0..<ShadowClientUIRuntimeDefaults.launchStatePollingAttempts {
-                    if !remoteDesktopRuntime.isClearingActiveSession,
-                       remoteDesktopRuntime.activeSession == nil {
-                        break
-                    }
-                    try? await Task.sleep(for: ShadowClientUIRuntimeDefaults.pollingInterval)
-                }
-            }
             let state = await baseDependencies.connectionRuntime.disconnect()
             await MainActor.run {
                 connectionState = state
@@ -1021,26 +995,9 @@ func disconnectFromHost() {
                 sessionDiagnosticsHistory = .init(
                     maxSamples: ShadowClientUIRuntimeDefaults.diagnosticsHUDSampleHistoryLimit
                 )
-                refreshRemoteDesktopCatalog()
+                refreshRemoteDesktopCatalog(force: true)
             }
         }
-    }
-
-    var disconnectingSessionOverlay: some View {
-        ZStack {
-            Color.black
-                .opacity(0.6)
-                .ignoresSafeArea()
-
-            playbackOverlayLabel(
-                "Disconnecting current session...",
-                symbol: "xmark.circle",
-                tone: .launching
-            )
-            .padding(.horizontal, 20)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .transition(.opacity)
     }
 }
 

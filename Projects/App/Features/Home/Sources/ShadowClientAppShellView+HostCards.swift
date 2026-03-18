@@ -147,7 +147,7 @@ var remoteDesktopHostCard: some View {
                 .background(hostHeaderBadgeSurface, in: Capsule())
 
             Button {
-                refreshRemoteDesktopCatalog()
+                refreshRemoteDesktopCatalog(force: true)
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
@@ -172,46 +172,16 @@ var remoteDesktopHostCard: some View {
                 Text(ShadowClientHostPanelPresentationKit.manualEntryTitle())
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(.white)
-                VStack(alignment: .leading, spacing: 10) {
-                    ShadowClientManualHostAddressField(
-                        text: $manualHostDraft,
-                        isFocused: $isManualHostFieldFocused
-                    ) {
-                        addManualHostToCatalog()
-                    }
-
-                    HStack(spacing: 10) {
-                        Image(systemName: "number")
-                            .foregroundStyle(Color.white.opacity(0.60))
-
-                        TextField("HTTPS port", text: $manualPortDraft)
-                            .font(.body.monospaced().weight(.semibold))
-                            .textFieldStyle(.plain)
-                            .foregroundStyle(.white)
-                            .autocorrectionDisabled(true)
-                            .focused($isManualPortFieldFocused)
-                            .accessibilityIdentifier("shadow.home.hosts.manual-port")
-                            .accessibilityLabel("Remote host HTTPS port")
-                            .submitLabel(.done)
-                            .onSubmit {
-                                isManualHostFieldFocused = false
-                                isManualPortFieldFocused = false
-                                addManualHostToCatalog()
-                            }
-#if os(iOS) || os(tvOS)
-                            .textInputAutocapitalization(.never)
-                            .keyboardType(.numberPad)
-#endif
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(hostPanelInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                    Text("Leave port empty to use the default HTTPS port.")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Color.white.opacity(0.64))
+                ShadowClientManualHostAddressField(
+                    text: $manualHostDraft,
+                    portText: $manualHostPortDraft,
+                    focusedField: $manualHostFocusedField
+                ) {
+                    addManualHostToCatalog()
                 }
+                .background(hostPanelInsetSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Spacer(minLength: 8)
 
@@ -221,7 +191,7 @@ var remoteDesktopHostCard: some View {
                         addManualHostToCatalog()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!ShadowClientManualHostEntryKit.canSubmit(hostDraft: manualHostDraft, portDraft: manualPortDraft))
+                    .disabled(!ShadowClientManualHostEntryKit.canSubmit(manualHostDraft, portDraft: manualHostPortDraft))
 
                     Button("Cancel") {
                         cancelManualHostEntry()
@@ -234,7 +204,7 @@ var remoteDesktopHostCard: some View {
                         addManualHostToCatalog()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!ShadowClientManualHostEntryKit.canSubmit(hostDraft: manualHostDraft, portDraft: manualPortDraft))
+                    .disabled(!ShadowClientManualHostEntryKit.canSubmit(manualHostDraft, portDraft: manualHostPortDraft))
 
                     Button("Cancel") {
                         cancelManualHostEntry()
@@ -242,17 +212,6 @@ var remoteDesktopHostCard: some View {
                     .buttonStyle(.bordered)
                 }
             }
-        }
-        .toolbar {
-#if os(iOS) || os(tvOS)
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") {
-                    isManualHostFieldFocused = false
-                    isManualPortFieldFocused = false
-                }
-            }
-#endif
         }
     }
 
@@ -527,10 +486,12 @@ var remoteDesktopHostCard: some View {
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.white.opacity(0.68))
                 ShadowUIHostInsetField {
-                    TextField("Use the discovered name", text: hostFriendlyNameBinding(host))
-                        .font(.body.weight(.semibold))
-                        .textFieldStyle(.plain)
-                        .foregroundStyle(.white)
+                    ShadowClientPlatformTextField(
+                        text: hostFriendlyNameBinding(host),
+                        placeholder: "Use the discovered name",
+                        accessibilityLabel: "Friendly name",
+                        fontWeight: .semibold
+                    )
                 }
             }
 
@@ -539,11 +500,13 @@ var remoteDesktopHostCard: some View {
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.white.opacity(0.68))
                 ShadowUIHostInsetField {
-                    TextField("Add a note for this device", text: hostNotesBinding(host), axis: .vertical)
-                        .font(.body)
-                        .textFieldStyle(.plain)
-                        .foregroundStyle(.white)
-                        .lineLimit(2...4)
+                    ShadowClientPlatformTextView(
+                        text: hostNotesBinding(host),
+                        placeholder: "Add a note for this device",
+                        accessibilityLabel: "Device notes",
+                        showsDoneToolbar: true
+                    )
+                    .frame(minHeight: 64)
                 }
             }
 
@@ -555,17 +518,22 @@ var remoteDesktopHostCard: some View {
                 ShadowUIHostInsetCard {
                     VStack(alignment: .leading, spacing: 10) {
                         ShadowUIHostInsetField {
-                            TextField("Admin username", text: hostApolloAdminUsernameBinding(host))
-                                .font(.body.weight(.semibold))
-                                .textFieldStyle(.plain)
-                                .foregroundStyle(.white)
+                            ShadowClientPlatformTextField(
+                                text: hostApolloAdminUsernameBinding(host),
+                                placeholder: "Admin username",
+                                accessibilityLabel: "Apollo admin username",
+                                fontWeight: .semibold
+                            )
                         }
 
                         ShadowUIHostInsetField {
-                            SecureField("Admin password", text: hostApolloAdminPasswordBinding(host))
-                                .font(.body.weight(.semibold))
-                                .textFieldStyle(.plain)
-                                .foregroundStyle(.white)
+                            ShadowClientPlatformTextField(
+                                text: hostApolloAdminPasswordBinding(host),
+                                placeholder: "Admin password",
+                                accessibilityLabel: "Apollo admin password",
+                                fontWeight: .semibold,
+                                isSecureTextEntry: true
+                            )
                         }
 
                         ViewThatFits(in: .horizontal) {
@@ -607,10 +575,12 @@ var remoteDesktopHostCard: some View {
                     ShadowUIHostInsetCard {
                         VStack(alignment: .leading, spacing: 10) {
                             ShadowUIHostInsetField {
-                                TextField("Display mode override", text: hostApolloDisplayModeBinding(for: host))
-                                    .font(.body.weight(.semibold))
-                                    .textFieldStyle(.plain)
-                                    .foregroundStyle(.white)
+                                ShadowClientPlatformTextField(
+                                    text: hostApolloDisplayModeBinding(for: host),
+                                    placeholder: "Display mode override",
+                                    accessibilityLabel: "Apollo display mode override",
+                                    fontWeight: .semibold
+                                )
                             }
 
                             Toggle(isOn: hostApolloAlwaysUseVirtualDisplayBinding(for: host)) {
@@ -748,7 +718,7 @@ var remoteDesktopHostCard: some View {
     @ViewBuilder
     func selectedHostPrimaryActionButton(for host: ShadowClientRemoteHostDescriptor) -> some View {
         Button("Go") {
-            connectionHost = host.hostCandidate
+            connectionHost = host.host
             connectToHost(autoLaunchAfterConnect: true, preferredHostID: host.id)
         }
         .accessibilityIdentifier("shadow.home.hosts.go-selected")
@@ -768,7 +738,7 @@ var remoteDesktopHostCard: some View {
         if canPairSelectedHost {
             Button("Pair") {
                 if let selectedHost = remoteDesktopRuntime.selectedHost {
-                    connectionHost = selectedHost.hostCandidate
+                    connectionHost = selectedHost.host
                 }
                 remoteDesktopRuntime.pairSelectedHost()
             }
@@ -828,7 +798,6 @@ var remoteDesktopHostCard: some View {
                         launchAccessibilityHint: ShadowClientHostAppLibraryPresentationKit.launchAccessibilityHint(),
                         launchAccessibilityIdentifier: "shadow.home.applist.launch.\(appIdentifier)",
                         launchDisabled: remoteDesktopRuntime.launchState.isTransitioning
-                            || remoteDesktopRuntime.isClearingActiveSession
                     ) {
                         launchRemoteApp(app)
                     }
@@ -989,7 +958,9 @@ var remoteDesktopHostCard: some View {
         }
 
         return [
-            GridItem(.adaptive(minimum: 220, maximum: 260), spacing: 16),
+            GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 16),
+            GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 16),
+            GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 16),
         ]
     }
 
@@ -1016,10 +987,7 @@ var remoteDesktopHostCard: some View {
     }
 
     var canRefreshSelectedHostApps: Bool {
-        guard !remoteDesktopRuntime.isClearingActiveSession else {
-            return false
-        }
-        return ShadowClientRemoteHostActionKit.canRefreshApps(
+        ShadowClientRemoteHostActionKit.canRefreshApps(
             selectedHost: remoteDesktopRuntime.selectedHost
         )
     }

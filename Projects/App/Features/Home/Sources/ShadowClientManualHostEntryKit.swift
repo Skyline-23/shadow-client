@@ -1,7 +1,8 @@
 import Foundation
+import ShadowClientFeatureConnection
 
 struct ShadowClientManualHostEntryKit {
-    static func normalizedHostDraft(_ draft: String) -> String {
+    static func normalizedDraft(_ draft: String, portDraft: String = "") -> String {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return ""
@@ -9,66 +10,51 @@ struct ShadowClientManualHostEntryKit {
 
         let candidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(trimmed)
         guard let url = URL(string: candidate), let host = url.host else {
-            return trimmed
+            if let port = parsedPort(from: portDraft) {
+                return normalizedHostCandidate(host: trimmed, port: port)
+            }
+            return trimmed.lowercased()
         }
 
-        if let port = url.port {
-            return "\(host.lowercased()):\(port)"
+        if let port = url.port ?? parsedPort(from: portDraft) {
+            return normalizedHostCandidate(host: host, port: port)
         }
 
         return host.lowercased()
     }
 
-    static func normalizedPortDraft(_ draft: String) -> String {
+    static func canSubmit(_ draft: String, portDraft: String = "") -> Bool {
+        let trimmedPort = portDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedPort.isEmpty, parsedPort(from: trimmedPort) == nil {
+            return false
+        }
+        return !normalizedDraft(draft, portDraft: portDraft).isEmpty
+    }
+
+    private static func parsedPort(from draft: String) -> Int? {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return ""
+        guard !trimmed.isEmpty,
+              let port = Int(trimmed),
+              (1...65_535).contains(port) else {
+            return nil
         }
-
-        let digitsOnly = trimmed.filter(\.isNumber)
-        guard digitsOnly == trimmed,
-              let parsedPort = Int(digitsOnly),
-              (1...65_535).contains(parsedPort)
-        else {
-            return ""
-        }
-
-        return String(parsedPort)
+        return port
     }
 
-    static func normalizedDraft(_ draft: String) -> String {
-        normalizedDraft(hostDraft: draft, portDraft: "")
-    }
-
-    static func normalizedDraft(hostDraft: String, portDraft: String) -> String {
-        let normalizedHost = normalizedHostDraft(hostDraft)
+    private static func normalizedHostCandidate(host: String, port: Int) -> String {
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalizedHost.isEmpty else {
             return ""
         }
+        let canonicalPort = ShadowClientGameStreamNetworkDefaults.canonicalHTTPSPort(
+            fromCandidatePort: port
+        )
 
-        let trimmedPort = portDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedPort.isEmpty else {
+        if canonicalPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
+        {
             return normalizedHost
         }
 
-        let normalizedPort = normalizedPortDraft(trimmedPort)
-        guard !normalizedPort.isEmpty else {
-            return ""
-        }
-
-        let candidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(normalizedHost)
-        guard let parsed = URL(string: candidate), let host = parsed.host else {
-            return "\(normalizedHost):\(normalizedPort)"
-        }
-
-        return "\(host.lowercased()):\(normalizedPort)"
-    }
-
-    static func canSubmit(_ draft: String) -> Bool {
-        canSubmit(hostDraft: draft, portDraft: "")
-    }
-
-    static func canSubmit(hostDraft: String, portDraft: String) -> Bool {
-        !normalizedDraft(hostDraft: hostDraft, portDraft: portDraft).isEmpty
+        return "\(normalizedHost):\(canonicalPort)"
     }
 }
