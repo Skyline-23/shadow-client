@@ -4575,11 +4575,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         hostAliasesByHost: [String: Set<String>],
         lastError: String
     ) -> ShadowClientRemoteHostDescriptor? {
-        if let existingDescriptor = existingHosts.first(where: {
-            $0.routes.allEndpoints.contains(where: { endpoint in
-                candidate(candidateHost, matches: endpoint, hostAliasesByHost: hostAliasesByHost)
-            })
-        }) {
+        if let existingDescriptor = matchedDescriptor(
+            forHostCandidate: candidateHost,
+            existingHosts: existingHosts,
+            hostAliasesByHost: hostAliasesByHost
+        ) {
             let activeRoute = existingDescriptor.routes.allEndpoints.first(where: { endpoint in
                 candidate(candidateHost, matches: endpoint, hostAliasesByHost: hostAliasesByHost)
             }) ?? existingDescriptor.routes.active
@@ -4724,11 +4724,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         preferredAnchorHost: ShadowClientRemoteHostDescriptor?,
         hostAliasesByHost: [String: Set<String>]
     ) -> ShadowClientRemoteHostDescriptor? {
-        if let existingDescriptor = existingHosts.first(where: {
-            $0.routes.allEndpoints.contains(where: { endpoint in
-                candidate(candidateHost, matches: endpoint, hostAliasesByHost: hostAliasesByHost)
-            })
-        }) {
+        if let existingDescriptor = matchedDescriptor(
+            forHostCandidate: candidateHost,
+            existingHosts: existingHosts,
+            hostAliasesByHost: hostAliasesByHost
+        ) {
             return existingDescriptor
         }
 
@@ -4756,6 +4756,44 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 hostAliasesByHost: hostAliasesByHost
             ).contains(normalizedCandidate)
         })
+    }
+
+    private static func matchedDescriptor(
+        forHostCandidate candidateHost: String,
+        existingHosts: [ShadowClientRemoteHostDescriptor],
+        hostAliasesByHost: [String: Set<String>]
+    ) -> ShadowClientRemoteHostDescriptor? {
+        let matchingDescriptors = existingHosts.filter { descriptor in
+            descriptor.routes.allEndpoints.contains { endpoint in
+                candidate(candidateHost, matches: endpoint, hostAliasesByHost: hostAliasesByHost)
+            }
+        }
+        guard !matchingDescriptors.isEmpty else {
+            return nil
+        }
+
+        if parsedCandidateRoute(candidateHost)?.port != nil {
+            return matchingDescriptors.first
+        }
+
+        var distinctPhysicalHosts: [ShadowClientRemoteHostDescriptor] = []
+        for descriptor in matchingDescriptors {
+            if distinctPhysicalHosts.contains(where: {
+                descriptorsBelongToSamePhysicalHost(
+                    $0,
+                    descriptor,
+                    hostAliasesByHost: hostAliasesByHost
+                )
+            }) {
+                continue
+            }
+            distinctPhysicalHosts.append(descriptor)
+            if distinctPhysicalHosts.count > 1 {
+                return nil
+            }
+        }
+
+        return distinctPhysicalHosts.first
     }
 
     private static func preferredAnchorHost(
