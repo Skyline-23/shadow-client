@@ -30,6 +30,7 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferHDR) var preferHDR = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.showDiagnosticsHUD) var showDiagnosticsHUD = false
     @AppStorage(ShadowClientAppSettings.StorageKeys.connectionHost) var connectionHost = ""
+    @AppStorage(ShadowClientAppSettings.StorageKeys.hiddenRemoteHostCandidates) var hiddenRemoteHostCandidatesRaw = ""
     @AppStorage(ShadowClientAppSettings.StorageKeys.resolution) var resolutionRawValue =
         ShadowClientAppSettingsDefaults.defaultResolution.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.frameRate) var frameRateRawValue =
@@ -555,16 +556,27 @@ func refreshRemoteDesktopCatalog(force: Bool = false) {
            (manualHostFocusedField != nil || !manualHostDraft.isEmpty || !manualHostPortDraft.isEmpty) {
             return
         }
+        let hiddenCandidates = hiddenRemoteHostCandidates
+        let discoveredCandidates = hostDiscoveryRuntime.hosts
+            .map(\.probeCandidate)
+            .filter { !hiddenCandidates.contains(normalizedStoredConnectionCandidate($0)) }
+        let cachedCandidates = ShadowClientHostCatalogKit.cachedCandidateHosts(
+            from: remoteDesktopRuntime.hosts
+        )
+        .filter { !hiddenCandidates.contains(normalizedStoredConnectionCandidate($0)) }
+        let manualHost = normalizedConnectionHost.isEmpty ? nil : normalizedConnectionHost
+        let visibleManualHost = manualHost.flatMap {
+            let normalized = normalizedStoredConnectionCandidate($0)
+            return hiddenCandidates.contains(normalized) ? nil : $0
+        }
         let candidates = ShadowClientHostCatalogKit.refreshCandidates(
             autoFindHosts: autoFindHosts,
-            discoveredHosts: hostDiscoveryRuntime.hosts.map(\.probeCandidate),
-            cachedHosts: ShadowClientHostCatalogKit.cachedCandidateHosts(
-                from: remoteDesktopRuntime.hosts
-            ),
-            manualHost: normalizedConnectionHost.isEmpty ? nil : normalizedConnectionHost
+            discoveredHosts: discoveredCandidates,
+            cachedHosts: cachedCandidates,
+            manualHost: visibleManualHost
         )
-        let preferredHost = normalizedConnectionHost.isEmpty ? nil : normalizedConnectionHost
-        let discoveredProbeCandidates = hostDiscoveryRuntime.hosts.map(\.probeCandidate).joined(separator: ",")
+        let preferredHost = visibleManualHost
+        let discoveredProbeCandidates = discoveredCandidates.joined(separator: ",")
         let candidateSummary = candidates.joined(separator: ",")
         Self.catalogLogger.notice(
             "Catalog refresh auto-find=\(autoFindHosts, privacy: .public) discovered=\(discoveredProbeCandidates, privacy: .public) candidates=\(candidateSummary, privacy: .public) preferred=\((preferredHost ?? "nil"), privacy: .public)"
@@ -615,6 +627,7 @@ func cancelManualHostEntry() {
         isShowingManualHostEntry = false
 
         Task { @MainActor [host] in
+            clearHiddenRemoteHostCandidates(matching: host)
             await remoteDesktopRuntime.rememberPreferredHostRoute(host)
             connectionHost = host
             refreshRemoteDesktopCatalog(force: true)
@@ -625,6 +638,7 @@ func cancelManualHostEntry() {
     @MainActor
     func deleteStoredHost(_ host: ShadowClientRemoteHostDescriptor) {
         let normalizedStoredConnectionHost = normalizedConnectionHost.lowercased()
+        suppressStoredHostCandidates(for: host)
         if !normalizedStoredConnectionHost.isEmpty,
            storedConnectionCandidates(for: host).contains(normalizedStoredConnectionHost) {
             connectionHost = ""

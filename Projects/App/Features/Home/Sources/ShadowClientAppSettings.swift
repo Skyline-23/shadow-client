@@ -157,6 +157,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         public static let preferHDR = "settings.preferHDR"
         public static let showDiagnosticsHUD = "settings.showDiagnosticsHUD"
         public static let connectionHost = "settings.connectionHost"
+        public static let hiddenRemoteHostCandidates = "settings.hiddenRemoteHostCandidates"
         public static let resolution = "settings.resolution"
         public static let frameRate = "settings.frameRate"
         public static let bitrateKbps = "settings.bitrateKbps"

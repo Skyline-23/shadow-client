@@ -36,6 +36,69 @@ func storedConnectionCandidates(for host: ShadowClientRemoteHostDescriptor) -> S
         })
     }
 
+func normalizedStoredConnectionCandidate(_ candidate: String) -> String {
+        candidate.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+var hiddenRemoteHostCandidates: Set<String> {
+        Set(
+            hiddenRemoteHostCandidatesRaw
+                .split(separator: "\n")
+                .map { normalizedStoredConnectionCandidate(String($0)) }
+                .filter { !$0.isEmpty }
+        )
+    }
+
+func persistHiddenRemoteHostCandidates(_ candidates: Set<String>) {
+        hiddenRemoteHostCandidatesRaw = candidates.sorted().joined(separator: "\n")
+    }
+
+func candidateVariants(for hostCandidate: String) -> Set<String> {
+        let trimmed = hostCandidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return []
+        }
+
+        let urlCandidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(trimmed)
+        guard let url = URL(string: urlCandidate),
+              let host = url.host?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !host.isEmpty
+        else {
+            return [normalizedStoredConnectionCandidate(trimmed)]
+        }
+
+        let port = url.port ?? ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
+        let canonicalHTTPSPort = ShadowClientGameStreamNetworkDefaults.canonicalHTTPSPort(
+            fromCandidatePort: port
+        )
+        var candidates: Set<String> = ["\(host):\(canonicalHTTPSPort)"]
+        if canonicalHTTPSPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort {
+            candidates.insert(host)
+        }
+        if let connectPort = ShadowClientGameStreamNetworkDefaults.mappedHTTPPort(
+            forHTTPSPort: canonicalHTTPSPort
+        ) {
+            candidates.insert("\(host):\(connectPort)")
+        }
+        return candidates
+    }
+
+func suppressStoredHostCandidates(for host: ShadowClientRemoteHostDescriptor) {
+        var candidates = hiddenRemoteHostCandidates
+        candidates.formUnion(storedConnectionCandidates(for: host))
+        persistHiddenRemoteHostCandidates(candidates)
+    }
+
+func clearHiddenRemoteHostCandidates(matching hostCandidate: String) {
+        let variants = candidateVariants(for: hostCandidate)
+        guard !variants.isEmpty else {
+            return
+        }
+
+        let updatedCandidates = hiddenRemoteHostCandidates.subtracting(variants)
+        persistHiddenRemoteHostCandidates(updatedCandidates)
+    }
+
 func settingsSection<Content: View>(
         title: String,
         @ViewBuilder content: () -> Content
