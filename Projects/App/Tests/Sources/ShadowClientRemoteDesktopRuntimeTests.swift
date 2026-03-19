@@ -471,6 +471,68 @@ func metadataClientKeepsPinnedHTTPSCertificateMismatchesOnHTTPS() async throws {
     #expect(await pinnedStore.machineID(forHost: "stream-host.example.invalid") == nil)
 }
 
+@Test("Metadata client preserves pinned HTTPS transport failure while still attempting HTTP fallback")
+func metadataClientPreservesPinnedHTTPSTransportFailureAfterHTTPFallback() async throws {
+    let defaultsSuite = "shadow-client.metadata.serverinfo.pinned-timeout-fallback.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let transport = ScriptedRequestTransport(
+        script: [
+            .init(
+                scheme: "https",
+                command: "serverinfo",
+                expectedPort: 48984,
+                result: .failure(.requestFailed("HTTPS stream open timed out"))
+            ),
+            .init(
+                scheme: "http",
+                command: "serverinfo",
+                expectedPort: 48989,
+                result: .failure(.requestFailed("connection ready timed out"))
+            ),
+        ]
+    )
+
+    let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    await pinnedStore.setCertificateDER(
+        Data([0x01, 0x02, 0x03]),
+        forHost: "apollo-host.example.invalid",
+        httpsPort: 48984
+    )
+
+    let client = NativeGameStreamMetadataClient(
+        identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: pinnedStore,
+        transport: transport
+    )
+
+    do {
+        _ = try await client.fetchServerInfo(host: "apollo-host.example.invalid:48984")
+        Issue.record("Expected combined HTTPS/HTTP fallback failure")
+    } catch let error as ShadowClientGameStreamError {
+        #expect(
+            error == .requestFailed(
+                "HTTPS stream open timed out (HTTP fallback also failed: connection ready timed out)"
+            )
+        )
+    } catch {
+        Issue.record("Unexpected error: \(error)")
+    }
+
+    #expect(
+        await transport.callsWithPort() == [
+            .init(scheme: "https", command: "serverinfo", port: 48984),
+            .init(scheme: "http", command: "serverinfo", port: 48989),
+        ]
+    )
+}
+
 @Test("Metadata client skips plain HTTP fallback for local .local hosts after pinned HTTPS certificate mismatch")
 func metadataClientKeepsLocalPinnedCertificateMismatchOnHTTPS() async throws {
     let defaultsSuite = "shadow-client.metadata.serverinfo.local-mismatch.\(UUID().uuidString)"

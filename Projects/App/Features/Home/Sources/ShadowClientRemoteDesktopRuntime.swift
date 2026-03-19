@@ -871,6 +871,12 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                 if Self.isAppTransportSecurityBlockedError(httpError) {
                     throw httpsError
                 }
+                if pinnedCertificateDER != nil {
+                    throw Self.combinedFallbackFailure(
+                        primary: httpsError,
+                        fallback: httpError
+                    )
+                }
                 throw httpError
             }
         }
@@ -1005,6 +1011,15 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             appVersion: nil,
             gfeVersion: nil,
             uniqueID: nil
+        )
+    }
+
+    private static func combinedFallbackFailure(
+        primary: ShadowClientGameStreamError,
+        fallback: ShadowClientGameStreamError
+    ) -> ShadowClientGameStreamError {
+        .requestFailed(
+            "\(primary.localizedDescription) (HTTP fallback also failed: \(fallback.localizedDescription))"
         )
     }
 
