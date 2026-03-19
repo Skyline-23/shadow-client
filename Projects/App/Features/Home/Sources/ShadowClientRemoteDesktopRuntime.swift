@@ -4672,7 +4672,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         hostAliasesByHost: [String: Set<String>],
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
     ) async -> Data? {
-        let descriptor = relatedDescriptor(
+        let candidateRoute = parsedCandidateRoute(candidateHost)
+        let exactDescriptor = matchedDescriptor(
+            forHostCandidate: candidateHost,
+            existingHosts: existingHosts,
+            hostAliasesByHost: hostAliasesByHost
+        )
+        let descriptor = exactDescriptor ?? relatedDescriptor(
             forHostCandidate: candidateHost,
             existingHosts: existingHosts,
             preferredRoutesByKey: preferredRoutesByKey,
@@ -4681,19 +4687,30 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             hostAliasesByHost: hostAliasesByHost
         )
 
-        if let normalizedMachineID = descriptor.flatMap({ normalizedUniqueID($0.uniqueID) }),
+        if let candidateRoute,
+           let exactRouteCertificate = await pinnedCertificateStore.certificateDER(
+            forHost: candidateRoute.host,
+            httpsPort: candidateRoute.port ?? ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
+           ) {
+            return exactRouteCertificate
+        }
+
+        if let normalizedMachineID = exactDescriptor.flatMap({ normalizedUniqueID($0.uniqueID) }),
            let machineCertificate = await pinnedCertificateStore.certificateDER(
             forMachineID: normalizedMachineID
            ) {
             return machineCertificate
         }
 
-        if let candidateRoute = parsedCandidateRoute(candidateHost),
-           let exactRouteCertificate = await pinnedCertificateStore.certificateDER(
-            forHost: candidateRoute.host,
-            httpsPort: candidateRoute.port ?? ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
+        guard candidateRoute?.port != nil else {
+            return nil
+        }
+
+        if let normalizedMachineID = descriptor.flatMap({ normalizedUniqueID($0.uniqueID) }),
+           let machineCertificate = await pinnedCertificateStore.certificateDER(
+            forMachineID: normalizedMachineID
            ) {
-            return exactRouteCertificate
+            return machineCertificate
         }
 
         if let descriptor {
