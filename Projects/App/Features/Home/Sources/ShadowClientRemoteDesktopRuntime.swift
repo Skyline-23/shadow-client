@@ -4681,24 +4681,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
     ) async -> Data? {
         let candidateRoute = parsedCandidateRoute(candidateHost)
-        let exactDescriptor = matchedDescriptor(
-            forHostCandidate: candidateHost,
-            existingHosts: existingHosts,
-            hostAliasesByHost: hostAliasesByHost
-        )
         if let candidateRoute,
            let exactRouteCertificate = await pinnedCertificateStore.certificateDER(
             forHost: candidateRoute.host,
             httpsPort: candidateRoute.port ?? ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
            ) {
             return exactRouteCertificate
-        }
-
-        if let normalizedMachineID = exactDescriptor.flatMap({ normalizedUniqueID($0.uniqueID) }),
-           let machineCertificate = await pinnedCertificateStore.certificateDER(
-            forMachineID: normalizedMachineID
-           ) {
-            return machineCertificate
         }
 
         guard candidateRoute?.port == nil else {
@@ -4713,13 +4701,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             preferredAnchorHost: preferredAnchorHost,
             hostAliasesByHost: hostAliasesByHost
         )
-
-        if let normalizedMachineID = descriptor.flatMap({ normalizedUniqueID($0.uniqueID) }),
-           let machineCertificate = await pinnedCertificateStore.certificateDER(
-            forMachineID: normalizedMachineID
-           ) {
-            return machineCertificate
-        }
 
         if let descriptor {
             for endpoint in descriptor.routes.allEndpoints {
@@ -4875,59 +4856,64 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         for group in clusterResolvedHosts(pairedOrIdentifiedHosts) {
-            let normalizedMachineID = group.compactMap { normalizedUniqueID($0.uniqueID) }.first
-            var certificate: Data?
+            let serviceGroups = Dictionary(grouping: group, by: synchronizationGroupKey(for:))
+                .values
 
-            for descriptor in group {
-                if let normalizedMachineID,
-                   let machineCertificate = await pinnedCertificateStore.certificateDER(
-                    forMachineID: normalizedMachineID
-                   ) {
-                    certificate = machineCertificate
-                    break
-                }
+            for serviceGroup in serviceGroups {
+                let normalizedMachineID = serviceGroup.compactMap { normalizedUniqueID($0.uniqueID) }.first
+                var certificate: Data?
 
-                for endpoint in descriptor.routes.allEndpoints {
-                    let routeCertificate = await pinnedCertificateStore.certificateDER(
-                        forHost: endpoint.host,
-                        httpsPort: endpoint.httpsPort
-                    )
-                    let legacyCertificate = routeCertificate == nil
-                        ? await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
-                        : nil
-                    if let existingCertificate = routeCertificate ?? legacyCertificate {
-                        certificate = existingCertificate
+                for descriptor in serviceGroup {
+                    if let normalizedMachineID,
+                       let machineCertificate = await pinnedCertificateStore.certificateDER(
+                        forMachineID: normalizedMachineID
+                       ) {
+                        certificate = machineCertificate
+                        break
+                    }
+
+                    for endpoint in descriptor.routes.allEndpoints {
+                        let routeCertificate = await pinnedCertificateStore.certificateDER(
+                            forHost: endpoint.host,
+                            httpsPort: endpoint.httpsPort
+                        )
+                        let legacyCertificate = routeCertificate == nil
+                            ? await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
+                            : nil
+                        if let existingCertificate = routeCertificate ?? legacyCertificate {
+                            certificate = existingCertificate
+                            break
+                        }
+                    }
+
+                    if certificate != nil {
                         break
                     }
                 }
 
-                if certificate != nil {
-                    break
+                guard let certificate else {
+                    continue
                 }
-            }
 
-            guard let certificate else {
-                continue
-            }
+                if let normalizedMachineID {
+                    await pinnedCertificateStore.setCertificateDER(certificate, forMachineID: normalizedMachineID)
+                }
 
-            if let normalizedMachineID {
-                await pinnedCertificateStore.setCertificateDER(certificate, forMachineID: normalizedMachineID)
-            }
-
-            for descriptor in group {
-                for endpoint in descriptor.routes.allEndpoints {
-                    if let normalizedMachineID {
-                        await pinnedCertificateStore.bindHost(
-                            endpoint.host,
-                            httpsPort: endpoint.httpsPort,
-                            toMachineID: normalizedMachineID
+                for descriptor in serviceGroup {
+                    for endpoint in descriptor.routes.allEndpoints {
+                        if let normalizedMachineID {
+                            await pinnedCertificateStore.bindHost(
+                                endpoint.host,
+                                httpsPort: endpoint.httpsPort,
+                                toMachineID: normalizedMachineID
+                            )
+                        }
+                        await pinnedCertificateStore.setCertificateDER(
+                            certificate,
+                            forHost: endpoint.host,
+                            httpsPort: endpoint.httpsPort
                         )
                     }
-                    await pinnedCertificateStore.setCertificateDER(
-                        certificate,
-                        forHost: endpoint.host,
-                        httpsPort: endpoint.httpsPort
-                    )
                 }
             }
         }
@@ -5869,12 +5855,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 continue
             }
 
-            if let normalizedMachineID = normalizedUniqueID(host.uniqueID),
-               await pinnedCertificateStore.certificateDER(forMachineID: normalizedMachineID) != nil {
-                pairedKeys.insert(mergeKey(for: host))
-                continue
-            }
-
             for endpoint in host.routes.allEndpoints {
                 let exactCertificate = await pinnedCertificateStore.certificateDER(
                     forHost: endpoint.host,
@@ -5891,6 +5871,19 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         return pairedKeys
+    }
+
+    private static func synchronizationGroupKey(for host: ShadowClientRemoteHostDescriptor) -> String {
+        let portKey = host.routes.allEndpoints
+            .map(\.httpsPort)
+            .sorted()
+            .map(String.init)
+            .joined(separator: ",")
+        if let uniqueID = normalizedUniqueID(host.uniqueID) {
+            return "uniqueid:\(uniqueID)|ports:\(portKey)"
+        }
+        let routeKey = routeIdentitySet(for: host).sorted().joined(separator: "|")
+        return "routes:\(routeKey)|ports:\(portKey)"
     }
 
     private static func compareMergePriority(

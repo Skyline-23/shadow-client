@@ -1942,6 +1942,77 @@ func remoteDesktopRuntimeMarksBareHostPinsAmbiguousAcrossApolloPorts() {
     #expect(ambiguous == ["dual-apollo.example.invalid"])
 }
 
+@Test("Remote desktop runtime does not synchronize pinned certificates across Apollo service ports")
+@MainActor
+func remoteDesktopRuntimeKeepsApolloServicePinsPortScoped() async {
+    let defaultsSuite = "shadow-client.runtime.port-scoped-pins.\(UUID().uuidString)"
+    let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    let sharedCertificate = Data([0x10, 0x20, 0x30])
+    await pinnedStore.setCertificateDER(
+        sharedCertificate,
+        forHost: "dual-apollo.example.invalid",
+        httpsPort: 47984
+    )
+    await pinnedStore.bindHost(
+        "dual-apollo.example.invalid",
+        httpsPort: 47984,
+        toMachineID: "APOLLO-SHARED"
+    )
+    await pinnedStore.setCertificateDER(sharedCertificate, forMachineID: "APOLLO-SHARED")
+
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "dual-apollo.example.invalid:48984": .init(
+                host: "dual-apollo.example.invalid",
+                displayName: "Apollo-48984",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "APOLLO-SHARED"
+            ),
+            "dual-apollo.example.invalid:47984": .init(
+                host: "dual-apollo.example.invalid",
+                displayName: "Apollo-47984",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "APOLLO-SHARED"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient(),
+        pinnedCertificateStore: pinnedStore
+    )
+
+    runtime.refreshHosts(
+        candidates: ["dual-apollo.example.invalid:48984", "dual-apollo.example.invalid:47984"],
+        preferredHost: "dual-apollo.example.invalid:48984"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    let requests = await metadataClient.recordedServerInfoRequests()
+    let https48984Request = requests.first(where: { $0.host == "dual-apollo.example.invalid:48984" })
+    let https47984Request = requests.first(where: { $0.host == "dual-apollo.example.invalid:47984" })
+
+    #expect(https48984Request?.pinnedServerCertificateDER == nil)
+    #expect(https47984Request?.pinnedServerCertificateDER == sharedCertificate)
+    #expect(
+        await pinnedStore.certificateDER(
+            forHost: "dual-apollo.example.invalid",
+            httpsPort: 48984
+        ) == nil
+    )
+}
+
 @Test("Remote desktop runtime scrubs ambiguous bare host pins before binding same-host Apollo services")
 @MainActor
 func remoteDesktopRuntimeScrubsAmbiguousBareHostPins() async {
