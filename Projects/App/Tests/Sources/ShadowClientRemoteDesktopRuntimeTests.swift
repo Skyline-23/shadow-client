@@ -2049,14 +2049,14 @@ func remoteDesktopRuntimePreservesPreferredExternalRoutesAcrossFailures() async 
     #expect(runtime.hosts.first?.routes.manual?.host == "external-route.example.invalid")
 }
 
-@Test("Remote desktop runtime preserves host-provided launch session URLs")
-func remoteDesktopRuntimePreservesHostProvidedLaunchSessionURL() {
+@Test("Remote desktop runtime rewrites local launch session URLs to the runtime host")
+func remoteDesktopRuntimeRewritesLocalLaunchSessionURLToRuntimeHost() {
     let rewritten = ShadowClientRemoteDesktopRuntime.rewrittenSessionURL(
         "rtsp://192.168.0.52:48010",
         runtimeHost: "external-route.example.invalid"
     )
 
-    #expect(rewritten == "rtsp://192.168.0.52:48010")
+    #expect(rewritten == "rtsp://external-route.example.invalid:48010")
 }
 
 @Test("Remote desktop runtime preserves host-provided launch session URLs for local runtime hosts")

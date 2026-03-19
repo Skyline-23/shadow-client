@@ -3374,7 +3374,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return true
         }
 
-        return ShadowClientRemoteHostCandidateFilter.isLoopbackHost(normalizedHost) ||
+        return isLocalPairHost(normalizedHost) ||
+            ShadowClientRemoteHostCandidateFilter.isLoopbackHost(normalizedHost) ||
             ShadowClientRemoteHostCandidateFilter.isLinkLocalHost(normalizedHost)
     }
 
