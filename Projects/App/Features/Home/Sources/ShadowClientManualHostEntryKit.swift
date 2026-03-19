@@ -23,6 +23,22 @@ struct ShadowClientManualHostEntryKit {
         return host.lowercased()
     }
 
+    static func submissionCandidate(_ draft: String, portDraft: String = "") -> String {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return ""
+        }
+
+        let candidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(trimmed)
+        guard let url = URL(string: candidate), let host = url.host else {
+            let port = parsedPort(from: portDraft) ?? ShadowClientGameStreamNetworkDefaults.defaultHTTPPort
+            return normalizedConnectCandidate(host: trimmed, port: port)
+        }
+
+        let port = url.port ?? parsedPort(from: portDraft) ?? ShadowClientGameStreamNetworkDefaults.defaultHTTPPort
+        return normalizedConnectCandidate(host: host, port: port)
+    }
+
     static func canSubmit(_ draft: String, portDraft: String = "") -> Bool {
         let trimmedPort = portDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedPort.isEmpty, parsedPort(from: trimmedPort) == nil {
@@ -51,5 +67,21 @@ struct ShadowClientManualHostEntryKit {
         )
 
         return "\(normalizedHost):\(canonicalPort)"
+    }
+
+    private static func normalizedConnectCandidate(host: String, port: Int) -> String {
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedHost.isEmpty else {
+            return ""
+        }
+
+        let canonicalHTTPSPort = ShadowClientGameStreamNetworkDefaults.canonicalHTTPSPort(
+            fromCandidatePort: port
+        )
+        let connectPort = ShadowClientGameStreamNetworkDefaults.mappedHTTPPort(
+            forHTTPSPort: canonicalHTTPSPort
+        ) ?? port
+
+        return "\(normalizedHost):\(connectPort)"
     }
 }

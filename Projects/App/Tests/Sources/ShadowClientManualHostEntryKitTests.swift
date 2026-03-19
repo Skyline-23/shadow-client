@@ -12,6 +12,15 @@ func manualHostEntryKitNormalization() {
     #expect(ShadowClientManualHostEntryKit.normalizedDraft("   ") == "")
 }
 
+@Test("Manual host entry kit submission candidate defaults to the Apollo connect port")
+func manualHostEntryKitSubmissionCandidateDefaultsToApolloConnectPort() {
+    #expect(ShadowClientManualHostEntryKit.submissionCandidate("ExampleHost") == "examplehost:47989")
+    #expect(ShadowClientManualHostEntryKit.submissionCandidate("https://ExampleHost:47984") == "examplehost:47989")
+    #expect(ShadowClientManualHostEntryKit.submissionCandidate("https://ExampleHost:47989") == "examplehost:47989")
+    #expect(ShadowClientManualHostEntryKit.submissionCandidate("https://ExampleHost:48984") == "examplehost:48989")
+    #expect(ShadowClientManualHostEntryKit.submissionCandidate("ExampleHost", portDraft: "48989") == "examplehost:48989")
+}
+
 @Test("Manual host entry kit only enables submission for non-empty normalized drafts")
 func manualHostEntryKitSubmitGate() {
     #expect(ShadowClientManualHostEntryKit.canSubmit("desktop.local"))

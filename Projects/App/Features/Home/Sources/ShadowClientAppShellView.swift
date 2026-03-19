@@ -461,8 +461,8 @@ var normalizedConnectionHost: String {
         connectionHost.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-var normalizedManualHostDraft: String {
-        ShadowClientManualHostEntryKit.normalizedDraft(
+var manualSubmissionHostCandidate: String {
+        ShadowClientManualHostEntryKit.submissionCandidate(
             manualHostDraft,
             portDraft: manualHostPortDraft
         )
@@ -604,7 +604,7 @@ func cancelManualHostEntry() {
 
     @MainActor
     func addManualHostToCatalog() {
-        let host = normalizedManualHostDraft
+        let host = manualSubmissionHostCandidate
         guard !host.isEmpty else {
             return
         }
