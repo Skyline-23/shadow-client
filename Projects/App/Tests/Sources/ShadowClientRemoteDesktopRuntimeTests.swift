@@ -1174,6 +1174,67 @@ func remoteDesktopRuntimeDeletesHostAndClearsPairingArtifacts() async {
     #expect(await pairingRouteStore.preferredHost(for: "uniqueid:host-123") == nil)
 }
 
+@Test("Remote desktop runtime delete removes explicit service-route certificates before returning")
+@MainActor
+func remoteDesktopRuntimeDeleteRemovesExplicitServiceRouteCertificatesBeforeReturning() async {
+    let defaultsSuite = "shadow-client.runtime.delete-explicit-route.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    let routeCertificate = Data([0x47, 0x98, 0x04])
+    await pinnedStore.setCertificateDER(
+        routeCertificate,
+        forHost: "apollo-route.example.invalid",
+        httpsPort: 47984
+    )
+
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "apollo-route.example.invalid:47984": .init(
+                host: "apollo-route.example.invalid",
+                displayName: "Apollo-47984",
+                pairStatus: .unknown,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: nil
+            ),
+        ],
+        appListByHost: [:]
+    )
+
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient(),
+        pinnedCertificateStore: pinnedStore,
+        defaults: defaults
+    )
+
+    runtime.refreshHosts(
+        candidates: ["apollo-route.example.invalid:47984"],
+        preferredHost: "apollo-route.example.invalid:47984"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    runtime.deleteHost("apollo-route.example.invalid")
+
+    #expect(runtime.hosts.isEmpty)
+    #expect(
+        await pinnedStore.certificateDER(
+            forHost: "apollo-route.example.invalid",
+            httpsPort: 47984
+        ) == nil
+    )
+}
+
 @Test("Remote desktop runtime prefers reachable local route when merging host routes")
 @MainActor
 func remoteDesktopRuntimePrefersReachableLocalRouteWhenMerging() async {

@@ -1640,7 +1640,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         case .pairSelectedHost:
             performPairSelectedHost()
         case let .deleteHost(hostID):
-            performDeleteHost(hostID)
+            await performDeleteHost(hostID)
         case .syncClipboardIfNeeded:
             await performSyncClipboardIfNeeded()
         case .pullClipboard:
@@ -2141,7 +2141,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    private func performDeleteHost(_ hostID: String) {
+    private func performDeleteHost(_ hostID: String) async {
         guard let host = Self.resolveHostSelection(hostID, in: hosts) else {
             return
         }
@@ -2161,17 +2161,15 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             clearSelectedHostApolloAdminState()
         }
 
-        Task {
-            await self.pairingRouteStore.setPreferredHost(nil, for: mergeKey)
-            if let normalizedMachineID = Self.normalizedUniqueID(host.uniqueID) {
-                await self.pinnedCertificateStore.removeCertificates(forMachineID: normalizedMachineID)
-            }
-            for endpoint in host.routes.allEndpoints {
-                await self.pinnedCertificateStore.removeCertificate(
-                    forHost: endpoint.host,
-                    httpsPort: endpoint.httpsPort
-                )
-            }
+        await self.pairingRouteStore.setPreferredHost(nil, for: mergeKey)
+        if let normalizedMachineID = Self.normalizedUniqueID(host.uniqueID) {
+            await self.pinnedCertificateStore.removeCertificates(forMachineID: normalizedMachineID)
+        }
+        for endpoint in host.routes.allEndpoints {
+            await self.pinnedCertificateStore.removeCertificate(
+                forHost: endpoint.host,
+                httpsPort: endpoint.httpsPort
+            )
         }
     }
 
