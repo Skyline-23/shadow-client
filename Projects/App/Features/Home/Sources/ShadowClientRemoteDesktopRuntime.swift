@@ -5951,18 +5951,43 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let selectedReachableHost = group.first(where: {
             $0.id == selectedHostID && $0.isReachable
         })?.host.lowercased()
-
-        let active = rankedActiveRouteCandidates.first(where: {
+        let localReachableRoute = rankedActiveRouteCandidates.first(where: {
             $0.host.lowercased() == reachableLocalHost && !isLinkLocalRouteHost($0.host)
-        }) ?? rankedActiveRouteCandidates.first(where: {
+        })
+        let localRoute = rankedActiveRouteCandidates.first(where: {
             isLocalPairHost($0.host)
-        }) ?? rankedActiveRouteCandidates.first(where: {
+        })
+        let selectedReachableRoute = rankedActiveRouteCandidates.first(where: {
             $0.host.lowercased() == selectedReachableHost
-        }) ?? rankedActiveRouteCandidates.first(where: {
+        })
+        let preferredHostRoute = rankedActiveRouteCandidates.first(where: {
             candidate(preferredHost, matches: $0, hostAliasesByHost: hostAliasesByHost)
-        }) ?? rankedActiveRouteCandidates.first(where: {
+        })
+        let storedPreferredRoute = rankedActiveRouteCandidates.first(where: {
             candidate(preferredRoute, matches: $0, hostAliasesByHost: hostAliasesByHost)
-        }) ?? rankedActiveRouteCandidates.first ?? fallbackPrimary.routes.active
+        })
+        let publicRoute = rankedActiveRouteCandidates.first(where: {
+            !isLocalPairHost($0.host) && !isLinkLocalRouteHost($0.host)
+        })
+
+        let active: ShadowClientRemoteHostEndpoint
+        if reachableHostNames.isEmpty {
+            active = preferredHostRoute
+                ?? storedPreferredRoute
+                ?? publicRoute
+                ?? localRoute
+                ?? rankedActiveRouteCandidates.first
+                ?? fallbackPrimary.routes.active
+        } else {
+            active = localReachableRoute
+                ?? localRoute
+                ?? selectedReachableRoute
+                ?? preferredHostRoute
+                ?? storedPreferredRoute
+                ?? publicRoute
+                ?? rankedActiveRouteCandidates.first
+                ?? fallbackPrimary.routes.active
+        }
 
         return ShadowClientRemoteHostRoutes(
             active: active,
@@ -5989,6 +6014,36 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
         let reachableDescriptors = matchingDescriptors.filter(\.isReachable)
         let candidateDescriptors = reachableDescriptors.isEmpty ? matchingDescriptors : reachableDescriptors
+        let preferredDescriptor = candidateDescriptors.first(where: {
+            candidateMatchesDescriptor(preferredHost, matches: $0)
+        })
+        let preferredReachableDescriptor = reachableDescriptors.first(where: {
+            candidateMatchesDescriptor(preferredHost, matches: $0)
+        })
+        let reachableLocalDescriptor = reachableDescriptors.first(where: {
+            isLocalPairHost($0.host) && !isLinkLocalRouteHost($0.host)
+        })
+        let publicDescriptor = candidateDescriptors.first(where: {
+            !isLocalPairHost($0.host) && !isLinkLocalRouteHost($0.host)
+        })
+
+        if reachableDescriptors.isEmpty {
+            if let preferredDescriptor {
+                return preferredDescriptor
+            }
+
+            if let publicDescriptor {
+                return publicDescriptor
+            }
+        } else {
+            if let reachableLocalDescriptor {
+                return reachableLocalDescriptor
+            }
+
+            if let preferredReachableDescriptor {
+                return preferredReachableDescriptor
+            }
+        }
 
         let currentActiveHost = selectedHost.routes.active.host.lowercased()
         if let activeDescriptor = candidateDescriptors.first(where: {
@@ -6015,10 +6070,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return localDescriptor
         }
 
-        if let preferredHost,
-           let preferredDescriptor = candidateDescriptors.first(where: {
-               candidateMatchesDescriptor(preferredHost, matches: $0)
-           }) {
+        if let preferredDescriptor {
             return preferredDescriptor
         }
 
