@@ -2355,6 +2355,56 @@ func realtimeRuntimeInSessionUDPReceiveRetryClassifier() {
     )
 }
 
+@Test("Realtime runtime in-session UDP retry classifier uses typed socket failures")
+func realtimeRuntimeInSessionUDPReceiveRetryClassifierUsesTypedSocketFailures() {
+    let receiveFailure = ShadowClientUDPDatagramSocketError.systemCallFailed(
+        operation: .receive,
+        code: EIO,
+        message: "Input/output error",
+        transient: false
+    )
+    let connectFailure = ShadowClientUDPDatagramSocketError.systemCallFailed(
+        operation: .connect,
+        code: ENETUNREACH,
+        message: "Network is unreachable",
+        transient: false
+    )
+    let transientSendFailure = ShadowClientUDPDatagramSocketError.systemCallFailed(
+        operation: .send,
+        code: ECONNRESET,
+        message: "Connection reset by peer",
+        transient: true
+    )
+    let unsupportedAddress = ShadowClientUDPDatagramSocketError.unsupportedAddress(
+        "Unsupported remote UDP endpoint"
+    )
+
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime
+            .shouldRetryInSessionAfterUDPVideoReceiveError(receiveFailure)
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime
+            .shouldRetryInSessionAfterUDPVideoReceiveError(connectFailure)
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime
+            .shouldRetryInSessionAfterUDPVideoReceiveError(transientSendFailure)
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime
+            .shouldRetryInSessionAfterUDPVideoReceiveError(unsupportedAddress)
+    )
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime
+            .shouldFallbackToInterleavedTransportAfterUDPReceiveError(receiveFailure)
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime
+            .shouldFallbackToInterleavedTransportAfterUDPReceiveError(connectFailure)
+    )
+}
+
 @Test("Realtime runtime UDP inactivity recovery request requires recent interactive input and respects cooldown")
 func realtimeRuntimeUDPInactivityRecoveryRequestRequiresRecentInput() {
     let now: TimeInterval = 100

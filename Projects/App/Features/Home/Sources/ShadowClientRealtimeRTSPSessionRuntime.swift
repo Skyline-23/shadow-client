@@ -2676,6 +2676,17 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     static func shouldFallbackToInterleavedTransportAfterUDPReceiveError(
         _ error: Error
     ) -> Bool {
+        if let socketError = error as? ShadowClientUDPDatagramSocketError {
+            switch socketError {
+            case .unsupportedAddress:
+                return false
+            case let .systemCallFailed(operation, _, _, transient):
+                if transient {
+                    return false
+                }
+                return operation == .receive
+            }
+        }
         let normalized = error.localizedDescription
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -2687,6 +2698,22 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     ) -> Bool {
         if error is CancellationError {
             return false
+        }
+        if let socketError = error as? ShadowClientUDPDatagramSocketError {
+            switch socketError {
+            case .unsupportedAddress:
+                return false
+            case let .systemCallFailed(operation, _, _, transient):
+                if transient {
+                    return true
+                }
+                switch operation {
+                case .receive, .send:
+                    return true
+                case .socket, .bind, .connect:
+                    return false
+                }
+            }
         }
         let normalized = error.localizedDescription
             .trimmingCharacters(in: .whitespacesAndNewlines)
