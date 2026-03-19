@@ -1703,6 +1703,15 @@ actor ShadowClientRTSPInterleavedClient {
                     )
                     return
                 } catch {
+                    if let udpSocketError = error as? ShadowClientUDPDatagramSocketError {
+                        logger.error(
+                            "RTSP UDP video receive loop failed op=\(udpSocketError.operation?.rawValue ?? "unknown", privacy: .public) transient=\(udpSocketError.isTransient, privacy: .public) error=\(udpSocketError.localizedDescription, privacy: .public)"
+                        )
+                    } else {
+                        logger.error(
+                            "RTSP UDP video receive loop failed with non-socket error: \(error.localizedDescription, privacy: .public)"
+                        )
+                    }
                     guard ShadowClientRealtimeRTSPSessionRuntime
                         .shouldRetryInSessionAfterUDPVideoReceiveError(error)
                     else {
@@ -2096,8 +2105,7 @@ actor ShadowClientRTSPInterleavedClient {
                 localHost: localHost,
                 localPort: preferredLocalPort,
                 remoteHost: host,
-                remotePort: port.rawValue,
-                connectOnInit: false
+                remotePort: port.rawValue
             )
             let endpointDescription = await socket.localEndpointDescription()
             logger.notice(
@@ -2112,8 +2120,7 @@ actor ShadowClientRTSPInterleavedClient {
                 localHost: localHost,
                 localPort: nil,
                 remoteHost: host,
-                remotePort: port.rawValue,
-                connectOnInit: false
+                remotePort: port.rawValue
             )
             let endpointDescription = await socket.localEndpointDescription()
             logger.notice("RTSP UDP video socket bound \(endpointDescription, privacy: .public) (ephemeral-fallback)")

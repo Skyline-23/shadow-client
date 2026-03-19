@@ -2,9 +2,53 @@ import Darwin
 import Foundation
 import Network
 
+enum ShadowClientUDPDatagramSocketOperation: String {
+    case socket
+    case bind
+    case connect
+    case send
+    case receive
+}
+
 enum ShadowClientUDPDatagramSocketError: Error {
     case unsupportedAddress(String)
-    case socketFailure(String)
+    case systemCallFailed(
+        operation: ShadowClientUDPDatagramSocketOperation,
+        code: Int32,
+        message: String,
+        transient: Bool
+    )
+}
+
+extension ShadowClientUDPDatagramSocketError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case let .unsupportedAddress(message):
+            return message
+        case let .systemCallFailed(operation, code, message, transient):
+            return "\(operation.rawValue) failed (\(code), transient=\(transient)): \(message)"
+        }
+    }
+}
+
+extension ShadowClientUDPDatagramSocketError {
+    var isTransient: Bool {
+        switch self {
+        case .unsupportedAddress:
+            return false
+        case let .systemCallFailed(_, _, _, transient):
+            return transient
+        }
+    }
+
+    var operation: ShadowClientUDPDatagramSocketOperation? {
+        switch self {
+        case .unsupportedAddress:
+            return nil
+        case let .systemCallFailed(operation, _, _, _):
+            return operation
+        }
+    }
 }
 
 actor ShadowClientUDPDatagramSocket {
@@ -33,8 +77,6 @@ actor ShadowClientUDPDatagramSocket {
 
     private let descriptor: Int32
     private let addressFamily: Int32
-    private let remoteAddress: SocketAddress
-    private let useConnectedSocket: Bool
     private var isClosed = false
     private var receiveBuffer: [UInt8] = Array(
         repeating: 0,
@@ -45,22 +87,22 @@ actor ShadowClientUDPDatagramSocket {
         localHost: NWEndpoint.Host?,
         localPort: UInt16?,
         remoteHost: NWEndpoint.Host,
-        remotePort: UInt16,
-        connectOnInit: Bool = true
+        remotePort: UInt16
     ) throws {
         guard let remoteAddress = Self.makeAddress(from: remoteHost, port: remotePort) else {
             throw ShadowClientUDPDatagramSocketError.unsupportedAddress(
                 "Unsupported remote UDP endpoint: \(String(describing: remoteHost)):\(remotePort)"
             )
         }
-        self.remoteAddress = remoteAddress
-        useConnectedSocket = connectOnInit
         addressFamily = remoteAddress.family
 
         descriptor = socket(addressFamily, SOCK_DGRAM, IPPROTO_UDP)
         guard descriptor >= 0 else {
-            throw ShadowClientUDPDatagramSocketError.socketFailure(
-                "socket() failed: \(String(cString: strerror(errno)))"
+            throw Self.makeSystemCallFailure(
+                operation: .socket,
+                code: errno,
+                message: String(cString: strerror(errno)),
+                transient: false
             )
         }
 
@@ -106,23 +148,31 @@ actor ShadowClientUDPDatagramSocket {
             bind(descriptor, sockaddrPointer, addressLength)
         }
         if bindStatus != 0 {
-            let message = "bind() failed: \(String(cString: strerror(errno)))"
+            let errorCode = errno
             Darwin.close(descriptor)
-            throw ShadowClientUDPDatagramSocketError.socketFailure(message)
+            throw Self.makeSystemCallFailure(
+                operation: .bind,
+                code: errorCode,
+                message: String(cString: strerror(errorCode)),
+                transient: false
+            )
         }
 
-        if connectOnInit {
-            var connectedRemoteAddress = remoteAddress
-            let connectStatus = Self.withSockaddrPointer(
-                to: &connectedRemoteAddress
-            ) { sockaddrPointer, addressLength in
-                connect(descriptor, sockaddrPointer, addressLength)
-            }
-            if connectStatus != 0 {
-                let message = "connect() failed: \(String(cString: strerror(errno)))"
-                Darwin.close(descriptor)
-                throw ShadowClientUDPDatagramSocketError.socketFailure(message)
-            }
+        var connectedRemoteAddress = remoteAddress
+        let connectStatus = Self.withSockaddrPointer(
+            to: &connectedRemoteAddress
+        ) { sockaddrPointer, addressLength in
+            connect(descriptor, sockaddrPointer, addressLength)
+        }
+        if connectStatus != 0 {
+            let errorCode = errno
+            Darwin.close(descriptor)
+            throw Self.makeSystemCallFailure(
+                operation: .connect,
+                code: errorCode,
+                message: String(cString: strerror(errorCode)),
+                transient: false
+            )
         }
     }
 
@@ -131,31 +181,21 @@ actor ShadowClientUDPDatagramSocket {
             guard let baseAddress = bytes.baseAddress else {
                 return 0
             }
-            if useConnectedSocket {
-                return Darwin.send(
-                    descriptor,
-                    baseAddress,
-                    datagram.count,
-                    0
-                )
-            }
-
-            var targetAddress = remoteAddress
-            return Self.withSockaddrPointer(to: &targetAddress) { sockaddrPointer, addressLength in
-                Darwin.sendto(
-                    descriptor,
-                    baseAddress,
-                    datagram.count,
-                    0,
-                    sockaddrPointer,
-                    addressLength
-                )
-            }
+            return Darwin.send(
+                descriptor,
+                baseAddress,
+                datagram.count,
+                0
+            )
         }
 
         if sentBytes < 0 {
-            throw ShadowClientUDPDatagramSocketError.socketFailure(
-                "send() failed: \(String(cString: strerror(errno)))"
+            let errorCode = errno
+            throw Self.makeSystemCallFailure(
+                operation: .send,
+                code: errorCode,
+                message: String(cString: strerror(errorCode)),
+                transient: Self.shouldTreatSendFailureAsTransient(errorCode)
             )
         }
     }
@@ -182,13 +222,15 @@ actor ShadowClientUDPDatagramSocket {
                 return nil
             }
             if Self.shouldTreatReceiveFailureAsTransient(
-                errorCode,
-                useConnectedSocket: useConnectedSocket
+                errorCode
             ) {
                 return nil
             }
-            throw ShadowClientUDPDatagramSocketError.socketFailure(
-                "recv() failed (\(errorCode)): \(String(cString: strerror(errorCode)))"
+            throw Self.makeSystemCallFailure(
+                operation: .receive,
+                code: errorCode,
+                message: String(cString: strerror(errorCode)),
+                transient: false
             )
         }
 
@@ -269,18 +311,39 @@ actor ShadowClientUDPDatagramSocket {
     }
 
     static func shouldTreatReceiveFailureAsTransient(
-        _ errorCode: Int32,
-        useConnectedSocket: Bool
+        _ errorCode: Int32
     ) -> Bool {
-        guard useConnectedSocket else {
-            return false
-        }
         switch errorCode {
         case ECONNREFUSED, ECONNRESET, ENOTCONN, EHOSTDOWN, EHOSTUNREACH, ENETDOWN, ENETUNREACH:
             return true
         default:
             return false
         }
+    }
+
+    static func shouldTreatSendFailureAsTransient(
+        _ errorCode: Int32
+    ) -> Bool {
+        switch errorCode {
+        case ECONNREFUSED, ECONNRESET, ENOTCONN, EHOSTDOWN, EHOSTUNREACH, ENETDOWN, ENETUNREACH:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func makeSystemCallFailure(
+        operation: ShadowClientUDPDatagramSocketOperation,
+        code: Int32,
+        message: String,
+        transient: Bool
+    ) -> ShadowClientUDPDatagramSocketError {
+        .systemCallFailed(
+            operation: operation,
+            code: code,
+            message: message,
+            transient: transient
+        )
     }
 
     private static func makeLocalAddress(

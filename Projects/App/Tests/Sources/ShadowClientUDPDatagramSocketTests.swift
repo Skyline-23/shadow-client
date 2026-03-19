@@ -6,32 +6,55 @@ import Testing
 func udpDatagramSocketIgnoresTransientConnectedReceiveFailures() {
     #expect(
         ShadowClientUDPDatagramSocket.shouldTreatReceiveFailureAsTransient(
-            ECONNREFUSED,
-            useConnectedSocket: true
+            ECONNREFUSED
         )
     )
     #expect(
         ShadowClientUDPDatagramSocket.shouldTreatReceiveFailureAsTransient(
-            ECONNRESET,
-            useConnectedSocket: true
+            ECONNRESET
         )
     )
     #expect(
         ShadowClientUDPDatagramSocket.shouldTreatReceiveFailureAsTransient(
-            ENETUNREACH,
-            useConnectedSocket: true
+            ENETUNREACH
         )
     )
     #expect(
         !ShadowClientUDPDatagramSocket.shouldTreatReceiveFailureAsTransient(
-            EINVAL,
-            useConnectedSocket: true
+            EINVAL
+        )
+    )
+}
+
+@Test("UDP datagram socket ignores transient connected send failures")
+func udpDatagramSocketIgnoresTransientConnectedSendFailures() {
+    #expect(
+        ShadowClientUDPDatagramSocket.shouldTreatSendFailureAsTransient(
+            ECONNREFUSED
         )
     )
     #expect(
-        !ShadowClientUDPDatagramSocket.shouldTreatReceiveFailureAsTransient(
-            ECONNREFUSED,
-            useConnectedSocket: false
+        ShadowClientUDPDatagramSocket.shouldTreatSendFailureAsTransient(
+            ENOTCONN
         )
     )
+    #expect(
+        !ShadowClientUDPDatagramSocket.shouldTreatSendFailureAsTransient(
+            EINVAL
+        )
+    )
+}
+
+@Test("UDP datagram socket error reports operation and transient state")
+func udpDatagramSocketErrorReportsOperationAndTransientState() {
+    let error = ShadowClientUDPDatagramSocketError.systemCallFailed(
+        operation: .receive,
+        code: ECONNRESET,
+        message: "Connection reset by peer",
+        transient: true
+    )
+
+    #expect(error.isTransient)
+    #expect(error.operation == .receive)
+    #expect(error.localizedDescription == "receive failed (\(ECONNRESET), transient=true): Connection reset by peer")
 }
