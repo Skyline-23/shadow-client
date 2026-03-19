@@ -2368,8 +2368,9 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
 
         let timeoutWorkItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
+            let diagnostics = self.timeoutDiagnostics()
             Self.logger.error(
-                "Secure HTTP timed out host=\(self.host, privacy: .public) stage=\(self.timeoutStage, privacy: .public)"
+                "Secure HTTP timed out host=\(self.host, privacy: .public) port=\(self.url.port ?? 443, privacy: .public) stage=\(self.timeoutStage, privacy: .public) diagnostics=\(diagnostics, privacy: .public)"
             )
             self.finish(.failure(
                 ShadowClientGameStreamError.requestFailed("HTTPS \(self.timeoutStage) timed out")
@@ -2404,6 +2405,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         switch event {
         case .openCompleted:
             readOpen = true
+            timeoutStage = writeOpen ? "peer validation" : "read stream open"
             validatePeerIfPossible()
         case .hasBytesAvailable:
             validatePeerIfPossible()
@@ -2424,6 +2426,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         switch event {
         case .openCompleted:
             writeOpen = true
+            timeoutStage = readOpen ? "peer validation" : "write stream open"
             validatePeerIfPossible()
         case .canAcceptBytes:
             guard validatePeerIfPossible() else { return }
@@ -2465,6 +2468,49 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
 
         peerValidated = true
         return true
+    }
+
+    private func timeoutDiagnostics() -> String {
+        let readStatus = readStream.map { Self.streamStatusDescription(CFReadStreamGetStatus($0)) } ?? "missing"
+        let writeStatus = writeStream.map { Self.streamStatusDescription(CFWriteStreamGetStatus($0)) } ?? "missing"
+        let readError = readStream
+            .flatMap { CFReadStreamCopyError($0) as Error? }
+            .map(\.localizedDescription) ?? "none"
+        let writeError = writeStream
+            .flatMap { CFWriteStreamCopyError($0) as Error? }
+            .map(\.localizedDescription) ?? "none"
+        return [
+            "readOpen=\(readOpen)",
+            "writeOpen=\(writeOpen)",
+            "peerValidated=\(peerValidated)",
+            "readStatus=\(readStatus)",
+            "writeStatus=\(writeStatus)",
+            "readError=\(readError)",
+            "writeError=\(writeError)",
+        ].joined(separator: " ")
+    }
+
+    private static func streamStatusDescription(_ status: CFStreamStatus) -> String {
+        switch status {
+        case .notOpen:
+            return "notOpen"
+        case .opening:
+            return "opening"
+        case .open:
+            return "open"
+        case .reading:
+            return "reading"
+        case .writing:
+            return "writing"
+        case .atEnd:
+            return "atEnd"
+        case .closed:
+            return "closed"
+        case .error:
+            return "error"
+        @unknown default:
+            return "unknown"
+        }
     }
 
     private func writePendingBytes() {

@@ -2374,7 +2374,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 } catch {
                     guard Self.shouldRetryForcedLaunch(
                         launchVerb: initialLaunchResult.verb,
-                        connectError: error
+                        connectError: error,
+                        settings: launchSettingsToUse
                     ) else {
                         throw error
                     }
@@ -3281,9 +3282,17 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     private static func shouldRetryForcedLaunch(
         launchVerb: String,
-        connectError: any Error
+        connectError: any Error,
+        settings: ShadowClientGameStreamLaunchSettings
     ) -> Bool {
         if shouldRetryCodecFallback(connectError: connectError) {
+            return true
+        }
+
+        if forcedLaunchSettings(
+            from: settings,
+            connectError: connectError
+        ).preferredCodec != settings.preferredCodec {
             return true
         }
 
@@ -3499,6 +3508,24 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let isAV1Requested = settings.preferredCodec == .av1 || settings.preferredCodec == .auto
         guard isAV1Requested else {
             return false
+        }
+
+        if let runtimeError = connectError as? ShadowClientRealtimeSessionRuntimeError {
+            switch runtimeError {
+            case .unsupportedCodec:
+                return true
+            case let .transportFailure(reason):
+                switch reason {
+                case .timedOutWaitingForFirstFrame,
+                     .udpVideoNoStartupDatagrams,
+                     .udpVideoProlongedDatagramInactivityAfterStartup:
+                    return true
+                case .message:
+                    break
+                }
+            case .invalidSessionURL, .connectionClosed:
+                break
+            }
         }
 
         let normalized = connectError.localizedDescription

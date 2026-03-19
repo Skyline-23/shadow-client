@@ -1637,6 +1637,83 @@ func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterResumeFirstFrameTimeou
     }
 }
 
+@Test("Remote desktop runtime downgrades codec for forceLaunch after launch startup UDP timeout")
+@MainActor
+func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterLaunchStartupUDPTimeout() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "stream-host.example.invalid": .init(
+                host: "stream-host.example.invalid",
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-AV1-LAUNCH-STARTUP-TIMEOUT"
+            ),
+        ],
+        appListByHost: [
+            "stream-host.example.invalid": [
+                .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let initialSessionURL = "rtsp://192.168.0.52:48010/launch-initial"
+    let forcedLaunchSessionURL = "rtsp://192.168.0.52:48010/launch-fallback"
+    let control = FakeControlClient(
+        simulatedLaunchResult: .init(sessionURL: forcedLaunchSessionURL, verb: "launch"),
+        simulatedLaunchResults: [
+            .init(sessionURL: initialSessionURL, verb: "launch"),
+            .init(sessionURL: forcedLaunchSessionURL, verb: "launch"),
+        ]
+    )
+    let sessionConnector = FakeSessionConnectionClient(
+        simulatedFailure: ShadowClientRealtimeSessionRuntimeError.transportFailure(
+            .udpVideoNoStartupDatagrams
+        )
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["stream-host.example.invalid"], preferredHost: "stream-host.example.invalid")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 881_448_767,
+        settings: .init(
+            preferredCodec: .av1,
+            enableHDR: true,
+            enableSurroundAudio: true,
+            lowLatencyMode: false
+        )
+    )
+    await waitForLaunchState(runtime, maxAttempts: 200)
+
+    #expect(await sessionConnector.connectCalls() == [
+        initialSessionURL,
+        forcedLaunchSessionURL,
+    ])
+    let codecHistory = await sessionConnector.videoConfigurations().map(\.preferredCodec)
+    #expect(codecHistory == [.av1, .h265])
+    let launchCalls = await control.launchCalls()
+    #expect(launchCalls.count == 2)
+    #expect(launchCalls[0].forceLaunch == false)
+    #expect(launchCalls[1].forceLaunch == true)
+    #expect(launchCalls[0].settings.preferredCodec == .av1)
+    #expect(launchCalls[1].settings.preferredCodec == .h265)
+    #expect(runtime.activeSession?.sessionURL == forcedLaunchSessionURL)
+    if case .launched = runtime.launchState {
+        #expect(true)
+    } else {
+        Issue.record("Expected launched state, got \(runtime.launchState)")
+    }
+}
+
 @Test("Remote desktop runtime fails launch when host returns missing video session URL")
 @MainActor
 func remoteDesktopRuntimeFailsLaunchWhenSessionURLIsMissing() async {
