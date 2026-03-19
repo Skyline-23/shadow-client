@@ -624,6 +624,11 @@ func cancelManualHostEntry() {
 
     @MainActor
     func deleteStoredHost(_ host: ShadowClientRemoteHostDescriptor) {
+        let normalizedStoredConnectionHost = normalizedConnectionHost.lowercased()
+        if !normalizedStoredConnectionHost.isEmpty,
+           storedConnectionCandidates(for: host).contains(normalizedStoredConnectionHost) {
+            connectionHost = ""
+        }
         hostCustomizationStore.removeHost(host.id)
         apolloDisplayModeDrafts.removeValue(forKey: host.id)
         apolloAlwaysUseVirtualDisplayDrafts.removeValue(forKey: host.id)

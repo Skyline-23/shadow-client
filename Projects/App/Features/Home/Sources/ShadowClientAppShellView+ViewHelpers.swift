@@ -14,6 +14,28 @@ func connectionCandidate(for host: ShadowClientRemoteHostDescriptor) -> String {
         return "\(endpoint.host):\(endpoint.httpsPort)"
     }
 
+func storedConnectionCandidates(for host: ShadowClientRemoteHostDescriptor) -> Set<String> {
+        Set(host.routes.allEndpoints.flatMap { endpoint in
+            let normalizedHost = endpoint.host
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard !normalizedHost.isEmpty else {
+                return [String]()
+            }
+
+            var candidates = ["\(normalizedHost):\(endpoint.httpsPort)"]
+            if endpoint.httpsPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort {
+                candidates.append(normalizedHost)
+            }
+            if let connectPort = ShadowClientGameStreamNetworkDefaults.mappedHTTPPort(
+                forHTTPSPort: endpoint.httpsPort
+            ) {
+                candidates.append("\(normalizedHost):\(connectPort)")
+            }
+            return candidates
+        })
+    }
+
 func settingsSection<Content: View>(
         title: String,
         @ViewBuilder content: () -> Content
