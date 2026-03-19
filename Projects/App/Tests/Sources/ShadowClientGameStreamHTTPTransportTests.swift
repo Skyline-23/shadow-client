@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Testing
 @testable import ShadowClientFeatureHome
 
@@ -20,6 +21,34 @@ func httpTransportMapsMissingClientCertificateIntoCertificateRequiredFailure() {
     )
 
     #expect(error == .requestFailed("TLSV1_ALERT_CERTIFICATE_REQUIRED: certificate required"))
+}
+
+@Test("HTTP transport fails ready waits immediately for refused or unreachable socket errors")
+func httpTransportFailsReadyWaitImmediatelyForTerminalNWErrors() {
+    #expect(
+        ShadowClientGameStreamHTTPTransport.shouldFailConnectionReadyImmediately(
+            NWError.posix(.ECONNREFUSED)
+        )
+    )
+    #expect(
+        ShadowClientGameStreamHTTPTransport.shouldFailConnectionReadyImmediately(
+            NWError.posix(.ENETUNREACH)
+        )
+    )
+}
+
+@Test("HTTP transport keeps waiting on non-terminal ready-state errors")
+func httpTransportKeepsWaitingOnNonTerminalReadyErrors() {
+    #expect(
+        !ShadowClientGameStreamHTTPTransport.shouldFailConnectionReadyImmediately(
+            NWError.posix(.ETIMEDOUT)
+        )
+    )
+    #expect(
+        !ShadowClientGameStreamHTTPTransport.shouldFailConnectionReadyImmediately(
+            URLError(.timedOut)
+        )
+    )
 }
 
 @Test("Pairchallenge certificate-required transport failure is treated as non-fatal")

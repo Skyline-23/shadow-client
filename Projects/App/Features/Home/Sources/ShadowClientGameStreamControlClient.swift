@@ -1964,6 +1964,16 @@ enum ShadowClientGameStreamHTTPTransport {
                 "Plain HTTP connection ready timed out host=\(host, privacy: .public) port=\(port.rawValue, privacy: .public)"
             )
             throw ShadowClientGameStreamError.requestFailed("connection ready timed out")
+        } catch let gameStreamError as ShadowClientGameStreamError {
+            logger.error(
+                "Plain HTTP connection ready failed host=\(host, privacy: .public) port=\(port.rawValue, privacy: .public) error=\(gameStreamError.localizedDescription, privacy: .public)"
+            )
+            throw gameStreamError
+        } catch {
+            logger.error(
+                "Plain HTTP connection ready failed host=\(host, privacy: .public) port=\(port.rawValue, privacy: .public) error=\(requestFailureMessage(error), privacy: .public)"
+            )
+            throw requestFailureError(error)
         }
         defer {
             connection.cancel()
@@ -2090,7 +2100,25 @@ enum ShadowClientGameStreamHTTPTransport {
             }
         }
 
+        final class WaitingErrorTracker: @unchecked Sendable {
+            private let lock = NSLock()
+            private var waitingError: Error?
+
+            func update(_ error: Error) {
+                lock.lock()
+                waitingError = error
+                lock.unlock()
+            }
+
+            func current() -> Error? {
+                lock.lock()
+                defer { lock.unlock() }
+                return waitingError
+            }
+        }
+
         let gate = ResumeGate()
+        let waitingErrorTracker = WaitingErrorTracker()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let deadline = DispatchTime.now() + timeout
 
@@ -2104,6 +2132,11 @@ enum ShadowClientGameStreamHTTPTransport {
                 switch state {
                 case .ready:
                     resume(.success(()))
+                case let .waiting(error):
+                    waitingErrorTracker.update(error)
+                    if shouldFailConnectionReadyImmediately(error) {
+                        resume(.failure(error))
+                    }
                 case let .failed(error):
                     resume(.failure(error))
                 case .cancelled:
@@ -2115,9 +2148,44 @@ enum ShadowClientGameStreamHTTPTransport {
 
             connection.start(queue: .global(qos: .userInitiated))
             DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: deadline) {
-                resume(.failure(URLError(.timedOut)))
+                if let waitingError = waitingErrorTracker.current() {
+                    resume(
+                        .failure(
+                            ShadowClientGameStreamError.requestFailed(
+                                "connection ready stalled while waiting: \(requestFailureMessage(waitingError))"
+                            )
+                        )
+                    )
+                } else {
+                    resume(.failure(URLError(.timedOut)))
+                }
             }
         }
+    }
+
+    static func shouldFailConnectionReadyImmediately(_ error: Error) -> Bool {
+        if let networkError = error as? NWError,
+           case let .posix(code) = networkError
+        {
+            switch code {
+            case .ECONNREFUSED, .ECONNRESET, .EHOSTUNREACH, .ENETUNREACH:
+                return true
+            default:
+                return false
+            }
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == NSPOSIXErrorDomain {
+            switch nsError.code {
+            case Int(ECONNREFUSED), Int(ECONNRESET), Int(EHOSTUNREACH), Int(ENETUNREACH):
+                return true
+            default:
+                break
+            }
+        }
+
+        return false
     }
 
     private static func send(
