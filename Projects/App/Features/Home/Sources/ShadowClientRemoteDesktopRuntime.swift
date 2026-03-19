@@ -743,7 +743,10 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         if let overridePinnedCertificateDER {
             pinnedCertificateDER = overridePinnedCertificateDER
         } else {
-            pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
+            pinnedCertificateDER = await pinnedCertificateStore.certificateDER(
+                forHost: endpoint.host,
+                httpsPort: endpoint.port
+            )
         }
 
         if pinnedCertificateDER == nil {
@@ -763,6 +766,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             await registerServerIdentity(
                 info: info,
                 requestedHost: endpoint.host,
+                requestedHTTPSPort: endpoint.port,
                 pinnedCertificateDER: pinnedCertificateDER
             )
             return info
@@ -785,6 +789,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             await registerServerIdentity(
                 info: info,
                 requestedHost: endpoint.host,
+                requestedHTTPSPort: endpoint.port,
                 pinnedCertificateDER: pinnedCertificateDER
             )
             return info
@@ -819,6 +824,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                     await registerServerIdentity(
                         info: info,
                         requestedHost: endpoint.host,
+                        requestedHTTPSPort: endpoint.port,
                         pinnedCertificateDER: pinnedCertificateDER
                     )
                     return info
@@ -857,6 +863,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                 await registerServerIdentity(
                     info: info,
                     requestedHost: endpoint.host,
+                    requestedHTTPSPort: endpoint.port,
                     pinnedCertificateDER: pinnedCertificateDER
                 )
                 return info
@@ -872,7 +879,10 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
     public func fetchAppList(host: String, httpsPort: Int?) async throws -> [ShadowClientRemoteAppDescriptor] {
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPSPort)
         let resolvedHTTPSPort = httpsPort ?? endpoint.port
-        let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
+        let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(
+            forHost: endpoint.host,
+            httpsPort: resolvedHTTPSPort
+        )
 
         guard pinnedCertificateDER != nil else {
             throw ShadowClientGameStreamError.requestFailed(
@@ -1010,7 +1020,11 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         if let overridePinnedCertificateDER {
             pinnedCertificateDER = overridePinnedCertificateDER
         } else {
-            pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: host)
+            pinnedCertificateDER = if scheme == ShadowClientGameStreamNetworkDefaults.httpsScheme {
+                await pinnedCertificateStore.certificateDER(forHost: host, httpsPort: port)
+            } else {
+                nil
+            }
         }
         let clientCertificateCredential: URLCredential?
         let clientCertificates: [SecCertificate]?
@@ -1041,6 +1055,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
     private func registerServerIdentity(
         info: ShadowClientGameStreamServerInfo,
         requestedHost: String,
+        requestedHTTPSPort: Int,
         pinnedCertificateDER: Data?
     ) async {
         guard let uniqueID = info.uniqueID?
@@ -1051,14 +1066,27 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             return
         }
 
-        await pinnedCertificateStore.bindHost(requestedHost, toMachineID: uniqueID)
+        await pinnedCertificateStore.bindHost(
+            requestedHost,
+            httpsPort: requestedHTTPSPort,
+            toMachineID: uniqueID
+        )
         for host in [info.host, info.localHost, info.remoteHost, info.manualHost].compactMap({ $0 }) {
-            await pinnedCertificateStore.bindHost(host, toMachineID: uniqueID)
+            await pinnedCertificateStore.bindHost(
+                host,
+                httpsPort: info.httpsPort,
+                toMachineID: uniqueID
+            )
         }
         await pinnedCertificateStore.clearRejectedHost(requestedHost)
 
         if let pinnedCertificateDER {
             await pinnedCertificateStore.setCertificateDER(pinnedCertificateDER, forMachineID: uniqueID)
+            await pinnedCertificateStore.setCertificateDER(
+                pinnedCertificateDER,
+                forHost: requestedHost,
+                httpsPort: requestedHTTPSPort
+            )
         }
     }
 
@@ -1921,16 +1949,33 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         await self.pairingRouteStore.setPreferredHost(normalizedHost, for: pairRouteKey)
         await self.pairingRouteStore.setPreferredHost(normalizedHost, for: mergeRouteKey)
 
-        let normalizedRouteHost = Self.parsedCandidateRoute(normalizedHost)?.host ?? normalizedHost
+        let normalizedRoute = Self.parsedCandidateRoute(normalizedHost)
+        let normalizedRouteHost = normalizedRoute?.host ?? normalizedHost
+        let normalizedRoutePort = normalizedRoute?.port ?? anchorHost.httpsPort
         if let normalizedMachineID = Self.normalizedUniqueID(anchorHost.uniqueID) {
-            await self.pinnedCertificateStore.bindHost(normalizedRouteHost, toMachineID: normalizedMachineID)
+            await self.pinnedCertificateStore.bindHost(
+                normalizedRouteHost,
+                httpsPort: normalizedRoutePort,
+                toMachineID: normalizedMachineID
+            )
         }
         for endpoint in anchorHost.routes.allEndpoints {
-            if let certificate = await self.pinnedCertificateStore.certificateDER(forHost: endpoint.host) {
+            let routeCertificate = await self.pinnedCertificateStore.certificateDER(
+                forHost: endpoint.host,
+                httpsPort: endpoint.httpsPort
+            )
+            let legacyCertificate = routeCertificate == nil
+                ? await self.pinnedCertificateStore.certificateDER(forHost: endpoint.host)
+                : nil
+            if let certificate = routeCertificate ?? legacyCertificate {
                 if let normalizedMachineID = Self.normalizedUniqueID(anchorHost.uniqueID) {
                     await self.pinnedCertificateStore.setCertificateDER(certificate, forMachineID: normalizedMachineID)
                 }
-                await self.pinnedCertificateStore.setCertificateDER(certificate, forHost: normalizedRouteHost)
+                await self.pinnedCertificateStore.setCertificateDER(
+                    certificate,
+                    forHost: normalizedRouteHost,
+                    httpsPort: normalizedRoutePort
+                )
                 break
             }
         }
@@ -2122,7 +2167,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 await self.pinnedCertificateStore.removeCertificates(forMachineID: normalizedMachineID)
             }
             for endpoint in host.routes.allEndpoints {
-                await self.pinnedCertificateStore.removeCertificate(forHost: endpoint.host)
+                await self.pinnedCertificateStore.removeCertificate(
+                    forHost: endpoint.host,
+                    httpsPort: endpoint.httpsPort
+                )
             }
         }
     }
@@ -4624,32 +4672,44 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         hostAliasesByHost: [String: Set<String>],
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
     ) async -> Data? {
-        if let candidateRoute = parsedCandidateRoute(candidateHost),
-           let directCertificate = await pinnedCertificateStore.certificateDER(forHost: candidateRoute.host) {
-            return directCertificate
-        }
-
-        guard let descriptor = relatedDescriptor(
+        let descriptor = relatedDescriptor(
             forHostCandidate: candidateHost,
             existingHosts: existingHosts,
             preferredRoutesByKey: preferredRoutesByKey,
             preferredHost: preferredHost,
             preferredAnchorHost: preferredAnchorHost,
             hostAliasesByHost: hostAliasesByHost
-        ) else {
-            return nil
-        }
+        )
 
-        if let normalizedMachineID = normalizedUniqueID(descriptor.uniqueID),
+        if let normalizedMachineID = descriptor.flatMap({ normalizedUniqueID($0.uniqueID) }),
            let machineCertificate = await pinnedCertificateStore.certificateDER(
             forMachineID: normalizedMachineID
            ) {
             return machineCertificate
         }
 
-        for endpoint in descriptor.routes.allEndpoints {
-            if let certificate = await pinnedCertificateStore.certificateDER(forHost: endpoint.host) {
-                return certificate
+        if let candidateRoute = parsedCandidateRoute(candidateHost),
+           let exactRouteCertificate = await pinnedCertificateStore.certificateDER(
+            forHost: candidateRoute.host,
+            httpsPort: candidateRoute.port ?? ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
+           ) {
+            return exactRouteCertificate
+        }
+
+        if let descriptor {
+            for endpoint in descriptor.routes.allEndpoints {
+                if let certificate = await pinnedCertificateStore.certificateDER(
+                    forHost: endpoint.host,
+                    httpsPort: endpoint.httpsPort
+                ) {
+                    return certificate
+                }
+            }
+
+            for endpoint in descriptor.routes.allEndpoints {
+                if let certificate = await pinnedCertificateStore.certificateDER(forHost: endpoint.host) {
+                    return certificate
+                }
             }
         }
 
@@ -4765,7 +4825,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 }
 
                 for endpoint in descriptor.routes.allEndpoints {
-                    if let existingCertificate = await pinnedCertificateStore.certificateDER(forHost: endpoint.host) {
+                    let routeCertificate = await pinnedCertificateStore.certificateDER(
+                        forHost: endpoint.host,
+                        httpsPort: endpoint.httpsPort
+                    )
+                    let legacyCertificate = routeCertificate == nil
+                        ? await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
+                        : nil
+                    if let existingCertificate = routeCertificate ?? legacyCertificate {
                         certificate = existingCertificate
                         break
                     }
@@ -4787,9 +4854,17 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             for descriptor in group {
                 for endpoint in descriptor.routes.allEndpoints {
                     if let normalizedMachineID {
-                        await pinnedCertificateStore.bindHost(endpoint.host, toMachineID: normalizedMachineID)
+                        await pinnedCertificateStore.bindHost(
+                            endpoint.host,
+                            httpsPort: endpoint.httpsPort,
+                            toMachineID: normalizedMachineID
+                        )
                     }
-                    await pinnedCertificateStore.setCertificateDER(certificate, forHost: endpoint.host)
+                    await pinnedCertificateStore.setCertificateDER(
+                        certificate,
+                        forHost: endpoint.host,
+                        httpsPort: endpoint.httpsPort
+                    )
                 }
             }
         }
@@ -4818,7 +4893,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
             var boundMachineID: String?
             for endpoint in host.routes.allEndpoints {
-                if let machineID = await pinnedCertificateStore.machineID(forHost: endpoint.host) {
+                let exactMachineID = await pinnedCertificateStore.machineID(
+                    forHost: endpoint.host,
+                    httpsPort: endpoint.httpsPort
+                )
+                let legacyMachineID = exactMachineID == nil
+                    ? await pinnedCertificateStore.machineID(forHost: endpoint.host)
+                    : nil
+                if let machineID = exactMachineID ?? legacyMachineID {
                     boundMachineID = machineID
                     break
                 }
@@ -5688,7 +5770,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             }
 
             for endpoint in host.routes.allEndpoints {
-                if await pinnedCertificateStore.certificateDER(forHost: endpoint.host) != nil {
+                let exactCertificate = await pinnedCertificateStore.certificateDER(
+                    forHost: endpoint.host,
+                    httpsPort: endpoint.httpsPort
+                )
+                let legacyCertificate = exactCertificate == nil
+                    ? await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
+                    : nil
+                if exactCertificate != nil || legacyCertificate != nil {
                     pairedKeys.insert(mergeKey(for: host))
                     break
                 }

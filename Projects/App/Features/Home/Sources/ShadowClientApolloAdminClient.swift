@@ -110,7 +110,10 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
             host: host,
             fallbackPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPPort
         )
-        guard let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: endpoint.host) else {
+        guard let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(
+            forHost: endpoint.host,
+            httpsPort: httpsPort
+        ) else {
             throw ShadowClientGameStreamError.requestFailed("Pair the host before using Apollo admin APIs.")
         }
 
@@ -179,7 +182,10 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
             host: host,
             fallbackPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPPort
         )
-        guard let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: endpoint.host) else {
+        guard let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(
+            forHost: endpoint.host,
+            httpsPort: httpsPort
+        ) else {
             throw ShadowClientGameStreamError.requestFailed("Pair the host before using Apollo admin APIs.")
         }
 
@@ -326,7 +332,10 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
             host: host,
             fallbackPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPPort
         )
-        guard let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(forHost: endpoint.host) else {
+        guard let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(
+            forHost: endpoint.host,
+            httpsPort: httpsPort
+        ) else {
             throw ShadowClientGameStreamError.requestFailed("Pair the host before using Apollo admin APIs.")
         }
 

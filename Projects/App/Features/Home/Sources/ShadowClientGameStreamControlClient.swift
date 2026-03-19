@@ -565,6 +565,23 @@ public actor ShadowClientPinnedHostCertificateStore {
         return nil
     }
 
+    public func certificateDER(forHost host: String, httpsPort: Int?) -> Data? {
+        guard let httpsPort else {
+            return certificateDER(forHost: host)
+        }
+
+        let key = normalizedRoute(host, httpsPort: httpsPort)
+        if let machineID = cachedHostMachineBindings[key],
+           let machineCertificate = certificateDER(forMachineID: machineID) {
+            return machineCertificate
+        }
+
+        if let value = cachedHostCertificates[key] {
+            return Data(base64Encoded: value)
+        }
+        return nil
+    }
+
     public func certificateDER(forMachineID machineID: String) -> Data? {
         let key = normalizedMachineID(machineID)
         guard let value = cachedMachineCertificates[key] else {
@@ -575,6 +592,20 @@ public actor ShadowClientPinnedHostCertificateStore {
 
     public func setCertificateDER(_ der: Data, forHost host: String) {
         let key = normalizedHost(host)
+        cachedHostCertificates[key] = der.base64EncodedString()
+        if let machineID = cachedHostMachineBindings[key] {
+            cachedMachineCertificates[machineID] = der.base64EncodedString()
+        }
+        persist()
+    }
+
+    public func setCertificateDER(_ der: Data, forHost host: String, httpsPort: Int?) {
+        guard let httpsPort else {
+            setCertificateDER(der, forHost: host)
+            return
+        }
+
+        let key = normalizedRoute(host, httpsPort: httpsPort)
         cachedHostCertificates[key] = der.base64EncodedString()
         if let machineID = cachedHostMachineBindings[key] {
             cachedMachineCertificates[machineID] = der.base64EncodedString()
@@ -606,8 +637,36 @@ public actor ShadowClientPinnedHostCertificateStore {
         persist()
     }
 
+    public func bindHost(_ host: String, httpsPort: Int?, toMachineID machineID: String) {
+        guard let httpsPort else {
+            bindHost(host, toMachineID: machineID)
+            return
+        }
+
+        let normalizedRouteKey = normalizedRoute(host, httpsPort: httpsPort)
+        let normalizedMachineKey = normalizedMachineID(machineID)
+        guard !normalizedRouteKey.isEmpty, !normalizedMachineKey.isEmpty else {
+            return
+        }
+        cachedHostMachineBindings[normalizedRouteKey] = normalizedMachineKey
+        if let hostCertificate = cachedHostCertificates[normalizedRouteKey] {
+            cachedMachineCertificates[normalizedMachineKey] = hostCertificate
+        } else if let machineCertificate = cachedMachineCertificates[normalizedMachineKey] {
+            cachedHostCertificates[normalizedRouteKey] = machineCertificate
+        }
+        persist()
+    }
+
     public func machineID(forHost host: String) -> String? {
         let key = normalizedHost(host)
+        return cachedHostMachineBindings[key]
+    }
+
+    public func machineID(forHost host: String, httpsPort: Int?) -> String? {
+        guard let httpsPort else {
+            return machineID(forHost: host)
+        }
+        let key = normalizedRoute(host, httpsPort: httpsPort)
         return cachedHostMachineBindings[key]
     }
 
@@ -625,6 +684,18 @@ public actor ShadowClientPinnedHostCertificateStore {
 
     public func removeCertificate(forHost host: String) {
         let key = normalizedHost(host)
+        cachedHostCertificates.removeValue(forKey: key)
+        cachedHostMachineBindings.removeValue(forKey: key)
+        persist()
+    }
+
+    public func removeCertificate(forHost host: String, httpsPort: Int?) {
+        guard let httpsPort else {
+            removeCertificate(forHost: host)
+            return
+        }
+
+        let key = normalizedRoute(host, httpsPort: httpsPort)
         cachedHostCertificates.removeValue(forKey: key)
         cachedHostMachineBindings.removeValue(forKey: key)
         persist()
@@ -649,6 +720,30 @@ public actor ShadowClientPinnedHostCertificateStore {
 
     private func normalizedHost(_ host: String) -> String {
         host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func normalizedRoute(_ host: String, httpsPort: Int) -> String {
+        let normalizedPort = ShadowClientGameStreamNetworkDefaults.canonicalHTTPSPort(
+            fromCandidatePort: httpsPort
+        )
+        let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(trimmedHost)
+        let normalizedRouteHost: String
+        if let url = URL(string: candidate), let parsedHost = url.host {
+            normalizedRouteHost = parsedHost.lowercased()
+        } else {
+            normalizedRouteHost = normalizedHost(trimmedHost)
+        }
+
+        let routeHost: String
+        if normalizedRouteHost.contains(":"),
+           !normalizedRouteHost.hasPrefix("["),
+           !normalizedRouteHost.hasSuffix("]") {
+            routeHost = "[\(normalizedRouteHost)]"
+        } else {
+            routeHost = normalizedRouteHost
+        }
+        return "\(routeHost):\(normalizedPort)"
     }
 
     private func normalizedMachineID(_ machineID: String) -> String {
@@ -949,7 +1044,11 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             throw error
         }
 
-        await pinnedCertificateStore.setCertificateDER(serverCertDER, forHost: endpoint.host)
+        await pinnedCertificateStore.setCertificateDER(
+            serverCertDER,
+            forHost: endpoint.host,
+            httpsPort: endpoint.httpsPort
+        )
         return ShadowClientGameStreamPairingResult(host: endpoint.host)
     }
 
@@ -970,7 +1069,10 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
     ) async throws -> ShadowClientGameStreamLaunchResult {
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
         let uniqueID = await identityStore.uniqueID()
-        let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
+        let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(
+            forHost: endpoint.host,
+            httpsPort: httpsPort
+        )
         let tlsClientCredential = try? await identityStore.tlsClientCertificateCredential()
         let tlsClientCertificates = try? await identityStore.tlsClientCertificates()
         let tlsClientIdentity = try? await identityStore.tlsClientIdentity()
@@ -1151,14 +1253,18 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         host: String,
         httpsPort: Int
     ) async throws {
+        let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: httpsPort)
         let uniqueID = await identityStore.uniqueID()
-        let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(forHost: host)
+        let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(
+            forHost: endpoint.host,
+            httpsPort: httpsPort
+        )
         let tlsClientCredential = try? await identityStore.tlsClientCertificateCredential()
         let tlsClientCertificates = try? await identityStore.tlsClientCertificates()
         let tlsClientIdentity = try? await identityStore.tlsClientIdentity()
 
         _ = try await ShadowClientGameStreamHTTPTransport.requestXML(
-            host: host,
+            host: endpoint.host,
             port: httpsPort,
             scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
             command: ShadowClientGameStreamCommand.cancel.rawValue,
@@ -1213,7 +1319,10 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         text: String
     ) async throws {
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
-        let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
+        let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(
+            forHost: endpoint.host,
+            httpsPort: httpsPort
+        )
         let tlsClientCertificates = try await identityStore.tlsClientCertificates()
         let tlsClientIdentity = try await identityStore.tlsClientIdentity()
 
@@ -1265,7 +1374,10 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         httpsPort: Int
     ) async throws -> String {
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
-        let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
+        let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(
+            forHost: endpoint.host,
+            httpsPort: httpsPort
+        )
         let tlsClientCertificates = try await identityStore.tlsClientCertificates()
         let tlsClientIdentity = try await identityStore.tlsClientIdentity()
 
