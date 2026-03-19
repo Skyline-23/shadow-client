@@ -5421,9 +5421,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         preferredHost: String?,
         existingHosts: [ShadowClientRemoteHostDescriptor]
     ) -> [String] {
-        let routeCandidates = existingHosts.flatMap { descriptor in
-            descriptor.routes.allEndpoints.map(serializedHostCandidate(for:))
-        }
+        let routeCandidates = ShadowClientHostCatalogKit.cachedCandidateHosts(
+            from: existingHosts
+        )
         return normalizedHostCandidates(
             candidates + routeCandidates + [preferredHost].compactMap { $0 }
         )
@@ -5468,9 +5468,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             let canonicalPort = ShadowClientGameStreamNetworkDefaults.canonicalHTTPSPort(
                 fromCandidatePort: port
             )
-            if canonicalPort != ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort {
-                return "\(host.lowercased()):\(canonicalPort)"
-            }
+            return "\(host.lowercased()):\(canonicalPort)"
         }
 
         return host.lowercased()
@@ -5486,18 +5484,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return nil
         }
 
-        let port: Int?
-        if let parsedPort = parsed.port {
-            let canonicalPort = ShadowClientGameStreamNetworkDefaults.canonicalHTTPSPort(
-                fromCandidatePort: parsedPort
+        let port = parsed.port.map {
+            ShadowClientGameStreamNetworkDefaults.canonicalHTTPSPort(
+                fromCandidatePort: $0
             )
-            if canonicalPort != ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort {
-                port = canonicalPort
-            } else {
-                port = nil
-            }
-        } else {
-            port = nil
         }
 
         return (host.lowercased(), port)

@@ -50,11 +50,6 @@ struct ShadowClientManualHostEntryKit {
             fromCandidatePort: port
         )
 
-        if canonicalPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
-        {
-            return normalizedHost
-        }
-
         return "\(normalizedHost):\(canonicalPort)"
     }
 }

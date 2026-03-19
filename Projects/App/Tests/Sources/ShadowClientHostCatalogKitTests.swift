@@ -33,7 +33,7 @@ func hostCatalogCollapsesBareHostIntoExplicitApolloConnectCandidate() {
         manualHost: nil
     )
 
-    #expect(candidates == ["apollo-host.local:48989"])
+    #expect(candidates == ["apollo-host.local:48984"])
 }
 
 @Test("Host catalog prefers Apollo connect base port over HTTPS endpoint aliases")
@@ -45,5 +45,17 @@ func hostCatalogPrefersApolloConnectPortOverHTTPSAlias() {
         manualHost: nil
     )
 
-    #expect(candidates == ["apollo-host.local:48989"])
+    #expect(candidates == ["apollo-host.local:48984"])
+}
+
+@Test("Host catalog preserves distinct explicit Apollo service ports on the same host")
+func hostCatalogPreservesDistinctExplicitApolloServicePortsOnSameHost() {
+    let candidates = ShadowClientHostCatalogKit.refreshCandidates(
+        autoFindHosts: true,
+        discoveredHosts: ["apollo-host.local:47989", "apollo-host.local:48989"],
+        cachedHosts: [],
+        manualHost: nil
+    )
+
+    #expect(candidates == ["apollo-host.local:47984", "apollo-host.local:48984"])
 }

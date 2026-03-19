@@ -6,12 +6,19 @@ enum ShadowClientHostCatalogKit {
     static func cachedCandidateHosts(
         from descriptors: [ShadowClientRemoteHostDescriptor]
     ) -> [String] {
+        let distinctHTTPSPortsByHost = distinctHTTPSPortsByHost(
+            descriptors.flatMap { $0.routes.allEndpoints }
+        )
         var seen: Set<String> = []
         var results: [String] = []
 
         for host in descriptors {
             for endpoint in host.routes.allEndpoints {
-                let connectCandidate = connectCandidateString(for: endpoint)
+                let connectCandidate = connectCandidateString(
+                    for: endpoint,
+                    preserveExplicitDefaultConnectPort:
+                        (distinctHTTPSPortsByHost[normalizedHostKey(for: endpoint.host)]?.count ?? 0) > 1
+                )
                 guard !connectCandidate.isEmpty,
                       seen.insert(connectCandidate).inserted
                 else {
@@ -39,7 +46,10 @@ enum ShadowClientHostCatalogKit {
         return canonicalizedConnectCandidates(filteredCandidates)
     }
 
-    private static func connectCandidateString(for endpoint: ShadowClientRemoteHostEndpoint) -> String {
+    private static func connectCandidateString(
+        for endpoint: ShadowClientRemoteHostEndpoint,
+        preserveExplicitDefaultConnectPort: Bool = false
+    ) -> String {
         let normalizedHost = endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalizedHost.isEmpty else {
             return ""
@@ -54,7 +64,8 @@ enum ShadowClientHostCatalogKit {
             return "\(normalizedHost):\(endpoint.httpsPort)"
         }
 
-        if connectPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPPort {
+        if connectPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPPort,
+           !preserveExplicitDefaultConnectPort {
             return normalizedHost
         }
 
@@ -86,59 +97,48 @@ enum ShadowClientHostCatalogKit {
             )
         }
 
-        var preferredExplicitCandidateByHost: [String: String] = [:]
-        var explicitPortsByHost: [String: Set<Int>] = [:]
+        var hostsWithExplicitCandidates: Set<String> = []
         for candidate in parsedCandidates {
             guard let explicitPort = candidate.explicitPort,
-                  explicitPort != ShadowClientGameStreamNetworkDefaults.defaultHTTPPort
-            else {
+                  explicitPort != ShadowClientGameStreamNetworkDefaults.defaultHTTPPort else {
                 continue
             }
-
-            explicitPortsByHost[candidate.host, default: []].insert(explicitPort)
-            let explicitCandidate = "\(candidate.host):\(explicitPort)"
-            let existing = preferredExplicitCandidateByHost[candidate.host]
-            if existing == nil || explicitCandidate.localizedCaseInsensitiveCompare(existing!) == .orderedAscending {
-                preferredExplicitCandidateByHost[candidate.host] = explicitCandidate
-            }
-        }
-
-        let apolloPortDelta = abs(ShadowClientGameStreamNetworkDefaults.httpsOffsetFromHTTPPort)
-        for (host, explicitPorts) in explicitPortsByHost {
-            let sortedPorts = explicitPorts.sorted()
-            guard sortedPorts.count > 1 else {
-                continue
-            }
-
-            var preferredConnectPort: Int?
-            for port in sortedPorts {
-                let pairedHTTPSPort = port + ShadowClientGameStreamNetworkDefaults.httpsOffsetFromHTTPPort
-                if explicitPorts.contains(pairedHTTPSPort) {
-                    preferredConnectPort = max(preferredConnectPort ?? port, port)
-                    continue
-                }
-
-                if explicitPorts.contains(port - apolloPortDelta) {
-                    preferredConnectPort = max(preferredConnectPort ?? port, port)
-                }
-            }
-
-            if let preferredConnectPort {
-                preferredExplicitCandidateByHost[host] = "\(host):\(preferredConnectPort)"
-            }
+            hostsWithExplicitCandidates.insert(candidate.host)
         }
 
         var seen: Set<String> = []
         var results: [String] = []
         for candidate in parsedCandidates {
-            let canonicalCandidate = preferredExplicitCandidateByHost[candidate.host] ?? candidate.original
-            guard seen.insert(canonicalCandidate).inserted else {
+            if candidate.explicitPort == nil,
+               hostsWithExplicitCandidates.contains(candidate.host) {
                 continue
             }
-            results.append(canonicalCandidate)
+
+            guard seen.insert(candidate.original).inserted else {
+                continue
+            }
+            results.append(candidate.original)
         }
 
         return results
+    }
+
+    private static func distinctHTTPSPortsByHost(
+        _ endpoints: [ShadowClientRemoteHostEndpoint]
+    ) -> [String: Set<Int>] {
+        var values: [String: Set<Int>] = [:]
+        for endpoint in endpoints {
+            let normalizedHost = normalizedHostKey(for: endpoint.host)
+            guard !normalizedHost.isEmpty else {
+                continue
+            }
+            values[normalizedHost, default: []].insert(endpoint.httpsPort)
+        }
+        return values
+    }
+
+    private static func normalizedHostKey(for host: String) -> String {
+        host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     static func currentMachineInterfaceHosts() -> Set<String> {

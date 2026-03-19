@@ -4,10 +4,10 @@ import Testing
 @Test("Manual host entry kit normalizes host names and preserves explicit ports")
 func manualHostEntryKitNormalization() {
     #expect(ShadowClientManualHostEntryKit.normalizedDraft("  ExampleHost  ") == "examplehost")
-    #expect(ShadowClientManualHostEntryKit.normalizedDraft("https://ExampleHost:47984") == "examplehost")
-    #expect(ShadowClientManualHostEntryKit.normalizedDraft("https://ExampleHost:47989") == "examplehost")
+    #expect(ShadowClientManualHostEntryKit.normalizedDraft("https://ExampleHost:47984") == "examplehost:47984")
+    #expect(ShadowClientManualHostEntryKit.normalizedDraft("https://ExampleHost:47989") == "examplehost:47984")
     #expect(ShadowClientManualHostEntryKit.normalizedDraft("https://ExampleHost:48010") == "examplehost:48010")
-    #expect(ShadowClientManualHostEntryKit.normalizedDraft("ExampleHost", portDraft: "47989") == "examplehost")
+    #expect(ShadowClientManualHostEntryKit.normalizedDraft("ExampleHost", portDraft: "47989") == "examplehost:47984")
     #expect(ShadowClientManualHostEntryKit.normalizedDraft("ExampleHost", portDraft: "48010") == "examplehost:48010")
     #expect(ShadowClientManualHostEntryKit.normalizedDraft("   ") == "")
 }

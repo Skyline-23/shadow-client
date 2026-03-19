@@ -31,3 +31,17 @@ func remoteHostCandidateFilterClassifiesNumericLoopbackAndLinkLocalAddresses() {
     #expect(!ShadowClientRemoteHostCandidateFilter.isLoopbackHost("buseongs-macbook-pro-14.local"))
     #expect(!ShadowClientRemoteHostCandidateFilter.isLinkLocalHost("buseongs-macbook-pro-14.local"))
 }
+
+@Test("Remote host candidate filter preserves explicit default Apollo service ports")
+func remoteHostCandidateFilterPreservesExplicitDefaultApolloServicePorts() {
+    let candidates = ShadowClientRemoteHostCandidateFilter.filteredCandidates(
+        discoveredHosts: [
+            "wifi.skyline23.com:47989",
+            "wifi.skyline23.com:48989",
+        ],
+        manualHost: nil,
+        localInterfaceHosts: []
+    )
+
+    #expect(candidates == ["wifi.skyline23.com:47984", "wifi.skyline23.com:48984"])
+}

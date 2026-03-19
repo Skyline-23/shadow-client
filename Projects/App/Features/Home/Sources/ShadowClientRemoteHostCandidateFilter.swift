@@ -27,7 +27,7 @@ enum ShadowClientRemoteHostCandidateFilter {
 
             guard !isLoopbackHost(normalized),
                   !isLinkLocalHost(normalized),
-                  !localInterfaceHosts.contains(normalized)
+                  !localInterfaceHosts.contains(hostForClassification(from: normalized))
             else {
                 return nil
             }
@@ -48,9 +48,7 @@ enum ShadowClientRemoteHostCandidateFilter {
             let canonicalPort = ShadowClientGameStreamNetworkDefaults.canonicalHTTPSPort(
                 fromCandidatePort: port
             )
-            if canonicalPort != ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort {
-                return "\(host):\(canonicalPort)"
-            }
+            return "\(host):\(canonicalPort)"
         }
         return host
     }
