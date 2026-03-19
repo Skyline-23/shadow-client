@@ -2623,8 +2623,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         guard secondsSinceLastDatagram >= max(0, inactivityTimeoutSeconds) else {
             return false
         }
-        _ = lastInteractiveInputEventUptime
-        _ = recentInputWindowSeconds
+        guard lastInteractiveInputEventUptime > 0,
+              now - lastInteractiveInputEventUptime <= max(0, recentInputWindowSeconds) else {
+            return false
+        }
         return now - lastRecoveryRequestUptime >= max(0, recoveryRequestCooldownSeconds)
     }
 

@@ -1588,6 +1588,7 @@ actor ShadowClientRTSPInterleavedClient {
     }
 
     nonisolated func sendInput(_ event: ShadowClientRemoteInputEvent) async throws {
+        await noteInteractiveInput(event)
         try await inputChannelGateway.sendInput(
             event,
             ensureRuntime: { [weak self] in
@@ -1608,6 +1609,25 @@ actor ShadowClientRTSPInterleavedClient {
                 await self?.invalidateInputControlChannelForGateway(runtime)
             }
         )
+    }
+
+    private func noteInteractiveInput(_ event: ShadowClientRemoteInputEvent) {
+        guard Self.isInteractiveInputEvent(event) else {
+            return
+        }
+        lastInteractiveInputEventUptime = ProcessInfo.processInfo.systemUptime
+    }
+
+    private static func isInteractiveInputEvent(_ event: ShadowClientRemoteInputEvent) -> Bool {
+        switch event {
+        case .keyDown, .keyUp, .text, .pointerMoved, .pointerPosition, .pointerButton, .scroll:
+            return true
+        case let .gamepadState(state):
+            return ShadowClientRealtimeRTSPSessionRuntime
+                .shouldTreatGamepadStateAsInteractiveForUDPDatagramRecovery(state)
+        case .gamepadArrival:
+            return false
+        }
     }
 
     func requestVideoRecoveryFrame(lastSeenFrameIndex: UInt32?) async {
@@ -1948,6 +1968,18 @@ actor ShadowClientRTSPInterleavedClient {
                             "RTSP UDP video datagram silence observed after startup (silence=\(secondsSinceLastDatagram, privacy: .public)s); treating as idle video suppression and keeping session alive"
                         )
                         hasPendingPostStartDatagramStall = true
+                    }
+                    if ShadowClientRealtimeRTSPSessionRuntime.shouldRequestVideoRecoveryForUDPDatagramInactivity(
+                        now: now,
+                        lastRecoveryRequestUptime: lastFECRecoveryRequestUptime,
+                        lastInteractiveInputEventUptime: lastInteractiveInputEventUptime,
+                        secondsSinceLastDatagram: secondsSinceLastDatagram
+                    ) {
+                        lastFECRecoveryRequestUptime = now
+                        logger.notice(
+                            "RTSP UDP video inactivity triggered recovery request (silence=\(secondsSinceLastDatagram, privacy: .public)s)"
+                        )
+                        await requestVideoRecoveryFrame(lastSeenFrameIndex: nil)
                     }
                 }
                 continue

@@ -2355,14 +2355,14 @@ func realtimeRuntimeInSessionUDPReceiveRetryClassifier() {
     )
 }
 
-@Test("Realtime runtime UDP inactivity recovery request is input-agnostic and cooldown-driven")
+@Test("Realtime runtime UDP inactivity recovery request requires recent interactive input and respects cooldown")
 func realtimeRuntimeUDPInactivityRecoveryRequestRequiresRecentInput() {
     let now: TimeInterval = 100
     let lastRecoveryRequest: TimeInterval = 95
     let secondsSinceLastDatagram: TimeInterval = 5
 
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime
+        !ShadowClientRealtimeRTSPSessionRuntime
             .shouldRequestVideoRecoveryForUDPDatagramInactivity(
                 now: now,
                 lastRecoveryRequestUptime: lastRecoveryRequest,
@@ -2371,7 +2371,7 @@ func realtimeRuntimeUDPInactivityRecoveryRequestRequiresRecentInput() {
             )
     )
     #expect(
-        ShadowClientRealtimeRTSPSessionRuntime
+        !ShadowClientRealtimeRTSPSessionRuntime
             .shouldRequestVideoRecoveryForUDPDatagramInactivity(
                 now: now,
                 lastRecoveryRequestUptime: lastRecoveryRequest,
