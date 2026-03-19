@@ -698,15 +698,14 @@ var remoteDesktopHostCard: some View {
         Group {
             if isCompactLayout {
                 VStack(alignment: .leading, spacing: 8) {
-                    selectedHostPrimaryActionButton(for: host)
-                        .frame(maxWidth: .infinity)
+                    selectedHostPrimaryActionButtons(for: host, fullWidth: true)
                     if shouldShowPairAction(for: host) {
                         pairSelectedHostButton(fullWidth: true)
                     }
                 }
             } else {
                 HStack(spacing: 8) {
-                    selectedHostPrimaryActionButton(for: host)
+                    selectedHostPrimaryActionButtons(for: host, fullWidth: false)
                     if shouldShowPairAction(for: host) {
                         pairSelectedHostButton(fullWidth: false)
                     }
@@ -716,28 +715,60 @@ var remoteDesktopHostCard: some View {
     }
 
     @ViewBuilder
-    func selectedHostPrimaryActionButton(for host: ShadowClientRemoteHostDescriptor) -> some View {
-        Button(host.currentGameID > 0 ? "Stop" : "Go") {
+    func selectedHostPrimaryActionButtons(
+        for host: ShadowClientRemoteHostDescriptor,
+        fullWidth: Bool
+    ) -> some View {
+        Group {
             if host.currentGameID > 0 {
-                remoteDesktopRuntime.clearActiveSession()
-                return
+                if fullWidth {
+                    VStack(alignment: .leading, spacing: 8) {
+                        goSelectedHostButton(for: host, fullWidth: true)
+                        stopSelectedHostButton(fullWidth: true)
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        goSelectedHostButton(for: host, fullWidth: false)
+                        stopSelectedHostButton(fullWidth: false)
+                    }
+                }
+            } else {
+                goSelectedHostButton(for: host, fullWidth: fullWidth)
             }
+        }
+    }
+
+    func goSelectedHostButton(
+        for host: ShadowClientRemoteHostDescriptor,
+        fullWidth: Bool
+    ) -> some View {
+        Button("Start") {
             connectionHost = connectionCandidate(for: host)
             connectToHost(autoLaunchAfterConnect: true, preferredHostID: host.id)
         }
         .accessibilityIdentifier("shadow.home.hosts.go-selected")
-        .accessibilityLabel(host.currentGameID > 0 ? "Stop selected host session" : "Go to selected host")
+        .accessibilityLabel("Start selected host")
         .accessibilityHint(
-            host.currentGameID > 0
-                ? "Stops the active streaming session on the selected host."
-                : ShadowClientHostAppLibraryPresentationKit.primaryActionHint(
-                    hostTitle: hostDisplayTitle(host),
-                    canConnect: hostCanConnect(host)
-                )
+            ShadowClientHostAppLibraryPresentationKit.primaryActionHint(
+                hostTitle: hostDisplayTitle(host),
+                canConnect: hostCanConnect(host)
+            )
         )
         .buttonStyle(.borderedProminent)
-        .tint(host.currentGameID > 0 ? .red : nil)
-        .disabled(host.currentGameID > 0 ? false : !hostCanConnect(host))
+        .frame(maxWidth: fullWidth ? .infinity : nil)
+        .disabled(!hostCanConnect(host))
+    }
+
+    func stopSelectedHostButton(fullWidth: Bool) -> some View {
+        Button("Stop") {
+            remoteDesktopRuntime.clearActiveSession()
+        }
+        .accessibilityIdentifier("shadow.home.hosts.stop-selected")
+        .accessibilityLabel("Stop selected host session")
+        .accessibilityHint("Stops the active streaming session on the selected host.")
+        .buttonStyle(.borderedProminent)
+        .tint(.red)
+        .frame(maxWidth: fullWidth ? .infinity : nil)
     }
 
     @ViewBuilder
