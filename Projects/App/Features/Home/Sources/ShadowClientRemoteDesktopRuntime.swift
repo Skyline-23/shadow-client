@@ -1949,37 +1949,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         await self.pairingRouteStore.setPreferredHost(normalizedHost, for: pairRouteKey)
         await self.pairingRouteStore.setPreferredHost(normalizedHost, for: mergeRouteKey)
 
-        let normalizedRoute = Self.parsedCandidateRoute(normalizedHost)
-        let normalizedRouteHost = normalizedRoute?.host ?? normalizedHost
-        let normalizedRoutePort = normalizedRoute?.port ?? anchorHost.httpsPort
-        if let normalizedMachineID = Self.normalizedUniqueID(anchorHost.uniqueID) {
-            await self.pinnedCertificateStore.bindHost(
-                normalizedRouteHost,
-                httpsPort: normalizedRoutePort,
-                toMachineID: normalizedMachineID
-            )
-        }
-        for endpoint in anchorHost.routes.allEndpoints {
-            let routeCertificate = await self.pinnedCertificateStore.certificateDER(
-                forHost: endpoint.host,
-                httpsPort: endpoint.httpsPort
-            )
-            let legacyCertificate = routeCertificate == nil
-                ? await self.pinnedCertificateStore.certificateDER(forHost: endpoint.host)
-                : nil
-            if let certificate = routeCertificate ?? legacyCertificate {
-                if let normalizedMachineID = Self.normalizedUniqueID(anchorHost.uniqueID) {
-                    await self.pinnedCertificateStore.setCertificateDER(certificate, forMachineID: normalizedMachineID)
-                }
-                await self.pinnedCertificateStore.setCertificateDER(
-                    certificate,
-                    forHost: normalizedRouteHost,
-                    httpsPort: normalizedRoutePort
-                )
-                break
-            }
-        }
-
         let updatedHosts = Self.upsertingManualRoute(
             normalizedHost,
             forHostID: anchorHost.id,

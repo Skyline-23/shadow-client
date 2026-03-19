@@ -1552,9 +1552,9 @@ func remoteDesktopRuntimeMatchesDefaultHTTPPortCandidateToCachedRoute() async {
     #expect(failingRuntime.hosts.first?.routes.local?.host == "local-stream-host.local")
 }
 
-@Test("Remote desktop runtime copies pinned certificates onto remembered manual routes before refresh")
+@Test("Remote desktop runtime remembers manual routes without mutating pinned certificates")
 @MainActor
-func remoteDesktopRuntimeCopiesPinnedCertificateForRememberedManualRoute() async {
+func remoteDesktopRuntimeRemembersManualRouteWithoutCopyingPinnedCertificates() async {
     let certificateStore = ShadowClientPinnedHostCertificateStore(
         defaultsSuiteName: "shadow-client.runtime.manual-route-cert-alias.\(UUID().uuidString)"
     )
@@ -1602,7 +1602,7 @@ func remoteDesktopRuntimeCopiesPinnedCertificateForRememberedManualRoute() async
     #expect(runtime.hosts.first?.routes.manual?.host == "manual-route.example.invalid")
     #expect(
         await certificateStore.certificateDER(forHost: "manual-route.example.invalid")
-            == localCertificate
+            == nil
     )
 }
 
