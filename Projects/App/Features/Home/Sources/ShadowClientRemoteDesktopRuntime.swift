@@ -4679,15 +4679,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             existingHosts: existingHosts,
             hostAliasesByHost: hostAliasesByHost
         )
-        let descriptor = exactDescriptor ?? relatedDescriptor(
-            forHostCandidate: candidateHost,
-            existingHosts: existingHosts,
-            preferredRoutesByKey: preferredRoutesByKey,
-            preferredHost: preferredHost,
-            preferredAnchorHost: preferredAnchorHost,
-            hostAliasesByHost: hostAliasesByHost
-        )
-
         if let candidateRoute,
            let exactRouteCertificate = await pinnedCertificateStore.certificateDER(
             forHost: candidateRoute.host,
@@ -4703,9 +4694,18 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return machineCertificate
         }
 
-        guard candidateRoute?.port != nil else {
+        guard candidateRoute?.port == nil else {
             return nil
         }
+
+        let descriptor = relatedDescriptor(
+            forHostCandidate: candidateHost,
+            existingHosts: existingHosts,
+            preferredRoutesByKey: preferredRoutesByKey,
+            preferredHost: preferredHost,
+            preferredAnchorHost: preferredAnchorHost,
+            hostAliasesByHost: hostAliasesByHost
+        )
 
         if let normalizedMachineID = descriptor.flatMap({ normalizedUniqueID($0.uniqueID) }),
            let machineCertificate = await pinnedCertificateStore.certificateDER(
@@ -5885,9 +5885,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return lhsUniqueID == rhsUniqueID
         }
 
-        let lhsRouteHosts = routeHostSet(for: lhs, hostAliasesByHost: hostAliasesByHost)
-        let rhsRouteHosts = routeHostSet(for: rhs, hostAliasesByHost: hostAliasesByHost)
-        if !lhsRouteHosts.isDisjoint(with: rhsRouteHosts) {
+        let lhsRouteIdentities = routeIdentitySet(for: lhs, hostAliasesByHost: hostAliasesByHost)
+        let rhsRouteIdentities = routeIdentitySet(for: rhs, hostAliasesByHost: hostAliasesByHost)
+        if !lhsRouteIdentities.isDisjoint(with: rhsRouteIdentities) {
             return true
         }
 
@@ -5899,12 +5899,26 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return "uniqueid:\(uniqueID)"
         }
 
-        let routeHosts = routeHostSet(for: host).sorted()
-        if !routeHosts.isEmpty {
-            return "routes:\(routeHosts.joined(separator: "|"))"
+        let routeIdentities = routeIdentitySet(for: host).sorted()
+        if !routeIdentities.isEmpty {
+            return "routes:\(routeIdentities.joined(separator: "|"))"
         }
 
         return "host:\(host.id)"
+    }
+
+    private static func routeIdentitySet(
+        for host: ShadowClientRemoteHostDescriptor,
+        hostAliasesByHost: [String: Set<String>] = [:]
+    ) -> Set<String> {
+        host.routes.allEndpoints.reduce(into: Set<String>()) { partialResult, endpoint in
+            guard !isLoopbackRouteHost(endpoint.host) else {
+                return
+            }
+            let identities = hostAliases(for: endpoint.host, hostAliasesByHost: hostAliasesByHost)
+                .map { "\($0):\(endpoint.httpsPort)" }
+            partialResult.formUnion(identities)
+        }
     }
 
     private static func routeHostSet(

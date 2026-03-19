@@ -1734,6 +1734,109 @@ func remoteDesktopRuntimePublishesCertificateMismatchHosts() async {
     #expect(apolloHost?.lastError == "Host rejected request (401): Server certificate mismatch")
 }
 
+@Test("Remote desktop runtime does not reuse pinned certificates across explicit service ports")
+@MainActor
+func remoteDesktopRuntimeDoesNotReusePinnedCertificatesAcrossExplicitServicePorts() async {
+    let defaultsSuite = "shadow-client.runtime.explicit-port-pins.\(UUID().uuidString)"
+    let certificateStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    await certificateStore.bindHost("wifi.skyline23.com", httpsPort: 48984, toMachineID: "APOLLO-48984")
+    await certificateStore.setCertificateDER(Data([0x48, 0x98, 0x04]), forMachineID: "APOLLO-48984")
+
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "wifi.skyline23.com:48984": .init(
+                host: "wifi.skyline23.com",
+                displayName: "Apollo-48984",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "APOLLO-48984"
+            ),
+            "wifi.skyline23.com:47984": .init(
+                host: "wifi.skyline23.com",
+                displayName: "Apollo-47984",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "APOLLO-47984"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient(),
+        pinnedCertificateStore: certificateStore
+    )
+
+    runtime.refreshHosts(
+        candidates: ["wifi.skyline23.com:48984", "wifi.skyline23.com:47984"],
+        preferredHost: "wifi.skyline23.com:47984"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    let request48984 = await metadataClient.recordedServerInfoRequests().first(where: {
+        $0.host == "wifi.skyline23.com:48984"
+    })
+    let request47984 = await metadataClient.recordedServerInfoRequests().first(where: {
+        $0.host == "wifi.skyline23.com:47984"
+    })
+
+    #expect(request48984?.pinnedServerCertificateDER == Data([0x48, 0x98, 0x04]))
+    #expect(request47984?.pinnedServerCertificateDER == nil)
+}
+
+@Test("Remote desktop runtime keeps same-host explicit service ports as separate cards when one mismatches")
+@MainActor
+func remoteDesktopRuntimeKeepsSameHostExplicitPortsSeparateOnMismatch() async {
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "wifi.skyline23.com:48984": .init(
+                host: "wifi.skyline23.com",
+                displayName: "Apollo-48984",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "APOLLO-48984"
+            ),
+        ],
+        appListByHost: [:],
+        serverInfoFailureByHost: [
+            "wifi.skyline23.com:47984": .responseRejected(
+                code: 401,
+                message: "Server certificate mismatch"
+            ),
+        ]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient()
+    )
+
+    runtime.refreshHosts(
+        candidates: ["wifi.skyline23.com:48984", "wifi.skyline23.com:47984"],
+        preferredHost: "wifi.skyline23.com:47984"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(runtime.hosts.count == 2)
+    let https48984Host = runtime.hosts.first(where: { $0.httpsPort == 48984 })
+    let https47984Host = runtime.hosts.first(where: { $0.httpsPort == 47984 })
+    #expect(https48984Host?.host == "wifi.skyline23.com")
+    #expect(https48984Host?.lastError == nil)
+    #expect(https47984Host?.host == "wifi.skyline23.com")
+    #expect(https47984Host?.lastError == "Host rejected request (401): Server certificate mismatch")
+}
+
 @Test("Remote desktop runtime skips probing routes rejected for certificate mismatch on subsequent refreshes")
 @MainActor
 func remoteDesktopRuntimeSkipsRejectedCertificateRoutesOnRefresh() async {
