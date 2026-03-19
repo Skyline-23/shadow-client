@@ -13,6 +13,9 @@ enum ShadowClientHostCatalogKit {
         var results: [String] = []
 
         for host in descriptors {
+            if isTerminalPinnedCertificateMismatch(host.lastError) {
+                continue
+            }
             for endpoint in host.routes.allEndpoints {
                 let connectCandidate = connectCandidateString(
                     for: endpoint,
@@ -29,6 +32,16 @@ enum ShadowClientHostCatalogKit {
         }
 
         return results
+    }
+
+    private static func isTerminalPinnedCertificateMismatch(_ lastError: String?) -> Bool {
+        guard let lastError else {
+            return false
+        }
+        let normalized = lastError
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalized.contains("certificate mismatch")
     }
 
     static func refreshCandidates(

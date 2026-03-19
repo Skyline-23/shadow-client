@@ -11,8 +11,8 @@ func rtspProfileUsesWildcardBindHostWhenLocalHostIsNil() {
 
 @Test("RTSP profile preserves resolved local bind host")
 func rtspProfilePreservesResolvedBindHost() {
-    let resolvedHost = NWEndpoint.Host("192.168.0.50")
+    let resolvedHost = NWEndpoint.Host("192.168.10.50")
     let host = ShadowClientRTSPProtocolProfile.localBindHost(from: resolvedHost)
 
-    #expect(String(describing: host) == "192.168.0.50")
+    #expect(String(describing: host) == "192.168.10.50")
 }

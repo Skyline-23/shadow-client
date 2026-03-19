@@ -1702,12 +1702,12 @@ func remoteDesktopRuntimeDoesNotReusePinnedCertificateForUnrelatedPreferredApoll
         defaultsSuiteName: "shadow-client.runtime.unrelated-preferred-apollo-cert.\(UUID().uuidString)"
     )
     let pcCertificate = Data([0xDE, 0xAD, 0xBE, 0xEF])
-    await certificateStore.setCertificateDER(pcCertificate, forHost: "192.168.0.52")
+    await certificateStore.setCertificateDER(pcCertificate, forHost: "192.168.10.52")
 
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "192.168.0.52": .init(
-                host: "192.168.0.52",
+            "192.168.10.52": .init(
+                host: "192.168.10.52",
                 displayName: "Skyline23-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -1717,9 +1717,9 @@ func remoteDesktopRuntimeDoesNotReusePinnedCertificateForUnrelatedPreferredApoll
                 gfeVersion: nil,
                 uniqueID: "PC-HOST"
             ),
-            "buseongs-macbook-pro-14.local:48984": .init(
-                host: "buseongs-macbook-pro-14.local",
-                displayName: "Buseong's MacBook Pro 14",
+            "test-route-host.local:48984": .init(
+                host: "test-route-host.local",
+                displayName: "Test Route Host",
                 pairStatus: .paired,
                 currentGameID: 0,
                 serverState: "SUNSHINE_SERVER_FREE",
@@ -1737,17 +1737,17 @@ func remoteDesktopRuntimeDoesNotReusePinnedCertificateForUnrelatedPreferredApoll
         pinnedCertificateStore: certificateStore
     )
 
-    runtime.refreshHosts(candidates: ["192.168.0.52"], preferredHost: "192.168.0.52")
+    runtime.refreshHosts(candidates: ["192.168.10.52"], preferredHost: "192.168.10.52")
     await waitForHostCatalogReady(runtime)
 
     runtime.refreshHosts(
-        candidates: ["192.168.0.52", "buseongs-macbook-pro-14.local:48984"],
-        preferredHost: "buseongs-macbook-pro-14.local:48984"
+        candidates: ["192.168.10.52", "test-route-host.local:48984"],
+        preferredHost: "test-route-host.local:48984"
     )
     await waitForHostCatalogReady(runtime)
 
     let apolloRequest = await metadataClient.recordedServerInfoRequests().last(where: {
-        $0.host == "buseongs-macbook-pro-14.local:48984"
+        $0.host == "test-route-host.local:48984"
     })
 
     #expect(apolloRequest?.pinnedServerCertificateDER == nil)
@@ -1758,8 +1758,8 @@ func remoteDesktopRuntimeDoesNotReusePinnedCertificateForUnrelatedPreferredApoll
 func remoteDesktopRuntimePublishesCertificateMismatchHosts() async {
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "192.168.0.52": .init(
-                host: "192.168.0.52",
+            "192.168.10.52": .init(
+                host: "192.168.10.52",
                 displayName: "Skyline23-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -1772,7 +1772,7 @@ func remoteDesktopRuntimePublishesCertificateMismatchHosts() async {
         ],
         appListByHost: [:],
         serverInfoFailureByHost: [
-            "buseongs-macbook-pro-14.local:48984": .responseRejected(
+            "test-route-host.local:48984": .responseRejected(
                 code: 401,
                 message: "Server certificate mismatch"
             ),
@@ -1784,13 +1784,13 @@ func remoteDesktopRuntimePublishesCertificateMismatchHosts() async {
     )
 
     runtime.refreshHosts(
-        candidates: ["192.168.0.52", "buseongs-macbook-pro-14.local:48984"],
-        preferredHost: "buseongs-macbook-pro-14.local:48984"
+        candidates: ["192.168.10.52", "test-route-host.local:48984"],
+        preferredHost: "test-route-host.local:48984"
     )
     await waitForHostCatalogReady(runtime)
 
     #expect(runtime.hosts.count == 2)
-    let apolloHost = runtime.hosts.first(where: { $0.host == "buseongs-macbook-pro-14.local" })
+    let apolloHost = runtime.hosts.first(where: { $0.host == "test-route-host.local" })
     #expect(apolloHost?.httpsPort == 48984)
     #expect(apolloHost?.lastError == "Host rejected request (401): Server certificate mismatch")
 }
@@ -1800,13 +1800,13 @@ func remoteDesktopRuntimePublishesCertificateMismatchHosts() async {
 func remoteDesktopRuntimeDoesNotReusePinnedCertificatesAcrossExplicitServicePorts() async {
     let defaultsSuite = "shadow-client.runtime.explicit-port-pins.\(UUID().uuidString)"
     let certificateStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
-    await certificateStore.bindHost("wifi.skyline23.com", httpsPort: 48984, toMachineID: "APOLLO-48984")
+    await certificateStore.bindHost("dual-apollo.example.invalid", httpsPort: 48984, toMachineID: "APOLLO-48984")
     await certificateStore.setCertificateDER(Data([0x48, 0x98, 0x04]), forMachineID: "APOLLO-48984")
 
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "wifi.skyline23.com:48984": .init(
-                host: "wifi.skyline23.com",
+            "dual-apollo.example.invalid:48984": .init(
+                host: "dual-apollo.example.invalid",
                 displayName: "Apollo-48984",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -1816,8 +1816,8 @@ func remoteDesktopRuntimeDoesNotReusePinnedCertificatesAcrossExplicitServicePort
                 gfeVersion: nil,
                 uniqueID: "APOLLO-48984"
             ),
-            "wifi.skyline23.com:47984": .init(
-                host: "wifi.skyline23.com",
+            "dual-apollo.example.invalid:47984": .init(
+                host: "dual-apollo.example.invalid",
                 displayName: "Apollo-47984",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -1837,16 +1837,16 @@ func remoteDesktopRuntimeDoesNotReusePinnedCertificatesAcrossExplicitServicePort
     )
 
     runtime.refreshHosts(
-        candidates: ["wifi.skyline23.com:48984", "wifi.skyline23.com:47984"],
-        preferredHost: "wifi.skyline23.com:47984"
+        candidates: ["dual-apollo.example.invalid:48984", "dual-apollo.example.invalid:47984"],
+        preferredHost: "dual-apollo.example.invalid:47984"
     )
     await waitForHostCatalogReady(runtime)
 
     let request48984 = await metadataClient.recordedServerInfoRequests().first(where: {
-        $0.host == "wifi.skyline23.com:48984"
+        $0.host == "dual-apollo.example.invalid:48984"
     })
     let request47984 = await metadataClient.recordedServerInfoRequests().first(where: {
-        $0.host == "wifi.skyline23.com:47984"
+        $0.host == "dual-apollo.example.invalid:47984"
     })
 
     #expect(request48984?.pinnedServerCertificateDER == Data([0x48, 0x98, 0x04]))
@@ -1858,8 +1858,8 @@ func remoteDesktopRuntimeDoesNotReusePinnedCertificatesAcrossExplicitServicePort
 func remoteDesktopRuntimeKeepsSameHostExplicitPortsSeparateOnMismatch() async {
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "wifi.skyline23.com:48984": .init(
-                host: "wifi.skyline23.com",
+            "dual-apollo.example.invalid:48984": .init(
+                host: "dual-apollo.example.invalid",
                 displayName: "Apollo-48984",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -1872,7 +1872,7 @@ func remoteDesktopRuntimeKeepsSameHostExplicitPortsSeparateOnMismatch() async {
         ],
         appListByHost: [:],
         serverInfoFailureByHost: [
-            "wifi.skyline23.com:47984": .responseRejected(
+            "dual-apollo.example.invalid:47984": .responseRejected(
                 code: 401,
                 message: "Server certificate mismatch"
             ),
@@ -1884,18 +1884,102 @@ func remoteDesktopRuntimeKeepsSameHostExplicitPortsSeparateOnMismatch() async {
     )
 
     runtime.refreshHosts(
-        candidates: ["wifi.skyline23.com:48984", "wifi.skyline23.com:47984"],
-        preferredHost: "wifi.skyline23.com:47984"
+        candidates: ["dual-apollo.example.invalid:48984", "dual-apollo.example.invalid:47984"],
+        preferredHost: "dual-apollo.example.invalid:47984"
     )
     await waitForHostCatalogReady(runtime)
 
     #expect(runtime.hosts.count == 2)
     let https48984Host = runtime.hosts.first(where: { $0.httpsPort == 48984 })
     let https47984Host = runtime.hosts.first(where: { $0.httpsPort == 47984 })
-    #expect(https48984Host?.host == "wifi.skyline23.com")
+    #expect(https48984Host?.host == "dual-apollo.example.invalid")
     #expect(https48984Host?.lastError == nil)
-    #expect(https47984Host?.host == "wifi.skyline23.com")
+    #expect(https47984Host?.host == "dual-apollo.example.invalid")
     #expect(https47984Host?.lastError == "Host rejected request (401): Server certificate mismatch")
+}
+
+@Test("Remote desktop runtime marks bare host pins ambiguous when one hostname serves multiple Apollo ports")
+func remoteDesktopRuntimeMarksBareHostPinsAmbiguousAcrossApolloPorts() {
+    let hosts: [ShadowClientRemoteHostDescriptor] = [
+        .init(
+            host: "dual-apollo.example.invalid",
+            displayName: "Apollo-48984",
+            pairStatus: .paired,
+            currentGameID: 0,
+            serverState: "SUNSHINE_SERVER_FREE",
+            httpsPort: 48984,
+            appVersion: nil,
+            gfeVersion: nil,
+            uniqueID: "APOLLO-48984",
+            lastError: nil
+        ),
+        .init(
+            host: "dual-apollo.example.invalid",
+            displayName: "Apollo-47984",
+            pairStatus: .paired,
+            currentGameID: 0,
+            serverState: "SUNSHINE_SERVER_FREE",
+            httpsPort: 47984,
+            appVersion: nil,
+            gfeVersion: nil,
+            uniqueID: "APOLLO-47984",
+            lastError: nil
+        ),
+    ]
+
+    let ambiguous = ShadowClientRemoteDesktopRuntime.ambiguousLegacyPinnedHosts(across: hosts)
+    #expect(ambiguous == ["dual-apollo.example.invalid"])
+}
+
+@Test("Remote desktop runtime scrubs ambiguous bare host pins before binding same-host Apollo services")
+@MainActor
+func remoteDesktopRuntimeScrubsAmbiguousBareHostPins() async {
+    let defaultsSuite = "shadow-client.runtime.scrub-ambiguous-bare-pins.\(UUID().uuidString)"
+    let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    await pinnedStore.setCertificateDER(Data([0x10, 0x20, 0x30]), forHost: "dual-apollo.example.invalid")
+    await pinnedStore.bindHost("dual-apollo.example.invalid", toMachineID: "APOLLO-47984")
+
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "dual-apollo.example.invalid:48984": .init(
+                host: "dual-apollo.example.invalid",
+                displayName: "Apollo-48984",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "APOLLO-48984"
+            ),
+            "dual-apollo.example.invalid:47984": .init(
+                host: "dual-apollo.example.invalid",
+                displayName: "Apollo-47984",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "APOLLO-47984"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient(),
+        pinnedCertificateStore: pinnedStore
+    )
+
+    runtime.refreshHosts(
+        candidates: ["dual-apollo.example.invalid:48984", "dual-apollo.example.invalid:47984"],
+        preferredHost: "dual-apollo.example.invalid:48984"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(await pinnedStore.certificateDER(forHost: "dual-apollo.example.invalid") == nil)
+    #expect(await pinnedStore.machineID(forHost: "dual-apollo.example.invalid") == nil)
 }
 
 @Test("Remote desktop runtime skips probing routes rejected for certificate mismatch on subsequent refreshes")
@@ -1952,9 +2036,9 @@ func rejectedRouteRemainsRejectedAfterAliasSynchronization() async {
 
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "192.168.0.52": .init(
-                host: "192.168.0.52",
-                localHost: "192.168.0.52",
+            "192.168.10.52": .init(
+                host: "192.168.10.52",
+                localHost: "192.168.10.52",
                 remoteHost: nil,
                 manualHost: nil,
                 displayName: "Example-PC",
@@ -1980,8 +2064,8 @@ func rejectedRouteRemainsRejectedAfterAliasSynchronization() async {
                 guard !normalized.isEmpty else {
                     continue
                 }
-                if normalized == "wifi-route.example.invalid" || normalized == "192.168.0.52" {
-                    aliases[normalized] = ["wifi-route.example.invalid", "192.168.0.52"]
+                if normalized == "wifi-route.example.invalid" || normalized == "192.168.10.52" {
+                    aliases[normalized] = ["wifi-route.example.invalid", "192.168.10.52"]
                 } else {
                     aliases[normalized] = [normalized]
                 }
@@ -1990,15 +2074,15 @@ func rejectedRouteRemainsRejectedAfterAliasSynchronization() async {
         }
     )
 
-    runtime.refreshHosts(candidates: ["wifi-route.example.invalid", "192.168.0.52"])
+    runtime.refreshHosts(candidates: ["wifi-route.example.invalid", "192.168.10.52"])
     await waitForHostCatalogReady(runtime)
 
     #expect(await certificateStore.isRejectedHost("wifi-route.example.invalid"))
 
-    runtime.refreshHosts(candidates: ["wifi-route.example.invalid", "192.168.0.52"])
+    runtime.refreshHosts(candidates: ["wifi-route.example.invalid", "192.168.10.52"])
     await waitForHostCatalogReady(runtime)
 
-    #expect(await metadataClient.recordedServerInfoHosts() == ["192.168.0.52", "192.168.0.52"])
+    #expect(await metadataClient.recordedServerInfoHosts() == ["192.168.10.52", "192.168.10.52"])
 }
 
 @Test("Remote desktop runtime merges hostname and LAN IP aliases into one published host")
@@ -2018,8 +2102,8 @@ func remoteDesktopRuntimeMergesResolvedRouteAliasesWithoutUniqueID() async {
                 guard !normalized.isEmpty else {
                     continue
                 }
-                if normalized == "wifi-route.example.invalid" || normalized == "192.168.0.52" {
-                    aliases[normalized] = ["wifi-route.example.invalid", "192.168.0.52"]
+                if normalized == "wifi-route.example.invalid" || normalized == "192.168.10.52" {
+                    aliases[normalized] = ["wifi-route.example.invalid", "192.168.10.52"]
                 } else {
                     aliases[normalized] = [normalized]
                 }
@@ -2028,13 +2112,13 @@ func remoteDesktopRuntimeMergesResolvedRouteAliasesWithoutUniqueID() async {
         }
     )
 
-    runtime.refreshHosts(candidates: ["wifi-route.example.invalid", "192.168.0.52"])
+    runtime.refreshHosts(candidates: ["wifi-route.example.invalid", "192.168.10.52"])
     await waitForHostCatalogReady(runtime)
 
     #expect(runtime.hosts.count == 1)
     #expect(
         Set(runtime.hosts[0].routes.allEndpoints.map(\.host))
-            == ["wifi-route.example.invalid", "192.168.0.52"]
+            == ["wifi-route.example.invalid", "192.168.10.52"]
     )
 }
 
@@ -2055,8 +2139,8 @@ func remoteDesktopRuntimePrefersDotLocalAliasOverRawLANIP() async {
                 guard !normalized.isEmpty else {
                     continue
                 }
-                if normalized == "local-stream-host.local" || normalized == "192.168.0.52" {
-                    aliases[normalized] = ["local-stream-host.local", "192.168.0.52"]
+                if normalized == "local-stream-host.local" || normalized == "192.168.10.52" {
+                    aliases[normalized] = ["local-stream-host.local", "192.168.10.52"]
                 } else {
                     aliases[normalized] = [normalized]
                 }
@@ -2065,7 +2149,7 @@ func remoteDesktopRuntimePrefersDotLocalAliasOverRawLANIP() async {
         }
     )
 
-    runtime.refreshHosts(candidates: ["192.168.0.52", "local-stream-host.local"])
+    runtime.refreshHosts(candidates: ["192.168.10.52", "local-stream-host.local"])
     await waitForHostCatalogReady(runtime)
 
     #expect(runtime.hosts.count == 1)
@@ -2216,7 +2300,7 @@ func remoteDesktopRuntimePreservesPreferredExternalRoutesAcrossFailures() async 
 @Test("Remote desktop runtime rewrites local launch session URLs to the runtime host")
 func remoteDesktopRuntimeRewritesLocalLaunchSessionURLToRuntimeHost() {
     let rewritten = ShadowClientRemoteDesktopRuntime.rewrittenSessionURL(
-        "rtsp://192.168.0.52:48010",
+        "rtsp://192.168.10.52:48010",
         runtimeHost: "external-route.example.invalid"
     )
 
@@ -2226,23 +2310,23 @@ func remoteDesktopRuntimeRewritesLocalLaunchSessionURLToRuntimeHost() {
 @Test("Remote desktop runtime preserves host-provided launch session URLs for local runtime hosts")
 func remoteDesktopRuntimePreservesHostProvidedLaunchSessionURLForLocalRuntimeHost() {
     let rewritten = ShadowClientRemoteDesktopRuntime.rewrittenSessionURL(
-        "rtsp://192.168.0.52:48010",
-        runtimeHost: "192.168.0.52"
+        "rtsp://192.168.10.52:48010",
+        runtimeHost: "192.168.10.52"
     )
 
-    #expect(rewritten == "rtsp://192.168.0.52:48010")
+    #expect(rewritten == "rtsp://192.168.10.52:48010")
 }
 
 @Test("Remote desktop runtime rewrites link-local launch session URLs to the runtime host")
 func remoteDesktopRuntimeRewritesLinkLocalLaunchSessionURLToRuntimeHost() {
     let rewritten = ShadowClientRemoteDesktopRuntime.rewrittenSessionURL(
         "rtsp://[fe80::4453:7fff:fedf:44ba%25en12]:49010/session",
-        runtimeHost: "buseongs-macbook-pro-14.local",
-        knownHosts: ["buseongs-macbook-pro-14.local"],
-        localRouteHosts: ["buseongs-macbook-pro-14.local"]
+        runtimeHost: "test-route-host.local",
+        knownHosts: ["test-route-host.local"],
+        localRouteHosts: ["test-route-host.local"]
     )
 
-    #expect(rewritten == "rtsp://buseongs-macbook-pro-14.local:49010/session")
+    #expect(rewritten == "rtsp://test-route-host.local:49010/session")
 }
 
 private struct FailingIdentityProvider: ShadowClientPairingIdentityProviding {

@@ -24,6 +24,24 @@ func hostCatalogMapsCachedApolloHTTPSRouteToConnectCandidate() {
     )
 }
 
+@Test("Host catalog does not recache certificate mismatch routes as automatic candidates")
+func hostCatalogSkipsRecachingCertificateMismatchRoutes() {
+    let descriptor = ShadowClientRemoteHostDescriptor(
+        activeRoute: .init(host: "apollo-host.local", httpsPort: 47_984),
+        displayName: "Apollo Mac",
+        pairStatus: .paired,
+        currentGameID: 0,
+        serverState: "SUNSHINE_SERVER_FREE",
+        appVersion: "1.0",
+        gfeVersion: nil,
+        uniqueID: "HOST-APOLLO",
+        lastError: "Host rejected request (401): Server certificate mismatch",
+        routes: .init(active: .init(host: "apollo-host.local", httpsPort: 47_984))
+    )
+
+    #expect(ShadowClientHostCatalogKit.cachedCandidateHosts(from: [descriptor]).isEmpty)
+}
+
 @Test("Host catalog collapses bare host aliases into explicit Apollo connect candidates")
 func hostCatalogCollapsesBareHostIntoExplicitApolloConnectCandidate() {
     let candidates = ShadowClientHostCatalogKit.refreshCandidates(

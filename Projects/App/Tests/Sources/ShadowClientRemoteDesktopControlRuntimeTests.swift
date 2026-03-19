@@ -781,7 +781,7 @@ func remoteDesktopRuntimeRewritesPrivateHostProvidedSessionURLForWANRoute() asyn
         ]
     )
     let control = FakeControlClient(
-        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.52:48010", verb: "resume")
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.10.52:48010", verb: "resume")
     )
     let sessionConnector = FakeSessionConnectionClient()
     let runtime = ShadowClientRemoteDesktopRuntime(
@@ -831,8 +831,8 @@ func remoteDesktopRuntimeRetriesForceLaunchAfterResumeConnectTimeout() async {
             ],
         ]
     )
-    let resumeSessionURL = "rtsp://192.168.0.52:48010/resume"
-    let forcedLaunchSessionURL = "rtsp://192.168.0.52:48010/launch"
+    let resumeSessionURL = "rtsp://192.168.10.52:48010/resume"
+    let forcedLaunchSessionURL = "rtsp://192.168.10.52:48010/launch"
     let control = FakeControlClient(
         simulatedLaunchResult: .init(sessionURL: forcedLaunchSessionURL, verb: "launch"),
         simulatedLaunchResults: [
@@ -879,11 +879,11 @@ func remoteDesktopRuntimeRetriesForceLaunchAfterResumeConnectTimeout() async {
 func remoteDesktopRuntimePreservesRawRTSPSessionURLWhileConnectingThroughActiveRoute() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
-            "wifi.skyline23.com": .init(
-                host: "wifi.skyline23.com",
-                localHost: "192.168.0.52",
-                remoteHost: "wifi.skyline23.com",
-                manualHost: "wifi.skyline23.com",
+            "test-wan.example.invalid": .init(
+                host: "test-wan.example.invalid",
+                localHost: "192.168.10.52",
+                remoteHost: "test-wan.example.invalid",
+                manualHost: "test-wan.example.invalid",
                 displayName: "Example-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -893,11 +893,11 @@ func remoteDesktopRuntimePreservesRawRTSPSessionURLWhileConnectingThroughActiveR
                 gfeVersion: nil,
                 uniqueID: "HOST-RTSP-ROUTE"
             ),
-            "192.168.0.52": .init(
-                host: "192.168.0.52",
-                localHost: "192.168.0.52",
-                remoteHost: "wifi.skyline23.com",
-                manualHost: "wifi.skyline23.com",
+            "192.168.10.52": .init(
+                host: "192.168.10.52",
+                localHost: "192.168.10.52",
+                remoteHost: "test-wan.example.invalid",
+                manualHost: "test-wan.example.invalid",
                 displayName: "Example-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -909,13 +909,13 @@ func remoteDesktopRuntimePreservesRawRTSPSessionURLWhileConnectingThroughActiveR
             ),
         ],
         appListByHost: [
-            "wifi.skyline23.com": [
+            "test-wan.example.invalid": [
                 .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
         ]
     )
     let control = FakeControlClient(
-        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.52:48010", verb: "launch")
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.10.52:48010", verb: "launch")
     )
     let sessionConnector = FakeSessionConnectionClient()
     let runtime = ShadowClientRemoteDesktopRuntime(
@@ -925,8 +925,8 @@ func remoteDesktopRuntimePreservesRawRTSPSessionURLWhileConnectingThroughActiveR
     )
 
     runtime.refreshHosts(
-        candidates: ["wifi.skyline23.com", "192.168.0.52"],
-        preferredHost: "wifi.skyline23.com"
+        candidates: ["test-wan.example.invalid", "192.168.10.52"],
+        preferredHost: "test-wan.example.invalid"
     )
     await waitForControlHostLoaded(runtime)
 
@@ -936,9 +936,9 @@ func remoteDesktopRuntimePreservesRawRTSPSessionURLWhileConnectingThroughActiveR
     )
     await waitForLaunchState(runtime)
 
-    #expect(await sessionConnector.connectCalls() == ["rtsp://192.168.0.52:48010"])
-    #expect(await sessionConnector.connectHosts() == ["wifi.skyline23.com"])
-    #expect(runtime.activeSession?.sessionURL == "rtsp://192.168.0.52:48010")
+    #expect(await sessionConnector.connectCalls() == ["rtsp://192.168.10.52:48010"])
+    #expect(await sessionConnector.connectHosts() == ["test-wan.example.invalid"])
+    #expect(runtime.activeSession?.sessionURL == "rtsp://192.168.10.52:48010")
 }
 
 @Test("Remote desktop runtime does not forceLaunch retry for deterministic RTSP setup 404 failure")
@@ -964,7 +964,7 @@ func remoteDesktopRuntimeDoesNotForceLaunchRetryForRTSPSetup404() async {
             ],
         ]
     )
-    let resumeSessionURL = "rtsp://192.168.0.52:48010/resume"
+    let resumeSessionURL = "rtsp://192.168.10.52:48010/resume"
     let control = FakeControlClient(
         simulatedLaunchResult: .init(sessionURL: resumeSessionURL, verb: "resume")
     )
@@ -1146,8 +1146,8 @@ func remoteDesktopRuntimeRetriesLaunchOnReachableLocalRoute() async {
                 gfeVersion: nil,
                 uniqueID: "HOST-ROUTE"
             ),
-            "192.168.0.52": .init(
-                host: "192.168.0.52",
+            "192.168.10.52": .init(
+                host: "192.168.10.52",
                 displayName: "Example-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -1162,13 +1162,13 @@ func remoteDesktopRuntimeRetriesLaunchOnReachableLocalRoute() async {
             "external-route.example.invalid": [
                 .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
-            "192.168.0.52": [
+            "192.168.10.52": [
                 .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
             ],
         ]
     )
     let control = FakeControlClient(
-        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.0.52:48010/session", verb: "launch"),
+        simulatedLaunchResult: .init(sessionURL: "rtsp://192.168.10.52:48010/session", verb: "launch"),
         simulatedLaunchFailures: [
             ShadowClientGameStreamError.requestFailed("Connection refused")
         ]
@@ -1187,7 +1187,7 @@ func remoteDesktopRuntimeRetriesLaunchOnReachableLocalRoute() async {
     )
 
     runtime.refreshHosts(
-        candidates: ["external-route.example.invalid", "192.168.0.52"],
+        candidates: ["external-route.example.invalid", "192.168.10.52"],
         preferredHost: "external-route.example.invalid"
     )
     await waitForControlHostLoaded(runtime)
@@ -1201,7 +1201,7 @@ func remoteDesktopRuntimeRetriesLaunchOnReachableLocalRoute() async {
     let launchCalls = await control.launchCalls()
     #expect(launchCalls.count == 2)
     #expect(launchCalls[0].host == "external-route.example.invalid")
-    #expect(launchCalls[1].host == "192.168.0.52")
+    #expect(launchCalls[1].host == "192.168.10.52")
     if case .launched = runtime.launchState {
         #expect(true)
     } else {
@@ -1502,8 +1502,8 @@ func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterResumeDecoderFailures(
             ],
         ]
     )
-    let resumeSessionURL = "rtsp://192.168.0.52:48010/resume"
-    let forcedLaunchSessionURL = "rtsp://192.168.0.52:48010/launch"
+    let resumeSessionURL = "rtsp://192.168.10.52:48010/resume"
+    let forcedLaunchSessionURL = "rtsp://192.168.10.52:48010/launch"
     let control = FakeControlClient(
         simulatedLaunchResult: .init(sessionURL: forcedLaunchSessionURL, verb: "launch"),
         simulatedLaunchResults: [
@@ -1583,8 +1583,8 @@ func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterResumeFirstFrameTimeou
             ],
         ]
     )
-    let resumeSessionURL = "rtsp://192.168.0.52:48010/resume"
-    let forcedLaunchSessionURL = "rtsp://192.168.0.52:48010/launch"
+    let resumeSessionURL = "rtsp://192.168.10.52:48010/resume"
+    let forcedLaunchSessionURL = "rtsp://192.168.10.52:48010/launch"
     let control = FakeControlClient(
         simulatedLaunchResult: .init(sessionURL: forcedLaunchSessionURL, verb: "launch"),
         simulatedLaunchResults: [
@@ -1660,8 +1660,8 @@ func remoteDesktopRuntimeDowngradesCodecOnForceLaunchAfterLaunchStartupUDPTimeou
             ],
         ]
     )
-    let initialSessionURL = "rtsp://192.168.0.52:48010/launch-initial"
-    let forcedLaunchSessionURL = "rtsp://192.168.0.52:48010/launch-fallback"
+    let initialSessionURL = "rtsp://192.168.10.52:48010/launch-initial"
+    let forcedLaunchSessionURL = "rtsp://192.168.10.52:48010/launch-fallback"
     let control = FakeControlClient(
         simulatedLaunchResult: .init(sessionURL: forcedLaunchSessionURL, verb: "launch"),
         simulatedLaunchResults: [

@@ -5,11 +5,11 @@ import Testing
 @Test("Connection host resolution upgrades a plain Apollo hostname to its connect candidate")
 func connectionHostResolutionUpgradesPlainApolloHostname() {
     let resolved = ShadowClientConnectionHostResolutionKit.resolvedConnectHost(
-        requestedHost: "buseongs-macbook-pro-14.local",
+        requestedHost: "test-route-host.local",
         discoveredHosts: [],
         knownHosts: [
             ShadowClientRemoteHostDescriptor(
-                host: "buseongs-macbook-pro-14.local:48989",
+                host: "test-route-host.local:48989",
                 displayName: "Mac",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -19,22 +19,22 @@ func connectionHostResolutionUpgradesPlainApolloHostname() {
                 gfeVersion: nil,
                 uniqueID: "apollo",
                 lastError: nil,
-                localHost: "192.168.0.50:48989"
+                localHost: "192.168.10.50:48989"
             )
         ]
     )
 
-    #expect(resolved == "buseongs-macbook-pro-14.local:48989")
+    #expect(resolved == "test-route-host.local:48989")
 }
 
 @Test("Connection host resolution upgrades a plain local route to the known Apollo connect candidate")
 func connectionHostResolutionUpgradesPlainLocalRoute() {
     let resolved = ShadowClientConnectionHostResolutionKit.resolvedConnectHost(
-        requestedHost: "192.168.0.50",
+        requestedHost: "192.168.10.50",
         discoveredHosts: [],
         knownHosts: [
             ShadowClientRemoteHostDescriptor(
-                host: "buseongs-macbook-pro-14.local:48989",
+                host: "test-route-host.local:48989",
                 displayName: "Mac",
                 pairStatus: .paired,
                 currentGameID: 0,
@@ -44,12 +44,12 @@ func connectionHostResolutionUpgradesPlainLocalRoute() {
                 gfeVersion: nil,
                 uniqueID: "apollo",
                 lastError: nil,
-                localHost: "192.168.0.50:48989"
+                localHost: "192.168.10.50:48989"
             )
         ]
     )
 
-    #expect(resolved == "192.168.0.50:48989")
+    #expect(resolved == "192.168.10.50:48989")
 }
 
 @Test("Connection host resolution preserves discovered explicit connect candidates")

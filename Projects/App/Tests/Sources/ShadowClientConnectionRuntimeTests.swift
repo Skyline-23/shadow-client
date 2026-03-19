@@ -109,9 +109,9 @@ func nativeHostProbeConnectorForwardsExplicitApolloConnectCandidatePorts() async
         return ShadowClientHostProbeResult(reachablePorts: [48989])
     }
 
-    try await client.connect(to: "buseongs-macbook-pro-14.local:48989")
+    try await client.connect(to: "test-route-host.local:48989")
 
-    #expect(await capture.hosts() == ["buseongs-macbook-pro-14.local"])
+    #expect(await capture.hosts() == ["test-route-host.local"])
     #expect(await capture.ports() == [[48989]])
 }
 

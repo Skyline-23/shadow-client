@@ -4,7 +4,7 @@ import Testing
 @Test("Remote desktop runtime removes hosts that share a self-host unique ID alias")
 func remoteDesktopRuntimeRemovesSelfHostAliasesByUniqueID() {
     let localHost = ShadowClientRemoteHostDescriptor(
-        host: "192.168.0.50",
+        host: "192.168.10.50",
         displayName: "Local Apollo",
         pairStatus: .paired,
         currentGameID: 0,
@@ -14,7 +14,7 @@ func remoteDesktopRuntimeRemovesSelfHostAliasesByUniqueID() {
         gfeVersion: nil,
         uniqueID: "local-host-uuid",
         lastError: nil,
-        localHost: "192.168.0.50",
+        localHost: "192.168.10.50",
         remoteHost: "169.254.15.176"
     )
     let aliasHost = ShadowClientRemoteHostDescriptor(
@@ -44,7 +44,7 @@ func remoteDesktopRuntimeRemovesSelfHostAliasesByUniqueID() {
 
     let filtered = ShadowClientRemoteDesktopRuntime.filterOutSelfHosts(
         [localHost, aliasHost, remoteHost],
-        localInterfaceHosts: ["192.168.0.50"]
+        localInterfaceHosts: ["192.168.10.50"]
     )
 
     #expect(filtered.map(\.host) == ["second-stream-host.local"])
