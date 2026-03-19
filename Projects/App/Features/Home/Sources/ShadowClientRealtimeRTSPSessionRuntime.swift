@@ -1351,7 +1351,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             "Video decoder entered recovery for codec \(String(describing: codec), privacy: .public); resetting decoder and requesting recovery frame"
         )
         await flushVideoPipelineForRecovery(codec: codec)
-        await decoder.reset()
+        await decoder.resetForRecovery()
         if let configuration = activeVideoConfiguration {
             await decoder.setPreferredOutputDimensions(
                 width: configuration.width,
