@@ -8,7 +8,19 @@ import ShadowUIFoundation
 extension ShadowClientAppShellView {
 func connectionCandidate(for host: ShadowClientRemoteHostDescriptor) -> String {
         let endpoint = host.routes.active
-        if endpoint.httpsPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort {
+        let normalizedHost = endpoint.host
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let distinctPortsForHost = Set(
+            remoteDesktopRuntime.hosts
+                .flatMap(\.routes.allEndpoints)
+                .filter {
+                    $0.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedHost
+                }
+                .map(\.httpsPort)
+        )
+        if endpoint.httpsPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort,
+           distinctPortsForHost.count <= 1 {
             return endpoint.host
         }
         return "\(endpoint.host):\(endpoint.httpsPort)"
@@ -97,6 +109,45 @@ func clearHiddenRemoteHostCandidates(matching hostCandidate: String) {
 
         let updatedCandidates = hiddenRemoteHostCandidates.subtracting(variants)
         persistHiddenRemoteHostCandidates(updatedCandidates)
+    }
+
+func resolvedPreferredHostCandidate(
+        _ preferredCandidate: String?,
+        availableCandidates: [String]
+    ) -> String? {
+        guard let preferredCandidate else {
+            return nil
+        }
+
+        let normalizedPreferred = normalizedStoredConnectionCandidate(preferredCandidate)
+        guard !normalizedPreferred.isEmpty else {
+            return nil
+        }
+
+        if availableCandidates.contains(normalizedPreferred) {
+            return normalizedPreferred
+        }
+
+        let urlCandidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(normalizedPreferred)
+        guard let url = URL(string: urlCandidate),
+              let host = url.host?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !host.isEmpty,
+              url.port == nil
+        else {
+            return nil
+        }
+
+        let matchingCandidates = availableCandidates.filter {
+            let candidateURL = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing($0)
+            guard let parsed = URL(string: candidateURL),
+                  let candidateHost = parsed.host?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            else {
+                return false
+            }
+            return candidateHost == host
+        }
+
+        return matchingCandidates.count == 1 ? matchingCandidates[0] : nil
     }
 
 func settingsSection<Content: View>(

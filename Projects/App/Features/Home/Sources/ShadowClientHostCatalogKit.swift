@@ -99,8 +99,7 @@ enum ShadowClientHostCatalogKit {
 
         var hostsWithExplicitCandidates: Set<String> = []
         for candidate in parsedCandidates {
-            guard let explicitPort = candidate.explicitPort,
-                  explicitPort != ShadowClientGameStreamNetworkDefaults.defaultHTTPPort else {
+            guard candidate.explicitPort != nil else {
                 continue
             }
             hostsWithExplicitCandidates.insert(candidate.host)

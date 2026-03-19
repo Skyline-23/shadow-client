@@ -575,7 +575,10 @@ func refreshRemoteDesktopCatalog(force: Bool = false) {
             cachedHosts: cachedCandidates,
             manualHost: visibleManualHost
         )
-        let preferredHost = visibleManualHost
+        let preferredHost = resolvedPreferredHostCandidate(
+            visibleManualHost,
+            availableCandidates: candidates
+        )
         let discoveredProbeCandidates = discoveredCandidates.joined(separator: ",")
         let candidateSummary = candidates.joined(separator: ",")
         Self.catalogLogger.notice(

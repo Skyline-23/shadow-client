@@ -59,3 +59,15 @@ func hostCatalogPreservesDistinctExplicitApolloServicePortsOnSameHost() {
 
     #expect(candidates == ["apollo-host.local:47984", "apollo-host.local:48984"])
 }
+
+@Test("Host catalog drops bare host aliases when explicit default and alternate service ports coexist")
+func hostCatalogDropsBareHostAliasWhenSameHostHasExplicitServiceCandidates() {
+    let candidates = ShadowClientHostCatalogKit.refreshCandidates(
+        autoFindHosts: true,
+        discoveredHosts: ["apollo-host.local", "apollo-host.local:47984", "apollo-host.local:48984"],
+        cachedHosts: [],
+        manualHost: nil
+    )
+
+    #expect(candidates == ["apollo-host.local:47984", "apollo-host.local:48984"])
+}
