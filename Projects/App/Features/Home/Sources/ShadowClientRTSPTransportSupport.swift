@@ -2096,7 +2096,8 @@ actor ShadowClientRTSPInterleavedClient {
                 localHost: localHost,
                 localPort: preferredLocalPort,
                 remoteHost: host,
-                remotePort: port.rawValue
+                remotePort: port.rawValue,
+                connectOnInit: false
             )
             let endpointDescription = await socket.localEndpointDescription()
             logger.notice(
@@ -2111,7 +2112,8 @@ actor ShadowClientRTSPInterleavedClient {
                 localHost: localHost,
                 localPort: nil,
                 remoteHost: host,
-                remotePort: port.rawValue
+                remotePort: port.rawValue,
+                connectOnInit: false
             )
             let endpointDescription = await socket.localEndpointDescription()
             logger.notice("RTSP UDP video socket bound \(endpointDescription, privacy: .public) (ephemeral-fallback)")

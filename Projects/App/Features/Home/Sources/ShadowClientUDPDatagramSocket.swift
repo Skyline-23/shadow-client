@@ -33,6 +33,8 @@ actor ShadowClientUDPDatagramSocket {
 
     private let descriptor: Int32
     private let addressFamily: Int32
+    private let remoteAddress: SocketAddress
+    private let useConnectedSocket: Bool
     private var isClosed = false
     private var receiveBuffer: [UInt8] = Array(
         repeating: 0,
@@ -43,13 +45,16 @@ actor ShadowClientUDPDatagramSocket {
         localHost: NWEndpoint.Host?,
         localPort: UInt16?,
         remoteHost: NWEndpoint.Host,
-        remotePort: UInt16
+        remotePort: UInt16,
+        connectOnInit: Bool = true
     ) throws {
         guard let remoteAddress = Self.makeAddress(from: remoteHost, port: remotePort) else {
             throw ShadowClientUDPDatagramSocketError.unsupportedAddress(
                 "Unsupported remote UDP endpoint: \(String(describing: remoteHost)):\(remotePort)"
             )
         }
+        self.remoteAddress = remoteAddress
+        useConnectedSocket = connectOnInit
         addressFamily = remoteAddress.family
 
         descriptor = socket(addressFamily, SOCK_DGRAM, IPPROTO_UDP)
@@ -106,25 +111,46 @@ actor ShadowClientUDPDatagramSocket {
             throw ShadowClientUDPDatagramSocketError.socketFailure(message)
         }
 
-        var connectedRemoteAddress = remoteAddress
-        let connectStatus = Self.withSockaddrPointer(to: &connectedRemoteAddress) { sockaddrPointer, addressLength in
-            connect(descriptor, sockaddrPointer, addressLength)
-        }
-        if connectStatus != 0 {
-            let message = "connect() failed: \(String(cString: strerror(errno)))"
-            Darwin.close(descriptor)
-            throw ShadowClientUDPDatagramSocketError.socketFailure(message)
+        if connectOnInit {
+            var connectedRemoteAddress = remoteAddress
+            let connectStatus = Self.withSockaddrPointer(
+                to: &connectedRemoteAddress
+            ) { sockaddrPointer, addressLength in
+                connect(descriptor, sockaddrPointer, addressLength)
+            }
+            if connectStatus != 0 {
+                let message = "connect() failed: \(String(cString: strerror(errno)))"
+                Darwin.close(descriptor)
+                throw ShadowClientUDPDatagramSocketError.socketFailure(message)
+            }
         }
     }
 
     func send(_ datagram: Data) throws {
         let sentBytes = datagram.withUnsafeBytes { bytes in
-            Darwin.send(
-                descriptor,
-                bytes.baseAddress,
-                datagram.count,
-                0
-            )
+            guard let baseAddress = bytes.baseAddress else {
+                return 0
+            }
+            if useConnectedSocket {
+                return Darwin.send(
+                    descriptor,
+                    baseAddress,
+                    datagram.count,
+                    0
+                )
+            }
+
+            var targetAddress = remoteAddress
+            return Self.withSockaddrPointer(to: &targetAddress) { sockaddrPointer, addressLength in
+                Darwin.sendto(
+                    descriptor,
+                    baseAddress,
+                    datagram.count,
+                    0,
+                    sockaddrPointer,
+                    addressLength
+                )
+            }
         }
 
         if sentBytes < 0 {
@@ -153,6 +179,12 @@ actor ShadowClientUDPDatagramSocket {
                 return nil
             }
             if errorCode == EBADF, isSocketMarkedClosed() {
+                return nil
+            }
+            if Self.shouldTreatReceiveFailureAsTransient(
+                errorCode,
+                useConnectedSocket: useConnectedSocket
+            ) {
                 return nil
             }
             throw ShadowClientUDPDatagramSocketError.socketFailure(
@@ -234,6 +266,21 @@ actor ShadowClientUDPDatagramSocket {
 
     private func isSocketMarkedClosed() -> Bool {
         isClosed
+    }
+
+    static func shouldTreatReceiveFailureAsTransient(
+        _ errorCode: Int32,
+        useConnectedSocket: Bool
+    ) -> Bool {
+        guard useConnectedSocket else {
+            return false
+        }
+        switch errorCode {
+        case ECONNREFUSED, ECONNRESET, ENOTCONN, EHOSTDOWN, EHOSTUNREACH, ENETDOWN, ENETUNREACH:
+            return true
+        default:
+            return false
+        }
     }
 
     private static func makeLocalAddress(
