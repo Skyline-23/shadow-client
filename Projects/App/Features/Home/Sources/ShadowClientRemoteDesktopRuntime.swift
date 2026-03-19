@@ -2139,11 +2139,19 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         if let normalizedMachineID = Self.normalizedUniqueID(host.uniqueID) {
             await self.pinnedCertificateStore.removeCertificates(forMachineID: normalizedMachineID)
         }
+        let routeHosts = Set(
+            host.routes.allEndpoints.map { endpoint in
+                endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            }
+        )
         for endpoint in host.routes.allEndpoints {
             await self.pinnedCertificateStore.removeCertificate(
                 forHost: endpoint.host,
                 httpsPort: endpoint.httpsPort
             )
+        }
+        for routeHost in routeHosts {
+            await self.pinnedCertificateStore.removeCertificate(forHost: routeHost)
         }
     }
 

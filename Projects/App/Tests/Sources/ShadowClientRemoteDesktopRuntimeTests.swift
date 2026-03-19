@@ -1188,10 +1188,19 @@ func remoteDesktopRuntimeDeleteRemovesExplicitServiceRouteCertificatesBeforeRetu
 
     let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
     let routeCertificate = Data([0x47, 0x98, 0x04])
+    let legacyCertificate = Data([0x47, 0x98, 0x05])
     await pinnedStore.setCertificateDER(
         routeCertificate,
         forHost: "apollo-route.example.invalid",
         httpsPort: 47984
+    )
+    await pinnedStore.setCertificateDER(
+        legacyCertificate,
+        forHost: "apollo-route.example.invalid"
+    )
+    await pinnedStore.bindHost(
+        "apollo-route.example.invalid",
+        toMachineID: "LEGACY-APOLLO-47984"
     )
 
     let metadataClient = FakeGameStreamMetadataClient(
@@ -1233,6 +1242,8 @@ func remoteDesktopRuntimeDeleteRemovesExplicitServiceRouteCertificatesBeforeRetu
             httpsPort: 47984
         ) == nil
     )
+    #expect(await pinnedStore.certificateDER(forHost: "apollo-route.example.invalid") == nil)
+    #expect(await pinnedStore.machineID(forHost: "apollo-route.example.invalid") == nil)
 }
 
 @Test("Remote desktop runtime prefers reachable local route when merging host routes")
