@@ -5,11 +5,33 @@ import Network
 import os
 import ShadowClientFeatureSession
 
+public enum ShadowClientRealtimeSessionTransportFailure: Equatable, Sendable {
+    case message(String)
+    case timedOutWaitingForFirstFrame
+    case udpVideoNoStartupDatagrams
+    case udpVideoProlongedDatagramInactivityAfterStartup
+}
+
+extension ShadowClientRealtimeSessionTransportFailure: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case let .message(message):
+            return message
+        case .timedOutWaitingForFirstFrame:
+            return "Timed out waiting for first frame."
+        case .udpVideoNoStartupDatagrams:
+            return "RTSP UDP video timeout: no startup datagrams received"
+        case .udpVideoProlongedDatagramInactivityAfterStartup:
+            return "RTSP UDP video timeout: prolonged datagram inactivity after startup"
+        }
+    }
+}
+
 public enum ShadowClientRealtimeSessionRuntimeError: Error, Equatable, Sendable {
     case invalidSessionURL
     case connectionClosed
     case unsupportedCodec
-    case transportFailure(String)
+    case transportFailure(ShadowClientRealtimeSessionTransportFailure)
 }
 
 extension ShadowClientRealtimeSessionRuntimeError: LocalizedError {
@@ -21,8 +43,8 @@ extension ShadowClientRealtimeSessionRuntimeError: LocalizedError {
             return "Remote session transport closed."
         case .unsupportedCodec:
             return "Remote session codec is not supported."
-        case let .transportFailure(message):
-            return message
+        case let .transportFailure(reason):
+            return reason.localizedDescription
         }
     }
 }
@@ -729,10 +751,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         case .droppedCorruptFrame:
             if await handleDepacketizerCorruption(codec: codec) {
                 throw ShadowClientRealtimeSessionRuntimeError.transportFailure(
-                    Self.runtimeRecoveryExhaustedMessage(
+                    .message(Self.runtimeRecoveryExhaustedMessage(
                         codec: codec,
                         reason: "depacketizer recovery exhausted"
-                    )
+                    ))
                 )
             }
             return
@@ -1916,9 +1938,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             case .rendering:
                 return
             case let .disconnected(message):
-                throw ShadowClientRealtimeSessionRuntimeError.transportFailure(message)
+                throw ShadowClientRealtimeSessionRuntimeError.transportFailure(.message(message))
             case let .failed(message):
-                throw ShadowClientRealtimeSessionRuntimeError.transportFailure(message)
+                throw ShadowClientRealtimeSessionRuntimeError.transportFailure(.message(message))
             case .idle, .connecting, .waitingForFirstFrame:
                 break
             }
@@ -1927,7 +1949,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         }
 
         throw ShadowClientRealtimeSessionRuntimeError.transportFailure(
-            "Timed out waiting for first frame."
+            .timedOutWaitingForFirstFrame
         )
     }
 
@@ -2676,6 +2698,18 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     static func shouldFallbackToInterleavedTransportAfterUDPReceiveError(
         _ error: Error
     ) -> Bool {
+        if let runtimeError = error as? ShadowClientRealtimeSessionRuntimeError,
+           case let .transportFailure(reason) = runtimeError
+        {
+            switch reason {
+            case .udpVideoNoStartupDatagrams,
+                 .udpVideoProlongedDatagramInactivityAfterStartup,
+                 .timedOutWaitingForFirstFrame:
+                return false
+            case .message:
+                break
+            }
+        }
         if let socketError = error as? ShadowClientUDPDatagramSocketError {
             switch socketError {
             case .unsupportedAddress:
@@ -2699,6 +2733,20 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         if error is CancellationError {
             return false
         }
+        if let runtimeError = error as? ShadowClientRealtimeSessionRuntimeError,
+           case let .transportFailure(reason) = runtimeError
+        {
+            switch reason {
+            case .udpVideoNoStartupDatagrams:
+                return false
+            case .udpVideoProlongedDatagramInactivityAfterStartup:
+                return true
+            case .timedOutWaitingForFirstFrame:
+                return false
+            case .message:
+                break
+            }
+        }
         if let socketError = error as? ShadowClientUDPDatagramSocketError {
             switch socketError {
             case .unsupportedAddress:
@@ -2718,9 +2766,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         let normalized = error.localizedDescription
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        if normalized.contains("udp video timeout: no video datagram received") ||
-            normalized.contains("udp video timeout: no startup datagrams received")
-        {
+        if normalized.contains("udp video timeout: no video datagram received") {
             // Moonlight-compatible policy: treat sustained UDP video inactivity as terminal
             // for this session attempt instead of looping in in-session recovery forever.
             return false

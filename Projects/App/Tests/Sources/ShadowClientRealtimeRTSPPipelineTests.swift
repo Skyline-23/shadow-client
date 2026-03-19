@@ -2294,15 +2294,11 @@ func realtimeRuntimeInterleavedFallbackClassifierIgnoresPostStartInactivityError
 
 @Test("Realtime runtime in-session UDP retry classifier treats sustained inactivity as terminal")
 func realtimeRuntimeInSessionUDPReceiveRetryClassifier() {
-    let noStartupDatagramError = NSError(
-        domain: "ShadowClientTest",
-        code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "RTSP UDP video timeout: no startup datagrams received"]
+    let noStartupDatagramError = ShadowClientRealtimeSessionRuntimeError.transportFailure(
+        .udpVideoNoStartupDatagrams
     )
-    let prolongedInactivityError = NSError(
-        domain: "ShadowClientTest",
-        code: 10,
-        userInfo: [NSLocalizedDescriptionKey: "RTSP UDP video timeout: prolonged datagram inactivity after startup"]
+    let prolongedInactivityError = ShadowClientRealtimeSessionRuntimeError.transportFailure(
+        .udpVideoProlongedDatagramInactivityAfterStartup
     )
     let recycleRequestedError = NSError(
         domain: "ShadowClientTest",

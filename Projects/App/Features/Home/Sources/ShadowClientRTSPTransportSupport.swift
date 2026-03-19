@@ -1723,7 +1723,7 @@ actor ShadowClientRTSPInterleavedClient {
                             "RTSP UDP video in-session receive retry exhausted (attempts=\(udpReceiveRetryCount, privacy: .public)); escalating to transport reconnect"
                         )
                         throw ShadowClientRealtimeSessionRuntimeError.transportFailure(
-                            "RTSP UDP video timeout: prolonged datagram inactivity after startup"
+                            .udpVideoProlongedDatagramInactivityAfterStartup
                         )
                     }
                     logger.error(
@@ -1965,7 +1965,7 @@ actor ShadowClientRTSPInterleavedClient {
                         "RTSP UDP video startup traffic missing (silence=\(secondsSinceLastDatagram, privacy: .public)s); terminating session"
                     )
                     throw ShadowClientRealtimeSessionRuntimeError.transportFailure(
-                        "RTSP UDP video timeout: no startup datagrams received"
+                        .udpVideoNoStartupDatagrams
                     )
                 }
                 if ShadowClientRealtimeRTSPSessionRuntime.shouldTreatUDPVideoDatagramReceiveAsStalledAfterStartup(
