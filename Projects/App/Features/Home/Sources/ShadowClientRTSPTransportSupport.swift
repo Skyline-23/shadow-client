@@ -1214,39 +1214,62 @@ actor ShadowClientRTSPInterleavedClient {
         {
             return true
         }
-
-        let normalized = error.localizedDescription
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        return normalized.contains("connection refused")
+        if let networkError = error as? NWError,
+           case let .posix(code) = networkError,
+           code == .ECONNREFUSED
+        {
+            return true
+        }
+        return false
     }
 
     private static func isLikelyRTSPTransportTerminationError(_ error: Error) -> Bool {
+        if let rtspError = error as? ShadowClientRTSPInterleavedClientError {
+            switch rtspError {
+            case .connectionClosed, .connectionFailed:
+                return true
+            case .invalidURL, .requestFailed, .invalidResponse:
+                break
+            }
+        }
         let nsError = error as NSError
         if nsError.domain == "Network.NWError", nsError.code == 96 {
             return true
         }
-
-        if let networkError = error as? NWError,
-           case let .posix(code) = networkError
+        if nsError.domain == NSPOSIXErrorDomain,
+           let posix = POSIXErrorCode(rawValue: Int32(nsError.code))
         {
-            switch code {
-            case .ECONNRESET, .EPIPE, .ENOTCONN, .ECONNABORTED:
+            switch posix {
+            case .ECONNRESET, .EPIPE, .ENOTCONN, .ECONNABORTED, .ETIMEDOUT, .ENETDOWN, .ENETUNREACH, .EHOSTUNREACH:
+                return true
+            default:
+                break
+            }
+        }
+        if nsError.domain == NSURLErrorDomain {
+            switch nsError.code {
+            case NSURLErrorNetworkConnectionLost,
+                 NSURLErrorTimedOut,
+                 NSURLErrorCannotConnectToHost,
+                 NSURLErrorCannotFindHost,
+                 NSURLErrorNotConnectedToInternet:
                 return true
             default:
                 break
             }
         }
 
-        let normalized = error.localizedDescription
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        return normalized.contains("no message available on stream") ||
-            normalized.contains("transport connection closed") ||
-            normalized.contains("connection closed") ||
-            normalized.contains("connection reset by peer") ||
-            normalized.contains("broken pipe") ||
-            normalized.contains("nwerror error 96")
+        if let networkError = error as? NWError,
+           case let .posix(code) = networkError
+        {
+            switch code {
+            case .ECONNRESET, .EPIPE, .ENOTCONN, .ECONNABORTED, .ETIMEDOUT, .ENETDOWN, .ENETUNREACH, .EHOSTUNREACH:
+                return true
+            default:
+                break
+            }
+        }
+        return false
     }
 
     private func normalizeRTSPURL(_ url: URL) -> URL {

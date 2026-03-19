@@ -2253,20 +2253,12 @@ func realtimeRuntimeUDPVideoStartupSocketRecycleClassifier() {
 
 @Test("Realtime runtime fallback classifier ignores post-start inactivity timeout errors")
 func realtimeRuntimeInterleavedFallbackClassifierIgnoresPostStartInactivityErrors() {
-    let noDatagramError = NSError(
-        domain: "ShadowClientTest",
-        code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "RTSP UDP video timeout: no video datagram received"]
+    let connectionClosedError = ShadowClientRTSPInterleavedClientError.connectionClosed
+    let stallError = ShadowClientRealtimeSessionRuntimeError.transportFailure(
+        .udpVideoNoStartupDatagrams
     )
-    let stallError = NSError(
-        domain: "ShadowClientTest",
-        code: 2,
-        userInfo: [NSLocalizedDescriptionKey: "RTSP UDP video timeout: video datagram stream stalled after startup"]
-    )
-    let prolongedError = NSError(
-        domain: "ShadowClientTest",
-        code: 3,
-        userInfo: [NSLocalizedDescriptionKey: "RTSP UDP video timeout: prolonged datagram inactivity after startup"]
+    let prolongedError = ShadowClientRealtimeSessionRuntimeError.transportFailure(
+        .udpVideoProlongedDatagramInactivityAfterStartup
     )
     let unrelatedError = NSError(
         domain: "ShadowClientTest",
@@ -2276,7 +2268,7 @@ func realtimeRuntimeInterleavedFallbackClassifierIgnoresPostStartInactivityError
 
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime
-            .shouldFallbackToInterleavedTransportAfterUDPReceiveError(noDatagramError)
+            .shouldFallbackToInterleavedTransportAfterUDPReceiveError(connectionClosedError)
     )
     #expect(
         !ShadowClientRealtimeRTSPSessionRuntime
@@ -2299,11 +2291,6 @@ func realtimeRuntimeInSessionUDPReceiveRetryClassifier() {
     )
     let prolongedInactivityError = ShadowClientRealtimeSessionRuntimeError.transportFailure(
         .udpVideoProlongedDatagramInactivityAfterStartup
-    )
-    let recycleRequestedError = NSError(
-        domain: "ShadowClientTest",
-        code: 11,
-        userInfo: [NSLocalizedDescriptionKey: "RTSP UDP video receive recycle requested: prolonged datagram inactivity after startup"]
     )
     let nwStreamError = NSError(
         domain: "Network.NWError",
@@ -2328,10 +2315,6 @@ func realtimeRuntimeInSessionUDPReceiveRetryClassifier() {
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime
             .shouldRetryInSessionAfterUDPVideoReceiveError(prolongedInactivityError)
-    )
-    #expect(
-        ShadowClientRealtimeRTSPSessionRuntime
-            .shouldRetryInSessionAfterUDPVideoReceiveError(recycleRequestedError)
     )
     #expect(
         ShadowClientRealtimeRTSPSessionRuntime

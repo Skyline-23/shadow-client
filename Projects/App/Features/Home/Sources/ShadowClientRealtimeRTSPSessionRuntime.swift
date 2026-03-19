@@ -2721,10 +2721,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 return operation == .receive
             }
         }
-        let normalized = error.localizedDescription
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        return normalized.contains("udp video timeout: no video datagram received")
+        return isLikelyRTSPTransportTerminationError(error)
     }
 
     static func shouldRetryInSessionAfterUDPVideoReceiveError(
@@ -2762,17 +2759,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     return false
                 }
             }
-        }
-        let normalized = error.localizedDescription
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        if normalized.contains("udp video timeout: no video datagram received") {
-            // Moonlight-compatible policy: treat sustained UDP video inactivity as terminal
-            // for this session attempt instead of looping in in-session recovery forever.
-            return false
-        }
-        if normalized.contains("udp video receive recycle requested") {
-            return true
         }
         if shouldFallbackToInterleavedTransportAfterUDPReceiveError(error) {
             return true
@@ -2823,45 +2809,85 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 }
             }
         }
-
-        let normalized = error.localizedDescription
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        if normalized.contains("operation canceled") ||
-            normalized.contains("operation cancelled") ||
-            normalized.contains("nwerror error 89")
-        {
-            return true
-        }
         return false
     }
 
     static func isLikelyRTSPTransportTerminationError(_ error: Error) -> Bool {
+        if let rtspError = error as? ShadowClientRTSPInterleavedClientError {
+            switch rtspError {
+            case .connectionClosed, .connectionFailed:
+                return true
+            case .invalidURL, .requestFailed, .invalidResponse:
+                break
+            }
+        }
+        if let runtimeError = error as? ShadowClientRealtimeSessionRuntimeError {
+            switch runtimeError {
+            case .connectionClosed:
+                return true
+            case .invalidSessionURL, .unsupportedCodec:
+                break
+            case let .transportFailure(reason):
+                switch reason {
+                case .udpVideoNoStartupDatagrams,
+                     .udpVideoProlongedDatagramInactivityAfterStartup,
+                     .timedOutWaitingForFirstFrame:
+                    return false
+                case .message:
+                    break
+                }
+            }
+        }
+        if let controlError = error as? ShadowClientHostControlChannelError {
+            switch controlError {
+            case .connectionClosed, .connectionTimedOut:
+                return true
+            case .handshakeTimedOut,
+                 .verifyConnectNotReceived,
+                 .commandAcknowledgeTimedOut,
+                 .invalidEncryptedControlKey,
+                 .encryptedControlEncodingFailed:
+                break
+            }
+        }
         let nsError = error as NSError
         if nsError.domain == "Network.NWError", nsError.code == 96 {
             return true
         }
-
-        if let networkError = error as? NWError,
-           case let .posix(code) = networkError
+        if nsError.domain == NSPOSIXErrorDomain,
+           let posix = POSIXErrorCode(rawValue: Int32(nsError.code))
         {
-            switch code {
-            case .ECONNRESET, .EPIPE, .ENOTCONN, .ECONNABORTED:
+            switch posix {
+            case .ECONNRESET, .EPIPE, .ENOTCONN, .ECONNABORTED, .ETIMEDOUT, .ENETDOWN, .ENETUNREACH, .EHOSTDOWN, .EHOSTUNREACH:
+                return true
+            default:
+                break
+            }
+        }
+        if nsError.domain == NSURLErrorDomain {
+            switch nsError.code {
+            case NSURLErrorNetworkConnectionLost,
+                 NSURLErrorTimedOut,
+                 NSURLErrorCannotConnectToHost,
+                 NSURLErrorCannotFindHost,
+                 NSURLErrorNotConnectedToInternet:
                 return true
             default:
                 break
             }
         }
 
-        let normalized = error.localizedDescription
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        return normalized.contains("no message available on stream") ||
-            normalized.contains("transport connection closed") ||
-            normalized.contains("connection closed") ||
-            normalized.contains("connection reset by peer") ||
-            normalized.contains("broken pipe") ||
-            normalized.contains("nwerror error 96")
+        if let networkError = error as? NWError,
+           case let .posix(code) = networkError
+        {
+            switch code {
+            case .ECONNRESET, .EPIPE, .ENOTCONN, .ECONNABORTED, .ETIMEDOUT, .ENETDOWN, .ENETUNREACH, .EHOSTDOWN, .EHOSTUNREACH:
+                return true
+            default:
+                break
+            }
+        }
+        return false
     }
 
     static func shouldResetInputControlChannelAfterSendError(_ error: Error) -> Bool {
@@ -2895,16 +2921,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     break
                 }
             }
-        }
-
-        let normalized = error.localizedDescription
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        if normalized.contains("connection closed") ||
-            normalized.contains("connection reset by peer") ||
-            normalized.contains("broken pipe")
-        {
-            return true
         }
         return false
     }
@@ -3321,21 +3337,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 break
             }
         }
-
-        let normalized = message.lowercased()
-        let terminationSignatures = [
-            "connection reset by peer",
-            "connection closed",
-            "connection timed out",
-            "no message available on stream",
-            "broken pipe",
-            "network is down",
-            "no route to host",
-            "not connected",
-            "network connection was lost",
-            "software caused connection abort",
-            "transport connection closed",
-        ]
-        return terminationSignatures.contains(where: normalized.contains)
+        _ = message
+        return isLikelyRTSPTransportTerminationError(error)
     }
 }
