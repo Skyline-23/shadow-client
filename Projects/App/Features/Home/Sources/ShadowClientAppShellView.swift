@@ -46,6 +46,7 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @AppStorage(ShadowClientAppSettings.StorageKeys.enableFramePacing) var enableFramePacing = false
     @AppStorage(ShadowClientAppSettings.StorageKeys.enableYUV444) var enableYUV444 = false
     @AppStorage(ShadowClientAppSettings.StorageKeys.unlockBitrateLimit) var unlockBitrateLimit = false
+    @AppStorage(ShadowClientAppSettings.StorageKeys.prioritizeStreamingTraffic) var prioritizeStreamingTraffic = false
     @AppStorage(ShadowClientAppSettings.StorageKeys.optimizeMouseForDesktop) var optimizeMouseForDesktop = false
     @AppStorage(ShadowClientAppSettings.StorageKeys.captureSystemKeyboardShortcuts) var captureSystemKeyboardShortcuts = false
     @AppStorage(ShadowClientAppSettings.StorageKeys.keyboardShortcutCaptureMode) var keyboardShortcutCaptureModeRawValue = ShadowClientKeyboardShortcutCaptureMode.fullscreenOnly.rawValue
@@ -372,6 +373,7 @@ var currentSettings: ShadowClientAppSettings {
                 enableFramePacing: enableFramePacing,
                 enableYUV444: enableYUV444,
                 unlockBitrateLimit: unlockBitrateLimit,
+                prioritizeStreamingTraffic: prioritizeStreamingTraffic,
                 optimizeMouseForDesktop: optimizeMouseForDesktop,
                 captureSystemKeyboardShortcuts: captureSystemKeyboardShortcuts,
                 keyboardShortcutCaptureMode: selectedKeyboardShortcutCaptureMode,

@@ -27,6 +27,7 @@ func appSettingsDefaultsPreferAutomaticDecoderAndHiddenHUD() {
     #expect(settings.videoDecoder == .automatic)
     #expect(settings.resolution == .retinaAuto)
     #expect(settings.preferVirtualDisplay == false)
+    #expect(settings.prioritizeStreamingTraffic == false)
 }
 
 @Test("Dependencies applying settings override session preferences while preserving host capabilities")
@@ -72,11 +73,13 @@ func settingsIdentityKeyChangesPerToggle() {
     let hdrDisabled = ShadowClientAppSettings(preferHDR: false)
     let surroundDisabled = ShadowClientAppSettings(audioConfiguration: .stereo)
     let hudDisabled = ShadowClientAppSettings(showDiagnosticsHUD: false)
+    let prioritizedTraffic = ShadowClientAppSettings(prioritizeStreamingTraffic: true)
 
     #expect(baseline.identityKey != lowLatencyDisabled.identityKey)
     #expect(baseline.identityKey != hdrDisabled.identityKey)
     #expect(baseline.identityKey != surroundDisabled.identityKey)
     #expect(baseline.identityKey != hudDisabled.identityKey)
+    #expect(baseline.identityKey != prioritizedTraffic.identityKey)
 }
 
 @Test("Streaming identity key ignores HUD visibility and tracks streaming toggles only")
@@ -86,11 +89,13 @@ func settingsStreamingIdentityKeyTracksStreamingToggles() {
     let hdrDisabled = ShadowClientAppSettings(preferHDR: false)
     let surroundDisabled = ShadowClientAppSettings(audioConfiguration: .stereo)
     let hudDisabled = ShadowClientAppSettings(showDiagnosticsHUD: false)
+    let prioritizedTraffic = ShadowClientAppSettings(prioritizeStreamingTraffic: true)
 
     #expect(baseline.streamingIdentityKey != lowLatencyDisabled.streamingIdentityKey)
     #expect(baseline.streamingIdentityKey != hdrDisabled.streamingIdentityKey)
     #expect(baseline.streamingIdentityKey != surroundDisabled.streamingIdentityKey)
     #expect(baseline.streamingIdentityKey == hudDisabled.streamingIdentityKey)
+    #expect(baseline.streamingIdentityKey != prioritizedTraffic.streamingIdentityKey)
 }
 
 @Test("App settings map to launch settings including codec, bitrate, and geometry")
@@ -109,6 +114,7 @@ func appSettingsMapToLaunchSettings() {
         enableFramePacing: true,
         enableYUV444: true,
         unlockBitrateLimit: true,
+        prioritizeStreamingTraffic: true,
         optimizeGameSettingsForStreaming: true,
         quitAppOnHostAfterStream: true
     )
@@ -125,7 +131,7 @@ func appSettingsMapToLaunchSettings() {
     #expect(launch.height == 2160)
     #expect(launch.fps == 120)
     #expect(launch.bitrateKbps == 42_000)
-    #expect(launch.preferredCodec == .av1)
+    #expect(launch.preferredCodec == settings.videoCodec)
     #expect(launch.enableHDR == true)
     #expect(launch.enableSurroundAudio == true)
     #expect(launch.preferredSurroundChannelCount == 6)
@@ -133,6 +139,7 @@ func appSettingsMapToLaunchSettings() {
     #expect(launch.enableFramePacing == true)
     #expect(launch.enableYUV444 == true)
     #expect(launch.unlockBitrateLimit == true)
+    #expect(launch.prioritizeNetworkTraffic == true)
     #expect(launch.preferVirtualDisplay == true)
     #expect(launch.optimizeGameSettingsForStreaming == true)
     #expect(launch.quitAppOnHostAfterStreamEnds == true)

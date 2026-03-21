@@ -171,6 +171,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         public static let enableFramePacing = "settings.enableFramePacing"
         public static let enableYUV444 = "settings.enableYUV444"
         public static let unlockBitrateLimit = "settings.unlockBitrateLimit"
+        public static let prioritizeStreamingTraffic = "settings.prioritizeStreamingTraffic"
         public static let optimizeMouseForDesktop = "settings.optimizeMouseForDesktop"
         public static let captureSystemKeyboardShortcuts = "settings.captureSystemKeyboardShortcuts"
         public static let keyboardShortcutCaptureMode = "settings.keyboardShortcutCaptureMode"
@@ -212,6 +213,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
     public let enableFramePacing: Bool
     public let enableYUV444: Bool
     public let unlockBitrateLimit: Bool
+    public let prioritizeStreamingTraffic: Bool
     public let optimizeMouseForDesktop: Bool
     public let captureSystemKeyboardShortcuts: Bool
     public let keyboardShortcutCaptureMode: ShadowClientKeyboardShortcutCaptureMode
@@ -247,6 +249,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         enableFramePacing: Bool = false,
         enableYUV444: Bool = false,
         unlockBitrateLimit: Bool = false,
+        prioritizeStreamingTraffic: Bool = false,
         optimizeMouseForDesktop: Bool = false,
         captureSystemKeyboardShortcuts: Bool = false,
         keyboardShortcutCaptureMode: ShadowClientKeyboardShortcutCaptureMode = .fullscreenOnly,
@@ -284,6 +287,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         self.enableFramePacing = enableFramePacing
         self.enableYUV444 = enableYUV444
         self.unlockBitrateLimit = unlockBitrateLimit
+        self.prioritizeStreamingTraffic = prioritizeStreamingTraffic
         self.optimizeMouseForDesktop = optimizeMouseForDesktop
         self.captureSystemKeyboardShortcuts = captureSystemKeyboardShortcuts
         self.keyboardShortcutCaptureMode = keyboardShortcutCaptureMode
@@ -338,6 +342,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             enableFramePacing: enableFramePacing,
             enableYUV444: enableYUV444,
             unlockBitrateLimit: unlockBitrateLimit,
+            prioritizeNetworkTraffic: prioritizeStreamingTraffic,
             forceHardwareDecoding: videoDecoder != .software,
             resolutionScalePercent: 100,
             requestHiDPI: false,
@@ -543,6 +548,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             "\(enableFramePacing)",
             "\(enableYUV444)",
             "\(unlockBitrateLimit)",
+            "\(prioritizeStreamingTraffic)",
             "\(autoFindHosts)",
         ].joined(separator: "-")
     }
@@ -553,6 +559,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             "\(preferHDR)",
             "\(preferVirtualDisplay)",
             audioConfiguration.rawValue,
+            "\(prioritizeStreamingTraffic)",
         ].joined(separator: "-")
     }
 }

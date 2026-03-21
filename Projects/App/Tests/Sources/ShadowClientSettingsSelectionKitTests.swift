@@ -35,6 +35,7 @@ func settingsSelectionKitBuildsAppSettings() {
             enableFramePacing: false,
             enableYUV444: true,
             unlockBitrateLimit: true,
+            prioritizeStreamingTraffic: true,
             optimizeMouseForDesktop: true,
             captureSystemKeyboardShortcuts: true,
             keyboardShortcutCaptureMode: .always,
@@ -61,4 +62,5 @@ func settingsSelectionKitBuildsAppSettings() {
     #expect(settings.frameRate == ShadowClientStreamingFrameRatePreset.fps120)
     #expect(settings.videoCodec == ShadowClientVideoCodecPreference.h265)
     #expect(settings.videoDecoder == ShadowClientVideoDecoderPreference.software)
+    #expect(settings.prioritizeStreamingTraffic)
 }

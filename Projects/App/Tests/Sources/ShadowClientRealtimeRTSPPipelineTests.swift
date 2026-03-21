@@ -2987,7 +2987,8 @@ func rtspRuntimePreservesApolloDisplayScaleContract() {
         preferredSurroundChannelCount: 6,
         enableYUV444: false,
         displayScalePercent: 200,
-        requestHiDPI: true
+        requestHiDPI: true,
+        prioritizeNetworkTraffic: true
     )
 
     let resolved = ShadowClientRealtimeRTSPSessionRuntime.resolvedRuntimeVideoConfiguration(configuration)
@@ -2997,6 +2998,7 @@ func rtspRuntimePreservesApolloDisplayScaleContract() {
     #expect(resolved.preferredSurroundChannelCount == 6)
     #expect(resolved.displayScalePercent == 200)
     #expect(resolved.requestHiDPI)
+    #expect(resolved.prioritizeNetworkTraffic)
 }
 
 private func moonlightFrameHeader(

@@ -255,6 +255,7 @@ actor ShadowClientRTSPInterleavedClient {
     private let videoFECUnrecoverableRecoveryBurstWindowSeconds: TimeInterval = 2.0
     private let videoFECUnrecoverableRecoveryBurstThreshold = 1
     private var lastInteractiveInputEventUptime: TimeInterval = 0
+    private var prioritizeNetworkTraffic = false
 
     init(
         timeout: Duration,
@@ -325,6 +326,7 @@ actor ShadowClientRTSPInterleavedClient {
 
         self.remoteInputKey = remoteInputKey
         self.remoteInputKeyID = remoteInputKeyID
+        prioritizeNetworkTraffic = videoConfiguration.prioritizeNetworkTraffic
         await inputChannelGateway.clear()
         lastInteractiveInputEventUptime = 0
         let normalizedURL = normalizeRTSPURL(url)
@@ -1062,7 +1064,11 @@ actor ShadowClientRTSPInterleavedClient {
                 let candidateConnection = NWConnection(
                     host: candidateHost,
                     port: port,
-                    using: .tcp
+                    using: ShadowClientStreamingTrafficPolicy.tcpParameters(
+                        trafficClass: ShadowClientStreamingTrafficPolicy.rtsp(
+                            prioritized: prioritizeNetworkTraffic
+                        )
+                    )
                 )
                 do {
                     try await waitForReady(
@@ -1546,6 +1552,7 @@ actor ShadowClientRTSPInterleavedClient {
 
         let controlHost = remoteHost ?? .init(host)
         let runtime = ShadowClientHostControlChannelRuntime(
+            prioritizeNetworkTraffic: prioritizeNetworkTraffic,
             onRoundTripSample: onControlRoundTripSample,
             onControllerFeedback: onControllerFeedback,
             onHDRMode: onHDRMode,
@@ -1870,6 +1877,7 @@ actor ShadowClientRTSPInterleavedClient {
         let audioPingPayload = self.audioPingPayload
         let audioEncryptionConfiguration = self.audioEncryptionConfiguration
         let audioRuntime = ShadowClientRealtimeAudioSessionRuntime(
+            prioritizeNetworkTraffic: prioritizeNetworkTraffic,
             stateDidChange: onAudioOutputStateChanged,
             pendingDurationDidChange: onAudioPendingDurationChanged
         )
@@ -2128,7 +2136,10 @@ actor ShadowClientRTSPInterleavedClient {
                 localHost: localHost,
                 localPort: preferredLocalPort,
                 remoteHost: host,
-                remotePort: port.rawValue
+                remotePort: port.rawValue,
+                trafficClass: ShadowClientStreamingTrafficPolicy.video(
+                    prioritized: prioritizeNetworkTraffic
+                )
             )
             let endpointDescription = await socket.localEndpointDescription()
             logger.notice(
@@ -2143,7 +2154,10 @@ actor ShadowClientRTSPInterleavedClient {
                 localHost: localHost,
                 localPort: nil,
                 remoteHost: host,
-                remotePort: port.rawValue
+                remotePort: port.rawValue,
+                trafficClass: ShadowClientStreamingTrafficPolicy.video(
+                    prioritized: prioritizeNetworkTraffic
+                )
             )
             let endpointDescription = await socket.localEndpointDescription()
             logger.notice("RTSP UDP video socket bound \(endpointDescription, privacy: .public) (ephemeral-fallback)")
@@ -2246,6 +2260,7 @@ actor ShadowClientRTSPInterleavedClient {
                 remotePort: audioServerPort,
                 localHost: localHost,
                 preferredLocalPort: negotiatedClientPortBase &+ 1,
+                prioritizeNetworkTraffic: prioritizeNetworkTraffic,
                 queue: queue,
                 logger: logger,
                 readyMessagePrefix: "RTSP UDP audio pre-PLAY socket ready",
@@ -2317,7 +2332,15 @@ actor ShadowClientRTSPInterleavedClient {
             return
         }
 
-        let bootstrapConnection = NWConnection(host: host, port: port, using: .tcp)
+        let bootstrapConnection = NWConnection(
+            host: host,
+            port: port,
+            using: ShadowClientStreamingTrafficPolicy.tcpParameters(
+                trafficClass: ShadowClientStreamingTrafficPolicy.rtsp(
+                    prioritized: prioritizeNetworkTraffic
+                )
+            )
+        )
         do {
             try await waitForReady(
                 bootstrapConnection,

@@ -393,6 +393,15 @@ var settingsTab: some View {
                         }
 
                         settingsRow {
+                            Toggle(isOn: $prioritizeStreamingTraffic) {
+                                Text("Prioritize streaming traffic on this device")
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(.mint)
+                        }
+
+                        settingsRow {
                             Toggle(isOn: $autoFindHosts) {
                                 Text("Automatically find PCs on local network")
                                     .font(.callout.weight(.semibold))

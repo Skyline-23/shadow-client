@@ -1831,6 +1831,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             enableYUV444: configuration.enableYUV444,
             displayScalePercent: configuration.displayScalePercent,
             requestHiDPI: configuration.requestHiDPI,
+            prioritizeNetworkTraffic: configuration.prioritizeNetworkTraffic,
             remoteInputKey: configuration.remoteInputKey,
             remoteInputKeyID: configuration.remoteInputKeyID,
             serverAppVersion: configuration.serverAppVersion

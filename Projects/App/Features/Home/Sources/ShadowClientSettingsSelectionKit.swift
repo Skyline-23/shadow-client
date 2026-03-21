@@ -18,6 +18,7 @@ struct ShadowClientSettingsSelectionInput {
     let enableFramePacing: Bool
     let enableYUV444: Bool
     let unlockBitrateLimit: Bool
+    let prioritizeStreamingTraffic: Bool
     let optimizeMouseForDesktop: Bool
     let captureSystemKeyboardShortcuts: Bool
     let keyboardShortcutCaptureMode: ShadowClientKeyboardShortcutCaptureMode
@@ -53,6 +54,7 @@ struct ShadowClientSettingsSelectionInput {
         enableFramePacing: Bool,
         enableYUV444: Bool,
         unlockBitrateLimit: Bool,
+        prioritizeStreamingTraffic: Bool,
         optimizeMouseForDesktop: Bool,
         captureSystemKeyboardShortcuts: Bool,
         keyboardShortcutCaptureMode: ShadowClientKeyboardShortcutCaptureMode,
@@ -87,6 +89,7 @@ struct ShadowClientSettingsSelectionInput {
         self.enableFramePacing = enableFramePacing
         self.enableYUV444 = enableYUV444
         self.unlockBitrateLimit = unlockBitrateLimit
+        self.prioritizeStreamingTraffic = prioritizeStreamingTraffic
         self.optimizeMouseForDesktop = optimizeMouseForDesktop
         self.captureSystemKeyboardShortcuts = captureSystemKeyboardShortcuts
         self.keyboardShortcutCaptureMode = keyboardShortcutCaptureMode
@@ -126,6 +129,7 @@ enum ShadowClientSettingsSelectionKit {
             enableFramePacing: input.enableFramePacing,
             enableYUV444: input.enableYUV444,
             unlockBitrateLimit: input.unlockBitrateLimit,
+            prioritizeStreamingTraffic: input.prioritizeStreamingTraffic,
             optimizeMouseForDesktop: input.optimizeMouseForDesktop,
             captureSystemKeyboardShortcuts: input.captureSystemKeyboardShortcuts,
             keyboardShortcutCaptureMode: input.keyboardShortcutCaptureMode,

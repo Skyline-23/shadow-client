@@ -430,6 +430,7 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
     public let enableYUV444: Bool
     public let displayScalePercent: Int
     public let requestHiDPI: Bool
+    public let prioritizeNetworkTraffic: Bool
     public let remoteInputKey: Data?
     public let remoteInputKeyID: UInt32?
     public let serverAppVersion: String?
@@ -446,6 +447,7 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
         enableYUV444: Bool = false,
         displayScalePercent: Int = 100,
         requestHiDPI: Bool = false,
+        prioritizeNetworkTraffic: Bool = false,
         remoteInputKey: Data? = nil,
         remoteInputKeyID: UInt32? = nil,
         serverAppVersion: String? = nil
@@ -464,6 +466,7 @@ public struct ShadowClientRemoteSessionVideoConfiguration: Equatable, Sendable {
         self.enableYUV444 = enableYUV444
         self.displayScalePercent = max(20, min(200, displayScalePercent))
         self.requestHiDPI = requestHiDPI
+        self.prioritizeNetworkTraffic = prioritizeNetworkTraffic
         self.remoteInputKey = remoteInputKey
         self.remoteInputKeyID = remoteInputKeyID
         self.serverAppVersion = serverAppVersion
@@ -3848,6 +3851,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 enableFramePacing: settings.enableFramePacing,
                 enableYUV444: settings.enableYUV444,
                 unlockBitrateLimit: settings.unlockBitrateLimit,
+                prioritizeNetworkTraffic: settings.prioritizeNetworkTraffic,
                 forceHardwareDecoding: settings.forceHardwareDecoding,
                 resolutionScalePercent: settings.resolutionScalePercent,
                 requestHiDPI: settings.requestHiDPI,
@@ -3872,6 +3876,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             enableFramePacing: settings.enableFramePacing,
             enableYUV444: settings.enableYUV444,
             unlockBitrateLimit: settings.unlockBitrateLimit,
+            prioritizeNetworkTraffic: settings.prioritizeNetworkTraffic,
             forceHardwareDecoding: settings.forceHardwareDecoding,
             resolutionScalePercent: settings.resolutionScalePercent,
             requestHiDPI: settings.requestHiDPI,
@@ -3901,6 +3906,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             enableYUV444: settings.enableYUV444,
             displayScalePercent: settings.resolutionScalePercent,
             requestHiDPI: settings.requestHiDPI,
+            prioritizeNetworkTraffic: settings.prioritizeNetworkTraffic,
             remoteInputKey: remoteInputKey,
             remoteInputKeyID: remoteInputKeyID,
             serverAppVersion: serverAppVersion

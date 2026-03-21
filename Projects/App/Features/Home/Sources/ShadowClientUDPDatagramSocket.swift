@@ -87,7 +87,8 @@ actor ShadowClientUDPDatagramSocket {
         localHost: NWEndpoint.Host?,
         localPort: UInt16?,
         remoteHost: NWEndpoint.Host,
-        remotePort: UInt16
+        remotePort: UInt16,
+        trafficClass: ShadowClientLocalTransportTrafficClass = .bestEffort
     ) throws {
         guard let remoteAddress = Self.makeAddress(from: remoteHost, port: remotePort) else {
             throw ShadowClientUDPDatagramSocketError.unsupportedAddress(
@@ -137,6 +138,11 @@ actor ShadowClientUDPDatagramSocket {
             SO_NOSIGPIPE,
             &noSigPipe,
             socklen_t(MemoryLayout<Int32>.size)
+        )
+        ShadowClientStreamingTrafficPolicy.apply(
+            trafficClass,
+            to: descriptor,
+            addressFamily: addressFamily
         )
 
         var localAddress = Self.makeLocalAddress(

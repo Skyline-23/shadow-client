@@ -56,6 +56,7 @@ func remoteDesktopRuntimeKeepsDisplayScaleIntentWhileNormalizingAudioLaunchSetti
             enableSurroundAudio: true,
             preferredSurroundChannelCount: 8,
             lowLatencyMode: false,
+            prioritizeNetworkTraffic: true,
             resolutionScalePercent: 200,
             requestHiDPI: true
         ),
@@ -66,4 +67,5 @@ func remoteDesktopRuntimeKeepsDisplayScaleIntentWhileNormalizingAudioLaunchSetti
     #expect(normalized.preferredSurroundChannelCount == 2)
     #expect(normalized.resolutionScalePercent == 200)
     #expect(normalized.requestHiDPI)
+    #expect(normalized.prioritizeNetworkTraffic)
 }

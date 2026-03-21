@@ -15,6 +15,7 @@ enum ShadowClientHostControlChannelError: Error {
 actor ShadowClientHostControlChannelRuntime {
     private let connectTimeout: Duration
     private let commandAcknowledgeTimeout: Duration
+    private let prioritizeNetworkTraffic: Bool
     private let onRoundTripSample: (@Sendable (Double) async -> Void)?
     private let onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)?
     private let onHDRMode: (@Sendable (ShadowClientHostHDRModeEvent) async -> Void)?
@@ -43,6 +44,7 @@ actor ShadowClientHostControlChannelRuntime {
     init(
         connectTimeout: Duration = ShadowClientHostControlChannelDefaults.connectTimeout,
         commandAcknowledgeTimeout: Duration = ShadowClientHostControlChannelDefaults.commandAcknowledgeTimeout,
+        prioritizeNetworkTraffic: Bool = false,
         onRoundTripSample: (@Sendable (Double) async -> Void)? = nil,
         onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)? = nil,
         onHDRMode: (@Sendable (ShadowClientHostHDRModeEvent) async -> Void)? = nil,
@@ -50,6 +52,7 @@ actor ShadowClientHostControlChannelRuntime {
     ) {
         self.connectTimeout = connectTimeout
         self.commandAcknowledgeTimeout = commandAcknowledgeTimeout
+        self.prioritizeNetworkTraffic = prioritizeNetworkTraffic
         self.onRoundTripSample = onRoundTripSample
         self.onControllerFeedback = onControllerFeedback
         self.onHDRMode = onHDRMode
@@ -75,7 +78,15 @@ actor ShadowClientHostControlChannelRuntime {
         }
         controlChannelMode = mode
 
-        let connection = NWConnection(host: host, port: port, using: .udp)
+        let connection = NWConnection(
+            host: host,
+            port: port,
+            using: ShadowClientStreamingTrafficPolicy.udpParameters(
+                trafficClass: ShadowClientStreamingTrafficPolicy.control(
+                    prioritized: prioritizeNetworkTraffic
+                )
+            )
+        )
         self.connection = connection
         resetSessionState()
 

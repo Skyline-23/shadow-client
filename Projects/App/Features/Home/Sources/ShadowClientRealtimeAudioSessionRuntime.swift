@@ -55,6 +55,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         subsystem: "com.skyline23.shadow-client",
         category: "RealtimeAudio"
     )
+    private let prioritizeNetworkTraffic: Bool
     private let stateDidChange: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)?
     private let pendingDurationDidChange: (@Sendable (Double) async -> Void)?
     private let connectionQueue = DispatchQueue(
@@ -76,9 +77,11 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     private var state: ShadowClientRealtimeAudioOutputState = .idle
 
     public init(
+        prioritizeNetworkTraffic: Bool = false,
         stateDidChange: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)? = nil,
         pendingDurationDidChange: (@Sendable (Double) async -> Void)? = nil
     ) {
+        self.prioritizeNetworkTraffic = prioritizeNetworkTraffic
         self.stateDidChange = stateDidChange
         self.pendingDurationDidChange = pendingDurationDidChange
     }
@@ -980,20 +983,13 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         }
 
         func makeParameters(localPort: UInt16?) -> NWParameters {
-            let parameters = NWParameters.udp
-            if let localHost {
-                let endpointPort: NWEndpoint.Port
-                if let localPort, let resolvedPort = NWEndpoint.Port(rawValue: localPort) {
-                    endpointPort = resolvedPort
-                } else {
-                    endpointPort = .any
-                }
-                parameters.requiredLocalEndpoint = .hostPort(
-                    host: localHost,
-                    port: endpointPort
+            ShadowClientStreamingTrafficPolicy.udpParameters(
+                localHost: localHost,
+                localPort: localPort,
+                trafficClass: ShadowClientStreamingTrafficPolicy.audio(
+                    prioritized: prioritizeNetworkTraffic
                 )
-            }
-            return parameters
+            )
         }
 
         let primaryConnection = NWConnection(

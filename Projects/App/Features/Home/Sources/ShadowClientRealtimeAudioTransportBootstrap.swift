@@ -8,6 +8,7 @@ enum ShadowClientRealtimeAudioTransportBootstrap {
         remotePort: NWEndpoint.Port,
         localHost: NWEndpoint.Host?,
         preferredLocalPort: UInt16?,
+        prioritizeNetworkTraffic: Bool,
         logger: Logger,
         readyMessagePrefix: String,
         fallbackReadyMessagePrefix: String
@@ -17,7 +18,10 @@ enum ShadowClientRealtimeAudioTransportBootstrap {
                 localHost: localHost,
                 localPort: preferredLocalPort,
                 remoteHost: remoteHost,
-                remotePort: remotePort.rawValue
+                remotePort: remotePort.rawValue,
+                trafficClass: ShadowClientStreamingTrafficPolicy.audio(
+                    prioritized: prioritizeNetworkTraffic
+                )
             )
             let endpointDescription = await socket.localEndpointDescription()
             logger.notice("\(readyMessagePrefix, privacy: .public) \(endpointDescription, privacy: .public)")
@@ -33,7 +37,10 @@ enum ShadowClientRealtimeAudioTransportBootstrap {
                 localHost: localHost,
                 localPort: nil,
                 remoteHost: remoteHost,
-                remotePort: remotePort.rawValue
+                remotePort: remotePort.rawValue,
+                trafficClass: ShadowClientStreamingTrafficPolicy.audio(
+                    prioritized: prioritizeNetworkTraffic
+                )
             )
             let endpointDescription = await socket.localEndpointDescription()
             logger.notice("\(fallbackReadyMessagePrefix, privacy: .public) \(endpointDescription, privacy: .public)")
@@ -46,26 +53,20 @@ enum ShadowClientRealtimeAudioTransportBootstrap {
         remotePort: NWEndpoint.Port,
         localHost: NWEndpoint.Host?,
         preferredLocalPort: UInt16?,
+        prioritizeNetworkTraffic: Bool,
         queue: DispatchQueue,
         logger: Logger,
         readyMessagePrefix: String,
         fallbackReadyMessagePrefix: String
     ) async throws -> NWConnection {
         func makeParameters(localPort: UInt16?) -> NWParameters {
-            let parameters = NWParameters.udp
-            if let localHost {
-                let endpointPort: NWEndpoint.Port
-                if let localPort, let resolvedPort = NWEndpoint.Port(rawValue: localPort) {
-                    endpointPort = resolvedPort
-                } else {
-                    endpointPort = .any
-                }
-                parameters.requiredLocalEndpoint = .hostPort(
-                    host: localHost,
-                    port: endpointPort
+            ShadowClientStreamingTrafficPolicy.udpParameters(
+                localHost: localHost,
+                localPort: localPort,
+                trafficClass: ShadowClientStreamingTrafficPolicy.audio(
+                    prioritized: prioritizeNetworkTraffic
                 )
-            }
-            return parameters
+            )
         }
 
         let primaryConnection = NWConnection(
