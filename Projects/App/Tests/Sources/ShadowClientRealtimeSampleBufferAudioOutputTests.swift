@@ -47,3 +47,31 @@ func sampleBufferStarvationResetIgnoresShortLateness() {
 
     #expect(!shouldReset)
 }
+
+@Test("Sample buffer pressure shedding defers while renderer backlog is still below startup threshold")
+func sampleBufferPressureSheddingDefersWhenRendererBacklogIsThin() {
+    let decision = ShadowClientRealtimeSampleBufferAudioOutput.pressureSheddingDecision(
+        hasStartedTimeline: true,
+        nextPresentationTime: CMTime(seconds: 1.005, preferredTimescale: 1_000),
+        currentTime: CMTime(seconds: 1.000, preferredTimescale: 1_000),
+        startupThreshold: CMTime(seconds: 0.010, preferredTimescale: 1_000),
+        pressureSheddingGraceUntilTime: CMTime(seconds: 0.900, preferredTimescale: 1_000)
+    )
+
+    #expect(decision.shouldDefer)
+    #expect(!decision.shouldClearExpiredGrace)
+}
+
+@Test("Sample buffer pressure shedding clears expired grace once renderer backlog is healthy")
+func sampleBufferPressureSheddingClearsExpiredGraceWhenBacklogRecovered() {
+    let decision = ShadowClientRealtimeSampleBufferAudioOutput.pressureSheddingDecision(
+        hasStartedTimeline: true,
+        nextPresentationTime: CMTime(seconds: 1.050, preferredTimescale: 1_000),
+        currentTime: CMTime(seconds: 1.000, preferredTimescale: 1_000),
+        startupThreshold: CMTime(seconds: 0.010, preferredTimescale: 1_000),
+        pressureSheddingGraceUntilTime: CMTime(seconds: 0.900, preferredTimescale: 1_000)
+    )
+
+    #expect(!decision.shouldDefer)
+    #expect(decision.shouldClearExpiredGrace)
+}

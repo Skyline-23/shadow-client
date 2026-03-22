@@ -142,6 +142,11 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         case playbackClockProgress = "playback-clock-progress"
     }
 
+    internal struct PressureSheddingDecision: Equatable, Sendable {
+        let shouldDefer: Bool
+        let shouldClearExpiredGrace: Bool
+    }
+
     private var timelineStartupState: TimelineStartupState = .idle
     private var timelineStartRequestTime: CMTime?
     private var pressureSheddingGraceUntilTime: CMTime?
@@ -286,21 +291,22 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             guard !isTerminated else {
                 return false
             }
-            guard timelineStartupState == .started else {
-                return true
-            }
-            guard let pressureSheddingGraceUntilTime else {
-                return false
-            }
             let currentTime = currentSynchronizerTimeLocked()
-            guard currentTime.isValid, currentTime.isNumeric else {
-                return true
+            let startupThreshold = Self.startupThresholdDuration(
+                outputFormat: renderFormat,
+                nominalFramesPerBuffer: nominalFramesPerBufferEstimate
+            )
+            let decision = Self.pressureSheddingDecision(
+                hasStartedTimeline: timelineStartupState == .started,
+                nextPresentationTime: nextPresentationTime,
+                currentTime: currentTime,
+                startupThreshold: startupThreshold,
+                pressureSheddingGraceUntilTime: pressureSheddingGraceUntilTime
+            )
+            if decision.shouldClearExpiredGrace {
+                pressureSheddingGraceUntilTime = nil
             }
-            if CMTimeCompare(currentTime, pressureSheddingGraceUntilTime) < 0 {
-                return true
-            }
-            self.pressureSheddingGraceUntilTime = nil
-            return false
+            return decision.shouldDefer
         }
     }
 
@@ -741,6 +747,55 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             divisor: 1
         )
         return CMTimeCompare(lateness, starvationThreshold) >= 0
+    }
+
+    static func pressureSheddingDecision(
+        hasStartedTimeline: Bool,
+        nextPresentationTime: CMTime,
+        currentTime: CMTime,
+        startupThreshold: CMTime,
+        pressureSheddingGraceUntilTime: CMTime?
+    ) -> PressureSheddingDecision {
+        guard hasStartedTimeline else {
+            return PressureSheddingDecision(
+                shouldDefer: true,
+                shouldClearExpiredGrace: false
+            )
+        }
+        guard currentTime.isValid, currentTime.isNumeric else {
+            return PressureSheddingDecision(
+                shouldDefer: true,
+                shouldClearExpiredGrace: false
+            )
+        }
+
+        let queuedDuration = CMTimeSubtract(nextPresentationTime, currentTime)
+        if queuedDuration.isValid,
+           queuedDuration.isNumeric,
+           CMTimeCompare(queuedDuration, startupThreshold) < 0
+        {
+            return PressureSheddingDecision(
+                shouldDefer: true,
+                shouldClearExpiredGrace: false
+            )
+        }
+
+        guard let pressureSheddingGraceUntilTime else {
+            return PressureSheddingDecision(
+                shouldDefer: false,
+                shouldClearExpiredGrace: false
+            )
+        }
+        if CMTimeCompare(currentTime, pressureSheddingGraceUntilTime) < 0 {
+            return PressureSheddingDecision(
+                shouldDefer: true,
+                shouldClearExpiredGrace: false
+            )
+        }
+        return PressureSheddingDecision(
+            shouldDefer: false,
+            shouldClearExpiredGrace: true
+        )
     }
 
     private static func makeRendererFormat(
