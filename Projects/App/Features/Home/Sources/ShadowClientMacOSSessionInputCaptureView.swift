@@ -11,8 +11,17 @@ enum ShadowClientMacOSPointerInputPolicy {
         previousLocationInView: CGPoint?,
         containerBounds: CGRect,
         videoSize: CGSize?,
-        isCaptured: Bool
+        isCaptured: Bool,
+        pendingCapturedAnchor: Bool
     ) -> ShadowClientRemoteInputEvent? {
+        if isCaptured && pendingCapturedAnchor {
+            return absoluteMotionEvent(
+                locationInView: locationInView,
+                containerBounds: containerBounds,
+                videoSize: videoSize
+            )
+        }
+
         if isCaptured {
             guard let previousLocationInView else {
                 return nil
@@ -25,6 +34,18 @@ enum ShadowClientMacOSPointerInputPolicy {
             return .pointerMoved(x: deltaX, y: deltaY)
         }
 
+        return absoluteMotionEvent(
+            locationInView: locationInView,
+            containerBounds: containerBounds,
+            videoSize: videoSize
+        )
+    }
+
+    static func absoluteMotionEvent(
+        locationInView: CGPoint,
+        containerBounds: CGRect,
+        videoSize: CGSize?
+    ) -> ShadowClientRemoteInputEvent? {
         let topLeftLocation = CGPoint(
             x: locationInView.x,
             y: containerBounds.height - locationInView.y
@@ -44,8 +65,11 @@ enum ShadowClientMacOSPointerInputPolicy {
         )
     }
 
-    static func shouldSyncAbsolutePointerBeforeButton(isCaptured: Bool) -> Bool {
-        !isCaptured
+    static func shouldSyncAbsolutePointerBeforeButton(
+        isCaptured: Bool,
+        pendingCapturedAnchor: Bool
+    ) -> Bool {
+        !isCaptured || pendingCapturedAnchor
     }
 }
 
@@ -96,6 +120,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     private var loggedInputKinds = Set<String>()
     private var loggedFocusFailure = false
     private var isCursorHidden = false
+    private var pendingCapturedPointerAnchor = false
     private var locallyHandledKeyCodes = Set<UInt16>()
     private var pendingRecaptureAfterActivation = false
     private var lastPointerLocationInView: CGPoint?
@@ -332,28 +357,34 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
             previousLocationInView: previousLocationInView,
             containerBounds: bounds,
             videoSize: referenceVideoSize,
-            isCaptured: isCursorHidden
+            isCaptured: isCursorHidden,
+            pendingCapturedAnchor: pendingCapturedPointerAnchor
         ) else {
             return
+        }
+        if isCursorHidden && pendingCapturedPointerAnchor {
+            pendingCapturedPointerAnchor = false
         }
         emit(motionEvent)
     }
 
     private func emitPointerPositionIfNeeded(from event: NSEvent) {
         guard ShadowClientMacOSPointerInputPolicy.shouldSyncAbsolutePointerBeforeButton(
-            isCaptured: isCursorHidden
+            isCaptured: isCursorHidden,
+            pendingCapturedAnchor: pendingCapturedPointerAnchor
         ) else {
             return
         }
         let locationInView = convert(event.locationInWindow, from: nil)
-        guard let motionEvent = ShadowClientMacOSPointerInputPolicy.motionEvent(
+        guard let motionEvent = ShadowClientMacOSPointerInputPolicy.absoluteMotionEvent(
             locationInView: locationInView,
-            previousLocationInView: lastPointerLocationInView,
             containerBounds: bounds,
-            videoSize: referenceVideoSize,
-            isCaptured: false
+            videoSize: referenceVideoSize
         ) else {
             return
+        }
+        if isCursorHidden && pendingCapturedPointerAnchor {
+            pendingCapturedPointerAnchor = false
         }
         emit(motionEvent)
     }
@@ -636,6 +667,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
 
         NSCursor.hide()
         isCursorHidden = true
+        pendingCapturedPointerAnchor = true
     }
 
     private func deactivatePointerCaptureIfNeeded() {
@@ -645,6 +677,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
 
         NSCursor.unhide()
         isCursorHidden = false
+        pendingCapturedPointerAnchor = false
     }
 
     private var isPointerInsideVisibleRegion: Bool {
