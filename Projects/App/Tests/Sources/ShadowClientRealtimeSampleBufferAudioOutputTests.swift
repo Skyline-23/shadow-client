@@ -48,6 +48,30 @@ func sampleBufferStarvationResetIgnoresShortLateness() {
     #expect(!shouldReset)
 }
 
+@Test("Sample buffer starvation reset ignores brief 40ms renderer clock jitter")
+func sampleBufferStarvationResetIgnoresBriefClockJitter() {
+    let shouldReset = ShadowClientRealtimeSampleBufferAudioOutput
+        .shouldResetTimelineForStarvation(
+            nextPresentationTime: CMTime(seconds: 0, preferredTimescale: 1_000),
+            currentTime: CMTime(seconds: 0.04, preferredTimescale: 1_000),
+            startupThreshold: CMTime(seconds: 0.01, preferredTimescale: 1_000)
+        )
+
+    #expect(!shouldReset)
+}
+
+@Test("Sample buffer starvation reset still trips once renderer stall exceeds steady-state floor")
+func sampleBufferStarvationResetTripsAfterSustainedStall() {
+    let shouldReset = ShadowClientRealtimeSampleBufferAudioOutput
+        .shouldResetTimelineForStarvation(
+            nextPresentationTime: CMTime(seconds: 0, preferredTimescale: 1_000),
+            currentTime: CMTime(seconds: 0.13, preferredTimescale: 1_000),
+            startupThreshold: CMTime(seconds: 0.01, preferredTimescale: 1_000)
+        )
+
+    #expect(shouldReset)
+}
+
 @Test("Sample buffer pressure shedding defers while renderer backlog is still below startup threshold")
 func sampleBufferPressureSheddingDefersWhenRendererBacklogIsThin() {
     let decision = ShadowClientRealtimeSampleBufferAudioOutput.pressureSheddingDecision(

@@ -15,6 +15,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         category: "RealtimeSampleBufferAudio"
     )
     private static let millisecondsPerSecond = 1_000.0
+    private static let minimumStarvationResetDurationSeconds = 0.125
 
     private actor BudgetState {
         private let sampleRate: Double
@@ -479,6 +480,9 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             outputFormat: renderFormat,
             nominalFramesPerBuffer: nominalFramesPerBufferEstimate
         )
+        let starvationThreshold = Self.starvationResetThresholdDuration(
+            startupThreshold: startupThreshold
+        )
         guard Self.shouldResetTimelineForStarvation(
             nextPresentationTime: nextPresentationTime,
             currentTime: currentTime,
@@ -491,8 +495,12 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         renderer.flush()
         resetTimelineAfterFlushLocked(resetTime: currentTime)
         startFeedingLocked()
+        let budgetState = self.budgetState
+        Task {
+            await budgetState.reset(currentTime: currentTime)
+        }
         Self.logger.notice(
-            "Sample buffer audio starvation detected; resetting timeline at \(CMTimeGetSeconds(currentTime), privacy: .public)s lateness-ms=\(CMTimeGetSeconds(lateness) * Self.millisecondsPerSecond, privacy: .public)"
+            "Sample buffer audio starvation detected; resetting timeline at \(CMTimeGetSeconds(currentTime), privacy: .public)s lateness-ms=\(CMTimeGetSeconds(lateness) * Self.millisecondsPerSecond, privacy: .public) threshold-ms=\(CMTimeGetSeconds(starvationThreshold) * Self.millisecondsPerSecond, privacy: .public)"
         )
         logRendererDiagnosticsLocked(reason: "starvation-reset")
     }
@@ -746,12 +754,37 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         else {
             return false
         }
-        let starvationThreshold = CMTimeMultiplyByRatio(
+        let starvationThreshold = starvationResetThresholdDuration(
+            startupThreshold: startupThreshold
+        )
+        return CMTimeCompare(lateness, starvationThreshold) >= 0
+    }
+
+    static func starvationResetThresholdDuration(
+        startupThreshold: CMTime
+    ) -> CMTime {
+        let timescale = CMTimeScale(max(1, Int32(Self.millisecondsPerSecond.rounded())))
+        let minimumThreshold = CMTime(
+            seconds: Self.minimumStarvationResetDurationSeconds,
+            preferredTimescale: timescale
+        )
+        guard startupThreshold.isValid, startupThreshold.isNumeric else {
+            return minimumThreshold
+        }
+        let scaledThreshold = CMTimeMultiplyByRatio(
             startupThreshold,
             multiplier: 4,
             divisor: 1
         )
-        return CMTimeCompare(lateness, starvationThreshold) >= 0
+        guard scaledThreshold.isValid, scaledThreshold.isNumeric else {
+            return minimumThreshold
+        }
+        if CMTimeCompare(scaledThreshold, minimumThreshold) >= 0 {
+            return scaledThreshold
+        }
+        // Renderer clocks can momentarily wobble by a few IO cycles. Keep a
+        // wider steady-state starvation floor so those blips do not flap audio.
+        return minimumThreshold
     }
 
     static func pressureSheddingDecision(
