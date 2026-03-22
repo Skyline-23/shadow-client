@@ -451,7 +451,14 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     consecutiveDroppedOutputBuffers = 0
                 }
 
-                if await audioOutput.enqueue(pcmBuffer: pcmBuffer) {
+                let enqueueResult = await Self.enqueueDecodedBufferWithRecovery(
+                    pcmBuffer,
+                    using: audioOutput
+                )
+                if enqueueResult != .failed {
+                    if enqueueResult == .recoveredAndEnqueued {
+                        self.logger.notice("Audio output recovered after enqueue failure")
+                    }
                     logFirstDecodedBufferIfNeeded(pcmBuffer.frameLength, source)
                     return
                 }
@@ -498,8 +505,11 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                     let pendingQueueDurationMs = Double(
                         pendingPacketCountAfterCurrentDequeue * max(1, packetDurationMs)
                     )
-                    let shouldDropDueToPendingPressure = !audioOutput.usesSystemManagedBuffering && Self
-                        .shouldRequeueReadyPacketsForPendingOutputPressure(
+                    let shouldDeferPressureShedding = await audioOutput.shouldDeferPressureShedding()
+                    let shouldDropDueToPendingPressure = Self
+                        .shouldDropAudioPacketForPendingPressure(
+                            usesSystemManagedBuffering: audioOutput.usesSystemManagedBuffering,
+                            shouldDeferPressureShedding: shouldDeferPressureShedding,
                             pendingOutputDurationMs: pendingQueueDurationMs,
                             realtimePendingDurationCapMs: realtimePendingDurationCapMs
                         )
@@ -2206,6 +2216,7 @@ protocol ShadowClientRealtimeAudioOutput: AnyObject, Sendable {
     func hasEnqueueCapacity() async -> Bool
     func pendingDurationMs() async -> Double
     func availableEnqueueSlots() async -> Int
+    func shouldDeferPressureShedding() async -> Bool
     func stop()
     func recoverPlaybackUnderPressure() -> Bool
     var usesSystemManagedBuffering: Bool { get }
@@ -2214,6 +2225,10 @@ protocol ShadowClientRealtimeAudioOutput: AnyObject, Sendable {
 }
 
 extension ShadowClientRealtimeAudioOutput {
+    func shouldDeferPressureShedding() async -> Bool {
+        false
+    }
+
     func updateVideoRenderingState(isRendering _: Bool) {}
 }
 
@@ -2237,6 +2252,45 @@ private extension ShadowClientRealtimeAudioPacketDecoding {
 
     func decodePacketLossConcealment(samplesPerChannel _: Int) throws -> AVAudioPCMBuffer? {
         nil
+    }
+}
+
+extension ShadowClientRealtimeAudioSessionRuntime {
+    internal enum AudioOutputEnqueueResult: Equatable {
+        case enqueued
+        case recoveredAndEnqueued
+        case failed
+    }
+
+    internal static func shouldDropAudioPacketForPendingPressure(
+        usesSystemManagedBuffering: Bool,
+        shouldDeferPressureShedding: Bool,
+        pendingOutputDurationMs: Double,
+        realtimePendingDurationCapMs: Double
+    ) -> Bool {
+        guard !usesSystemManagedBuffering, !shouldDeferPressureShedding else {
+            return false
+        }
+        return shouldRequeueReadyPacketsForPendingOutputPressure(
+            pendingOutputDurationMs: pendingOutputDurationMs,
+            realtimePendingDurationCapMs: realtimePendingDurationCapMs
+        )
+    }
+
+    internal static func enqueueDecodedBufferWithRecovery(
+        _ pcmBuffer: AVAudioPCMBuffer,
+        using audioOutput: any ShadowClientRealtimeAudioOutput
+    ) async -> AudioOutputEnqueueResult {
+        if await audioOutput.enqueue(pcmBuffer: pcmBuffer) {
+            return .enqueued
+        }
+        guard audioOutput.recoverPlaybackUnderPressure() else {
+            return .failed
+        }
+        if await audioOutput.enqueue(pcmBuffer: pcmBuffer) {
+            return .recoveredAndEnqueued
+        }
+        return .failed
     }
 }
 

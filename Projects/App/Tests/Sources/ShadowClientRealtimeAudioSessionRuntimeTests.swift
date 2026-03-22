@@ -1,6 +1,7 @@
 import Testing
 @testable import ShadowClientFeatureHome
 import AVFoundation
+import Foundation
 
 private final class MockCustomAudioDecoder: ShadowClientRealtimeCustomAudioDecoder {
     let codec: ShadowClientAudioCodec
@@ -70,6 +71,111 @@ private final class RecordingPLCCustomAudioDecoder: ShadowClientRealtimeCustomAu
         buffer.frameLength = AVAudioFrameCount(samplesPerChannel)
         return buffer
     }
+}
+
+private actor TestAudioOutputState {
+    struct Snapshot: Equatable, Sendable {
+        let enqueueAttemptCount: Int
+    }
+
+    private var enqueueResults: [Bool]
+    private var enqueueAttemptCount = 0
+    private let shouldDeferPressureSheddingValue: Bool
+
+    init(
+        enqueueResults: [Bool],
+        shouldDeferPressureShedding: Bool = false
+    ) {
+        self.enqueueResults = enqueueResults
+        self.shouldDeferPressureSheddingValue = shouldDeferPressureShedding
+    }
+
+    func nextEnqueueResult() -> Bool {
+        enqueueAttemptCount += 1
+        if !enqueueResults.isEmpty {
+            return enqueueResults.removeFirst()
+        }
+        return false
+    }
+
+    func shouldDeferPressureShedding() -> Bool {
+        shouldDeferPressureSheddingValue
+    }
+
+    func snapshot() -> Snapshot {
+        Snapshot(enqueueAttemptCount: enqueueAttemptCount)
+    }
+}
+
+private final class TestRealtimeAudioOutput: ShadowClientRealtimeAudioOutput, Sendable {
+    private let state: TestAudioOutputState
+    private let recoveryResult: Bool
+
+    init(
+        enqueueResults: [Bool],
+        shouldDeferPressureShedding: Bool = false,
+        recoveryResult: Bool = false
+    ) {
+        self.state = TestAudioOutputState(
+            enqueueResults: enqueueResults,
+            shouldDeferPressureShedding: shouldDeferPressureShedding
+        )
+        self.recoveryResult = recoveryResult
+    }
+
+    func enqueue(pcmBuffer _: AVAudioPCMBuffer) async -> Bool {
+        await state.nextEnqueueResult()
+    }
+
+    func hasEnqueueCapacity() async -> Bool {
+        true
+    }
+
+    func pendingDurationMs() async -> Double {
+        0
+    }
+
+    func availableEnqueueSlots() async -> Int {
+        1
+    }
+
+    func shouldDeferPressureShedding() async -> Bool {
+        await state.shouldDeferPressureShedding()
+    }
+
+    func stop() {}
+
+    func recoverPlaybackUnderPressure() -> Bool {
+        recoveryResult
+    }
+
+    var usesSystemManagedBuffering: Bool {
+        false
+    }
+
+    var debugFormatDescription: String {
+        "test"
+    }
+
+    func updateVideoRenderingState(isRendering _: Bool) {}
+
+    func snapshot() async -> TestAudioOutputState.Snapshot {
+        await state.snapshot()
+    }
+}
+
+private func makeTestAudioPCMBuffer(
+    frameCount: AVAudioFrameCount = 240,
+    sampleRate: Double = 48_000,
+    channels: AVAudioChannelCount = 2
+) -> AVAudioPCMBuffer {
+    let format = AVAudioFormat(
+        standardFormatWithSampleRate: sampleRate,
+        channels: channels
+    )!
+    let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
+    buffer.frameLength = frameCount
+    return buffer
 }
 
 @Test("Payload type adaptation accepts dynamic payload type changes before lock")
@@ -719,6 +825,60 @@ func audioPendingPressureAndCooldownGatesRemainDeterministic() {
             burstThreshold: 8
         )
     )
+}
+
+@Test("Audio pending pressure gate honors output startup grace")
+func audioPendingPressureGateHonorsOutputStartupGrace() {
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldDropAudioPacketForPendingPressure(
+            usesSystemManagedBuffering: false,
+            shouldDeferPressureShedding: true,
+            pendingOutputDurationMs: 240,
+            realtimePendingDurationCapMs: 30
+        )
+    )
+    #expect(
+        ShadowClientRealtimeAudioSessionRuntime.shouldDropAudioPacketForPendingPressure(
+            usesSystemManagedBuffering: false,
+            shouldDeferPressureShedding: false,
+            pendingOutputDurationMs: 240,
+            realtimePendingDurationCapMs: 30
+        )
+    )
+}
+
+@Test("Audio enqueue retries once after output recovery")
+func audioEnqueueRetriesOnceAfterOutputRecovery() async {
+    let output = TestRealtimeAudioOutput(
+        enqueueResults: [false, true],
+        recoveryResult: true
+    )
+
+    let result = await ShadowClientRealtimeAudioSessionRuntime.enqueueDecodedBufferWithRecovery(
+        makeTestAudioPCMBuffer(),
+        using: output
+    )
+    let snapshot = await output.snapshot()
+
+    #expect(result == .recoveredAndEnqueued)
+    #expect(snapshot.enqueueAttemptCount == 2)
+}
+
+@Test("Audio enqueue fails when output recovery cannot restore playback")
+func audioEnqueueFailsWhenOutputRecoveryCannotRestorePlayback() async {
+    let output = TestRealtimeAudioOutput(
+        enqueueResults: [false],
+        recoveryResult: false
+    )
+
+    let result = await ShadowClientRealtimeAudioSessionRuntime.enqueueDecodedBufferWithRecovery(
+        makeTestAudioPCMBuffer(),
+        using: output
+    )
+    let snapshot = await output.snapshot()
+
+    #expect(result == .failed)
+    #expect(snapshot.enqueueAttemptCount == 1)
 }
 
 @Test("Audio drop window packet count scales with packet duration")
