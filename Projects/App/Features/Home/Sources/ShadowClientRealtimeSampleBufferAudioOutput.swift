@@ -715,13 +715,18 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         return formatDescription
     }
 
-    // Moonlight's LiGetPendingAudioDuration() measures the client-side ready queue,
-    // not the downstream device renderer backlog.
+    // Apple sample-buffer output can report a thin renderer queue even while the
+    // decode-side ready queue briefly spikes. Use whichever side of the pipeline is
+    // actually more backlogged so pressure shedding only triggers once audio output
+    // itself is also running hot.
     static func pressureSheddingPendingDurationMs(
         moonlightQueuePendingDurationMs: Double,
-        rendererPendingDurationMs _: Double
+        rendererPendingDurationMs: Double
     ) -> Double {
-        max(0, moonlightQueuePendingDurationMs)
+        max(
+            max(0, moonlightQueuePendingDurationMs),
+            max(0, rendererPendingDurationMs)
+        )
     }
 
     static func shouldResetTimelineForStarvation(

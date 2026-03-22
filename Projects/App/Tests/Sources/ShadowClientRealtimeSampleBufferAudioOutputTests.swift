@@ -2,15 +2,15 @@ import Testing
 @preconcurrency import CoreMedia
 @testable import ShadowClientFeatureHome
 
-@Test("Sample buffer pressure shedding follows Moonlight queue duration instead of renderer backlog")
-func sampleBufferPressureSheddingUsesMoonlightQueueDuration() {
+@Test("Sample buffer pressure shedding tracks the more backlogged output stage")
+func sampleBufferPressureSheddingUsesMostBackloggedOutputStage() {
     let pendingDurationMs = ShadowClientRealtimeSampleBufferAudioOutput
         .pressureSheddingPendingDurationMs(
             moonlightQueuePendingDurationMs: 25,
             rendererPendingDurationMs: 174
         )
 
-    #expect(pendingDurationMs == 25)
+    #expect(pendingDurationMs == 174)
 }
 
 @Test("Sample buffer pressure shedding clamps negative Moonlight queue duration")

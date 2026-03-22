@@ -81,13 +81,16 @@ private actor TestAudioOutputState {
     private var enqueueResults: [Bool]
     private var enqueueAttemptCount = 0
     private let shouldDeferPressureSheddingValue: Bool
+    private let pendingDurationMsValue: Double
 
     init(
         enqueueResults: [Bool],
-        shouldDeferPressureShedding: Bool = false
+        shouldDeferPressureShedding: Bool = false,
+        pendingDurationMs: Double = 0
     ) {
         self.enqueueResults = enqueueResults
         self.shouldDeferPressureSheddingValue = shouldDeferPressureShedding
+        self.pendingDurationMsValue = pendingDurationMs
     }
 
     func nextEnqueueResult() -> Bool {
@@ -102,6 +105,10 @@ private actor TestAudioOutputState {
         shouldDeferPressureSheddingValue
     }
 
+    func pendingDurationMs() -> Double {
+        pendingDurationMsValue
+    }
+
     func snapshot() -> Snapshot {
         Snapshot(enqueueAttemptCount: enqueueAttemptCount)
     }
@@ -114,11 +121,13 @@ private final class TestRealtimeAudioOutput: ShadowClientRealtimeAudioOutput, Se
     init(
         enqueueResults: [Bool],
         shouldDeferPressureShedding: Bool = false,
+        pendingDurationMs: Double = 0,
         recoveryResult: Bool = false
     ) {
         self.state = TestAudioOutputState(
             enqueueResults: enqueueResults,
-            shouldDeferPressureShedding: shouldDeferPressureShedding
+            shouldDeferPressureShedding: shouldDeferPressureShedding,
+            pendingDurationMs: pendingDurationMs
         )
         self.recoveryResult = recoveryResult
     }
@@ -132,7 +141,7 @@ private final class TestRealtimeAudioOutput: ShadowClientRealtimeAudioOutput, Se
     }
 
     func pendingDurationMs() async -> Double {
-        0
+        await state.pendingDurationMs()
     }
 
     func availableEnqueueSlots() async -> Int {
@@ -740,13 +749,17 @@ func audioReadyPacketDrainLimitUsesAvailableSlotsAndBatchCap() {
 func audioReadyPacketsAreRequeuedForPendingOutputPressure() {
     let shouldRequeue = ShadowClientRealtimeAudioSessionRuntime
         .shouldRequeueReadyPacketsForPendingOutputPressure(
-            pendingOutputDurationMs: 121,
-            realtimePendingDurationCapMs: 120
+            readyPacketPendingDurationMs: 121,
+            outputPendingDurationMs: 121,
+            realtimePendingDurationCapMs: 120,
+            pendingPressureHysteresisMs: 0
         )
     let shouldNotRequeue = ShadowClientRealtimeAudioSessionRuntime
         .shouldRequeueReadyPacketsForPendingOutputPressure(
-            pendingOutputDurationMs: 120,
-            realtimePendingDurationCapMs: 120
+            readyPacketPendingDurationMs: 121,
+            outputPendingDurationMs: 120,
+            realtimePendingDurationCapMs: 120,
+            pendingPressureHysteresisMs: 0
         )
 
     #expect(shouldRequeue)
@@ -807,8 +820,10 @@ func audioDecodeCooldownGateSuppressesStaleBursts() {
 func audioPendingPressureAndCooldownGatesRemainDeterministic() {
     #expect(
         ShadowClientRealtimeAudioSessionRuntime.shouldRequeueReadyPacketsForPendingOutputPressure(
-            pendingOutputDurationMs: 240,
-            realtimePendingDurationCapMs: 30
+            readyPacketPendingDurationMs: 240,
+            outputPendingDurationMs: 240,
+            realtimePendingDurationCapMs: 30,
+            pendingPressureHysteresisMs: 0
         )
     )
     #expect(
@@ -833,16 +848,58 @@ func audioPendingPressureGateHonorsOutputStartupGrace() {
         !ShadowClientRealtimeAudioSessionRuntime.shouldDropAudioPacketForPendingPressure(
             usesSystemManagedBuffering: false,
             shouldDeferPressureShedding: true,
-            pendingOutputDurationMs: 240,
-            realtimePendingDurationCapMs: 30
+            readyPacketPendingDurationMs: 240,
+            outputPendingDurationMs: 240,
+            realtimePendingDurationCapMs: 30,
+            pendingPressureHysteresisMs: 0
         )
     )
     #expect(
         ShadowClientRealtimeAudioSessionRuntime.shouldDropAudioPacketForPendingPressure(
             usesSystemManagedBuffering: false,
             shouldDeferPressureShedding: false,
-            pendingOutputDurationMs: 240,
-            realtimePendingDurationCapMs: 30
+            readyPacketPendingDurationMs: 240,
+            outputPendingDurationMs: 240,
+            realtimePendingDurationCapMs: 30,
+            pendingPressureHysteresisMs: 0
+        )
+    )
+}
+
+@Test("Audio pending pressure gate does not shed when output backlog stays below realtime cap")
+func audioPendingPressureGateRequiresOutputBacklogToAlsoBeHigh() {
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldDropAudioPacketForPendingPressure(
+            usesSystemManagedBuffering: false,
+            shouldDeferPressureShedding: false,
+            readyPacketPendingDurationMs: 240,
+            outputPendingDurationMs: 10,
+            realtimePendingDurationCapMs: 30,
+            pendingPressureHysteresisMs: 0
+        )
+    )
+}
+
+@Test("Audio pending pressure gate tolerates one-packet transient above cap before shedding")
+func audioPendingPressureGateAppliesOnePacketHysteresis() {
+    #expect(
+        !ShadowClientRealtimeAudioSessionRuntime.shouldDropAudioPacketForPendingPressure(
+            usesSystemManagedBuffering: false,
+            shouldDeferPressureShedding: false,
+            readyPacketPendingDurationMs: 34,
+            outputPendingDurationMs: 34,
+            realtimePendingDurationCapMs: 30,
+            pendingPressureHysteresisMs: 5
+        )
+    )
+    #expect(
+        ShadowClientRealtimeAudioSessionRuntime.shouldDropAudioPacketForPendingPressure(
+            usesSystemManagedBuffering: false,
+            shouldDeferPressureShedding: false,
+            readyPacketPendingDurationMs: 36,
+            outputPendingDurationMs: 36,
+            realtimePendingDurationCapMs: 30,
+            pendingPressureHysteresisMs: 5
         )
     )
 }

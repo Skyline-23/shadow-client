@@ -135,6 +135,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         var decoderImplementationName = "unknown"
         var realtimePendingDurationCapMs = ShadowClientMoonlightProtocolPolicy.Audio
             .outputRealtimePendingDurationCapMs
+        let pendingPressureHysteresisMs = Double(max(1, packetDurationMs))
 
         do {
             let resolvedDecoder = try await ShadowClientRealtimeAudioDecoderFactory.make(
@@ -163,7 +164,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 prefersSpatialHeadphoneRendering: prefersSpatialHeadphoneRendering
             )
             logger.notice(
-                "Audio output pressure mode=shadow-lbq-pending-duration(moonlight-compatible) cap-ms=\(realtimePendingDurationCapMs, privacy: .public) renderer-cap-ms=\(rendererPendingDurationCapMs, privacy: .public) queued-buffers=\(queuePressureProfile.maximumQueuedBuffers, privacy: .public) nominal-frames=\(nominalPacketFrameCount, privacy: .public)"
+                "Audio output pressure mode=dual-stage-ready+output-pending cap-ms=\(realtimePendingDurationCapMs, privacy: .public) hysteresis-ms=\(pendingPressureHysteresisMs, privacy: .public) renderer-cap-ms=\(rendererPendingDurationCapMs, privacy: .public) queued-buffers=\(queuePressureProfile.maximumQueuedBuffers, privacy: .public) nominal-frames=\(nominalPacketFrameCount, privacy: .public)"
             )
             if let encryption {
                 payloadDecryptor = try ShadowClientRealtimeAudioPayloadDecryptor(
@@ -355,6 +356,7 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 return TimeInterval(components.seconds) +
                     (TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000)
             }()
+            let pendingPressureHysteresisMs = Double(max(1, packetDurationMs))
             let outputSlotBackoff: Duration = .milliseconds(2)
             let decodeCooldownActivationMinimumIntervalSeconds: TimeInterval = 0.25
 
@@ -506,12 +508,17 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                         pendingPacketCountAfterCurrentDequeue * max(1, packetDurationMs)
                     )
                     let shouldDeferPressureShedding = await audioOutput.shouldDeferPressureShedding()
+                    let outputPendingDurationMs = shouldDeferPressureShedding
+                        ? 0
+                        : await audioOutput.pendingDurationMs()
                     let shouldDropDueToPendingPressure = Self
                         .shouldDropAudioPacketForPendingPressure(
                             usesSystemManagedBuffering: audioOutput.usesSystemManagedBuffering,
                             shouldDeferPressureShedding: shouldDeferPressureShedding,
-                            pendingOutputDurationMs: pendingQueueDurationMs,
-                            realtimePendingDurationCapMs: realtimePendingDurationCapMs
+                            readyPacketPendingDurationMs: pendingQueueDurationMs,
+                            outputPendingDurationMs: outputPendingDurationMs,
+                            realtimePendingDurationCapMs: realtimePendingDurationCapMs,
+                            pendingPressureHysteresisMs: pendingPressureHysteresisMs
                         )
                     if shouldDropDueToPendingPressure {
                         registerOutputQueuePressureDrop(1, "drop-shadow-lbq-pending-audio-duration")
@@ -1513,10 +1520,15 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     }
 
     internal static func shouldRequeueReadyPacketsForPendingOutputPressure(
-        pendingOutputDurationMs: Double,
-        realtimePendingDurationCapMs: Double
+        readyPacketPendingDurationMs: Double,
+        outputPendingDurationMs: Double,
+        realtimePendingDurationCapMs: Double,
+        pendingPressureHysteresisMs: Double
     ) -> Bool {
-        pendingOutputDurationMs > realtimePendingDurationCapMs
+        let effectivePendingDurationCapMs = realtimePendingDurationCapMs +
+            max(0, pendingPressureHysteresisMs)
+        return readyPacketPendingDurationMs > effectivePendingDurationCapMs &&
+            outputPendingDurationMs > effectivePendingDurationCapMs
     }
 
     internal static func shouldRequeueReadyPacketsForUnavailableOutputSlots(
@@ -2265,15 +2277,19 @@ extension ShadowClientRealtimeAudioSessionRuntime {
     internal static func shouldDropAudioPacketForPendingPressure(
         usesSystemManagedBuffering: Bool,
         shouldDeferPressureShedding: Bool,
-        pendingOutputDurationMs: Double,
-        realtimePendingDurationCapMs: Double
+        readyPacketPendingDurationMs: Double,
+        outputPendingDurationMs: Double,
+        realtimePendingDurationCapMs: Double,
+        pendingPressureHysteresisMs: Double
     ) -> Bool {
         guard !usesSystemManagedBuffering, !shouldDeferPressureShedding else {
             return false
         }
         return shouldRequeueReadyPacketsForPendingOutputPressure(
-            pendingOutputDurationMs: pendingOutputDurationMs,
-            realtimePendingDurationCapMs: realtimePendingDurationCapMs
+            readyPacketPendingDurationMs: readyPacketPendingDurationMs,
+            outputPendingDurationMs: outputPendingDurationMs,
+            realtimePendingDurationCapMs: realtimePendingDurationCapMs,
+            pendingPressureHysteresisMs: pendingPressureHysteresisMs
         )
     }
 
