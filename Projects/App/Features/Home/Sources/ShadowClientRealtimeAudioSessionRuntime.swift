@@ -471,10 +471,18 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
                 let nowUptime = ProcessInfo.processInfo.systemUptime
                 let isDecodeCooldownActive = nowUptime < decodeCooldownUntilUptime
                 let availableOutputSlots = await audioOutput.availableEnqueueSlots()
+                let shouldDeferPressureShedding = await audioOutput.shouldDeferPressureShedding()
+                let outputPendingDurationMs = shouldDeferPressureShedding
+                    ? 0
+                    : await audioOutput.pendingDurationMs()
                 let drainLimit = Self.audioReadyPacketDrainLimit(
                     isDecodeCooldownActive: isDecodeCooldownActive,
                     availableOutputSlots: availableOutputSlots,
-                    maximumDrainBatch: 4
+                    maximumDrainBatch: 4,
+                    shouldDeferPressureShedding: shouldDeferPressureShedding,
+                    outputPendingDurationMs: outputPendingDurationMs,
+                    realtimePendingDurationCapMs: realtimePendingDurationCapMs,
+                    pendingPressureHysteresisMs: pendingPressureHysteresisMs
                 ) ?? 0
                 if drainLimit == 0 {
                     if isDecodeCooldownActive {
@@ -1498,13 +1506,27 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
     internal static func audioReadyPacketDrainLimit(
         isDecodeCooldownActive: Bool,
         availableOutputSlots: Int,
-        maximumDrainBatch: Int = 4
+        maximumDrainBatch: Int = 4,
+        shouldDeferPressureShedding: Bool = false,
+        outputPendingDurationMs: Double = 0,
+        realtimePendingDurationCapMs: Double = 0,
+        pendingPressureHysteresisMs: Double = 0
     ) -> Int? {
         if isDecodeCooldownActive {
             return 0
         }
         guard availableOutputSlots > 0 else {
             return 0
+        }
+        let nearRealtimePendingDurationCapMs = max(
+            0,
+            realtimePendingDurationCapMs - max(0, pendingPressureHysteresisMs)
+        )
+        if !shouldDeferPressureShedding,
+           nearRealtimePendingDurationCapMs > 0,
+           outputPendingDurationMs >= nearRealtimePendingDurationCapMs
+        {
+            return 1
         }
         return min(max(1, maximumDrainBatch), availableOutputSlots)
     }

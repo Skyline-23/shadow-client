@@ -745,6 +745,36 @@ func audioReadyPacketDrainLimitUsesAvailableSlotsAndBatchCap() {
     #expect(byBatch == 8)
 }
 
+@Test("Audio ready packet drain limit collapses to one packet when output backlog nears realtime cap")
+func audioReadyPacketDrainLimitCollapsesNearRealtimeCap() {
+    let limit = ShadowClientRealtimeAudioSessionRuntime.audioReadyPacketDrainLimit(
+        isDecodeCooldownActive: false,
+        availableOutputSlots: 12,
+        maximumDrainBatch: 8,
+        shouldDeferPressureShedding: false,
+        outputPendingDurationMs: 26,
+        realtimePendingDurationCapMs: 30,
+        pendingPressureHysteresisMs: 5
+    )
+
+    #expect(limit == 1)
+}
+
+@Test("Audio ready packet drain limit keeps batch size when output backlog stays below near-cap threshold")
+func audioReadyPacketDrainLimitKeepsBatchSizeBelowNearRealtimeCap() {
+    let limit = ShadowClientRealtimeAudioSessionRuntime.audioReadyPacketDrainLimit(
+        isDecodeCooldownActive: false,
+        availableOutputSlots: 12,
+        maximumDrainBatch: 8,
+        shouldDeferPressureShedding: false,
+        outputPendingDurationMs: 24,
+        realtimePendingDurationCapMs: 30,
+        pendingPressureHysteresisMs: 5
+    )
+
+    #expect(limit == 8)
+}
+
 @Test("Audio ready packets are requeued when pending output duration exceeds realtime cap")
 func audioReadyPacketsAreRequeuedForPendingOutputPressure() {
     let shouldRequeue = ShadowClientRealtimeAudioSessionRuntime

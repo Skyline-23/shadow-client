@@ -5,6 +5,50 @@ import CoreGraphics
 import os
 import SwiftUI
 
+enum ShadowClientMacOSPointerInputPolicy {
+    static func motionEvent(
+        locationInView: CGPoint,
+        previousLocationInView: CGPoint?,
+        containerBounds: CGRect,
+        videoSize: CGSize?,
+        isCaptured: Bool
+    ) -> ShadowClientRemoteInputEvent? {
+        if isCaptured {
+            guard let previousLocationInView else {
+                return nil
+            }
+            let deltaX = locationInView.x - previousLocationInView.x
+            let deltaY = previousLocationInView.y - locationInView.y
+            guard deltaX != 0 || deltaY != 0 else {
+                return nil
+            }
+            return .pointerMoved(x: deltaX, y: deltaY)
+        }
+
+        let topLeftLocation = CGPoint(
+            x: locationInView.x,
+            y: containerBounds.height - locationInView.y
+        )
+        guard let pointerState = ShadowClientSessionPointerGeometry.absolutePointerState(
+            for: topLeftLocation,
+            containerBounds: containerBounds,
+            videoSize: videoSize
+        ) else {
+            return nil
+        }
+        return .pointerPosition(
+            x: pointerState.x,
+            y: pointerState.y,
+            referenceWidth: pointerState.referenceWidth,
+            referenceHeight: pointerState.referenceHeight
+        )
+    }
+
+    static func shouldSyncAbsolutePointerBeforeButton(isCaptured: Bool) -> Bool {
+        !isCaptured
+    }
+}
+
 struct ShadowClientMacOSSessionInputCaptureView: NSViewRepresentable {
     let referenceVideoSize: CGSize?
     let visiblePointerRegions: [CGRect]
@@ -220,84 +264,98 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         requestInputFocusIfNeeded(allowWindowActivation: true)
-        emitPointerPosition(from: event)
+        updatePointerCaptureLocation(from: event)
+        emitPointerPositionIfNeeded(from: event)
         emit(.pointerButton(button: .left, isPressed: true))
     }
 
     override func mouseUp(with event: NSEvent) {
-        emitPointerPosition(from: event)
+        updatePointerCaptureLocation(from: event)
+        emitPointerPositionIfNeeded(from: event)
         emit(.pointerButton(button: .left, isPressed: false))
     }
 
     override func rightMouseDown(with event: NSEvent) {
         requestInputFocusIfNeeded(allowWindowActivation: true)
-        emitPointerPosition(from: event)
+        updatePointerCaptureLocation(from: event)
+        emitPointerPositionIfNeeded(from: event)
         emit(.pointerButton(button: .right, isPressed: true))
     }
 
     override func rightMouseUp(with event: NSEvent) {
-        emitPointerPosition(from: event)
+        updatePointerCaptureLocation(from: event)
+        emitPointerPositionIfNeeded(from: event)
         emit(.pointerButton(button: .right, isPressed: false))
     }
 
     override func otherMouseDown(with event: NSEvent) {
         requestInputFocusIfNeeded(allowWindowActivation: true)
-        emitPointerPosition(from: event)
+        updatePointerCaptureLocation(from: event)
+        emitPointerPositionIfNeeded(from: event)
         let button = event.buttonNumber == 2 ? ShadowClientRemoteMouseButton.middle : .other(Int(event.buttonNumber))
         emit(.pointerButton(button: button, isPressed: true))
     }
 
     override func otherMouseUp(with event: NSEvent) {
-        emitPointerPosition(from: event)
+        updatePointerCaptureLocation(from: event)
+        emitPointerPositionIfNeeded(from: event)
         let button = event.buttonNumber == 2 ? ShadowClientRemoteMouseButton.middle : .other(Int(event.buttonNumber))
         emit(.pointerButton(button: button, isPressed: false))
     }
 
     override func mouseMoved(with event: NSEvent) {
-        updatePointerCaptureLocation(from: event)
-        emitPointerPosition(from: event)
+        emitPointerMotion(from: event)
     }
 
     override func mouseDragged(with event: NSEvent) {
-        updatePointerCaptureLocation(from: event)
-        emitPointerPosition(from: event)
+        emitPointerMotion(from: event)
     }
 
     override func rightMouseDragged(with event: NSEvent) {
-        updatePointerCaptureLocation(from: event)
-        emitPointerPosition(from: event)
+        emitPointerMotion(from: event)
     }
 
     override func otherMouseDragged(with event: NSEvent) {
-        updatePointerCaptureLocation(from: event)
-        emitPointerPosition(from: event)
+        emitPointerMotion(from: event)
     }
 
     override func scrollWheel(with event: NSEvent) {
         emit(.scroll(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY))
     }
 
-    private func emitPointerPosition(from event: NSEvent) {
+    private func emitPointerMotion(from event: NSEvent) {
         let locationInView = convert(event.locationInWindow, from: nil)
-        let topLeftLocation = CGPoint(
-            x: locationInView.x,
-            y: bounds.height - locationInView.y
-        )
-        guard let pointerState = ShadowClientSessionPointerGeometry.absolutePointerState(
-            for: topLeftLocation,
+        let previousLocationInView = lastPointerLocationInView
+        updatePointerCaptureLocation(from: event, locationInView: locationInView)
+        guard let motionEvent = ShadowClientMacOSPointerInputPolicy.motionEvent(
+            locationInView: locationInView,
+            previousLocationInView: previousLocationInView,
             containerBounds: bounds,
-            videoSize: referenceVideoSize
+            videoSize: referenceVideoSize,
+            isCaptured: isCursorHidden
         ) else {
             return
         }
-        emit(
-            .pointerPosition(
-                x: pointerState.x,
-                y: pointerState.y,
-                referenceWidth: pointerState.referenceWidth,
-                referenceHeight: pointerState.referenceHeight
-            )
-        )
+        emit(motionEvent)
+    }
+
+    private func emitPointerPositionIfNeeded(from event: NSEvent) {
+        guard ShadowClientMacOSPointerInputPolicy.shouldSyncAbsolutePointerBeforeButton(
+            isCaptured: isCursorHidden
+        ) else {
+            return
+        }
+        let locationInView = convert(event.locationInWindow, from: nil)
+        guard let motionEvent = ShadowClientMacOSPointerInputPolicy.motionEvent(
+            locationInView: locationInView,
+            previousLocationInView: lastPointerLocationInView,
+            containerBounds: bounds,
+            videoSize: referenceVideoSize,
+            isCaptured: false
+        ) else {
+            return
+        }
+        emit(motionEvent)
     }
 
     private func emit(_ event: ShadowClientRemoteInputEvent) {
@@ -434,8 +492,11 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         requestInputFocusIfNeeded(forceRecapture: true, allowWindowActivation: !window.isKeyWindow)
     }
 
-    private func updatePointerCaptureLocation(from event: NSEvent) {
-        let locationInView = convert(event.locationInWindow, from: nil)
+    private func updatePointerCaptureLocation(
+        from event: NSEvent,
+        locationInView: CGPoint? = nil
+    ) {
+        let locationInView = locationInView ?? convert(event.locationInWindow, from: nil)
         lastPointerLocationInView = locationInView
         updatePointerCaptureVisibility(for: locationInView)
     }
