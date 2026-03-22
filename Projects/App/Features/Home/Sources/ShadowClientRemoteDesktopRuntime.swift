@@ -64,6 +64,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
     public let appVersion: String?
     public let gfeVersion: String?
     public let uniqueID: String?
+    public let macAddress: String?
     public let serverCodecModeSupport: Int
     public let lastError: String?
     public let routes: ShadowClientRemoteHostRoutes
@@ -78,6 +79,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         appVersion: String?,
         gfeVersion: String?,
         uniqueID: String?,
+        macAddress: String? = nil,
         serverCodecModeSupport: Int = 0,
         lastError: String?,
         localHost: String? = nil,
@@ -92,6 +94,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         self.appVersion = appVersion
         self.gfeVersion = gfeVersion
         self.uniqueID = uniqueID
+        self.macAddress = macAddress
         self.serverCodecModeSupport = serverCodecModeSupport
         self.lastError = lastError
         self.routes = ShadowClientRemoteHostRoutes(
@@ -111,6 +114,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         appVersion: String?,
         gfeVersion: String?,
         uniqueID: String?,
+        macAddress: String? = nil,
         serverCodecModeSupport: Int = 0,
         lastError: String?,
         routes: ShadowClientRemoteHostRoutes
@@ -123,6 +127,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         self.appVersion = appVersion
         self.gfeVersion = gfeVersion
         self.uniqueID = uniqueID
+        self.macAddress = macAddress
         self.serverCodecModeSupport = serverCodecModeSupport
         self.lastError = lastError
         self.routes = routes
@@ -285,6 +290,26 @@ public enum ShadowClientApolloAdminClientState: Equatable, Sendable {
     case failed(String)
 }
 
+public enum ShadowClientRemoteHostWakeState: Equatable, Sendable {
+    case idle
+    case sending
+    case sent(String)
+    case failed(String)
+
+    public var label: String {
+        switch self {
+        case .idle:
+            return "Ready to send a magic packet."
+        case .sending:
+            return "Sending magic packet..."
+        case let .sent(message):
+            return message
+        case let .failed(message):
+            return message
+        }
+    }
+}
+
 public protocol ShadowClientPairingPINProviding {
     func nextPIN() -> String
 }
@@ -338,6 +363,7 @@ public struct ShadowClientGameStreamServerInfo: Equatable, Sendable {
     let appVersion: String?
     let gfeVersion: String?
     let uniqueID: String?
+    let macAddress: String?
     let serverCodecModeSupport: Int
 
     init(
@@ -353,6 +379,7 @@ public struct ShadowClientGameStreamServerInfo: Equatable, Sendable {
         appVersion: String?,
         gfeVersion: String?,
         uniqueID: String?,
+        macAddress: String? = nil,
         serverCodecModeSupport: Int = 0
     ) {
         self.host = host
@@ -367,6 +394,7 @@ public struct ShadowClientGameStreamServerInfo: Equatable, Sendable {
         self.appVersion = appVersion
         self.gfeVersion = gfeVersion
         self.uniqueID = uniqueID
+        self.macAddress = macAddress
         self.serverCodecModeSupport = serverCodecModeSupport
     }
 }
@@ -1348,6 +1376,7 @@ private enum ShadowClientRemoteDesktopCommand: Sendable {
     case sendInputKeepAlive
     case openSessionFlow(host: String, appTitle: String)
     case selectHost(String)
+    case wakeSelectedHost(macAddress: String, port: UInt16)
     case refreshSelectedHostApps
     case refreshSelectedHostApolloAdmin(username: String, password: String)
     case updateSelectedHostApolloAdmin(
@@ -1387,6 +1416,7 @@ private struct ShadowClientPersistedRemoteHostRecord: Codable {
     let appVersion: String?
     let gfeVersion: String?
     let uniqueID: String?
+    let macAddress: String?
     let lastError: String?
     let localHost: String?
     let remoteHost: String?
@@ -1402,6 +1432,7 @@ private struct ShadowClientPersistedRemoteHostRecord: Codable {
         appVersion = descriptor.appVersion
         gfeVersion = descriptor.gfeVersion
         uniqueID = descriptor.uniqueID
+        macAddress = descriptor.macAddress
         lastError = descriptor.lastError
         localHost = descriptor.routes.local?.host
         remoteHost = descriptor.routes.remote?.host
@@ -1419,6 +1450,7 @@ private struct ShadowClientPersistedRemoteHostRecord: Codable {
             appVersion: appVersion,
             gfeVersion: gfeVersion,
             uniqueID: uniqueID,
+            macAddress: macAddress,
             lastError: lastError,
             localHost: localHost,
             remoteHost: remoteHost,
@@ -1502,11 +1534,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @Published public private(set) var sessionIssue: ShadowClientRemoteSessionIssue?
     @Published public private(set) var selectedHostApolloAdminProfile: ShadowClientApolloAdminClientProfile?
     @Published public private(set) var selectedHostApolloAdminState: ShadowClientApolloAdminClientState = .idle
+    @Published public private(set) var selectedHostWakeState: ShadowClientRemoteHostWakeState = .idle
     public let sessionPresentationMode: ShadowClientRemoteSessionPresentationMode
     public let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext
 
     private let metadataClient: any ShadowClientGameStreamMetadataClient
     private let controlClient: any ShadowClientGameStreamControlClient
+    private let wakeOnLANClient: any ShadowClientWakeOnLANClient
     private let apolloAdminClient: any ShadowClientApolloAdminClient
     private let clipboardClient: any ShadowClientClipboardClient
     private let sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient
@@ -1555,6 +1589,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
         controlClient: any ShadowClientGameStreamControlClient = NativeGameStreamControlClient(),
+        wakeOnLANClient: any ShadowClientWakeOnLANClient = NativeShadowClientWakeOnLANClient(),
         apolloAdminClient: any ShadowClientApolloAdminClient = NativeShadowClientApolloAdminClient(),
         clipboardClient: any ShadowClientClipboardClient = NativeShadowClientClipboardClient(),
         sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient = NoopShadowClientRemoteSessionConnectionClient(),
@@ -1574,6 +1609,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         self.metadataClient = metadataClient
         self.controlClient = controlClient
+        self.wakeOnLANClient = wakeOnLANClient
         self.apolloAdminClient = apolloAdminClient
         self.clipboardClient = clipboardClient
         self.sessionConnectionClient = sessionConnectionClient
@@ -1682,6 +1718,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             performOpenSessionFlow(host: host, appTitle: appTitle)
         case let .selectHost(hostID):
             performSelectHost(hostID)
+        case let .wakeSelectedHost(macAddress, port):
+            performWakeSelectedHost(macAddress: macAddress, port: port)
         case .refreshSelectedHostApps:
             performRefreshSelectedHostApps()
         case let .refreshSelectedHostApolloAdmin(username, password):
@@ -1766,6 +1804,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             cachedAppsByHostID = [:]
             selectedHostID = nil
             clearSelectedHostApolloAdminState()
+            clearSelectedHostWakeState()
             pendingSelectedHostID = nil
             hostState = .idle
             appState = .idle
@@ -2151,6 +2190,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             apps = []
             appState = remainingHosts.isEmpty ? .idle : appState
             clearSelectedHostApolloAdminState()
+            clearSelectedHostWakeState()
         }
 
         await self.pairingRouteStore.setPreferredHost(nil, for: mergeKey)
@@ -4062,6 +4102,16 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
+    public func wakeSelectedHost(macAddress: String, port: UInt16) {
+        commandContinuation.yield(
+            .wakeSelectedHost(
+                macAddress: macAddress,
+                port: port
+            )
+        )
+    }
+
+    @MainActor
     private func performSelectHost(_ hostID: String) {
         pendingSelectedHostID = hostID
         guard let resolvedHost = Self.resolveHostSelection(hostID, in: hosts) else {
@@ -4071,6 +4121,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         pendingSelectedHostID = nil
         selectedHostID = resolvedHost.id
         clearSelectedHostApolloAdminState()
+        clearSelectedHostWakeState()
         performRefreshSelectedHostApps()
     }
 
@@ -4270,6 +4321,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     ) {
         guard let selectedHost else {
             clearSelectedHostApolloAdminState()
+            clearSelectedHostWakeState()
             return
         }
 
@@ -4390,6 +4442,55 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
+    private func clearSelectedHostWakeState() {
+        selectedHostWakeState = .idle
+    }
+
+    @MainActor
+    private func performWakeSelectedHost(macAddress: String, port: UInt16) {
+        guard let selectedHost else {
+            selectedHostWakeState = .failed("Select a host first.")
+            return
+        }
+
+        let normalizedMACAddress = macAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard ShadowClientWakeOnLANKit.normalizedMACAddress(normalizedMACAddress) != nil else {
+            selectedHostWakeState = .failed("Enter a valid MAC address first.")
+            return
+        }
+
+        selectedHostWakeState = .sending
+        let selectedHostID = selectedHost.id
+
+        Task { [weak self] in
+            do {
+                guard let self else {
+                    return
+                }
+                let sentPacketCount = try await self.wakeOnLANClient.sendMagicPacket(
+                    macAddress: normalizedMACAddress,
+                    port: port
+                )
+                await MainActor.run {
+                    guard self.selectedHostID == selectedHostID else {
+                        return
+                    }
+                    self.selectedHostWakeState = .sent(
+                        "Sent \(sentPacketCount) magic packet\(sentPacketCount == 1 ? "" : "s") on UDP \(port)."
+                    )
+                }
+            } catch {
+                await MainActor.run {
+                    guard let self, self.selectedHostID == selectedHostID else {
+                        return
+                    }
+                    self.selectedHostWakeState = .failed(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    @MainActor
     private func performDisconnectSelectedHostApolloAdmin(
         username: String,
         password: String
@@ -4495,6 +4596,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         return
                     }
                     self.clearSelectedHostApolloAdminState()
+                    self.clearSelectedHostWakeState()
                     self.performRefreshHosts(
                         candidates: self.latestHostCandidates,
                         preferredHost: Self.activeRouteCandidate(for: selectedHost)
@@ -4551,6 +4653,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 appVersion: info.appVersion,
                 gfeVersion: info.gfeVersion,
                 uniqueID: info.uniqueID,
+                macAddress: info.macAddress,
                 serverCodecModeSupport: info.serverCodecModeSupport,
                 lastError: nil,
                 localHost: info.localHost,
@@ -4629,6 +4732,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 appVersion: existingDescriptor.appVersion,
                 gfeVersion: existingDescriptor.gfeVersion,
                 uniqueID: existingDescriptor.uniqueID,
+                macAddress: existingDescriptor.macAddress,
                 serverCodecModeSupport: existingDescriptor.serverCodecModeSupport,
                 lastError: lastError,
                 routes: routes
@@ -4686,6 +4790,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             appVersion: preferredDescriptor.appVersion,
             gfeVersion: preferredDescriptor.gfeVersion,
             uniqueID: preferredDescriptor.uniqueID,
+            macAddress: preferredDescriptor.macAddress,
             serverCodecModeSupport: preferredDescriptor.serverCodecModeSupport,
             lastError: lastError,
             routes: routes
@@ -4991,6 +5096,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     appVersion: host.appVersion,
                     gfeVersion: host.gfeVersion,
                     uniqueID: boundMachineID,
+                    macAddress: host.macAddress,
                     serverCodecModeSupport: host.serverCodecModeSupport,
                     lastError: host.lastError,
                     routes: host.routes
@@ -5069,6 +5175,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             appVersion: info.appVersion,
             gfeVersion: info.gfeVersion,
             uniqueID: info.uniqueID,
+            macAddress: info.macAddress,
             serverCodecModeSupport: info.serverCodecModeSupport,
             lastError: nil,
             localHost: info.localHost,
@@ -5706,6 +5813,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             appVersion: descriptor.appVersion,
             gfeVersion: descriptor.gfeVersion,
             uniqueID: descriptor.uniqueID,
+            macAddress: descriptor.macAddress,
             serverCodecModeSupport: descriptor.serverCodecModeSupport,
             lastError: descriptor.lastError,
             routes: routes
@@ -5854,6 +5962,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             appVersion: primary.appVersion,
             gfeVersion: primary.gfeVersion,
             uniqueID: primary.uniqueID,
+            macAddress: group.compactMap(\.macAddress).first ?? primary.macAddress,
             lastError: lastError,
             routes: mergedRoutes
         )
@@ -6223,6 +6332,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 appVersion: selectedHost.appVersion,
                 gfeVersion: selectedHost.gfeVersion,
                 uniqueID: selectedHost.uniqueID,
+                macAddress: selectedHost.macAddress,
                 lastError: nil,
                 routes: ShadowClientRemoteHostRoutes(
                     active: localEndpoint,
@@ -6272,6 +6382,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             appVersion: host.appVersion,
             gfeVersion: host.gfeVersion,
             uniqueID: host.uniqueID,
+            macAddress: host.macAddress,
             serverCodecModeSupport: host.serverCodecModeSupport,
             lastError: host.lastError,
             routes: routes
@@ -6344,6 +6455,9 @@ enum ShadowClientGameStreamXMLParsers {
             document.values["hostname"]?.first,
             fallbackHost: host
         )
+        let macAddress = ShadowClientWakeOnLANKit.normalizedMACAddress(
+            document.values["mac"]?.first
+        )
         let pairStatus = parsePairStatus(document.values["PairStatus"]?.first)
         let serverState = document.values["state"]?.first ?? ""
         let rawCurrentGameID = Int(document.values["currentgame"]?.first ?? "") ?? 0
@@ -6376,6 +6490,7 @@ enum ShadowClientGameStreamXMLParsers {
             appVersion: document.values["appversion"]?.first,
             gfeVersion: document.values["GfeVersion"]?.first,
             uniqueID: document.values["uniqueid"]?.first,
+            macAddress: macAddress,
             serverCodecModeSupport: serverCodecModeSupport
         )
     }

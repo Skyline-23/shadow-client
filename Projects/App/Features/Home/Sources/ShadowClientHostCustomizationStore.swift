@@ -4,6 +4,8 @@ import Foundation
 public struct ShadowClientHostCustomizationSnapshot: Sendable {
     public let aliases: [String: String]
     public let notes: [String: String]
+    public let wakeOnLANMACAddresses: [String: String]
+    public let wakeOnLANPorts: [String: String]
     public let apolloAdminUsernames: [String: String]
     public let apolloAdminPasswords: [String: String]
 }
@@ -19,6 +21,8 @@ public actor ShadowClientHostCustomizationPersistence {
         ShadowClientHostCustomizationSnapshot(
             aliases: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.hostAliases),
             notes: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.hostNotes),
+            wakeOnLANMACAddresses: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.hostWakeOnLANMACAddresses),
+            wakeOnLANPorts: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.hostWakeOnLANPorts),
             apolloAdminUsernames: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.apolloAdminUsernames),
             apolloAdminPasswords: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.apolloAdminPasswords)
         )
@@ -44,6 +48,26 @@ public actor ShadowClientHostCustomizationPersistence {
         persistMap(notes, forKey: ShadowClientAppSettings.StorageKeys.hostNotes)
     }
 
+    public func saveWakeOnLANMACAddress(_ value: String?, forHostID hostID: String) {
+        var addresses = decodeMap(forKey: ShadowClientAppSettings.StorageKeys.hostWakeOnLANMACAddresses)
+        if let value, !value.isEmpty {
+            addresses[hostID] = value
+        } else {
+            addresses.removeValue(forKey: hostID)
+        }
+        persistMap(addresses, forKey: ShadowClientAppSettings.StorageKeys.hostWakeOnLANMACAddresses)
+    }
+
+    public func saveWakeOnLANPort(_ value: String?, forHostID hostID: String) {
+        var ports = decodeMap(forKey: ShadowClientAppSettings.StorageKeys.hostWakeOnLANPorts)
+        if let value, !value.isEmpty {
+            ports[hostID] = value
+        } else {
+            ports.removeValue(forKey: hostID)
+        }
+        persistMap(ports, forKey: ShadowClientAppSettings.StorageKeys.hostWakeOnLANPorts)
+    }
+
     public func saveApolloAdminUsername(_ value: String?, forHostID hostID: String) {
         var usernames = decodeMap(forKey: ShadowClientAppSettings.StorageKeys.apolloAdminUsernames)
         if let value, !value.isEmpty {
@@ -67,6 +91,8 @@ public actor ShadowClientHostCustomizationPersistence {
     public func removeHost(_ hostID: String) {
         saveAlias(nil, forHostID: hostID)
         saveNote(nil, forHostID: hostID)
+        saveWakeOnLANMACAddress(nil, forHostID: hostID)
+        saveWakeOnLANPort(nil, forHostID: hostID)
         saveApolloAdminUsername(nil, forHostID: hostID)
         saveApolloAdminPassword(nil, forHostID: hostID)
     }
@@ -98,6 +124,8 @@ public actor ShadowClientHostCustomizationPersistence {
 public final class ShadowClientHostCustomizationStore: ObservableObject {
     @Published private var aliases: [String: String] = [:]
     @Published private var notes: [String: String] = [:]
+    @Published private var wakeOnLANMACAddresses: [String: String] = [:]
+    @Published private var wakeOnLANPorts: [String: String] = [:]
     @Published private var apolloAdminUsernames: [String: String] = [:]
     @Published private var apolloAdminPasswords: [String: String] = [:]
 
@@ -114,6 +142,8 @@ public final class ShadowClientHostCustomizationStore: ObservableObject {
             let snapshot = await persistence.loadSnapshot()
             aliases = snapshot.aliases
             notes = snapshot.notes
+            wakeOnLANMACAddresses = snapshot.wakeOnLANMACAddresses
+            wakeOnLANPorts = snapshot.wakeOnLANPorts
             apolloAdminUsernames = snapshot.apolloAdminUsernames
             apolloAdminPasswords = snapshot.apolloAdminPasswords
         }
@@ -125,6 +155,14 @@ public final class ShadowClientHostCustomizationStore: ObservableObject {
 
     public func note(forHostID hostID: String) -> String {
         notes[hostID] ?? ""
+    }
+
+    public func wakeOnLANMACAddress(forHostID hostID: String) -> String {
+        wakeOnLANMACAddresses[hostID] ?? ""
+    }
+
+    public func wakeOnLANPort(forHostID hostID: String) -> String {
+        wakeOnLANPorts[hostID] ?? ""
     }
 
     public func apolloAdminUsername(forHostID hostID: String) -> String {
@@ -161,6 +199,36 @@ public final class ShadowClientHostCustomizationStore: ObservableObject {
         }
     }
 
+    public func setWakeOnLANMACAddress(_ value: String, forHostID hostID: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let persistedValue = trimmed.uppercased()
+        if persistedValue.isEmpty {
+            wakeOnLANMACAddresses.removeValue(forKey: hostID)
+        } else {
+            wakeOnLANMACAddresses[hostID] = persistedValue
+        }
+
+        Task {
+            await persistence.saveWakeOnLANMACAddress(
+                persistedValue.isEmpty ? nil : persistedValue,
+                forHostID: hostID
+            )
+        }
+    }
+
+    public func setWakeOnLANPort(_ value: String, forHostID hostID: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            wakeOnLANPorts.removeValue(forKey: hostID)
+        } else {
+            wakeOnLANPorts[hostID] = trimmed
+        }
+
+        Task {
+            await persistence.saveWakeOnLANPort(trimmed.isEmpty ? nil : trimmed, forHostID: hostID)
+        }
+    }
+
     public func setApolloAdminUsername(_ value: String, forHostID hostID: String) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
@@ -190,6 +258,8 @@ public final class ShadowClientHostCustomizationStore: ObservableObject {
     public func removeHost(_ hostID: String) {
         aliases.removeValue(forKey: hostID)
         notes.removeValue(forKey: hostID)
+        wakeOnLANMACAddresses.removeValue(forKey: hostID)
+        wakeOnLANPorts.removeValue(forKey: hostID)
         apolloAdminUsernames.removeValue(forKey: hostID)
         apolloAdminPasswords.removeValue(forKey: hostID)
 

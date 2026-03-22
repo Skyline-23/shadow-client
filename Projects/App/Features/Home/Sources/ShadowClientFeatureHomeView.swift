@@ -41,6 +41,7 @@ public struct ShadowClientFeatureHomeDependencies {
 public struct ShadowClientRemoteDesktopDependencies {
     public let metadataClient: any ShadowClientGameStreamMetadataClient
     public let controlClient: any ShadowClientGameStreamControlClient
+    public let wakeOnLANClient: any ShadowClientWakeOnLANClient
     public let sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient
     public let sessionInputClient: any ShadowClientRemoteSessionInputClient
     public let pinProvider: any ShadowClientPairingPINProviding
@@ -49,6 +50,7 @@ public struct ShadowClientRemoteDesktopDependencies {
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient,
         controlClient: any ShadowClientGameStreamControlClient,
+        wakeOnLANClient: any ShadowClientWakeOnLANClient,
         sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient,
         sessionInputClient: any ShadowClientRemoteSessionInputClient,
         pinProvider: any ShadowClientPairingPINProviding,
@@ -56,6 +58,7 @@ public struct ShadowClientRemoteDesktopDependencies {
     ) {
         self.metadataClient = metadataClient
         self.controlClient = controlClient
+        self.wakeOnLANClient = wakeOnLANClient
         self.sessionConnectionClient = sessionConnectionClient
         self.sessionInputClient = sessionInputClient
         self.pinProvider = pinProvider
@@ -149,6 +152,7 @@ public extension ShadowClientRemoteDesktopDependencies {
                 defaultHTTPPort: defaultHTTPPort,
                 defaultHTTPSPort: defaultHTTPSPort
             ),
+            wakeOnLANClient: NativeShadowClientWakeOnLANClient(),
             sessionConnectionClient: NativeShadowClientRemoteSessionConnectionClient(
                 timeout: sessionConnectTimeout,
                 sessionRuntime: sessionRuntime

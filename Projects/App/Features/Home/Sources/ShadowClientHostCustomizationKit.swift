@@ -16,6 +16,24 @@ struct ShadowClientHostCustomizationKit {
         store.note(forHostID: host.id)
     }
 
+    static func wakeOnLANMACAddress(
+        store: ShadowClientHostCustomizationStore,
+        host: ShadowClientRemoteHostDescriptor
+    ) -> String {
+        let stored = store.wakeOnLANMACAddress(forHostID: host.id)
+        if !stored.isEmpty {
+            return stored
+        }
+        return host.macAddress ?? ""
+    }
+
+    static func wakeOnLANPort(
+        store: ShadowClientHostCustomizationStore,
+        host: ShadowClientRemoteHostDescriptor
+    ) -> String {
+        store.wakeOnLANPort(forHostID: host.id)
+    }
+
     static func apolloAdminUsername(
         store: ShadowClientHostCustomizationStore,
         host: ShadowClientRemoteHostDescriptor
@@ -47,6 +65,26 @@ struct ShadowClientHostCustomizationKit {
         Binding(
             get: { notes(store: store, host: host) },
             set: { store.setNote($0, forHostID: host.id) }
+        )
+    }
+
+    static func wakeOnLANMACAddressBinding(
+        store: ShadowClientHostCustomizationStore,
+        host: ShadowClientRemoteHostDescriptor
+    ) -> Binding<String> {
+        Binding(
+            get: { wakeOnLANMACAddress(store: store, host: host) },
+            set: { store.setWakeOnLANMACAddress($0, forHostID: host.id) }
+        )
+    }
+
+    static func wakeOnLANPortBinding(
+        store: ShadowClientHostCustomizationStore,
+        host: ShadowClientRemoteHostDescriptor
+    ) -> Binding<String> {
+        Binding(
+            get: { wakeOnLANPort(store: store, host: host) },
+            set: { store.setWakeOnLANPort($0, forHostID: host.id) }
         )
     }
 

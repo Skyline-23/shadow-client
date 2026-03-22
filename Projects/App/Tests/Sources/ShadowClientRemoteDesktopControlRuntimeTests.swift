@@ -261,6 +261,45 @@ func remoteDesktopRuntimeLaunchesSelectedApp() async {
     }
 }
 
+@Test("Remote desktop runtime wakes the selected host through injected WOL client")
+@MainActor
+func remoteDesktopRuntimeWakesSelectedHost() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
+                displayName: "LivingRoom-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-WOL-1",
+                macAddress: "AA:BB:CC:DD:EE:FF"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let wakeOnLANClient = FakeWakeOnLANClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: FakeControlClient(),
+        wakeOnLANClient: wakeOnLANClient
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.wakeSelectedHost(macAddress: "AA:BB:CC:DD:EE:FF", port: 9)
+    await waitForWakeState(runtime)
+
+    #expect(await wakeOnLANClient.calls() == [
+        .init(macAddress: "AA:BB:CC:DD:EE:FF", port: 9),
+    ])
+    #expect(runtime.selectedHostWakeState == .sent("Sent 3 magic packets on UDP 9."))
+}
+
 @Test("Remote desktop runtime prefers local route for app queries when a manual route is also present")
 @MainActor
 func remoteDesktopRuntimePrefersLocalRouteForAppQueries() async {
@@ -3025,6 +3064,29 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
     }
 }
 
+private actor FakeWakeOnLANClient: ShadowClientWakeOnLANClient {
+    struct Call: Equatable {
+        let macAddress: String
+        let port: UInt16
+    }
+
+    private var recordedCalls: [Call] = []
+    private let simulatedResultCount: Int
+
+    init(simulatedResultCount: Int = 3) {
+        self.simulatedResultCount = simulatedResultCount
+    }
+
+    func sendMagicPacket(macAddress: String, port: UInt16) async throws -> Int {
+        recordedCalls.append(.init(macAddress: macAddress, port: port))
+        return simulatedResultCount
+    }
+
+    func calls() -> [Call] {
+        recordedCalls
+    }
+}
+
 private actor FakeClipboardClient: ShadowClientClipboardClient {
     private var text: String?
 
@@ -3334,6 +3396,21 @@ private func waitForLaunchState(
         }
 
         try? await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+private func waitForWakeState(
+    _ runtime: ShadowClientRemoteDesktopRuntime,
+    maxAttempts: Int = 50
+) async {
+    for _ in 0..<maxAttempts {
+        switch runtime.selectedHostWakeState {
+        case .sent, .failed:
+            return
+        case .idle, .sending:
+            break
+        }
+        await Task.yield()
     }
 }
 

@@ -8,6 +8,7 @@ func gameStreamParserMapsServerInfoXML() throws {
     let xml = """
     <root status_code="200" status_message="OK">
       <hostname>LivingRoom-PC</hostname>
+      <mac>aa-bb-cc-dd-ee-ff</mac>
       <PairStatus>1</PairStatus>
       <currentgame>0</currentgame>
       <state>SUNSHINE_SERVER_FREE</state>
@@ -33,6 +34,7 @@ func gameStreamParserMapsServerInfoXML() throws {
     #expect(info.appVersion == "1.2.3")
     #expect(info.gfeVersion == "3.26.0.131")
     #expect(info.uniqueID == "HOST-123")
+    #expect(info.macAddress == "AA:BB:CC:DD:EE:FF")
 }
 
 @Test("GameStream parser normalizes stale currentgame when server state is free")

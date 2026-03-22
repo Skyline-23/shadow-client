@@ -511,6 +511,83 @@ var remoteDesktopHostCard: some View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
+                Text("Wake on LAN")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.white.opacity(0.68))
+
+                ShadowUIHostInsetCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ShadowUIHostInsetField {
+                            ShadowClientPlatformTextField(
+                                text: hostWakeOnLANMACAddressBinding(host),
+                                placeholder: "AA:BB:CC:DD:EE:FF",
+                                accessibilityLabel: "Wake on LAN MAC address",
+                                keyboardType: .ascii,
+                                usesMonospacedFont: true,
+                                fontWeight: .semibold
+                            )
+                        }
+
+                        ShadowUIHostInsetField {
+                            ShadowClientPlatformTextField(
+                                text: hostWakeOnLANPortBinding(host),
+                                placeholder: String(ShadowClientWakeOnLANKit.defaultPort),
+                                accessibilityLabel: "Wake on LAN UDP port",
+                                keyboardType: .numberPad,
+                                usesMonospacedFont: true,
+                                fontWeight: .semibold
+                            )
+                        }
+
+                        if usesDiscoveredWakeOnLANMAC(host) {
+                            Text("Using the MAC address discovered from host metadata.")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.white.opacity(0.68))
+                        }
+
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 10) {
+                                Button("Send Magic Packet") {
+                                    remoteDesktopRuntime.wakeSelectedHost(
+                                        macAddress: effectiveWakeOnLANMACAddress(for: host),
+                                        port: effectiveWakeOnLANPort(for: host)
+                                    )
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(
+                                    remoteDesktopRuntime.selectedHostID != host.id ||
+                                        !canWakeHost(host)
+                                )
+
+                                Text(hostWakeOnLANStateLabel(for: host))
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(Color.white.opacity(0.68))
+                                    .lineLimit(2)
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Button("Send Magic Packet") {
+                                    remoteDesktopRuntime.wakeSelectedHost(
+                                        macAddress: effectiveWakeOnLANMACAddress(for: host),
+                                        port: effectiveWakeOnLANPort(for: host)
+                                    )
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(
+                                    remoteDesktopRuntime.selectedHostID != host.id ||
+                                        !canWakeHost(host)
+                                )
+
+                                Text(hostWakeOnLANStateLabel(for: host))
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(Color.white.opacity(0.68))
+                            }
+                        }
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Apollo Admin")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.white.opacity(0.68))
@@ -1094,6 +1171,65 @@ var remoteDesktopHostCard: some View {
             store: hostCustomizationStore,
             host: host
         )
+    }
+
+    func hostWakeOnLANMACAddress(_ host: ShadowClientRemoteHostDescriptor) -> String {
+        ShadowClientHostCustomizationKit.wakeOnLANMACAddress(
+            store: hostCustomizationStore,
+            host: host
+        )
+    }
+
+    func hostWakeOnLANPort(_ host: ShadowClientRemoteHostDescriptor) -> String {
+        ShadowClientHostCustomizationKit.wakeOnLANPort(
+            store: hostCustomizationStore,
+            host: host
+        )
+    }
+
+    func hostWakeOnLANMACAddressBinding(_ host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
+        ShadowClientHostCustomizationKit.wakeOnLANMACAddressBinding(
+            store: hostCustomizationStore,
+            host: host
+        )
+    }
+
+    func hostWakeOnLANPortBinding(_ host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
+        ShadowClientHostCustomizationKit.wakeOnLANPortBinding(
+            store: hostCustomizationStore,
+            host: host
+        )
+    }
+
+    func effectiveWakeOnLANMACAddress(for host: ShadowClientRemoteHostDescriptor) -> String {
+        hostWakeOnLANMACAddress(host)
+    }
+
+    func effectiveWakeOnLANPort(for host: ShadowClientRemoteHostDescriptor) -> UInt16 {
+        ShadowClientWakeOnLANKit.resolvedPort(from: hostWakeOnLANPort(host))
+    }
+
+    func canWakeHost(_ host: ShadowClientRemoteHostDescriptor) -> Bool {
+        let hasValidMACAddress = ShadowClientWakeOnLANKit.normalizedMACAddress(
+            effectiveWakeOnLANMACAddress(for: host)
+        ) != nil
+        let wakeOnLANPortDraft = hostWakeOnLANPort(host).trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasValidPort = wakeOnLANPortDraft.isEmpty ||
+            ShadowClientWakeOnLANKit.parsedPort(from: wakeOnLANPortDraft) != nil
+        return hasValidMACAddress && hasValidPort
+    }
+
+    func usesDiscoveredWakeOnLANMAC(_ host: ShadowClientRemoteHostDescriptor) -> Bool {
+        let stored = hostCustomizationStore.wakeOnLANMACAddress(forHostID: host.id)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return stored.isEmpty && host.macAddress != nil
+    }
+
+    func hostWakeOnLANStateLabel(for host: ShadowClientRemoteHostDescriptor) -> String {
+        guard remoteDesktopRuntime.selectedHostID == host.id else {
+            return "Select this host first"
+        }
+        return remoteDesktopRuntime.selectedHostWakeState.label
     }
 
     func hostApolloAdminUsername(_ host: ShadowClientRemoteHostDescriptor) -> String {

@@ -35,6 +35,7 @@ public final class ShadowClientFeatureHomeContainer {
         let remoteDesktopRuntime = ShadowClientRemoteDesktopRuntime(
             metadataClient: remoteDesktopDependencies.metadataClient,
             controlClient: remoteDesktopDependencies.controlClient,
+            wakeOnLANClient: remoteDesktopDependencies.wakeOnLANClient,
             sessionConnectionClient: remoteDesktopDependencies.sessionConnectionClient,
             sessionInputClient: remoteDesktopDependencies.sessionInputClient,
             pinProvider: remoteDesktopDependencies.pinProvider,
