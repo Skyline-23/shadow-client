@@ -16,8 +16,8 @@ func surfaceColorSpaceKitPreservesHDRColorSpace() {
     #expect(resolved.name == hdr.name)
 }
 
-@Test("Surface color space kit prefers extended linear Display P3 output on HDR P3 screens")
-func surfaceColorSpaceKitPrefersExtendedLinearDisplayP3OnHDRP3Screens() {
+@Test("Surface color space kit preserves HDR output color space when a P3 screen color space is provided")
+func surfaceColorSpaceKitPreservesHDROutputColorSpaceWhenP3ScreenColorSpaceIsProvided() {
     let sdr = CGColorSpace(name: CGColorSpace.itur_709) ?? CGColorSpaceCreateDeviceRGB()
     let hdr = CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
     let screen = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
@@ -29,7 +29,7 @@ func surfaceColorSpaceKitPrefersExtendedLinearDisplayP3OnHDRP3Screens() {
         screenColorSpace: screen
     )
 
-    #expect(resolved.name == CGColorSpace.extendedLinearDisplayP3)
+    #expect(resolved.name == hdr.name)
 }
 
 @Test("Surface color space kit uses display HDR color space for Metal YUV rendering")
@@ -71,8 +71,8 @@ func surfaceColorSpaceKitKeepsDirectHDRPresentationEnabledForMetalYUVTargets() {
     #expect(configuration.outputColorSpace.name == hdr.name)
 }
 
-@Test("Surface color space kit uses extended linear Display P3 render target for HDR Metal YUV on P3 screens")
-func surfaceColorSpaceKitUsesExtendedLinearDisplayP3ForHDRMetalYUVOnP3Screens() {
+@Test("Surface color space kit preserves HDR Metal YUV output on P3 screens")
+func surfaceColorSpaceKitPreservesHDRMetalYUVOutputOnP3Screens() {
     let hdr = CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
     let colorConfiguration = ShadowClientRealtimeSessionColorConfiguration(
         renderColorSpace: hdr,
@@ -92,5 +92,5 @@ func surfaceColorSpaceKitUsesExtendedLinearDisplayP3ForHDRMetalYUVOnP3Screens() 
 
     #expect(configuration.prefersExtendedDynamicRange)
     #expect(configuration.targetPixelFormat == .bgr10a2Unorm)
-    #expect(configuration.outputColorSpace.name == CGColorSpace.extendedLinearDisplayP3)
+    #expect(configuration.outputColorSpace.name == hdr.name)
 }

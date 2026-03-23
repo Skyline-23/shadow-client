@@ -107,6 +107,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var lastVideoStatPublishUptime: TimeInterval = 0
     private var smoothedIngressVideoFPS: Double = 0
     private var runtimeVideoPacingFPS = 0
+    private var adaptivePacingDeficitSampleCount = 0
+    private var adaptivePacingRecoverySampleCount = 0
     private var videoDecodeQueueDropCount = 0
     private var firstVideoDecodeQueueDropUptime: TimeInterval = 0
     private var lastVideoDecodeQueueRecoveryUptime: TimeInterval = 0
@@ -227,6 +229,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastVideoStatPublishUptime = 0
         smoothedIngressVideoFPS = 0
         runtimeVideoPacingFPS = 0
+        adaptivePacingDeficitSampleCount = 0
+        adaptivePacingRecoverySampleCount = 0
         videoDecodeQueueDropCount = 0
         firstVideoDecodeQueueDropUptime = 0
         lastVideoDecodeQueueRecoveryUptime = 0
@@ -407,6 +411,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         videoStatsFrameCount = 0
         videoStatsByteCount = 0
         lastVideoStatPublishUptime = 0
+        smoothedIngressVideoFPS = 0
+        runtimeVideoPacingFPS = 0
+        adaptivePacingDeficitSampleCount = 0
+        adaptivePacingRecoverySampleCount = 0
         videoDecodeQueueDropCount = 0
         firstVideoDecodeQueueDropUptime = 0
         lastVideoDecodeQueueRecoveryUptime = 0
@@ -1910,7 +1918,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         videoStatsFrameCount += 1
         videoStatsByteCount += max(0, frameBytes)
 
-        if now - lastVideoStatPublishUptime < 0.2 {
+        if now - lastVideoStatPublishUptime <
+            ShadowClientRealtimeSessionDefaults.videoAdaptivePacingStatPublishIntervalSeconds
+        {
             return
         }
         lastVideoStatPublishUptime = now
@@ -1922,40 +1932,13 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         videoStatsFrameCount = 0
         videoStatsByteCount = 0
         let sessionSurfaceContext = self.surfaceContext
-        let decoder = self.decoder
-        let adaptivePacingFPS: Int?
-        if let configuration = activeVideoConfiguration {
-            let previousSmoothedIngressFPS = smoothedIngressVideoFPS > 0 ? smoothedIngressVideoFPS : nil
-            let proposedPacingFPS = Self.resolvedAdaptiveRenderFPS(
-                measuredIngressFPS: measuredIngressFPS,
-                previousSmoothedIngressFPS: previousSmoothedIngressFPS,
-                sessionFPS: configuration.fps
-            )
-            smoothedIngressVideoFPS = Self.smoothedIngressVideoFPS(
-                measuredIngressFPS: measuredIngressFPS,
-                previousSmoothedIngressFPS: previousSmoothedIngressFPS,
-                sessionFPS: configuration.fps
-            )
-            let currentPacingFPS = targetRenderPacingFPS(sessionFPS: configuration.fps)
-            if Self.shouldApplyAdaptiveRenderFPS(
-                currentFPS: currentPacingFPS,
-                proposedFPS: proposedPacingFPS
-            ) {
-                runtimeVideoPacingFPS = proposedPacingFPS
-                adaptivePacingFPS = proposedPacingFPS
-                logger.notice(
-                    "Adjusted runtime video pacing target from \(currentPacingFPS, privacy: .public) to \(proposedPacingFPS, privacy: .public) fps (measured-ingress=\(Int(measuredIngressFPS.rounded()), privacy: .public) fps)"
-                )
-            } else {
-                adaptivePacingFPS = nil
-            }
-        } else {
-            adaptivePacingFPS = nil
-        }
+        let adaptivePacingFPS = resolvedAdaptivePacingUpdate(
+            measuredIngressFPS: measuredIngressFPS,
+            now: now
+        )
 
         Task {
             if let adaptivePacingFPS {
-                await decoder.setDecodePresentationTimeScale(fps: adaptivePacingFPS)
                 await MainActor.run {
                     sessionSurfaceContext.updatePreferredRenderFPS(adaptivePacingFPS)
                 }
@@ -2029,6 +2012,114 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             Int((Double(normalizedCurrentFPS) * 0.12).rounded(.up))
         )
         return abs(normalizedCurrentFPS - normalizedProposedFPS) >= minimumDelta
+    }
+
+    private func resolvedAdaptivePacingUpdate(
+        measuredIngressFPS: Double,
+        now: TimeInterval
+    ) -> Int? {
+        guard let configuration = activeVideoConfiguration else {
+            return nil
+        }
+
+        let sessionFPS = max(1, configuration.fps)
+        let previousSmoothedIngressFPS = smoothedIngressVideoFPS > 0 ? smoothedIngressVideoFPS : nil
+        let proposedPacingFPS = Self.resolvedAdaptiveRenderFPS(
+            measuredIngressFPS: measuredIngressFPS,
+            previousSmoothedIngressFPS: previousSmoothedIngressFPS,
+            sessionFPS: sessionFPS
+        )
+        let updatedSmoothedIngressFPS = Self.smoothedIngressVideoFPS(
+            measuredIngressFPS: measuredIngressFPS,
+            previousSmoothedIngressFPS: previousSmoothedIngressFPS,
+            sessionFPS: sessionFPS
+        )
+        smoothedIngressVideoFPS = updatedSmoothedIngressFPS
+
+        let currentPacingFPS = targetRenderPacingFPS(sessionFPS: sessionFPS)
+        let pipelineUnderIngressPressure =
+            isVideoPipelineUnderIngressPressure(now: now) || pendingVideoRecoveryRequest
+        let severeIngressDeficit =
+            updatedSmoothedIngressFPS <
+            Double(sessionFPS) * ShadowClientRealtimeSessionDefaults.videoAdaptivePacingDeficitRatio
+        let recoveredIngressCadence =
+            updatedSmoothedIngressFPS >=
+            Double(sessionFPS) * ShadowClientRealtimeSessionDefaults.videoAdaptivePacingRecoveryRatio
+
+        if currentPacingFPS >= sessionFPS {
+            adaptivePacingRecoverySampleCount = 0
+            guard pipelineUnderIngressPressure, severeIngressDeficit else {
+                adaptivePacingDeficitSampleCount = 0
+                return nil
+            }
+
+            adaptivePacingDeficitSampleCount += 1
+            guard adaptivePacingDeficitSampleCount >=
+                ShadowClientRealtimeSessionDefaults.videoAdaptivePacingDeficitSampleThreshold
+            else {
+                return nil
+            }
+
+            adaptivePacingDeficitSampleCount = 0
+            guard Self.shouldApplyAdaptiveRenderFPS(
+                currentFPS: currentPacingFPS,
+                proposedFPS: proposedPacingFPS
+            ) else {
+                return nil
+            }
+
+            runtimeVideoPacingFPS = proposedPacingFPS
+            logger.notice(
+                "Adjusted runtime video pacing target from \(currentPacingFPS, privacy: .public) to \(proposedPacingFPS, privacy: .public) fps (measured-ingress=\(Int(measuredIngressFPS.rounded()), privacy: .public) fps)"
+            )
+            return proposedPacingFPS
+        }
+
+        if recoveredIngressCadence && !pipelineUnderIngressPressure {
+            adaptivePacingRecoverySampleCount += 1
+            adaptivePacingDeficitSampleCount = 0
+            guard adaptivePacingRecoverySampleCount >=
+                ShadowClientRealtimeSessionDefaults.videoAdaptivePacingRecoverySampleThreshold
+            else {
+                return nil
+            }
+
+            adaptivePacingRecoverySampleCount = 0
+            runtimeVideoPacingFPS = 0
+            logger.notice(
+                "Restored runtime video pacing target from \(currentPacingFPS, privacy: .public) to \(sessionFPS, privacy: .public) fps (measured-ingress=\(Int(measuredIngressFPS.rounded()), privacy: .public) fps)"
+            )
+            return sessionFPS
+        }
+
+        adaptivePacingRecoverySampleCount = 0
+        guard pipelineUnderIngressPressure, severeIngressDeficit else {
+            adaptivePacingDeficitSampleCount = 0
+            return nil
+        }
+
+        adaptivePacingDeficitSampleCount += 1
+        guard adaptivePacingDeficitSampleCount >=
+            ShadowClientRealtimeSessionDefaults.videoAdaptivePacingDeficitSampleThreshold
+        else {
+            return nil
+        }
+
+        adaptivePacingDeficitSampleCount = 0
+        guard proposedPacingFPS < currentPacingFPS,
+              Self.shouldApplyAdaptiveRenderFPS(
+                  currentFPS: currentPacingFPS,
+                  proposedFPS: proposedPacingFPS
+              )
+        else {
+            return nil
+        }
+
+        runtimeVideoPacingFPS = proposedPacingFPS
+        logger.notice(
+            "Adjusted runtime video pacing target from \(currentPacingFPS, privacy: .public) to \(proposedPacingFPS, privacy: .public) fps (measured-ingress=\(Int(measuredIngressFPS.rounded()), privacy: .public) fps)"
+        )
+        return proposedPacingFPS
     }
 
     private func waitForInitialRenderState(timeout: Duration) async throws {

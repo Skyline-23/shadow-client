@@ -137,6 +137,11 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let videoRecoveryFrameRequestCooldownSeconds: TimeInterval = 0.75
     public static let videoRecoveryFramePendingTimeoutSeconds: TimeInterval = 2.0
     public static let videoRecoveryFrameRequestUnderPressureCooldownSeconds: TimeInterval = 3.5
+    public static let videoAdaptivePacingStatPublishIntervalSeconds: TimeInterval = 0.5
+    public static let videoAdaptivePacingDeficitRatio: Double = 0.82
+    public static let videoAdaptivePacingRecoveryRatio: Double = 0.95
+    public static let videoAdaptivePacingDeficitSampleThreshold = 3
+    public static let videoAdaptivePacingRecoverySampleThreshold = 3
     public static let videoRenderSubmitPacingToleranceRatio: Double = 0.80
     public static let videoRenderSubmitDropSummaryInterval = 600
     public static let audioOutputQueueDropWindowSeconds: TimeInterval = 1.0
