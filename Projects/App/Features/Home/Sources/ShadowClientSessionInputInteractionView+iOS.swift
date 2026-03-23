@@ -682,7 +682,7 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         _: UIPointerInteraction,
         styleFor _: UIPointerRegion
     ) -> UIPointerStyle? {
-        .hidden()
+        UIPointerStyle.hidden()
     }
 
     func gestureRecognizer(

@@ -3295,7 +3295,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         guard fallbackSettings.preferredCodec != launchRequest.settings.preferredCodec else {
             return
         }
-
         runtimeCodecRecoveryInProgress = true
         lastLaunchRequestContext = .init(
             hostKey: launchRequest.hostKey,

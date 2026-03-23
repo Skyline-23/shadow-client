@@ -148,7 +148,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             )
         }
 
-        if let renderTargetConfiguration, let pixelBuffer {
+        if let renderTargetConfiguration, pixelBuffer != nil {
             let renderTargetSignature = Self.renderTargetSignature(for: renderTargetConfiguration)
             let didResetDrawablePool = applyColorConfiguration(
                 renderTargetConfiguration,
