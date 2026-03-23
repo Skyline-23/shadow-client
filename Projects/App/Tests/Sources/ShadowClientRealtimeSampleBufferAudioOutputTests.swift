@@ -72,6 +72,84 @@ func sampleBufferStarvationResetTripsAfterSustainedStall() {
     #expect(shouldReset)
 }
 
+@Test("Sample buffer starvation reset requires repeated underrun evidence before flushing")
+func sampleBufferStarvationResetRequiresRepeatedEvidence() {
+    let firstDecision = ShadowClientRealtimeSampleBufferAudioOutput
+        .starvationResetDecision(
+            rendererIsReadyForMoreMediaData: true,
+            nextPresentationTime: CMTime(seconds: 0, preferredTimescale: 1_000),
+            currentTime: CMTime(seconds: 0.13, preferredTimescale: 1_000),
+            startupThreshold: CMTime(seconds: 0.01, preferredTimescale: 1_000),
+            starvationGraceUntilTime: nil,
+            consecutiveStarvationEvidenceCount: 0
+        )
+    let secondDecision = ShadowClientRealtimeSampleBufferAudioOutput
+        .starvationResetDecision(
+            rendererIsReadyForMoreMediaData: true,
+            nextPresentationTime: CMTime(seconds: 0, preferredTimescale: 1_000),
+            currentTime: CMTime(seconds: 0.14, preferredTimescale: 1_000),
+            startupThreshold: CMTime(seconds: 0.01, preferredTimescale: 1_000),
+            starvationGraceUntilTime: nil,
+            consecutiveStarvationEvidenceCount: firstDecision.nextConsecutiveEvidenceCount
+        )
+
+    #expect(!firstDecision.shouldReset)
+    #expect(firstDecision.nextConsecutiveEvidenceCount == 1)
+    #expect(!firstDecision.shouldClearExpiredGrace)
+    #expect(secondDecision.shouldReset)
+    #expect(secondDecision.nextConsecutiveEvidenceCount == 0)
+}
+
+@Test("Sample buffer starvation reset ignores threshold breach during startup grace")
+func sampleBufferStarvationResetSuppressesThresholdBreachDuringGrace() {
+    let decision = ShadowClientRealtimeSampleBufferAudioOutput
+        .starvationResetDecision(
+            rendererIsReadyForMoreMediaData: true,
+            nextPresentationTime: CMTime(seconds: 0, preferredTimescale: 1_000),
+            currentTime: CMTime(seconds: 0.13, preferredTimescale: 1_000),
+            startupThreshold: CMTime(seconds: 0.01, preferredTimescale: 1_000),
+            starvationGraceUntilTime: CMTime(seconds: 0.15, preferredTimescale: 1_000),
+            consecutiveStarvationEvidenceCount: 1
+        )
+
+    #expect(!decision.shouldReset)
+    #expect(decision.nextConsecutiveEvidenceCount == 0)
+    #expect(!decision.shouldClearExpiredGrace)
+}
+
+@Test("Sample buffer starvation reset requires renderer underrun readiness")
+func sampleBufferStarvationResetRequiresRendererReadyForMoreData() {
+    let decision = ShadowClientRealtimeSampleBufferAudioOutput
+        .starvationResetDecision(
+            rendererIsReadyForMoreMediaData: false,
+            nextPresentationTime: CMTime(seconds: 0, preferredTimescale: 1_000),
+            currentTime: CMTime(seconds: 0.20, preferredTimescale: 1_000),
+            startupThreshold: CMTime(seconds: 0.01, preferredTimescale: 1_000),
+            starvationGraceUntilTime: nil,
+            consecutiveStarvationEvidenceCount: 1
+        )
+
+    #expect(!decision.shouldReset)
+    #expect(decision.nextConsecutiveEvidenceCount == 0)
+}
+
+@Test("Sample buffer starvation reset clears expired startup grace once renderer is late again")
+func sampleBufferStarvationResetClearsExpiredGrace() {
+    let decision = ShadowClientRealtimeSampleBufferAudioOutput
+        .starvationResetDecision(
+            rendererIsReadyForMoreMediaData: true,
+            nextPresentationTime: CMTime(seconds: 0, preferredTimescale: 1_000),
+            currentTime: CMTime(seconds: 0.20, preferredTimescale: 1_000),
+            startupThreshold: CMTime(seconds: 0.01, preferredTimescale: 1_000),
+            starvationGraceUntilTime: CMTime(seconds: 0.15, preferredTimescale: 1_000),
+            consecutiveStarvationEvidenceCount: 0
+        )
+
+    #expect(!decision.shouldReset)
+    #expect(decision.nextConsecutiveEvidenceCount == 1)
+    #expect(decision.shouldClearExpiredGrace)
+}
+
 @Test("Sample buffer pressure shedding defers while renderer backlog is still below startup threshold")
 func sampleBufferPressureSheddingDefersWhenRendererBacklogIsThin() {
     let decision = ShadowClientRealtimeSampleBufferAudioOutput.pressureSheddingDecision(

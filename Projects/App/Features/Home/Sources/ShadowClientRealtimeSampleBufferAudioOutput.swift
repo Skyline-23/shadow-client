@@ -16,6 +16,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
     )
     private static let millisecondsPerSecond = 1_000.0
     private static let minimumStarvationResetDurationSeconds = 0.125
+    private static let requiredConsecutiveStarvationEvidenceCount = 2
 
     private actor BudgetState {
         private let sampleRate: Double
@@ -148,9 +149,17 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         let shouldClearExpiredGrace: Bool
     }
 
+    internal struct StarvationResetDecision: Equatable, Sendable {
+        let shouldReset: Bool
+        let nextConsecutiveEvidenceCount: Int
+        let shouldClearExpiredGrace: Bool
+    }
+
     private var timelineStartupState: TimelineStartupState = .idle
     private var timelineStartRequestTime: CMTime?
     private var pressureSheddingGraceUntilTime: CMTime?
+    private var starvationResetGraceUntilTime: CMTime?
+    private var consecutiveStarvationEvidenceCount = 0
 
     init(
         format: AVAudioFormat,
@@ -332,6 +341,8 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             timelineStartupState = .idle
             timelineStartRequestTime = nil
             pressureSheddingGraceUntilTime = nil
+            starvationResetGraceUntilTime = nil
+            consecutiveStarvationEvidenceCount = 0
             isVideoRenderingReady = false
         }
 
@@ -387,6 +398,8 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
                     self.hasRequestedTimelineStart = false
                     self.timelineStartupState = .idle
                     self.timelineStartRequestTime = nil
+                    self.starvationResetGraceUntilTime = nil
+                    self.consecutiveStarvationEvidenceCount = 0
                 }
                 Self.logger.notice("Sample buffer audio video-render gate closed")
             }
@@ -483,11 +496,28 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         let starvationThreshold = Self.starvationResetThresholdDuration(
             startupThreshold: startupThreshold
         )
-        guard Self.shouldResetTimelineForStarvation(
+        let decision = Self.starvationResetDecision(
+            rendererIsReadyForMoreMediaData: renderer.isReadyForMoreMediaData,
             nextPresentationTime: nextPresentationTime,
             currentTime: currentTime,
-            startupThreshold: startupThreshold
-        ) else {
+            startupThreshold: startupThreshold,
+            starvationGraceUntilTime: starvationResetGraceUntilTime,
+            consecutiveStarvationEvidenceCount: consecutiveStarvationEvidenceCount
+        )
+        if decision.shouldClearExpiredGrace {
+            starvationResetGraceUntilTime = nil
+        }
+        let previousEvidenceCount = consecutiveStarvationEvidenceCount
+        consecutiveStarvationEvidenceCount = decision.nextConsecutiveEvidenceCount
+        guard decision.shouldReset else {
+            if previousEvidenceCount == 0,
+               decision.nextConsecutiveEvidenceCount == 1
+            {
+                let lateness = CMTimeSubtract(currentTime, nextPresentationTime)
+                Self.logger.notice(
+                    "Sample buffer audio starvation evidence observed without reset at \(CMTimeGetSeconds(currentTime), privacy: .public)s lateness-ms=\(CMTimeGetSeconds(lateness) * Self.millisecondsPerSecond, privacy: .public) threshold-ms=\(CMTimeGetSeconds(starvationThreshold) * Self.millisecondsPerSecond, privacy: .public) consecutive=\(decision.nextConsecutiveEvidenceCount, privacy: .public)/\(Self.requiredConsecutiveStarvationEvidenceCount, privacy: .public)"
+                )
+            }
             return
         }
         let lateness = CMTimeSubtract(currentTime, nextPresentationTime)
@@ -500,7 +530,7 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
             await budgetState.reset(currentTime: currentTime)
         }
         Self.logger.notice(
-            "Sample buffer audio starvation detected; resetting timeline at \(CMTimeGetSeconds(currentTime), privacy: .public)s lateness-ms=\(CMTimeGetSeconds(lateness) * Self.millisecondsPerSecond, privacy: .public) threshold-ms=\(CMTimeGetSeconds(starvationThreshold) * Self.millisecondsPerSecond, privacy: .public)"
+            "Sample buffer audio starvation detected; resetting timeline at \(CMTimeGetSeconds(currentTime), privacy: .public)s lateness-ms=\(CMTimeGetSeconds(lateness) * Self.millisecondsPerSecond, privacy: .public) threshold-ms=\(CMTimeGetSeconds(starvationThreshold) * Self.millisecondsPerSecond, privacy: .public) consecutive=\(Self.requiredConsecutiveStarvationEvidenceCount, privacy: .public)"
         )
         logRendererDiagnosticsLocked(reason: "starvation-reset")
     }
@@ -520,6 +550,8 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         timelineStartupState = .idle
         timelineStartRequestTime = nil
         pressureSheddingGraceUntilTime = nil
+        starvationResetGraceUntilTime = nil
+        consecutiveStarvationEvidenceCount = 0
     }
 
     private func drainPendingSampleBuffersLocked() {
@@ -649,6 +681,11 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         } else {
             pressureSheddingGraceUntilTime = nil
         }
+        starvationResetGraceUntilTime = CMTimeAdd(
+            currentTime,
+            Self.starvationResetGraceDuration(startupThreshold: startupThreshold)
+        )
+        consecutiveStarvationEvidenceCount = 0
         Self.logger.notice(
             "Sample buffer audio timeline started reason=\(reason.rawValue, privacy: .public) rate=\(self.synchronizer.rate, privacy: .public) time=\(CMTimeGetSeconds(currentTime), privacy: .public)s pending=\(self.pendingSampleBuffers.count, privacy: .public) renderer-preroll=\(self.renderer.hasSufficientMediaDataForReliablePlaybackStart, privacy: .public) renderer-status=\(String(describing: self.renderer.status), privacy: .public) queued-preroll-ms=\(CMTimeGetSeconds(queuedDuration) * Self.millisecondsPerSecond, privacy: .public) startup-threshold-ms=\(CMTimeGetSeconds(startupThreshold) * Self.millisecondsPerSecond, privacy: .public)"
         )
@@ -760,6 +797,70 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         return CMTimeCompare(lateness, starvationThreshold) >= 0
     }
 
+    static func starvationResetDecision(
+        rendererIsReadyForMoreMediaData: Bool,
+        nextPresentationTime: CMTime,
+        currentTime: CMTime,
+        startupThreshold: CMTime,
+        starvationGraceUntilTime: CMTime?,
+        consecutiveStarvationEvidenceCount: Int
+    ) -> StarvationResetDecision {
+        let shouldClearExpiredGrace: Bool
+        if let starvationGraceUntilTime,
+           starvationGraceUntilTime.isValid,
+           starvationGraceUntilTime.isNumeric,
+           currentTime.isValid,
+           currentTime.isNumeric,
+           CMTimeCompare(currentTime, starvationGraceUntilTime) >= 0
+        {
+            shouldClearExpiredGrace = true
+        } else {
+            shouldClearExpiredGrace = false
+        }
+
+        if let starvationGraceUntilTime,
+           starvationGraceUntilTime.isValid,
+           starvationGraceUntilTime.isNumeric,
+           currentTime.isValid,
+           currentTime.isNumeric,
+           CMTimeCompare(currentTime, starvationGraceUntilTime) < 0
+        {
+            return StarvationResetDecision(
+                shouldReset: false,
+                nextConsecutiveEvidenceCount: 0,
+                shouldClearExpiredGrace: false
+            )
+        }
+
+        guard rendererIsReadyForMoreMediaData,
+              shouldResetTimelineForStarvation(
+                  nextPresentationTime: nextPresentationTime,
+                  currentTime: currentTime,
+                  startupThreshold: startupThreshold
+              )
+        else {
+            return StarvationResetDecision(
+                shouldReset: false,
+                nextConsecutiveEvidenceCount: 0,
+                shouldClearExpiredGrace: shouldClearExpiredGrace
+            )
+        }
+
+        let nextConsecutiveEvidenceCount = max(0, consecutiveStarvationEvidenceCount) + 1
+        if nextConsecutiveEvidenceCount >= Self.requiredConsecutiveStarvationEvidenceCount {
+            return StarvationResetDecision(
+                shouldReset: true,
+                nextConsecutiveEvidenceCount: 0,
+                shouldClearExpiredGrace: shouldClearExpiredGrace
+            )
+        }
+        return StarvationResetDecision(
+            shouldReset: false,
+            nextConsecutiveEvidenceCount: nextConsecutiveEvidenceCount,
+            shouldClearExpiredGrace: shouldClearExpiredGrace
+        )
+    }
+
     static func starvationResetThresholdDuration(
         startupThreshold: CMTime
     ) -> CMTime {
@@ -785,6 +886,12 @@ final class ShadowClientRealtimeSampleBufferAudioOutput: @unchecked Sendable, Sh
         // Renderer clocks can momentarily wobble by a few IO cycles. Keep a
         // wider steady-state starvation floor so those blips do not flap audio.
         return minimumThreshold
+    }
+
+    static func starvationResetGraceDuration(
+        startupThreshold: CMTime
+    ) -> CMTime {
+        starvationResetThresholdDuration(startupThreshold: startupThreshold)
     }
 
     static func pressureSheddingDecision(
