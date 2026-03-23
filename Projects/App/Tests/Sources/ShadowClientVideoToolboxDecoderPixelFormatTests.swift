@@ -12,22 +12,22 @@ func videoToolboxDecoderRequestsUncompressedBiPlanarOutputForH264() {
     )
 }
 
-@Test("VideoToolbox decoder requests uncompressed 10-bit bi-planar output for HDR HEVC")
+@Test("VideoToolbox decoder requests uncompressed 10-bit video-range bi-planar output for HDR HEVC")
 func videoToolboxDecoderRequestsUncompressedTenBitBiPlanarOutputForHDRHEVC() {
     #expect(
         ShadowClientVideoToolboxDecoder.preferredPixelBufferFormat(
             for: .h265,
             hdrEnabled: true
-        ) == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
+        ) == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
     )
 }
 
-@Test("VideoToolbox decoder requests uncompressed 10-bit bi-planar output for HDR AV1")
+@Test("VideoToolbox decoder requests uncompressed 10-bit video-range bi-planar output for HDR AV1")
 func videoToolboxDecoderRequestsUncompressedTenBitBiPlanarOutputForHDRAV1() {
     #expect(
         ShadowClientVideoToolboxDecoder.preferredPixelBufferFormat(
             for: .av1,
             hdrEnabled: true
-        ) == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
+        ) == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
     )
 }

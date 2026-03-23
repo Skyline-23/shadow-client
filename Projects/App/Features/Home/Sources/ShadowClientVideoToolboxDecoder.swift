@@ -959,7 +959,7 @@ public actor ShadowClientVideoToolboxDecoder {
             return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         case .h265, .av1:
             return hdrEnabled
-                ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
+                ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
                 : kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         }
     }

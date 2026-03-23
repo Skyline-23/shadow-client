@@ -359,12 +359,20 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         }
 
         let sourceStandard = ShadowClientRealtimeSessionColorPipeline.sourceStandard(for: pixelBuffer)
+        let carriesHDRTransfer = transferFunction == .pq || transferFunction == .hlg
+        let usesLinearHDROutput =
+            prefersExtendedDynamicRange &&
+            (
+                outputColorSpace.name == CGColorSpace.extendedLinearITUR_2020 ||
+                outputColorSpace.name == CGColorSpace.extendedLinearDisplayP3 ||
+                    outputColorSpace.name == CGColorSpace.extendedLinearSRGB
+            )
         let decodesTransfer =
-            !prefersExtendedDynamicRange &&
-            (transferFunction == .pq || transferFunction == .hlg)
+            carriesHDRTransfer &&
+            (!prefersExtendedDynamicRange || usesLinearHDROutput)
         let appliesToneMapToSDR =
-            !prefersExtendedDynamicRange &&
-            (transferFunction == .pq || transferFunction == .hlg)
+            carriesHDRTransfer &&
+            !prefersExtendedDynamicRange
         let appliesGamutTransform =
             sourceStandard == .rec2020 &&
             outputColorSpace.name == CGColorSpace.extendedLinearDisplayP3
