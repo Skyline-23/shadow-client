@@ -105,6 +105,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var videoStatsFrameCount = 0
     private var videoStatsByteCount = 0
     private var lastVideoStatPublishUptime: TimeInterval = 0
+    private var smoothedIngressVideoFPS: Double = 0
+    private var runtimeVideoPacingFPS = 0
     private var videoDecodeQueueDropCount = 0
     private var firstVideoDecodeQueueDropUptime: TimeInterval = 0
     private var lastVideoDecodeQueueRecoveryUptime: TimeInterval = 0
@@ -223,6 +225,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         videoStatsFrameCount = 0
         videoStatsByteCount = 0
         lastVideoStatPublishUptime = 0
+        smoothedIngressVideoFPS = 0
+        runtimeVideoPacingFPS = 0
         videoDecodeQueueDropCount = 0
         firstVideoDecodeQueueDropUptime = 0
         lastVideoDecodeQueueRecoveryUptime = 0
@@ -1748,7 +1752,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         guard Self.shouldDropRenderSubmitForSessionFPS(
             now: now,
             lastRenderedFramePublishUptime: lastRenderedFramePublishUptime,
-            sessionFPS: configuration.fps,
+            sessionFPS: targetRenderPacingFPS(sessionFPS: configuration.fps),
             pacingToleranceRatio: ShadowClientRealtimeSessionDefaults.videoRenderSubmitPacingToleranceRatio
         ) else {
             return false
@@ -1775,7 +1779,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             interval: ShadowClientRealtimeSessionDefaults.videoRenderSubmitDropSummaryInterval
         ) {
             logger.notice(
-                "Video render submit pacing dropped decoded frame to match session FPS (count=\(self.videoRenderSubmitDropCount, privacy: .public))"
+                "Video render submit pacing dropped decoded frame to match runtime pacing target (count=\(self.videoRenderSubmitDropCount, privacy: .public))"
             )
         }
         return true
@@ -1912,14 +1916,119 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastVideoStatPublishUptime = now
 
         let windowDuration = max(now - videoStatsWindowStartUptime, 0.001)
+        let measuredIngressFPS = Double(videoStatsFrameCount) / windowDuration
         let bitrateKbps = Int((Double(videoStatsByteCount) * 8.0 / 1_000.0) / windowDuration)
         videoStatsWindowStartUptime = now
         videoStatsFrameCount = 0
         videoStatsByteCount = 0
         let sessionSurfaceContext = self.surfaceContext
-        Task { @MainActor in
-            sessionSurfaceContext.updateRuntimeVideoBitrateKbps(bitrateKbps)
+        let decoder = self.decoder
+        let adaptivePacingFPS: Int?
+        if let configuration = activeVideoConfiguration {
+            let previousSmoothedIngressFPS = smoothedIngressVideoFPS > 0 ? smoothedIngressVideoFPS : nil
+            let proposedPacingFPS = Self.resolvedAdaptiveRenderFPS(
+                measuredIngressFPS: measuredIngressFPS,
+                previousSmoothedIngressFPS: previousSmoothedIngressFPS,
+                sessionFPS: configuration.fps
+            )
+            smoothedIngressVideoFPS = Self.smoothedIngressVideoFPS(
+                measuredIngressFPS: measuredIngressFPS,
+                previousSmoothedIngressFPS: previousSmoothedIngressFPS,
+                sessionFPS: configuration.fps
+            )
+            let currentPacingFPS = targetRenderPacingFPS(sessionFPS: configuration.fps)
+            if Self.shouldApplyAdaptiveRenderFPS(
+                currentFPS: currentPacingFPS,
+                proposedFPS: proposedPacingFPS
+            ) {
+                runtimeVideoPacingFPS = proposedPacingFPS
+                adaptivePacingFPS = proposedPacingFPS
+                logger.notice(
+                    "Adjusted runtime video pacing target from \(currentPacingFPS, privacy: .public) to \(proposedPacingFPS, privacy: .public) fps (measured-ingress=\(Int(measuredIngressFPS.rounded()), privacy: .public) fps)"
+                )
+            } else {
+                adaptivePacingFPS = nil
+            }
+        } else {
+            adaptivePacingFPS = nil
         }
+
+        Task {
+            if let adaptivePacingFPS {
+                await decoder.setDecodePresentationTimeScale(fps: adaptivePacingFPS)
+                await MainActor.run {
+                    sessionSurfaceContext.updatePreferredRenderFPS(adaptivePacingFPS)
+                }
+            }
+            await MainActor.run {
+                sessionSurfaceContext.updateRuntimeVideoBitrateKbps(bitrateKbps)
+            }
+        }
+    }
+
+    private func targetRenderPacingFPS(sessionFPS: Int) -> Int {
+        let normalizedSessionFPS = max(1, sessionFPS)
+        let runtimeOverride = runtimeVideoPacingFPS
+        if runtimeOverride > 0 {
+            return min(normalizedSessionFPS, runtimeOverride)
+        }
+        return normalizedSessionFPS
+    }
+
+    static func smoothedIngressVideoFPS(
+        measuredIngressFPS: Double,
+        previousSmoothedIngressFPS: Double?,
+        sessionFPS: Int
+    ) -> Double {
+        let clampedMeasuredFPS = min(
+            max(1.0, measuredIngressFPS),
+            Double(max(1, sessionFPS))
+        )
+        guard let previousSmoothedIngressFPS,
+              previousSmoothedIngressFPS.isFinite,
+              previousSmoothedIngressFPS > 0
+        else {
+            return clampedMeasuredFPS
+        }
+        return (previousSmoothedIngressFPS * 0.70) + (clampedMeasuredFPS * 0.30)
+    }
+
+    static func resolvedAdaptiveRenderFPS(
+        measuredIngressFPS: Double,
+        previousSmoothedIngressFPS: Double?,
+        sessionFPS: Int
+    ) -> Int {
+        let normalizedSessionFPS = max(1, sessionFPS)
+        let smoothedFPS = smoothedIngressVideoFPS(
+            measuredIngressFPS: measuredIngressFPS,
+            previousSmoothedIngressFPS: previousSmoothedIngressFPS,
+            sessionFPS: normalizedSessionFPS
+        )
+        if smoothedFPS >= Double(normalizedSessionFPS) * 0.92 {
+            return normalizedSessionFPS
+        }
+
+        let minimumAdaptiveFPS = min(normalizedSessionFPS, 24)
+        return min(
+            normalizedSessionFPS,
+            max(minimumAdaptiveFPS, Int(smoothedFPS.rounded()))
+        )
+    }
+
+    static func shouldApplyAdaptiveRenderFPS(
+        currentFPS: Int,
+        proposedFPS: Int
+    ) -> Bool {
+        let normalizedCurrentFPS = max(1, currentFPS)
+        let normalizedProposedFPS = max(1, proposedFPS)
+        if normalizedCurrentFPS == normalizedProposedFPS {
+            return false
+        }
+        let minimumDelta = max(
+            4,
+            Int((Double(normalizedCurrentFPS) * 0.12).rounded(.up))
+        )
+        return abs(normalizedCurrentFPS - normalizedProposedFPS) >= minimumDelta
     }
 
     private func waitForInitialRenderState(timeout: Duration) async throws {

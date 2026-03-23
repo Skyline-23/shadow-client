@@ -3165,7 +3165,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         return false
     }
 
-    private static func shouldRetryRuntimeStreamReconnect(failureMessage: String) -> Bool {
+    private static func shouldRetryRuntimeStreamReconnect(
+        failureMessage: String,
+        settings: ShadowClientGameStreamLaunchSettings
+    ) -> Bool {
         let normalized = failureMessage
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -3186,7 +3189,19 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             "connection reset by peer",
             "network.nwerror error 96",
         ]
-        return reconnectSignatures.contains(where: normalized.contains)
+        if reconnectSignatures.contains(where: normalized.contains) {
+            return true
+        }
+
+        let hevcRuntimeRecoveryReconnectSignatures = [
+            "hevc runtime recovery exhausted",
+        ]
+        if (settings.preferredCodec == .h265 || settings.preferredCodec == .auto) &&
+            hevcRuntimeRecoveryReconnectSignatures.contains(where: normalized.contains) {
+            return true
+        }
+
+        return false
     }
 
     @MainActor
@@ -3200,7 +3215,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         guard let launchRequest = lastLaunchRequestContext else {
             return false
         }
-        guard Self.shouldRetryRuntimeStreamReconnect(failureMessage: message) else {
+        guard Self.shouldRetryRuntimeStreamReconnect(
+            failureMessage: message,
+            settings: launchRequest.settings
+        ) else {
             return false
         }
 

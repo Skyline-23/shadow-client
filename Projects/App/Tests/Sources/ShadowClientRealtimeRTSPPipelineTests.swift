@@ -2601,6 +2601,38 @@ func realtimeRuntimeRenderSubmitPacingAllowsWhenBudgetMet() {
     )
 }
 
+@Test("Realtime runtime adaptive pacing follows measured ingress cadence")
+func realtimeRuntimeAdaptivePacingFollowsMeasuredIngressCadence() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.resolvedAdaptiveRenderFPS(
+            measuredIngressFPS: 44,
+            previousSmoothedIngressFPS: nil,
+            sessionFPS: 120
+        ) == 44
+    )
+}
+
+@Test("Realtime runtime adaptive pacing restores negotiated cadence near full ingress rate")
+func realtimeRuntimeAdaptivePacingRestoresNegotiatedCadence() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.resolvedAdaptiveRenderFPS(
+            measuredIngressFPS: 118,
+            previousSmoothedIngressFPS: 110,
+            sessionFPS: 120
+        ) == 120
+    )
+}
+
+@Test("Realtime runtime adaptive pacing ignores minor cadence oscillations")
+func realtimeRuntimeAdaptivePacingIgnoresMinorOscillations() {
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldApplyAdaptiveRenderFPS(
+            currentFPS: 48,
+            proposedFPS: 50
+        )
+    )
+}
+
 @Test("Realtime runtime stall recovery aborts when recovery limit is exceeded")
 func realtimeRuntimeStallRecoveryAbortsOnRecoveryLimit() {
     #expect(

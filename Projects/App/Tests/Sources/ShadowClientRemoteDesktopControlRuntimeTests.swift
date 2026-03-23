@@ -1382,6 +1382,75 @@ func remoteDesktopRuntimeAutoReconnectsStreamAfterTransportInactivity() async {
     #expect(codecHistory == [.h265, .h265])
 }
 
+@Test("Remote desktop runtime reconnects HEVC after runtime recovery exhaustion without codec downgrade")
+@MainActor
+func remoteDesktopRuntimeReconnectsHEVCAfterRuntimeRecoveryExhaustion() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.155": .init(
+                host: "192.168.0.155",
+                displayName: "HEVC-Recovery-Reconnect-Host",
+                pairStatus: .paired,
+                currentGameID: 881_448_767,
+                serverState: "SUNSHINE_SERVER_BUSY",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-HEVC-RECOVERY-RECONNECT"
+            ),
+        ],
+        appListByHost: [
+            "192.168.0.155": [
+                .init(id: 881_448_767, title: "Desktop", hdrSupported: true, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let sessionURL = "rtsp://192.168.0.155:48010/session"
+    let control = FakeControlClient(
+        simulatedLaunchResults: [
+            .init(sessionURL: sessionURL, verb: "launch"),
+            .init(sessionURL: sessionURL, verb: "resume"),
+        ]
+    )
+    let sessionConnector = FakeSessionConnectionClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: control,
+        sessionConnectionClient: sessionConnector
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.155"], preferredHost: "192.168.0.155")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.launchSelectedApp(
+        appID: 881_448_767,
+        settings: .init(
+            preferredCodec: .h265,
+            enableHDR: true,
+            enableSurroundAudio: true,
+            lowLatencyMode: true
+        )
+    )
+    await waitForLaunchState(runtime)
+
+    runtime.handleSessionRenderStateTransition(
+        .failed("HEVC runtime recovery exhausted (decoder-output-stall-exhausted). Runtime recovery exhausted; retry with H.264.")
+    )
+
+    await waitForLaunchCalls(control, expectedCount: 2)
+    await waitForLaunchState(runtime, maxAttempts: 200)
+
+    let launchCalls = await control.launchCalls()
+    #expect(launchCalls.count == 2)
+    #expect(launchCalls[0].forceLaunch == false)
+    #expect(launchCalls[1].forceLaunch == false)
+    #expect(launchCalls[0].settings.preferredCodec == .h265)
+    #expect(launchCalls[1].settings.preferredCodec == .h265)
+
+    let codecHistory = await sessionConnector.videoConfigurations().map(\.preferredCodec)
+    #expect(codecHistory == [.h265, .h265])
+}
+
 @Test("Remote desktop runtime downgrades codec instead of reconnecting on startup UDP video timeout")
 @MainActor
 func remoteDesktopRuntimeDowngradesCodecOnStartupUDPVideoTimeout() async {
