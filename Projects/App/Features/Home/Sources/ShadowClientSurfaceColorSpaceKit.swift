@@ -71,9 +71,23 @@ enum ShadowClientSurfaceColorSpaceKit {
         renderBackend: ShadowClientSurfaceColorRenderBackend = .coreImage
     ) -> CGColorSpace {
         if prefersExtendedDynamicRange {
+            if prefersDisplayP3ExtendedDynamicRangeOutput(screenColorSpace: screenColorSpace) {
+                return CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)
+                    ?? hdrDisplayColorSpace
+            }
             return hdrDisplayColorSpace
         }
 
         return sdrSourceColorSpace
+    }
+
+    private static func prefersDisplayP3ExtendedDynamicRangeOutput(
+        screenColorSpace: CGColorSpace?
+    ) -> Bool {
+        guard let colorSpaceName = screenColorSpace?.name else {
+            return false
+        }
+        return colorSpaceName == CGColorSpace.displayP3 ||
+            colorSpaceName == CGColorSpace.extendedLinearDisplayP3
     }
 }

@@ -16,8 +16,8 @@ func surfaceColorSpaceKitPreservesHDRColorSpace() {
     #expect(resolved.name == hdr.name)
 }
 
-@Test("Surface color space kit preserves HDR output color space even when a screen color space is provided")
-func surfaceColorSpaceKitPreservesHDROutputColorSpaceWhenScreenColorSpaceIsProvided() {
+@Test("Surface color space kit prefers extended linear Display P3 output on HDR P3 screens")
+func surfaceColorSpaceKitPrefersExtendedLinearDisplayP3OnHDRP3Screens() {
     let sdr = CGColorSpace(name: CGColorSpace.itur_709) ?? CGColorSpaceCreateDeviceRGB()
     let hdr = CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
     let screen = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
@@ -29,7 +29,7 @@ func surfaceColorSpaceKitPreservesHDROutputColorSpaceWhenScreenColorSpaceIsProvi
         screenColorSpace: screen
     )
 
-    #expect(resolved.name == hdr.name)
+    #expect(resolved.name == CGColorSpace.extendedLinearDisplayP3)
 }
 
 @Test("Surface color space kit uses display HDR color space for Metal YUV rendering")
@@ -69,4 +69,28 @@ func surfaceColorSpaceKitKeepsDirectHDRPresentationEnabledForMetalYUVTargets() {
     #expect(configuration.prefersExtendedDynamicRange)
     #expect(configuration.targetPixelFormat == .bgr10a2Unorm)
     #expect(configuration.outputColorSpace.name == hdr.name)
+}
+
+@Test("Surface color space kit uses extended linear Display P3 render target for HDR Metal YUV on P3 screens")
+func surfaceColorSpaceKitUsesExtendedLinearDisplayP3ForHDRMetalYUVOnP3Screens() {
+    let hdr = CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
+    let colorConfiguration = ShadowClientRealtimeSessionColorConfiguration(
+        renderColorSpace: hdr,
+        displayColorSpace: hdr,
+        pixelFormat: .bgr10a2Unorm,
+        prefersExtendedDynamicRange: true,
+        videoRangeExpansion: nil
+    )
+    let screen = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
+
+    let configuration = ShadowClientSurfaceColorSpaceKit.renderTargetConfiguration(
+        colorConfiguration: colorConfiguration,
+        supportsExtendedDynamicRange: true,
+        renderBackend: .metalYUV,
+        screenColorSpace: screen
+    )
+
+    #expect(configuration.prefersExtendedDynamicRange)
+    #expect(configuration.targetPixelFormat == .bgr10a2Unorm)
+    #expect(configuration.outputColorSpace.name == CGColorSpace.extendedLinearDisplayP3)
 }

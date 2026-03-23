@@ -31,6 +31,43 @@ func colorPipelineEnablesEDRForHDRPQFrames() throws {
     #expect(configuration.displayColorSpace.name == CGColorSpace.itur_2100_PQ)
 }
 
+@Test("Color pipeline preserves Display P3 HDR metadata for PQ frames")
+func colorPipelinePreservesDisplayP3HDRMetadataForPQFrames() throws {
+    let pixelBuffer = try makePixelBuffer(pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferColorPrimariesKey,
+        kCVImageBufferColorPrimaries_P3_D65,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferTransferFunctionKey,
+        kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferYCbCrMatrixKey,
+        kCVImageBufferYCbCrMatrix_ITU_R_2020,
+        .shouldPropagate
+    )
+
+    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(
+        for: pixelBuffer,
+        allowExtendedDynamicRange: true
+    )
+    #expect(configuration.prefersExtendedDynamicRange)
+    #expect(configuration.renderColorSpace.name == CGColorSpace.displayP3_PQ)
+    #expect(configuration.displayColorSpace.name == CGColorSpace.displayP3_PQ)
+    #expect(
+        ShadowClientRealtimeSessionColorPipeline.sourceStandard(for: pixelBuffer) == .displayP3
+    )
+    #expect(
+        ShadowClientRealtimeSessionColorPipeline.matrixStandard(for: pixelBuffer) == .rec2020
+    )
+}
+
 @Test("Color pipeline keeps SDR output for BT.709 frames")
 func colorPipelineKeepsSDRForBT709Frames() throws {
     let pixelBuffer = try makePixelBuffer(pixelFormat: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)

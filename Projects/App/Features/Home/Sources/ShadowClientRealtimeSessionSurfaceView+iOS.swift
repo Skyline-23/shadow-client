@@ -138,7 +138,8 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             ShadowClientSurfaceColorSpaceKit.renderTargetConfiguration(
                 colorConfiguration: colorConfiguration,
                 supportsExtendedDynamicRange: supportsExtendedDynamicRangeDisplay(for: view),
-                renderBackend: .metalYUV
+                renderBackend: .metalYUV,
+                screenColorSpace: screenColorSpace(for: view)
             )
         }
 
@@ -236,6 +237,16 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         }
         let screen = view.window?.screen ?? UIScreen.main
         return screen.potentialEDRHeadroom > 1.0
+    }
+
+    private func screenColorSpace(for view: MTKView) -> CGColorSpace? {
+        let screen = view.window?.screen ?? UIScreen.main
+        switch screen.traitCollection.displayGamut {
+        case .P3:
+            return CGColorSpace(name: CGColorSpace.displayP3)
+        default:
+            return nil
+        }
     }
 
     private func scheduleDrawableTextureSampleIfNeeded(

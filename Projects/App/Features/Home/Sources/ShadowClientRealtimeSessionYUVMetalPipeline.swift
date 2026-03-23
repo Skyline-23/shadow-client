@@ -541,9 +541,11 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
     }
 
     private func cscMatrix(for pixelBuffer: CVPixelBuffer) -> (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>) {
-        switch ShadowClientRealtimeSessionColorPipeline.sourceStandard(for: pixelBuffer) {
+        switch ShadowClientRealtimeSessionColorPipeline.matrixStandard(for: pixelBuffer) {
         case .rec2020:
             return Constants.bt2020
+        case .displayP3:
+            return Constants.bt709
         case .rec709:
             return Constants.bt709
         case .rec601:

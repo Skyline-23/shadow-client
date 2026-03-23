@@ -19,6 +19,7 @@ struct ShadowClientVideoRangeExpansion: Equatable, Sendable {
 enum ShadowClientRealtimeSessionSourceColorSpaceStandard: Sendable {
     case rec601
     case rec709
+    case displayP3
     case rec2020
 }
 
@@ -26,6 +27,8 @@ enum ShadowClientRealtimeSessionColorPipeline {
     private static let defaultSDRSourceColorSpace = CGColorSpace(name: CGColorSpace.sRGB)
         ?? CGColorSpaceCreateDeviceRGB()
     private static let rec709ColorSpace = CGColorSpace(name: CGColorSpace.itur_709)
+        ?? defaultSDRSourceColorSpace
+    private static let displayP3ColorSpace = CGColorSpace(name: CGColorSpace.displayP3)
         ?? defaultSDRSourceColorSpace
     private static let rec601LikeColorSpace = CGColorSpace(name: CGColorSpace.sRGB)
         ?? defaultSDRSourceColorSpace
@@ -127,6 +130,12 @@ enum ShadowClientRealtimeSessionColorPipeline {
         colorMetadata(for: pixelBuffer).sourceStandard
     }
 
+    static func matrixStandard(
+        for pixelBuffer: CVPixelBuffer
+    ) -> ShadowClientRealtimeSessionSourceColorSpaceStandard {
+        colorMetadata(for: pixelBuffer).matrixStandard
+    }
+
     private static func sourceColorSpace(
         for pixelBuffer: CVPixelBuffer,
         metadata: ShadowClientColorMetadata,
@@ -134,9 +143,17 @@ enum ShadowClientRealtimeSessionColorPipeline {
     ) -> CGColorSpace {
         if prefersExtendedDynamicRange {
             if metadata.isPQ {
+                if metadata.sourceStandard == .displayP3 {
+                    return CGColorSpace(name: CGColorSpace.displayP3_PQ)
+                        ?? displayP3ColorSpace
+                }
                 return CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? defaultHDRDisplayColorSpace
             }
             if metadata.isHLG {
+                if metadata.sourceStandard == .displayP3 {
+                    return CGColorSpace(name: CGColorSpace.displayP3_HLG)
+                        ?? displayP3ColorSpace
+                }
                 return CGColorSpace(name: CGColorSpace.itur_2100_HLG) ?? defaultHDRDisplayColorSpace
             }
         }
@@ -150,6 +167,8 @@ enum ShadowClientRealtimeSessionColorPipeline {
         switch metadata.sourceStandard {
         case .rec2020:
             return CGColorSpace(name: CGColorSpace.itur_2020) ?? defaultSDRSourceColorSpace
+        case .displayP3:
+            return displayP3ColorSpace
         case .rec709:
             return rec709ColorSpace
         case .rec601:
@@ -161,9 +180,17 @@ enum ShadowClientRealtimeSessionColorPipeline {
         for metadata: ShadowClientColorMetadata
     ) -> CGColorSpace {
         if metadata.isPQ {
+            if metadata.sourceStandard == .displayP3 {
+                return CGColorSpace(name: CGColorSpace.displayP3_PQ)
+                    ?? defaultHDRDisplayColorSpace
+            }
             return CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? defaultHDRDisplayColorSpace
         }
         if metadata.isHLG {
+            if metadata.sourceStandard == .displayP3 {
+                return CGColorSpace(name: CGColorSpace.displayP3_HLG)
+                    ?? defaultHDRDisplayColorSpace
+            }
             return CGColorSpace(name: CGColorSpace.itur_2100_HLG) ?? defaultHDRDisplayColorSpace
         }
         return CGColorSpace(name: CGColorSpace.itur_2020) ?? defaultHDRDisplayColorSpace
@@ -184,12 +211,13 @@ enum ShadowClientRealtimeSessionColorPipeline {
         )
         let isPQ = matchesTransferFunctionPQ(transferFunction)
         let isHLG = matchesTransferFunctionHLG(transferFunction)
-        let isBT2020 = isPQ || isHLG || matchesColorPrimaries2020(colorPrimaries) || matchesYCbCrMatrix2020(yCbCrMatrix)
+        let isBT2020 = matchesColorPrimaries2020(colorPrimaries) || matchesYCbCrMatrix2020(yCbCrMatrix)
         let sourceStandard = sourceStandard(
             colorPrimaries: colorPrimaries,
             yCbCrMatrix: yCbCrMatrix,
             isHDRTransfer: isPQ || isHLG
         )
+        let matrixStandard = matrixStandard(yCbCrMatrix: yCbCrMatrix)
         return ShadowClientColorMetadata(
             transferFunction: transferFunction,
             colorPrimaries: colorPrimaries,
@@ -200,6 +228,7 @@ enum ShadowClientRealtimeSessionColorPipeline {
             isBT709Like: sourceStandard == .rec709,
             isBT601Like: sourceStandard == .rec601,
             sourceStandard: sourceStandard,
+            matrixStandard: matrixStandard,
             hasTransferFunction: transferFunction != nil
         )
     }
@@ -209,6 +238,9 @@ enum ShadowClientRealtimeSessionColorPipeline {
         yCbCrMatrix: String?,
         isHDRTransfer: Bool
     ) -> ShadowClientRealtimeSessionSourceColorSpaceStandard {
+        if matchesColorPrimariesDisplayP3(colorPrimaries) || matchesYCbCrMatrixDisplayP3(yCbCrMatrix) {
+            return .displayP3
+        }
         if isHDRTransfer || matchesColorPrimaries2020(colorPrimaries) || matchesYCbCrMatrix2020(yCbCrMatrix) {
             return .rec2020
         }
@@ -226,6 +258,21 @@ enum ShadowClientRealtimeSessionColorPipeline {
         }
 
         // Match Moonlight's default when colorspace metadata is missing.
+        return .rec601
+    }
+
+    private static func matrixStandard(
+        yCbCrMatrix: String?
+    ) -> ShadowClientRealtimeSessionSourceColorSpaceStandard {
+        if matchesYCbCrMatrix2020(yCbCrMatrix) {
+            return .rec2020
+        }
+        if matchesYCbCrMatrix709(yCbCrMatrix) {
+            return .rec709
+        }
+        if matchesYCbCrMatrix601(yCbCrMatrix) {
+            return .rec601
+        }
         return .rec601
     }
 
@@ -319,6 +366,19 @@ enum ShadowClientRealtimeSessionColorPipeline {
         return value == token || value.contains("2020")
     }
 
+    private static func matchesColorPrimariesDisplayP3(_ value: String?) -> Bool {
+        guard let value else {
+            return false
+        }
+        let accepted: Set<String> = [
+            (kCVImageBufferColorPrimaries_P3_D65 as String).uppercased(),
+            (kCVImageBufferColorPrimaries_DCI_P3 as String).uppercased(),
+            "P3_D65",
+            "DCI_P3",
+        ]
+        return accepted.contains(value) || value.contains("DISPLAYP3") || value.contains("P3")
+    }
+
     private static func matchesYCbCrMatrix2020(_ value: String?) -> Bool {
         guard let value else {
             return false
@@ -330,6 +390,16 @@ enum ShadowClientRealtimeSessionColorPipeline {
             "ITU_R_2020_NCL",
         ]
         return accepted.contains(value) || value.contains("2020")
+    }
+
+    private static func matchesYCbCrMatrixDisplayP3(_ value: String?) -> Bool {
+        guard let value else {
+            return false
+        }
+        let accepted: Set<String> = [
+            "P3_D65",
+        ]
+        return accepted.contains(value) || value.contains("DISPLAYP3") || value.contains("P3_D65")
     }
 
     private static func matchesColorPrimaries709(_ value: String?) -> Bool {
@@ -387,5 +457,6 @@ private struct ShadowClientColorMetadata {
     let isBT709Like: Bool
     let isBT601Like: Bool
     let sourceStandard: ShadowClientRealtimeSessionSourceColorSpaceStandard
+    let matrixStandard: ShadowClientRealtimeSessionSourceColorSpaceStandard
     let hasTransferFunction: Bool
 }
