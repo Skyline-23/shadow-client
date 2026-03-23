@@ -3451,7 +3451,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     ) -> String? {
         let normalizedRuntimeHost = runtimeHost.trimmingCharacters(in: .whitespacesAndNewlines)
         if !normalizedRuntimeHost.isEmpty,
-           !shouldRewriteSessionURLHost(normalizedRuntimeHost.lowercased())
+           isUsableSessionRouteHost(normalizedRuntimeHost)
         {
             return normalizedRuntimeHost
         }
@@ -3460,7 +3460,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .sorted()
-        if let candidate = localCandidates.first(where: { !shouldRewriteSessionURLHost($0.lowercased()) }) {
+        if let candidate = localCandidates.first(where: isUsableSessionRouteHost) {
             return candidate
         }
 
@@ -3468,7 +3468,17 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .sorted()
-        return knownCandidates.first(where: { !shouldRewriteSessionURLHost($0.lowercased()) })
+        return knownCandidates.first(where: isUsableSessionRouteHost)
+    }
+
+    private static func isUsableSessionRouteHost(_ host: String) -> Bool {
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedHost.isEmpty else {
+            return false
+        }
+
+        return !ShadowClientRemoteHostCandidateFilter.isLoopbackHost(normalizedHost) &&
+            !ShadowClientRemoteHostCandidateFilter.isLinkLocalHost(normalizedHost)
     }
 
     private static func connectWithCodecFallback(

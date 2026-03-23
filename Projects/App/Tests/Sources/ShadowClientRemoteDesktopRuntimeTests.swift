@@ -2475,6 +2475,18 @@ func remoteDesktopRuntimeRewritesLinkLocalLaunchSessionURLToRuntimeHost() {
     #expect(rewritten == "rtsp://test-route-host.local:49010/session")
 }
 
+@Test("Remote desktop runtime rewrites numeric-scope link-local launch session URLs to local runtime hosts")
+func remoteDesktopRuntimeRewritesNumericScopeLinkLocalLaunchSessionURLToLocalRuntimeHost() {
+    let rewritten = ShadowClientRemoteDesktopRuntime.rewrittenSessionURL(
+        "rtsp://[fe80::be45:d406:8f11:80ae%5]:48010",
+        runtimeHost: "skyline23-pc.local",
+        knownHosts: ["skyline23-pc.local"],
+        localRouteHosts: ["skyline23-pc.local"]
+    )
+
+    #expect(rewritten == "rtsp://skyline23-pc.local:48010")
+}
+
 private struct FailingIdentityProvider: ShadowClientPairingIdentityProviding {
     func loadIdentityMaterial() throws -> ShadowClientPairingIdentityMaterial {
         throw ShadowClientGameStreamControlError.invalidKeyMaterial
