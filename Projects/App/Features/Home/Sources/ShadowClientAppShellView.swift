@@ -25,6 +25,7 @@ let baseDependencies: ShadowClientFeatureHomeDependencies
 let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
 
     @Environment(\.horizontalSizeClass) var horizontalSizeClass
+    @Environment(\.accessibilityReduceMotion) var accessibilityReduceMotion
     @State var selectedTab: AppTab = .home
     @AppStorage(ShadowClientAppSettings.StorageKeys.lowLatencyMode) var lowLatencyMode = true
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferHDR) var preferHDR = true
@@ -686,7 +687,13 @@ func runHostSpotlightPresentation(forHostID hostID: String) async {
             return
         }
 
-        await animateAsync(.spring(response: 0.52, dampingFraction: 0.84)) {
+        if accessibilityReduceMotion {
+            spotlightAnimationProgress = 1
+            spotlightCardSettled = true
+            return
+        }
+
+        await animateAsync(hostSpotlightPresentationAnimation) {
             spotlightAnimationProgress = 1
         }
 
@@ -704,7 +711,13 @@ func runHostSpotlightDismissal(forHostID hostID: String?) async {
 
         spotlightCardSettled = false
 
-        await animateAsync(.spring(response: 0.38, dampingFraction: 0.92)) {
+        if accessibilityReduceMotion {
+            spotlightAnimationProgress = 0
+            spotlightedHostID = nil
+            return
+        }
+
+        await animateAsync(hostSpotlightDismissalAnimation) {
             spotlightAnimationProgress = 0
         }
 
@@ -781,6 +794,24 @@ func connectToHost(
 func connectToDiscoveredHost(_ discoveredHost: ShadowClientDiscoveredHost) {
         connectionHost = discoveredHost.probeCandidate
         connectToHost(autoLaunchAfterConnect: true)
+    }
+
+    @MainActor
+func startRemoteHostSession(_ host: ShadowClientRemoteHostDescriptor) {
+        connectionHost = connectionCandidate(for: host)
+        remoteDesktopRuntime.selectHost(host.id)
+        connectToHost(
+            autoLaunchAfterConnect: true,
+            preferredHostID: host.id
+        )
+    }
+
+    var hostSpotlightPresentationAnimation: Animation {
+        .spring(response: 0.52, dampingFraction: 0.84)
+    }
+
+    var hostSpotlightDismissalAnimation: Animation {
+        .spring(response: 0.38, dampingFraction: 0.92)
     }
 
     @MainActor

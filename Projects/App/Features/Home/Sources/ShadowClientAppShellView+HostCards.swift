@@ -43,6 +43,7 @@ private enum RemoteHostCardMetrics {
     static let spotlightBottomInset: CGFloat = 28
     static let transitionStart = 0.34
     static let transitionEnd = 0.66
+    static let quickConnectReservationWidth: CGFloat = 96
 }
 
 private struct RemoteHostFrontLayoutStyle {
@@ -234,26 +235,48 @@ var remoteDesktopHostCard: some View {
         let isSelected = remoteDesktopRuntime.selectedHostID == host.id
         let hostIdentifier = ShadowClientRemoteHostPresentationKit.sanitizedIdentifier(host.id)
         let spotlighted = spotlightedHostID == host.id
+        let canQuickConnect = hostCanConnect(host)
 
-        return Button {
-            presentHostSpotlight(for: host)
-        } label: {
-            remoteDesktopHostFrontContent(
-                host,
-                isSelected: isSelected,
-                summaryLineLimit: 2,
-                style: .tile
-            )
-            .frame(maxWidth: .infinity, minHeight: RemoteHostCardMetrics.tileMinHeight, alignment: .topLeading)
-            .padding(RemoteHostCardMetrics.cardPadding)
-            .background(hostCardSurface(isSelected: isSelected))
+        return ZStack(alignment: .bottomTrailing) {
+            Button {
+                presentHostSpotlight(for: host)
+            } label: {
+                remoteDesktopHostFrontContent(
+                    host,
+                    isSelected: isSelected,
+                    summaryLineLimit: 2,
+                    style: .tile,
+                    reservesTrailingActionSpace: canQuickConnect
+                )
+                .frame(maxWidth: .infinity, minHeight: RemoteHostCardMetrics.tileMinHeight, alignment: .topLeading)
+                .padding(RemoteHostCardMetrics.cardPadding)
+                .background(hostCardSurface(isSelected: isSelected))
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("shadow.home.host.\(hostIdentifier).row")
+            .accessibilityLabel(hostAccessibilityLabel(host, isSelected: isSelected))
+            .accessibilityHint(hostAccessibilityHint(host))
+
+            if canQuickConnect {
+                Button(ShadowClientDiscoveredHostPresentationKit.connectButtonTitle()) {
+                    startRemoteHostSession(host)
+                }
+                .accessibilityIdentifier("shadow.home.host.\(hostIdentifier).quick-connect")
+                .accessibilityLabel("Connect to \(hostDisplayTitle(host))")
+                .accessibilityHint(
+                    ShadowClientHostAppLibraryPresentationKit.primaryActionHint(
+                        hostTitle: hostDisplayTitle(host),
+                        canConnect: true
+                    )
+                )
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .padding(RemoteHostCardMetrics.cardPadding)
+            }
         }
-        .buttonStyle(.plain)
         .allowsHitTesting(!spotlighted)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("shadow.home.host.\(hostIdentifier).row")
-        .accessibilityLabel(hostAccessibilityLabel(host, isSelected: isSelected))
-        .accessibilityHint(hostAccessibilityHint(host))
         .overlay(
             RoundedRectangle(cornerRadius: RemoteHostCardMetrics.tileCornerRadius, style: .continuous)
                 .stroke(isSelected ? accentColor.opacity(0.92) : Color.white.opacity(0.08), lineWidth: isSelected ? 2 : 1)
@@ -267,6 +290,84 @@ var remoteDesktopHostCard: some View {
                 )
             }
         )
+    }
+
+    fileprivate func remoteDesktopHostFrontContent(
+        _ host: ShadowClientRemoteHostDescriptor,
+        isSelected: Bool,
+        summaryLineLimit: Int,
+        style: RemoteHostFrontLayoutStyle,
+        reservesTrailingActionSpace: Bool = false
+    ) -> some View {
+        VStack(alignment: .leading, spacing: style.contentSpacing) {
+            HStack(alignment: .top, spacing: style.headerSpacing) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: style.glyphCornerRadius, style: .continuous)
+                        .fill(hostGlyphColor(host).opacity(0.16))
+                        .frame(width: style.glyphSize, height: style.glyphSize)
+
+                    Image(systemName: hostGlyphSymbol(host))
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(hostGlyphColor(host))
+                }
+
+                VStack(alignment: .leading, spacing: style.titleStackSpacing) {
+                    Text(hostDisplayTitle(host))
+                        .font(.system(size: style.titleFontSize, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+
+                    Text(host.host)
+                        .font(.footnote.monospaced())
+                        .foregroundStyle(Color.white.opacity(0.70))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer(minLength: style.headerSpacing)
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(accentColor)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: RemoteHostCardMetrics.sectionSpacing) {
+                Text(host.statusLabel)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(remoteHostStatusColor(host))
+                    .padding(.horizontal, style.badgeHorizontalPadding)
+                    .padding(.vertical, style.badgeVerticalPadding)
+                    .background(remoteHostStatusColor(host).opacity(0.14), in: Capsule())
+            }
+
+            Text(hostSummaryText(host))
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(host.lastError == nil ? Color.white.opacity(0.76) : .red.opacity(0.92))
+                .lineLimit(summaryLineLimit)
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: style.footerSpacing) {
+                Label(hostTileActionLabel(host), systemImage: hostFrontHintSymbol(host))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(hostFrontHintColor(host))
+
+                Spacer(minLength: style.footerSpacing)
+
+                if reservesTrailingActionSpace {
+                    Color.clear
+                        .frame(width: RemoteHostCardMetrics.quickConnectReservationWidth, height: 1)
+                        .accessibilityHidden(true)
+                } else {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.white.opacity(0.46))
+                }
+            }
+        }
     }
 
     func remoteDesktopHostSpotlightCard(_ host: ShadowClientRemoteHostDescriptor, containerSize: CGSize) -> some View {
@@ -339,76 +440,6 @@ var remoteDesktopHostCard: some View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    fileprivate func remoteDesktopHostFrontContent(
-        _ host: ShadowClientRemoteHostDescriptor,
-        isSelected: Bool,
-        summaryLineLimit: Int,
-        style: RemoteHostFrontLayoutStyle
-    ) -> some View {
-        VStack(alignment: .leading, spacing: style.contentSpacing) {
-            HStack(alignment: .top, spacing: style.headerSpacing) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: style.glyphCornerRadius, style: .continuous)
-                        .fill(hostGlyphColor(host).opacity(0.16))
-                        .frame(width: style.glyphSize, height: style.glyphSize)
-
-                    Image(systemName: hostGlyphSymbol(host))
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(hostGlyphColor(host))
-                }
-
-                VStack(alignment: .leading, spacing: style.titleStackSpacing) {
-                    Text(hostDisplayTitle(host))
-                        .font(.system(size: style.titleFontSize, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-                        .truncationMode(.tail)
-
-                    Text(host.host)
-                        .font(.footnote.monospaced())
-                        .foregroundStyle(Color.white.opacity(0.70))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-
-                Spacer(minLength: style.headerSpacing)
-
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.headline.weight(.bold))
-                        .foregroundStyle(accentColor)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: RemoteHostCardMetrics.sectionSpacing) {
-                Text(host.statusLabel)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(remoteHostStatusColor(host))
-                    .padding(.horizontal, style.badgeHorizontalPadding)
-                    .padding(.vertical, style.badgeVerticalPadding)
-                    .background(remoteHostStatusColor(host).opacity(0.14), in: Capsule())
-            }
-
-            Text(hostSummaryText(host))
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(host.lastError == nil ? Color.white.opacity(0.76) : .red.opacity(0.92))
-                .lineLimit(summaryLineLimit)
-
-            Spacer(minLength: 0)
-
-            HStack(spacing: style.footerSpacing) {
-                Label(hostTileActionLabel(host), systemImage: hostFrontHintSymbol(host))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(hostFrontHintColor(host))
-
-                Spacer(minLength: style.footerSpacing)
-
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.white.opacity(0.46))
-            }
-        }
-    }
 
     func remoteDesktopHostBackFace(_ host: ShadowClientRemoteHostDescriptor, interactive: Bool) -> some View {
         ScrollView(.vertical, showsIndicators: false) {
@@ -856,8 +887,7 @@ var remoteDesktopHostCard: some View {
         fullWidth: Bool
     ) -> some View {
         Button("Start") {
-            connectionHost = connectionCandidate(for: host)
-            connectToHost(autoLaunchAfterConnect: true, preferredHostID: host.id)
+            startRemoteHostSession(host)
         }
         .accessibilityIdentifier("shadow.home.hosts.go-selected")
         .accessibilityLabel("Start selected host")
