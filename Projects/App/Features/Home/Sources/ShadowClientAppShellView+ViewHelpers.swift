@@ -201,6 +201,7 @@ func discoveredHostRow(_ discoveredHost: ShadowClientDiscoveredHost) -> some Vie
             }
             Spacer(minLength: 8)
             Button(ShadowClientDiscoveredHostPresentationKit.useButtonTitle()) {
+                remoteDesktopRuntime.saveHostCandidate(discoveredHost.probeCandidate)
                 connectionHost = discoveredHost.probeCandidate
                 refreshRemoteDesktopCatalog()
             }

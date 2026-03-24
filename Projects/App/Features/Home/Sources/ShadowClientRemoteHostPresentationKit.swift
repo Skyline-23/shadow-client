@@ -31,6 +31,9 @@ enum ShadowClientRemoteHostPresentationKit {
         if input.issue != nil {
             return "Permissions"
         }
+        if input.host.isPendingResolution {
+            return "Saved"
+        }
         if !input.host.isReachable {
             return "Needs Attention"
         }
@@ -48,6 +51,9 @@ enum ShadowClientRemoteHostPresentationKit {
         if input.issue != nil {
             return "Permissions"
         }
+        if input.host.isPendingResolution {
+            return "Saved"
+        }
         if !input.host.isReachable {
             return "Connection issue"
         }
@@ -60,6 +66,9 @@ enum ShadowClientRemoteHostPresentationKit {
     static func frontHintSymbol(_ input: ShadowClientRemoteHostPresentationInput) -> String {
         if input.issue != nil {
             return "lock.trianglebadge.exclamationmark"
+        }
+        if input.host.isPendingResolution {
+            return "bookmark.circle"
         }
         if !input.host.isReachable {
             return "exclamationmark.shield"
@@ -74,6 +83,9 @@ enum ShadowClientRemoteHostPresentationKit {
         if input.issue != nil {
             return .yellow
         }
+        if input.host.isPendingResolution {
+            return Color.white.opacity(0.84)
+        }
         if !input.host.isReachable {
             return .red.opacity(0.9)
         }
@@ -86,6 +98,9 @@ enum ShadowClientRemoteHostPresentationKit {
     static func frontMessage(_ input: ShadowClientRemoteHostPresentationInput) -> String {
         if let issue = input.issue {
             return issue.message
+        }
+        if input.host.isPendingResolution {
+            return "This address is saved. Host details will attach when the server responds."
         }
         if let lastError = input.host.lastError, !lastError.isEmpty {
             return lastError
@@ -121,6 +136,9 @@ enum ShadowClientRemoteHostPresentationKit {
         if input.issue != nil {
             return "lock.trianglebadge.exclamationmark.fill"
         }
+        if input.host.isPendingResolution {
+            return "bookmark.circle.fill"
+        }
         if !input.host.isReachable {
             return "wifi.exclamationmark"
         }
@@ -133,6 +151,9 @@ enum ShadowClientRemoteHostPresentationKit {
     static func glyphColor(_ input: ShadowClientRemoteHostPresentationInput) -> Color {
         if input.issue != nil {
             return .yellow
+        }
+        if input.host.isPendingResolution {
+            return Color.white.opacity(0.84)
         }
         if !input.host.isReachable {
             return .red.opacity(0.92)

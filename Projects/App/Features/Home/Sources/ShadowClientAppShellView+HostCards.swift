@@ -1,5 +1,6 @@
 import ShadowClientStreaming
 import ShadowClientUI
+import ShadowClientFeatureConnection
 import SwiftUI
 import ShadowUIFoundation
 
@@ -481,6 +482,41 @@ var remoteDesktopHostCard: some View {
 
     func remoteDesktopHostMetadataEditor(_ host: ShadowClientRemoteHostDescriptor) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Connection Address")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.white.opacity(0.68))
+                ShadowUIHostInsetCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ShadowUIHostInsetField {
+                            ShadowClientPlatformTextField(
+                                text: hostAddressBinding(for: host),
+                                placeholder: connectionCandidate(for: host),
+                                accessibilityLabel: "Connection address",
+                                keyboardType: .ascii,
+                                usesMonospacedFont: true,
+                                fontWeight: .semibold
+                            )
+                        }
+
+                        Button("Save Address") {
+                            let updatedAddress = hostAddressDraft(for: host)
+                            remoteDesktopRuntime.updateSavedHostCandidate(
+                                forHostID: host.id,
+                                host: updatedAddress
+                            )
+                            connectionHost = updatedAddress
+                            refreshRemoteDesktopCatalog(force: true)
+                        }
+                        .buttonStyle(.bordered)
+
+                        Text(hostAddressSummary(for: host))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.white.opacity(0.68))
+                    }
+                }
+            }
+
             VStack(alignment: .leading, spacing: 6) {
                 Text("Friendly Name")
                     .font(.caption.weight(.bold))
@@ -1150,6 +1186,43 @@ var remoteDesktopHostCard: some View {
             store: hostCustomizationStore,
             host: host
         )
+    }
+
+    func hostAddressDraft(for host: ShadowClientRemoteHostDescriptor) -> String {
+        let draft = hostAddressDrafts[host.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !draft.isEmpty {
+            return draft
+        }
+        return connectionCandidate(for: host)
+    }
+
+    func hostAddressBinding(for host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
+        Binding(
+            get: { hostAddressDraft(for: host) },
+            set: { hostAddressDrafts[host.id] = $0 }
+        )
+    }
+
+    func hostAddressSummary(for host: ShadowClientRemoteHostDescriptor) -> String {
+        let routeLabels = [
+            host.routes.local.map { "Local: \(connectionCandidateLabel(for: $0))" },
+            host.routes.remote.map { "External: \(connectionCandidateLabel(for: $0))" },
+            host.routes.manual.map { "Override: \(connectionCandidateLabel(for: $0))" },
+        ]
+        .compactMap { $0 }
+
+        if routeLabels.isEmpty {
+            return "This card uses the address you save here as its primary route."
+        }
+
+        return routeLabels.joined(separator: " | ")
+    }
+
+    private func connectionCandidateLabel(for endpoint: ShadowClientRemoteHostEndpoint) -> String {
+        if endpoint.httpsPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort {
+            return endpoint.host
+        }
+        return "\(endpoint.host):\(endpoint.httpsPort)"
     }
 
     func hostNotes(_ host: ShadowClientRemoteHostDescriptor) -> String {

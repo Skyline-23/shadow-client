@@ -69,6 +69,7 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @ObservedObject var sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext
     @StateObject var hostCustomizationStore: ShadowClientHostCustomizationStore
     @State var connectionState: ShadowClientConnectionState = .disconnected
+    @State var hostAddressDrafts: [String: String] = [:]
     @State var apolloDisplayModeDrafts: [String: String] = [:]
     @State var apolloAlwaysUseVirtualDisplayDrafts: [String: Bool] = [:]
     @State var apolloPermissionDrafts: [String: UInt32] = [:]
@@ -633,10 +634,9 @@ func cancelManualHostEntry() {
 
         Task { @MainActor [host] in
             clearHiddenRemoteHostCandidates(matching: host)
-            await remoteDesktopRuntime.rememberPreferredHostRoute(host)
+            remoteDesktopRuntime.saveHostCandidate(host)
             connectionHost = host
             refreshRemoteDesktopCatalog(force: true)
-            remoteDesktopRuntime.selectHost(host.lowercased())
         }
     }
 

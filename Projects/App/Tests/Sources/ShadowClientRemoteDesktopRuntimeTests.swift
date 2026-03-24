@@ -1627,6 +1627,120 @@ func remoteDesktopRuntimeMatchesDefaultHTTPPortCandidateToCachedRoute() async {
     #expect(failingRuntime.hosts.first?.routes.local?.host == "local-stream-host.local")
 }
 
+@Test("Remote desktop runtime saves host candidates before metadata resolves")
+@MainActor
+func remoteDesktopRuntimeSavesHostCandidatesImmediately() async {
+    let defaultsSuite = "shadow-client.runtime.saved-host-candidate.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: FakeGameStreamMetadataClient(serverInfoByHost: [:], appListByHost: [:]),
+        controlClient: RecordingGameStreamControlClient(),
+        defaults: defaults
+    )
+
+    runtime.saveHostCandidate("manual-route.example.invalid")
+
+    #expect(runtime.hosts.count == 1)
+    #expect(runtime.hosts.first?.host == "manual-route.example.invalid")
+    #expect(runtime.hosts.first?.isSaved == true)
+    #expect(runtime.hosts.first?.isPendingResolution == true)
+
+    let reloadedRuntime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: FakeGameStreamMetadataClient(serverInfoByHost: [:], appListByHost: [:]),
+        controlClient: RecordingGameStreamControlClient(),
+        defaults: defaults
+    )
+
+    #expect(reloadedRuntime.hosts.count == 1)
+    #expect(reloadedRuntime.hosts.first?.host == "manual-route.example.invalid")
+    #expect(reloadedRuntime.hosts.first?.isSaved == true)
+}
+
+@Test("Remote desktop runtime keeps saved address as the active route after metadata refresh")
+@MainActor
+func remoteDesktopRuntimePreservesSavedAddressOverrideDuringRefresh() async {
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "external-route.example.invalid": .init(
+                host: "external-route.example.invalid",
+                localHost: "local-stream-host.local",
+                remoteHost: "external-route.example.invalid",
+                manualHost: nil,
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
+            "local-stream-host.local": .init(
+                host: "local-stream-host.local",
+                localHost: "local-stream-host.local",
+                remoteHost: "external-route.example.invalid",
+                manualHost: nil,
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient()
+    )
+
+    runtime.saveHostCandidate("external-route.example.invalid")
+    runtime.refreshHosts(
+        candidates: ["external-route.example.invalid", "local-stream-host.local"],
+        preferredHost: "external-route.example.invalid"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(runtime.hosts.count == 1)
+    #expect(runtime.hosts.first?.isSaved == true)
+    #expect(runtime.hosts.first?.host == "external-route.example.invalid")
+    #expect(runtime.hosts.first?.routes.local?.host == "local-stream-host.local")
+}
+
+@Test("Remote desktop runtime updates saved host addresses from user override")
+@MainActor
+func remoteDesktopRuntimeUpdatesSavedHostCandidateAddress() async {
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: FakeGameStreamMetadataClient(serverInfoByHost: [:], appListByHost: [:]),
+        controlClient: RecordingGameStreamControlClient()
+    )
+
+    runtime.saveHostCandidate("old-route.example.invalid")
+    guard let savedHost = runtime.hosts.first else {
+        Issue.record("Expected saved host placeholder")
+        return
+    }
+
+    runtime.updateSavedHostCandidate(
+        forHostID: savedHost.id,
+        host: "new-route.example.invalid"
+    )
+
+    #expect(runtime.hosts.count == 1)
+    #expect(runtime.hosts.first?.host == "new-route.example.invalid")
+    #expect(runtime.hosts.first?.isSaved == true)
+}
+
 @Test("Remote desktop runtime remembers manual routes without mutating pinned certificates")
 @MainActor
 func remoteDesktopRuntimeRemembersManualRouteWithoutCopyingPinnedCertificates() async {
@@ -2128,6 +2242,124 @@ func remoteDesktopRuntimeScrubsAmbiguousBareHostPins() async {
     #expect(await pinnedStore.machineID(forHost: "dual-apollo.example.invalid") == nil)
 }
 
+@Test("Remote desktop runtime refreshes app list on the exact selected Apollo service port")
+@MainActor
+func remoteDesktopRuntimeRefreshesAppsOnExactSelectedApolloPort() async {
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "dual-apollo.example.invalid:47984": .init(
+                host: "dual-apollo.example.invalid",
+                displayName: "Apollo-47984",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "APOLLO-SHARED"
+            ),
+            "dual-apollo.example.invalid:48984": .init(
+                host: "dual-apollo.example.invalid",
+                displayName: "Apollo-48984",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "APOLLO-SHARED"
+            ),
+        ],
+        appListByHost: [
+            "dual-apollo.example.invalid:48984": [
+                .init(id: 1, title: "Desktop", hdrSupported: false, isAppCollectorGame: false),
+            ],
+        ]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient()
+    )
+
+    runtime.refreshHosts(
+        candidates: ["dual-apollo.example.invalid:48984", "dual-apollo.example.invalid:47984"],
+        preferredHost: "dual-apollo.example.invalid:48984"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(runtime.selectedHost?.httpsPort == 48984)
+
+    runtime.refreshSelectedHostApps()
+    await waitForAppCatalogReady(runtime)
+
+    #expect(await metadataClient.recordedAppListRequests().last == .init(
+        host: "dual-apollo.example.invalid",
+        httpsPort: 48984
+    ))
+}
+
+@Test("Remote desktop runtime launches on the exact selected Apollo service port")
+@MainActor
+func remoteDesktopRuntimeLaunchesOnExactSelectedApolloPort() async {
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "dual-apollo.example.invalid:47984": .init(
+                host: "dual-apollo.example.invalid",
+                displayName: "Apollo-47984",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "APOLLO-SHARED"
+            ),
+            "dual-apollo.example.invalid:48984": .init(
+                host: "dual-apollo.example.invalid",
+                displayName: "Apollo-48984",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "APOLLO-SHARED"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let controlClient = RecordingGameStreamControlClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: controlClient
+    )
+
+    runtime.refreshHosts(
+        candidates: ["dual-apollo.example.invalid:48984", "dual-apollo.example.invalid:47984"],
+        preferredHost: "dual-apollo.example.invalid:48984"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(runtime.selectedHost?.httpsPort == 48984)
+
+    runtime.launchSelectedApp(
+        appID: 1,
+        appTitle: "Desktop",
+        settings: .init(
+            enableHDR: false,
+            enableSurroundAudio: false,
+            lowLatencyMode: false
+        )
+    )
+    await waitForLaunchRequest(controlClient)
+
+    #expect(await controlClient.launchRequests().last == .init(
+        host: "dual-apollo.example.invalid",
+        httpsPort: 48984,
+        appID: 1
+    ))
+}
+
 @Test("Remote desktop runtime skips probing routes rejected for certificate mismatch on subsequent refreshes")
 @MainActor
 func remoteDesktopRuntimeSkipsRejectedCertificateRoutesOnRefresh() async {
@@ -2580,12 +2812,18 @@ private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient
         let pinnedServerCertificateDER: Data?
     }
 
+    struct AppListRequest: Equatable {
+        let host: String
+        let httpsPort: Int?
+    }
+
     private let serverInfoByHost: [String: ShadowClientGameStreamServerInfo]
     private let appListByHost: [String: [ShadowClientRemoteAppDescriptor]]
     private let serverInfoFailureByHost: [String: ShadowClientGameStreamError]
     private let appListFailureByHost: [String: ShadowClientGameStreamError]
     private var serverInfoHosts: [String] = []
     private var serverInfoRequests: [ServerInfoRequest] = []
+    private var appListRequests: [AppListRequest] = []
 
     init(
         serverInfoByHost: [String: ShadowClientGameStreamServerInfo],
@@ -2622,10 +2860,12 @@ private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient
     }
 
     func fetchAppList(host: String, httpsPort: Int?) async throws -> [ShadowClientRemoteAppDescriptor] {
-        if let error = appListFailureByHost[host] {
+        appListRequests.append(.init(host: host, httpsPort: httpsPort))
+        let routeKey = httpsPort.map { "\(host):\($0)" } ?? host
+        if let error = appListFailureByHost[routeKey] ?? appListFailureByHost[host] {
             throw error
         }
-        return appListByHost[host] ?? []
+        return appListByHost[routeKey] ?? appListByHost[host] ?? []
     }
 
     func recordedServerInfoHosts() -> [String] {
@@ -2635,11 +2875,22 @@ private actor FakeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient
     func recordedServerInfoRequests() -> [ServerInfoRequest] {
         serverInfoRequests
     }
+
+    func recordedAppListRequests() -> [AppListRequest] {
+        appListRequests
+    }
 }
 
 private actor RecordingGameStreamControlClient: ShadowClientGameStreamControlClient {
+    struct LaunchRequest: Equatable {
+        let host: String
+        let httpsPort: Int
+        let appID: Int
+    }
+
     private let successfulHosts: Set<String>
     private var recordedPairHosts: [String] = []
+    private var recordedLaunchRequests: [LaunchRequest] = []
 
     init(successfulHosts: Set<String> = []) {
         self.successfulHosts = successfulHosts
@@ -2668,11 +2919,18 @@ private actor RecordingGameStreamControlClient: ShadowClientGameStreamControlCli
         forceLaunch: Bool,
         settings: ShadowClientGameStreamLaunchSettings
     ) async throws -> ShadowClientGameStreamLaunchResult {
-        .init(sessionURL: nil, verb: "launch")
+        recordedLaunchRequests.append(
+            .init(host: host, httpsPort: httpsPort, appID: appID)
+        )
+        return .init(sessionURL: nil, verb: "launch")
     }
 
     func pairRequests() -> [String] {
         recordedPairHosts
+    }
+
+    func launchRequests() -> [LaunchRequest] {
+        recordedLaunchRequests
     }
 }
 
@@ -2697,6 +2955,19 @@ private func waitForAppCatalogReady(
 ) async {
     for _ in 0..<maxAttempts {
         if runtime.appState == .loaded || runtime.appState.label.starts(with: "Failed") {
+            return
+        }
+
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+private func waitForLaunchRequest(
+    _ controlClient: RecordingGameStreamControlClient,
+    maxAttempts: Int = 50
+) async {
+    for _ in 0..<maxAttempts {
+        if !(await controlClient.launchRequests()).isEmpty {
             return
         }
 

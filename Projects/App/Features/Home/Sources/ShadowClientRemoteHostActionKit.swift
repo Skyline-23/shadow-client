@@ -31,6 +31,9 @@ enum ShadowClientRemoteHostActionKit {
         isSelected: Bool,
         accentColor: Color
     ) -> Color {
+        if host.isPendingResolution {
+            return Color.white.opacity(0.72)
+        }
         if !host.isReachable {
             return .red.opacity(0.92)
         }
