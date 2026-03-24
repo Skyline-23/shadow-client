@@ -1067,6 +1067,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         forceLaunch: Bool = false,
         settings: ShadowClientGameStreamLaunchSettings
     ) async throws -> ShadowClientGameStreamLaunchResult {
+        try Self.validateExperimentalLaunchCodec(settings.preferredCodec)
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPPort)
         let uniqueID = await identityStore.uniqueID()
         let pinnedServerCertificate = await pinnedCertificateStore.certificateDER(
@@ -1494,6 +1495,18 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             verb: command.rawValue,
             remoteInputKey: remoteInputKey,
             remoteInputKeyID: remoteInputKeyID
+        )
+    }
+
+    private static func validateExperimentalLaunchCodec(
+        _ preferredCodec: ShadowClientVideoCodecPreference
+    ) throws {
+        guard preferredCodec.requiresCustomHostSupport else {
+            return
+        }
+
+        throw ShadowClientGameStreamError.requestFailed(
+            "ProRes is experimental in shadow and requires a custom host codec lane. Stock Sunshine/GameStream hosts are not supported yet."
         )
     }
 
