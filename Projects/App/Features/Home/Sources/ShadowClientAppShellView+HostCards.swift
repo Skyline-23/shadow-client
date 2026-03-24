@@ -175,8 +175,8 @@ var remoteDesktopHostCard: some View {
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(.white)
                 ShadowClientManualHostAddressField(
-                    text: $manualHostDraft,
-                    portText: $manualHostPortDraft,
+                    text: manualHostDraftBinding,
+                    portText: manualHostPortDraftBinding,
                     focusedField: $manualHostFocusedField
                 ) {
                     addManualHostToCatalog()

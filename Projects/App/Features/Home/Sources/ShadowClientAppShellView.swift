@@ -75,14 +75,8 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @State var apolloAlwaysUseVirtualDisplayDrafts: [String: Bool] = [:]
     @State var apolloPermissionDrafts: [String: UInt32] = [:]
     @State var remoteDesktopHostFrames: [String: CGRect] = [:]
-    @State var spotlightedHostID: String?
-    @State var spotlightedHostSourceFrame: CGRect = .zero
-    @State var spotlightAnimationProgress = 0.0
-    @State var spotlightCardSettled = false
-    @State var hostSpotlightTask: Task<Void, Never>?
-    @State var isShowingManualHostEntry = false
-    @State var manualHostDraft = ""
-    @State var manualHostPortDraft = ""
+    @State var hostSpotlightState = ShadowClientHostSpotlightState()
+    @State var manualHostEntryState = ShadowClientManualHostEntryState()
     @FocusState var manualHostFocusedField: ShadowClientManualHostAddressField.FocusField?
     @State var lastRemoteDesktopCatalogSignature = ""
     @State var settingsTelemetryTask: Task<Void, Never>?
