@@ -43,6 +43,35 @@ public enum ShadowClientSessionPointerGeometry {
         )
     }
 
+    public static func relativePointerDelta(
+        from previousLocation: CGPoint,
+        to location: CGPoint,
+        containerBounds: CGRect,
+        videoSize: CGSize?
+    ) -> CGSize? {
+        guard let previousState = absolutePointerState(
+            for: previousLocation,
+            containerBounds: containerBounds,
+            videoSize: videoSize
+        ),
+        let currentState = absolutePointerState(
+            for: location,
+            containerBounds: containerBounds,
+            videoSize: videoSize
+        )
+        else {
+            return nil
+        }
+
+        let deltaX = currentState.x - previousState.x
+        let deltaY = currentState.y - previousState.y
+        guard deltaX != 0 || deltaY != 0 else {
+            return nil
+        }
+
+        return CGSize(width: deltaX, height: deltaY)
+    }
+
     private static func normalizedReferenceVideoSize(
         _ videoSize: CGSize?,
         fallback: CGSize

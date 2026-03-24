@@ -22,22 +22,7 @@ enum ShadowClientIOSIndirectPointerInputPolicy {
         if let tap = recognizer as? UITapGestureRecognizer {
             return tap.numberOfTouchesRequired == 1
         }
-        return recognizer is UIPanGestureRecognizer
-    }
-
-    static func dragMoveEvent(
-        translation: CGPoint,
-        isPrimaryButtonHeld: Bool
-    ) -> ShadowClientRemoteInputEvent? {
-        guard isPrimaryButtonHeld else {
-            return nil
-        }
-        let deltaX = Double(translation.x)
-        let deltaY = Double(translation.y)
-        guard deltaX != 0 || deltaY != 0 else {
-            return nil
-        }
-        return .pointerMoved(x: deltaX, y: deltaY)
+        return false
     }
 }
 
@@ -338,21 +323,27 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         if isPrimaryButtonHeld {
             return
         }
+        let location = recognizer.location(in: self)
         let translation = recognizer.translation(in: self)
         recognizer.setTranslation(.zero, in: self)
-        let deltaX = Double(translation.x)
-        let deltaY = Double(translation.y)
-        guard deltaX != 0 || deltaY != 0 else {
+        let previousLocation = CGPoint(
+            x: location.x - translation.x,
+            y: location.y - translation.y
+        )
+        guard let delta = ShadowClientSessionPointerGeometry.relativePointerDelta(
+            from: previousLocation,
+            to: location,
+            containerBounds: bounds,
+            videoSize: referenceVideoSize
+        ) else {
             return
         }
-        emit(.pointerMoved(x: deltaX, y: deltaY))
+        emit(.pointerMoved(x: Double(delta.width), y: Double(delta.height)))
     }
 
     @objc
     private func handleIndirectPointerPan(_ recognizer: UIPanGestureRecognizer) {
         let location = recognizer.location(in: self)
-        let translation = recognizer.translation(in: self)
-        recognizer.setTranslation(.zero, in: self)
 
         if recognizer.buttonMask.contains(.primary) || isPrimaryButtonHeld {
             switch recognizer.state {
@@ -368,24 +359,23 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
                     isPrimaryButtonHeld = true
                     emit(.pointerButton(button: .left, isPressed: true))
                 }
-                if let dragMoveEvent = ShadowClientIOSIndirectPointerInputPolicy.dragMoveEvent(
-                    translation: translation,
-                    isPrimaryButtonHeld: isPrimaryButtonHeld
-                ) {
-                    emit(dragMoveEvent)
-                }
+                emitAbsolutePointerPosition(at: location)
+                lastPrimaryDragLocation = location
             case .ended, .cancelled, .failed:
                 emitAbsolutePointerPosition(at: location)
                 if isPrimaryButtonHeld {
                     isPrimaryButtonHeld = false
                     emit(.pointerButton(button: .left, isPressed: false))
                 }
+                lastPrimaryDragLocation = nil
             default:
                 break
             }
             return
         }
 
+        let translation = recognizer.translation(in: self)
+        recognizer.setTranslation(.zero, in: self)
         let deltaX = Double(translation.x)
         let deltaY = Double(translation.y)
         guard deltaX != 0 || deltaY != 0 else {
@@ -440,10 +430,13 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
         case .changed:
             let location = recognizer.location(in: self)
             if let previousLocation = lastPrimaryDragLocation {
-                let deltaX = Double(location.x - previousLocation.x)
-                let deltaY = Double(location.y - previousLocation.y)
-                if deltaX != 0 || deltaY != 0 {
-                    emit(.pointerMoved(x: deltaX, y: deltaY))
+                if let delta = ShadowClientSessionPointerGeometry.relativePointerDelta(
+                    from: previousLocation,
+                    to: location,
+                    containerBounds: bounds,
+                    videoSize: referenceVideoSize
+                ) {
+                    emit(.pointerMoved(x: Double(delta.width), y: Double(delta.height)))
                 }
             }
             lastPrimaryDragLocation = location
