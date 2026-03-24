@@ -10,6 +10,14 @@ let signableTargetSettings: Settings = .settings(
     base: signableTargetBaseSettings
 )
 
+let layeredAppIconResources: ResourceFileElements = [
+    .folderReference(path: "shadow.icon"),
+]
+
+let layeredAppIconSettings: SettingsDictionary = [
+    "ASSETCATALOG_COMPILER_APPICON_NAME": "shadow",
+]
+
 let project = Project(
     name: "shadow-client",
     targets: [
@@ -127,6 +135,7 @@ let project = Project(
                     ],
                 ]
             ),
+            resources: layeredAppIconResources,
             buildableFolders: [
                 "Projects/App/iOS/Sources",
             ],
@@ -136,7 +145,9 @@ let project = Project(
             ],
             settings: .settings(
                 base: signableTargetBaseSettings.merging(
-                    ["INFOPLIST_KEY_CFBundleDisplayName": "Shadow"],
+                    [
+                        "INFOPLIST_KEY_CFBundleDisplayName": "Shadow",
+                    ].merging(layeredAppIconSettings, uniquingKeysWith: { _, new in new }),
                     uniquingKeysWith: { _, new in new }
                 )
             )
@@ -168,6 +179,7 @@ let project = Project(
                     ],
                 ]
             ),
+            resources: layeredAppIconResources,
             buildableFolders: [
                 "Projects/App/macOS/Sources",
             ],
@@ -177,7 +189,9 @@ let project = Project(
             ],
             settings: .settings(
                 base: signableTargetBaseSettings.merging(
-                    ["INFOPLIST_KEY_CFBundleDisplayName": "Shadow"],
+                    [
+                        "INFOPLIST_KEY_CFBundleDisplayName": "Shadow",
+                    ].merging(layeredAppIconSettings, uniquingKeysWith: { _, new in new }),
                     uniquingKeysWith: { _, new in new }
                 )
             )
