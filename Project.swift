@@ -2,10 +2,12 @@ import ProjectDescription
 
 let defaultDevelopmentTeam = "Q23JLSJCCV"
 
+let signableTargetBaseSettings: SettingsDictionary = [:]
+    .automaticCodeSigning(devTeam: defaultDevelopmentTeam)
+    .codeSignIdentityAppleDevelopment()
+
 let signableTargetSettings: Settings = .settings(
-    base: [:]
-        .automaticCodeSigning(devTeam: defaultDevelopmentTeam)
-        .codeSignIdentityAppleDevelopment()
+    base: signableTargetBaseSettings
 )
 
 let project = Project(
@@ -132,7 +134,12 @@ let project = Project(
                 .target(name: "ShadowClientFeatureHome"),
                 .target(name: "ShadowClientNativeAudioDecoding"),
             ],
-            settings: signableTargetSettings
+            settings: .settings(
+                base: signableTargetBaseSettings.merging(
+                    ["INFOPLIST_KEY_CFBundleDisplayName": "Shadow"],
+                    uniquingKeysWith: { _, new in new }
+                )
+            )
         ),
         .target(
             name: "ShadowClientmacOSApp",
@@ -142,6 +149,7 @@ let project = Project(
             deploymentTargets: .macOS("14.0"),
             infoPlist: .extendingDefault(
                 with: [
+                    "CFBundleDisplayName": "Shadow",
                     "NSLocalNetworkUsageDescription": "shadow-client discovers streaming hosts on your local network.",
                     "NSBonjourServices": [
                         "_nvstream._tcp",
@@ -167,7 +175,12 @@ let project = Project(
                 .target(name: "ShadowClientFeatureHome"),
                 .target(name: "ShadowClientNativeAudioDecoding"),
             ],
-            settings: signableTargetSettings
+            settings: .settings(
+                base: signableTargetBaseSettings.merging(
+                    ["INFOPLIST_KEY_CFBundleDisplayName": "Shadow"],
+                    uniquingKeysWith: { _, new in new }
+                )
+            )
         ),
         .target(
             name: "ShadowClienttvOSApp",
@@ -177,6 +190,7 @@ let project = Project(
             deploymentTargets: .tvOS("17.0"),
             infoPlist: .extendingDefault(
                 with: [
+                    "CFBundleDisplayName": "Shadow",
                     "UILaunchScreen": [
                         "UIColorName": "",
                         "UIImageName": "",
@@ -206,7 +220,12 @@ let project = Project(
                 .target(name: "ShadowClientFeatureHome"),
                 .target(name: "ShadowClientNativeAudioDecoding"),
             ],
-            settings: signableTargetSettings
+            settings: .settings(
+                base: signableTargetBaseSettings.merging(
+                    ["INFOPLIST_KEY_CFBundleDisplayName": "Shadow"],
+                    uniquingKeysWith: { _, new in new }
+                )
+            )
         ),
         .target(
             name: "ShadowClientTests",
