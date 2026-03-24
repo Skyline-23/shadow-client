@@ -11,6 +11,8 @@ func remoteSessionPresentationMapperMissingEndpoint() {
     #expect(model.launchTone == .idle)
     #expect(model.statusText.localizedCaseInsensitiveContains("launch desktop/game"))
     #expect(model.overlay?.symbol == "desktopcomputer")
+    #expect(model.blocksRemoteInteraction)
+    #expect(model.showsLoadingIndicator)
 }
 
 @Test("Remote session presentation mapper emits connecting state while launching")
@@ -23,6 +25,8 @@ func remoteSessionPresentationMapperLaunching() {
     #expect(model.launchTone == .launching)
     #expect(model.statusText.localizedCaseInsensitiveContains("connecting"))
     #expect(model.overlay?.symbol == "antenna.radiowaves.left.and.right")
+    #expect(model.blocksRemoteInteraction)
+    #expect(model.showsLoadingIndicator)
 }
 
 @Test("Remote session presentation mapper emits optimization state while relaunching an active session")
@@ -35,6 +39,8 @@ func remoteSessionPresentationMapperOptimizing() {
     #expect(model.launchTone == .launching)
     #expect(model.statusText.localizedCaseInsensitiveContains("optimizing"))
     #expect(model.overlay?.symbol == "arrow.trianglehead.2.clockwise.rotate.90")
+    #expect(model.blocksRemoteInteraction)
+    #expect(model.showsLoadingIndicator)
 }
 
 @Test("Remote session presentation mapper emits decoder wait state after launch")
@@ -47,6 +53,8 @@ func remoteSessionPresentationMapperLaunched() {
     #expect(model.launchTone == .launched)
     #expect(model.statusText.localizedCaseInsensitiveContains("native frame decoder"))
     #expect(model.overlay?.symbol == "hourglass")
+    #expect(model.blocksRemoteInteraction)
+    #expect(model.showsLoadingIndicator)
 }
 
 @Test("Remote session presentation mapper hides overlay once native rendering is live")
@@ -60,6 +68,8 @@ func remoteSessionPresentationMapperRenderingLive() {
     #expect(model.launchTone == .launched)
     #expect(model.statusText.localizedCaseInsensitiveContains("live"))
     #expect(model.overlay == nil)
+    #expect(!model.blocksRemoteInteraction)
+    #expect(!model.showsLoadingIndicator)
 }
 
 @Test("Remote session presentation mapper emits disconnected state when render transport drops")
@@ -74,6 +84,8 @@ func remoteSessionPresentationMapperDisconnected() {
     #expect(model.statusText.localizedCaseInsensitiveContains("disconnected"))
     #expect(model.statusText.localizedCaseInsensitiveContains("connection reset by peer"))
     #expect(model.overlay?.symbol == "wifi.slash")
+    #expect(model.blocksRemoteInteraction)
+    #expect(!model.showsLoadingIndicator)
 }
 
 @Test("Remote session presentation mapper preserves launch failure reason")
@@ -86,4 +98,6 @@ func remoteSessionPresentationMapperFailure() {
     #expect(model.launchTone == .failed)
     #expect(model.statusText == "transport failed")
     #expect(model.overlay?.symbol == "exclamationmark.triangle")
+    #expect(model.blocksRemoteInteraction)
+    #expect(!model.showsLoadingIndicator)
 }

@@ -8,8 +8,9 @@ import GameController
 
 extension ShadowClientAppShellView {
     @ViewBuilder
-var remoteSessionFlowView: some View {
+    var remoteSessionFlowView: some View {
         if remoteDesktopRuntime.activeSession != nil {
+            let presentationModel = sessionPresentationModel
             ZStack {
                 Color.black
 
@@ -21,21 +22,23 @@ var remoteSessionFlowView: some View {
                     .accessibilityIdentifier("shadow.remote.session.surface")
                     .accessibilityLabel("Remote Session Surface")
 
-                    if let overlay = sessionPresentationModel.overlay {
+                    if let overlay = presentationModel.overlay {
                         ZStack {
                             Color.black
-                                .opacity(ShadowClientRemoteSessionOverlayPresentationKit.dimOpacity(for: sessionPresentationModel.launchTone))
+                                .opacity(ShadowClientRemoteSessionOverlayPresentationKit.dimOpacity(for: presentationModel.launchTone))
                                 .ignoresSafeArea()
 
                             playbackOverlayLabel(
                                 overlay.title,
                                 symbol: overlay.symbol,
-                                tone: sessionPresentationModel.launchTone
+                                tone: presentationModel.launchTone,
+                                showsLoadingIndicator: presentationModel.showsLoadingIndicator
                             )
                             .padding(.horizontal, 20)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .allowsHitTesting(false)
+                        .contentShape(Rectangle())
+                        .allowsHitTesting(presentationModel.blocksRemoteInteraction)
                     }
 
                     if let hudDisplayState = realtimeSessionHUDDisplayState {
@@ -90,6 +93,7 @@ var remoteSessionFlowView: some View {
                     } onPasteClipboardCommand: {
                         pasteLocalClipboardIntoRemoteSession()
                     }
+                    .allowsHitTesting(!presentationModel.blocksRemoteInteraction)
                     .padding(remoteSessionSafeAreaInsets)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.clear)
@@ -338,10 +342,11 @@ func rowSurface(cornerRadius: CGFloat) -> some View {
             )
     }
 
-func playbackOverlayLabel(
+    func playbackOverlayLabel(
         _ title: String,
         symbol: String,
-        tone: ShadowClientRemoteSessionLaunchTone
+        tone: ShadowClientRemoteSessionLaunchTone,
+        showsLoadingIndicator: Bool
     ) -> some View {
         let style = ShadowClientRemoteSessionOverlayPresentationKit.overlayStyle(for: tone)
         let overlayWidth = isCompactLayout ? 250.0 : 320.0
@@ -356,7 +361,8 @@ func playbackOverlayLabel(
             backgroundOpacity: style.backgroundOpacity,
             strokeOpacity: style.strokeOpacity,
             width: overlayWidth,
-            animatesSymbol: animatesSymbol
+            animatesSymbol: animatesSymbol,
+            showsActivityIndicator: showsLoadingIndicator
         )
     }
 

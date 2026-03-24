@@ -145,6 +145,8 @@ extension ShadowClientAppShellView {
 
     @MainActor
     func disconnectFromHost() {
+        let disconnectingHost = connectionState.host ?? normalizedConnectionHost
+        connectionState = .disconnecting(host: disconnectingHost)
         Task {
             let state = await baseDependencies.connectionRuntime.disconnect()
             await MainActor.run {

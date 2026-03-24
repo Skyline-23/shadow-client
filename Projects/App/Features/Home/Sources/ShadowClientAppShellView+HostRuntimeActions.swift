@@ -256,8 +256,6 @@ extension ShadowClientAppShellView {
             return
         }
 
-        refreshRemoteDesktopCatalog(force: true)
-
         let normalizedTargetHost = host.lowercased()
         let alreadyConnectedToTarget: Bool = {
             guard case let .connected(connectedHost) = connectionState else {
@@ -276,6 +274,9 @@ extension ShadowClientAppShellView {
             }
             return
         }
+
+        connectionState = .connecting(host: host)
+        refreshRemoteDesktopCatalog(force: true)
 
         Task {
             let state = await baseDependencies.connectionRuntime.connect(to: host)

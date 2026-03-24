@@ -122,6 +122,29 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
         ZStack {
             backgroundGradient
             rootContentView
+
+            if let overlay = appBlockingOverlayModel {
+                ZStack {
+                    Color.black
+                        .opacity(0.38)
+                        .ignoresSafeArea()
+
+                    ShadowUIRemoteSessionOverlayBadge(
+                        title: overlay.title,
+                        symbol: overlay.symbol,
+                        textColor: Color.white.opacity(0.92),
+                        backgroundOpacity: 0.56,
+                        strokeOpacity: 0.26,
+                        width: horizontalSizeClass == .compact ? 260 : 320,
+                        animatesSymbol: false,
+                        showsActivityIndicator: true
+                    )
+                    .padding(.horizontal, 20)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .accessibilityIdentifier("shadow.app.blocking-overlay")
+            }
         }
         .background(
             GeometryReader { geometry in

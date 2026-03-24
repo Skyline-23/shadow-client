@@ -5,6 +5,11 @@ import ShadowClientFeatureConnection
 import ShadowClientFeatureSession
 
 extension ShadowClientAppShellView {
+    struct AppBlockingOverlayModel: Equatable {
+        let title: String
+        let symbol: String
+    }
+
     var currentSettings: ShadowClientAppSettings {
         ShadowClientSettingsSelectionKit.makeSettings(
             .init(
@@ -109,6 +114,45 @@ extension ShadowClientAppShellView {
             launchState: remoteDesktopRuntime.launchState,
             renderState: sessionSurfaceContext.renderState
         )
+    }
+
+    var appBlockingOverlayModel: AppBlockingOverlayModel? {
+        guard remoteDesktopRuntime.activeSession == nil else {
+            return nil
+        }
+
+        switch connectionState {
+        case let .connecting(host):
+            return .init(
+                title: "Connecting to \(host)...",
+                symbol: "antenna.radiowaves.left.and.right"
+            )
+        case let .disconnecting(host):
+            let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = trimmedHost.isEmpty ? "Disconnecting from host..." : "Disconnecting from \(trimmedHost)..."
+            return .init(
+                title: title,
+                symbol: "bolt.horizontal.circle"
+            )
+        case .connected, .disconnected, .failed:
+            break
+        }
+
+        switch remoteDesktopRuntime.launchState {
+        case .idle, .launched, .failed:
+            return nil
+        case .launching:
+            return .init(
+                title: "Starting remote desktop stream...",
+                symbol: "play.circle"
+            )
+        case let .optimizing(message):
+            let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            return .init(
+                title: trimmedMessage.isEmpty ? "Optimizing stream settings..." : trimmedMessage,
+                symbol: "arrow.trianglehead.2.clockwise.rotate.90"
+            )
+        }
     }
 
     var normalizedConnectionHost: String {

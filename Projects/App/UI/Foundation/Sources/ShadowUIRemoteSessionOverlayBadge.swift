@@ -8,6 +8,7 @@ public struct ShadowUIRemoteSessionOverlayBadge: View {
     private let strokeOpacity: Double
     private let width: CGFloat
     private let animatesSymbol: Bool
+    private let showsActivityIndicator: Bool
 
     @State private var isAnimating = false
 
@@ -18,7 +19,8 @@ public struct ShadowUIRemoteSessionOverlayBadge: View {
         backgroundOpacity: Double,
         strokeOpacity: Double,
         width: CGFloat,
-        animatesSymbol: Bool
+        animatesSymbol: Bool,
+        showsActivityIndicator: Bool = false
     ) {
         self.title = title
         self.symbol = symbol
@@ -27,21 +29,31 @@ public struct ShadowUIRemoteSessionOverlayBadge: View {
         self.strokeOpacity = strokeOpacity
         self.width = width
         self.animatesSymbol = animatesSymbol
+        self.showsActivityIndicator = showsActivityIndicator
     }
 
     public var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: symbol)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(textColor)
-                .rotationEffect(.degrees(animatesSymbol && isAnimating ? 360 : 0))
-                .animation(
-                    animatesSymbol
-                        ? .linear(duration: 1.1).repeatForever(autoreverses: false)
-                        : .default,
-                    value: isAnimating
-                )
-                .frame(width: 24, height: 24)
+            if showsActivityIndicator {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .tint(textColor)
+                    .controlSize(.regular)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
+            } else {
+                Image(systemName: symbol)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(textColor)
+                    .rotationEffect(.degrees(animatesSymbol && isAnimating ? 360 : 0))
+                    .animation(
+                        animatesSymbol
+                            ? .linear(duration: 1.1).repeatForever(autoreverses: false)
+                            : .default,
+                        value: isAnimating
+                    )
+                    .frame(width: 24, height: 24)
+            }
 
             Text(title)
                 .font(.callout.weight(.semibold))
@@ -69,7 +81,7 @@ public struct ShadowUIRemoteSessionOverlayBadge: View {
         .shadow(color: Color.black.opacity(0.22), radius: 18, x: 0, y: 10)
         .padding(.horizontal, 24)
         .onAppear {
-            guard animatesSymbol else {
+            guard animatesSymbol, !showsActivityIndicator else {
                 return
             }
             isAnimating = true

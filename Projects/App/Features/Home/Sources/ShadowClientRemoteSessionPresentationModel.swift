@@ -22,15 +22,21 @@ public struct ShadowClientRemoteSessionPresentationModel: Equatable, Sendable {
     public let statusText: String
     public let overlay: ShadowClientRemoteSessionOverlayModel?
     public let launchTone: ShadowClientRemoteSessionLaunchTone
+    public let blocksRemoteInteraction: Bool
+    public let showsLoadingIndicator: Bool
 
     public init(
         statusText: String,
         overlay: ShadowClientRemoteSessionOverlayModel?,
-        launchTone: ShadowClientRemoteSessionLaunchTone
+        launchTone: ShadowClientRemoteSessionLaunchTone,
+        blocksRemoteInteraction: Bool,
+        showsLoadingIndicator: Bool
     ) {
         self.statusText = statusText
         self.overlay = overlay
         self.launchTone = launchTone
+        self.blocksRemoteInteraction = blocksRemoteInteraction
+        self.showsLoadingIndicator = showsLoadingIndicator
     }
 }
 
@@ -60,7 +66,9 @@ public enum ShadowClientRemoteSessionPresentationKit {
                     title: "Waiting for remote desktop stream...",
                     symbol: "desktopcomputer"
                 ),
-                launchTone: .idle
+                launchTone: .idle,
+                blocksRemoteInteraction: true,
+                showsLoadingIndicator: true
             )
         }
 
@@ -72,7 +80,9 @@ public enum ShadowClientRemoteSessionPresentationKit {
                     title: "Remote session disconnected. Reconnect to resume input/output.",
                     symbol: "wifi.slash"
                 ),
-                launchTone: .failed
+                launchTone: .failed,
+                blocksRemoteInteraction: true,
+                showsLoadingIndicator: false
             )
         case let .failed(message):
             return .init(
@@ -81,7 +91,9 @@ public enum ShadowClientRemoteSessionPresentationKit {
                     title: "Native decoder failed. Check stream codec/session state.",
                     symbol: "exclamationmark.triangle"
                 ),
-                launchTone: .failed
+                launchTone: .failed,
+                blocksRemoteInteraction: true,
+                showsLoadingIndicator: false
             )
         case .idle, .connecting, .waitingForFirstFrame, .rendering:
             break
@@ -95,7 +107,9 @@ public enum ShadowClientRemoteSessionPresentationKit {
                     title: "Connecting to remote desktop stream...",
                     symbol: "antenna.radiowaves.left.and.right"
                 ),
-                launchTone: .idle
+                launchTone: .idle,
+                blocksRemoteInteraction: true,
+                showsLoadingIndicator: true
             )
         case .launching:
             return .init(
@@ -104,7 +118,9 @@ public enum ShadowClientRemoteSessionPresentationKit {
                     title: "Connecting to remote desktop stream...",
                     symbol: "antenna.radiowaves.left.and.right"
                 ),
-                launchTone: .launching
+                launchTone: .launching,
+                blocksRemoteInteraction: true,
+                showsLoadingIndicator: true
             )
         case let .optimizing(message):
             return .init(
@@ -113,7 +129,9 @@ public enum ShadowClientRemoteSessionPresentationKit {
                     title: "Optimizing display for the current window...",
                     symbol: "arrow.trianglehead.2.clockwise.rotate.90"
                 ),
-                launchTone: .launching
+                launchTone: .launching,
+                blocksRemoteInteraction: true,
+                showsLoadingIndicator: true
             )
         case .launched:
             switch renderState {
@@ -121,7 +139,9 @@ public enum ShadowClientRemoteSessionPresentationKit {
                 return .init(
                     statusText: "Remote desktop session is live. Input and output are active.",
                     overlay: nil,
-                    launchTone: .launched
+                    launchTone: .launched,
+                    blocksRemoteInteraction: false,
+                    showsLoadingIndicator: false
                 )
             case .connecting:
                 return .init(
@@ -130,7 +150,9 @@ public enum ShadowClientRemoteSessionPresentationKit {
                         title: "Connecting to remote desktop stream...",
                         symbol: "antenna.radiowaves.left.and.right"
                     ),
-                    launchTone: .launching
+                    launchTone: .launching,
+                    blocksRemoteInteraction: true,
+                    showsLoadingIndicator: true
                 )
             case .disconnected, .failed:
                 break
@@ -143,7 +165,9 @@ public enum ShadowClientRemoteSessionPresentationKit {
                     title: "Waiting for native frame decoder...",
                     symbol: "hourglass"
                 ),
-                launchTone: .launched
+                launchTone: .launched,
+                blocksRemoteInteraction: true,
+                showsLoadingIndicator: true
             )
         case let .failed(message):
             return .init(
@@ -152,7 +176,9 @@ public enum ShadowClientRemoteSessionPresentationKit {
                     title: "Remote desktop stream failed to start.",
                     symbol: "exclamationmark.triangle"
                 ),
-                launchTone: .failed
+                launchTone: .failed,
+                blocksRemoteInteraction: true,
+                showsLoadingIndicator: false
             )
         }
     }
