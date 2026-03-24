@@ -3778,6 +3778,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return [.h265, .h264]
         case .h264:
             return [.h264]
+        case .prores:
+            return [.prores]
         }
     }
 
@@ -3852,6 +3854,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return supportsHEVC ? .h265 : .h264
         case .h264:
             return .h264
+        case .prores:
+            return .prores
         }
     }
 
@@ -3996,7 +4000,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         persistentFallback: ShadowClientVideoCodecPreference?
     ) -> (settings: ShadowClientGameStreamLaunchSettings, remainingFallback: ShadowClientVideoCodecPreference?) {
         switch settings.preferredCodec {
-        case .h264, .h265:
+        case .h264, .h265, .prores:
             return (settings, nil)
         case .auto, .av1:
             if let fallback = persistentFallback {
@@ -4080,6 +4084,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return negotiatedCodec == .h265
         case .h264:
             return negotiatedCodec == .h264
+        case .prores:
+            return negotiatedCodec == .prores
         }
     }
 

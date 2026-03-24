@@ -121,6 +121,8 @@ enum ShadowClientRTSPAnnounceProfile {
     static let bitStreamFormatH264 = "0"
     static let bitStreamFormatH265 = "1"
     static let bitStreamFormatAV1 = "2"
+    // Shadow-only experimental placeholder until a custom host lane is implemented.
+    static let bitStreamFormatProRes = "3"
 
     static let hevcSupportDisabled = "0"
     static let hevcSupportEnabled = "1"
@@ -186,6 +188,8 @@ enum ShadowClientRTSPAnnounceProfile {
             return bitStreamFormatH265
         case .av1:
             return bitStreamFormatAV1
+        case .prores:
+            return bitStreamFormatProRes
         }
     }
 
@@ -195,6 +199,8 @@ enum ShadowClientRTSPAnnounceProfile {
             return hevcSupportDisabled
         case .h265, .av1:
             return hevcSupportEnabled
+        case .prores:
+            return hevcSupportDisabled
         }
     }
 

@@ -25,6 +25,8 @@ enum ShadowClientSessionControlPresentationKit {
             return "H.265"
         case .h264:
             return "H.264"
+        case .prores:
+            return "ProRes (Experimental)"
         }
     }
 
@@ -36,6 +38,8 @@ enum ShadowClientSessionControlPresentationKit {
             return "H.265"
         case .h264:
             return "H.264"
+        case .prores:
+            return "ProRes"
         }
     }
 

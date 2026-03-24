@@ -366,6 +366,8 @@ public actor ShadowClientVideoToolboxDecoder {
                 invalidateDecoderSessionForReconfiguration()
             }
             samplePayload = annexBAccessUnit
+        case .prores:
+            throw ShadowClientVideoToolboxDecoderError.unsupportedCodec
         }
 
         try ensureDecoderSession(codec: newCodec, onFrame: onFrame)
@@ -961,6 +963,8 @@ public actor ShadowClientVideoToolboxDecoder {
             return hdrEnabled
                 ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
                 : kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        case .prores:
+            return kCVPixelFormatType_422YpCbCr10
         }
     }
 
@@ -1053,6 +1057,8 @@ public actor ShadowClientVideoToolboxDecoder {
                 throw ShadowClientVideoToolboxDecoderError.cannotCreateFormatDescription(status)
             }
             return formatDescription
+        case .prores:
+            throw ShadowClientVideoToolboxDecoderError.unsupportedCodec
         }
     }
 
@@ -1425,7 +1431,7 @@ public actor ShadowClientVideoToolboxDecoder {
             default:
                 return .sample
             }
-        case .av1:
+        case .av1, .prores:
             return .sample
         }
     }
@@ -1449,7 +1455,7 @@ public actor ShadowClientVideoToolboxDecoder {
                 return [h265VPS, h265SPS, h265PPS]
             }
             return []
-        case .av1:
+        case .av1, .prores:
             return []
         }
     }

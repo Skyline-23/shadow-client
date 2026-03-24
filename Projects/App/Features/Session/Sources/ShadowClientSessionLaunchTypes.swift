@@ -39,6 +39,7 @@ public enum ShadowClientVideoCodecPreference: String, CaseIterable, Equatable, S
     case av1
     case h265
     case h264
+    case prores
 
     public var launchParameterValue: String? {
         switch self {
@@ -50,6 +51,17 @@ public enum ShadowClientVideoCodecPreference: String, CaseIterable, Equatable, S
             return "hevc"
         case .h264:
             return "h264"
+        case .prores:
+            return "prores"
+        }
+    }
+
+    public var requiresCustomHostSupport: Bool {
+        switch self {
+        case .prores:
+            return true
+        case .auto, .av1, .h265, .h264:
+            return false
         }
     }
 }

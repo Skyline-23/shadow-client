@@ -965,6 +965,8 @@ actor ShadowClientRTSPInterleavedClient {
             return .h265
         case .h264:
             return .h264
+        case .prores:
+            return .prores
         }
     }
 
@@ -1301,6 +1303,8 @@ actor ShadowClientRTSPInterleavedClient {
             codec = .h265
         case .h264:
             codec = .h264
+        case .prores:
+            codec = .prores
         case .auto:
             codec = inferFallbackCodec(fromDescribeSDP: describeSDP)
         }

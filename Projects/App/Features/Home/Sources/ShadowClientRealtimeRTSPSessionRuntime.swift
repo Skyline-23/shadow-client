@@ -2346,7 +2346,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         case .h264, .h265:
             // H264/H265 tolerate trailing zero padding and the Apollo host doesn't guarantee valid lastPayloadLength.
             return .passthroughForAnnexBCodecs
-        case .av1:
+        case .av1, .prores:
             return .trimUsingLastPacketLength
         }
     }

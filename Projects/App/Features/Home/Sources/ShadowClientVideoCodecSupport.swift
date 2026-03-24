@@ -39,7 +39,7 @@ public struct ShadowClientVideoCodecSupport: Sendable {
             return av1Supported ? .auto : nonAV1Fallback
         case .av1:
             return av1Supported ? .av1 : nonAV1Fallback
-        case .h265, .h264:
+        case .h265, .h264, .prores:
             return preferredCodec
         }
     }

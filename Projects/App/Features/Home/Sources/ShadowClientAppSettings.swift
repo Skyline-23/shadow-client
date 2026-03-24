@@ -417,6 +417,8 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             codecMultiplier = 0.95
         case .h264:
             codecMultiplier = 1.08
+        case .prores:
+            codecMultiplier = 1.65
         }
         bitrate *= codecMultiplier
 

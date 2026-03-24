@@ -4,6 +4,7 @@ public enum ShadowClientVideoCodec: String, Codable, Equatable, Sendable {
     case h264
     case h265
     case av1
+    case prores
 }
 
 public struct ShadowClientRTSPVideoTrackDescriptor: Equatable, Sendable {
@@ -578,6 +579,8 @@ public enum ShadowClientRTSPSessionDescriptionParser {
             return (payloadType, .h265)
         case "av1":
             return (payloadType, .av1)
+        case "prores", "apcn", "apch", "apcs", "apco", "ap4h", "ap4x":
+            return (payloadType, .prores)
         default:
             return nil
         }
@@ -647,6 +650,8 @@ public enum ShadowClientRTSPSessionDescriptionParser {
                     codec = .h265
                 case 2:
                     codec = .av1
+                case 3:
+                    codec = .prores
                 default:
                     break
                 }
@@ -901,6 +906,8 @@ public enum ShadowClientRTSPSessionDescriptionParser {
                 }
             }
             return records
+        case .prores:
+            return []
         }
     }
 
@@ -966,6 +973,9 @@ public enum ShadowClientRTSPSessionDescriptionParser {
         }
         if fmtp["profile"] != nil || fmtp["level-idx"] != nil {
             return .av1
+        }
+        if fmtp["sampling"] != nil && fmtp["depth"] != nil {
+            return .prores
         }
         return nil
     }

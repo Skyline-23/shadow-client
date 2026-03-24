@@ -1457,7 +1457,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             return resolved != .av1
         case .auto:
             return resolved != .auto
-        case .h265, .h264:
+        case .h265, .h264, .prores:
             return false
         }
     }

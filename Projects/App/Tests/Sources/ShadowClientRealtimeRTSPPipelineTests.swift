@@ -79,6 +79,31 @@ func rtspSdpParserExtractsAV1Track() throws {
     #expect(track.parameterSets.isEmpty)
 }
 
+@Test("RTSP SDP parser recognizes ProRes rtpmap")
+func rtspSdpParserExtractsProResTrack() throws {
+    let sdp = """
+    v=0
+    o=- 0 0 IN IP4 127.0.0.1
+    s=No Name
+    t=0 0
+    a=control:*
+    m=video 0 RTP/AVP 110
+    a=rtpmap:110 ProRes/90000
+    a=fmtp:110 sampling=YCbCr-4:2:2;depth=10;colorimetry=BT709
+    a=control:streamid=video
+    """
+
+    let track = try ShadowClientRTSPSessionDescriptionParser.parseVideoTrack(
+        sdp: sdp,
+        contentBase: "rtsp://example-pc.local:48010/",
+        fallbackSessionURL: "rtsp://example-pc.local:48010"
+    )
+
+    #expect(track.rtpPayloadType == 110)
+    #expect(track.codec == .prores)
+    #expect(track.parameterSets.isEmpty)
+}
+
 @Test("RTSP SDP parser infers video track when Apollo-style DESCRIBE omits media section")
 func rtspSdpParserHandlesDescribeWithoutMediaSection() throws {
     let sdp = """
@@ -101,6 +126,25 @@ func rtspSdpParserHandlesDescribeWithoutMediaSection() throws {
     #expect(track.codec == .av1)
     #expect(track.parameterSets.count == 1)
     #expect(track.parameterSets[0] == Data([0x00, 0x00, 0x00, 0x01]))
+}
+
+@Test("RTSP SDP parser recognizes shadow experimental ProRes host hint")
+func rtspSdpParserRecognizesShadowExperimentalProResHostHint() throws {
+    let sdp = """
+    a=x-nv-video[0].payloadType:110
+    a=x-nv-vqos[0].bitStreamFormat:3
+    a=control:streamid=video
+    """
+
+    let track = try ShadowClientRTSPSessionDescriptionParser.parseVideoTrack(
+        sdp: sdp,
+        contentBase: "rtsp://example-pc.local:48010/",
+        fallbackSessionURL: "rtsp://example-pc.local:48010"
+    )
+
+    #expect(track.rtpPayloadType == 110)
+    #expect(track.codec == .prores)
+    #expect(track.controlURL == "rtsp://example-pc.local:48010/streamid=video")
 }
 
 @Test("RTSP SDP parser infers HEVC track from bare parameter-set line without media section")

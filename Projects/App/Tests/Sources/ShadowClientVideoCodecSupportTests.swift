@@ -41,6 +41,15 @@ func videoCodecSupportKeepsExplicitSelections() {
     #expect(support.resolvePreferredCodec(.h265) == .h265)
 }
 
+@Test("Codec support keeps explicit ProRes selection")
+func videoCodecSupportKeepsExplicitProResSelection() {
+    let support = ShadowClientVideoCodecSupport { _ in
+        false
+    }
+
+    #expect(support.resolvePreferredCodec(.prores) == .prores)
+}
+
 @Test("Codec support keeps AV1 when HDR is enabled and AV1 hardware decode is available")
 func videoCodecSupportKeepsAV1WhenHDREnabled() {
     let support = ShadowClientVideoCodecSupport { codecType in

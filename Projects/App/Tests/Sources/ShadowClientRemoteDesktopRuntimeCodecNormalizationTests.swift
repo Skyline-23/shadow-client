@@ -57,3 +57,22 @@ func remoteDesktopRuntimeKeepsAutoWhenHostCodecSupportIsUnknown() {
 
     #expect(normalized.preferredCodec == .auto || normalized.preferredCodec == .h265)
 }
+
+@Test("Remote desktop runtime preserves experimental ProRes selection during codec normalization")
+func remoteDesktopRuntimePreservesExperimentalProResSelection() {
+    let normalized = ShadowClientRemoteDesktopRuntime.normalizeCodecLaunchSettings(
+        .init(
+            width: 1920,
+            height: 1080,
+            fps: 60,
+            bitrateKbps: 15_000,
+            preferredCodec: .prores,
+            enableHDR: false,
+            enableSurroundAudio: false,
+            lowLatencyMode: false
+        ),
+        serverCodecModeSupport: ShadowClientServerCodecModeSupport.hevc
+    )
+
+    #expect(normalized.preferredCodec == .prores)
+}
