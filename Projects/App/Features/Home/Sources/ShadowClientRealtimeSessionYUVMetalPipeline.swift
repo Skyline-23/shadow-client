@@ -404,17 +404,10 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         let gamutRows = appliesGamutTransform
             ? Constants.rec2020ToDisplayP3
             : Constants.identity3x3
-        let hdrReferenceWhiteScale: Float
-        switch transferFunction {
-        case .pq:
-            // ST 2084 PQ is absolute (normalized to 10,000 nits). EDR uses 1.0 as SDR white,
-            // so 100 nit reference white maps back to 1.0 in linear EDR space.
-            hdrReferenceWhiteScale = 100.0
-        case .hlg:
-            hdrReferenceWhiteScale = 1.0
-        case .linear:
-            hdrReferenceWhiteScale = 1.0
-        }
+        let hdrReferenceWhiteScale = hdrReferenceWhiteScale(
+            for: pixelBuffer,
+            transferFunction: transferFunction
+        )
 
         return .init(
             transferFunction: transferFunction,
@@ -438,6 +431,81 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         _ = outputColorSpace
         _ = prefersExtendedDynamicRange
         return ShadowClientRealtimeSessionColorPipeline.matrixStandard(for: pixelBuffer)
+    }
+
+    private static func hdrReferenceWhiteScale(
+        for pixelBuffer: CVPixelBuffer,
+        transferFunction: TransferFunctionKind
+    ) -> Float {
+        switch transferFunction {
+        case .pq:
+            // PQ EOTF returns absolute luminance normalized to 10,000 nits.
+            // EDR treats 1.0 as SDR reference white (100 nits), so source headroom
+            // should come from negotiated/frame HDR metadata rather than a fixed 100x scale.
+            if let metadataHeadroom = hdrMetadataHeadroom(for: pixelBuffer) {
+                return metadataHeadroom
+            }
+            return 100.0
+        case .hlg:
+            return 1.0
+        case .linear:
+            return 1.0
+        }
+    }
+
+    private static func hdrMetadataHeadroom(
+        for pixelBuffer: CVPixelBuffer
+    ) -> Float? {
+        let masteringDisplayNits = masteringDisplayMaxLuminance(for: pixelBuffer)
+        let contentLightNits = contentLightMaxLuminance(for: pixelBuffer)
+        let frameAverageNits = frameAverageLightLuminance(for: pixelBuffer)
+        let peakNits = max(masteringDisplayNits, contentLightNits, frameAverageNits)
+        guard peakNits > 0 else {
+            return nil
+        }
+        return max(peakNits / 100.0, 1.0)
+    }
+
+    private static func masteringDisplayMaxLuminance(
+        for pixelBuffer: CVPixelBuffer
+    ) -> Float {
+        guard let data = staticAttachmentDataValue(
+            forKey: kCVImageBufferMasteringDisplayColorVolumeKey,
+            pixelBuffer: pixelBuffer
+        ),
+        data.count == 24
+        else {
+            return 0
+        }
+        return Float(readUInt32BE(data, at: 16))
+    }
+
+    private static func contentLightMaxLuminance(
+        for pixelBuffer: CVPixelBuffer
+    ) -> Float {
+        guard let data = staticAttachmentDataValue(
+            forKey: kCVImageBufferContentLightLevelInfoKey,
+            pixelBuffer: pixelBuffer
+        ),
+        data.count == 4
+        else {
+            return 0
+        }
+        return Float(readUInt16BE(data, at: 0))
+    }
+
+    private static func frameAverageLightLuminance(
+        for pixelBuffer: CVPixelBuffer
+    ) -> Float {
+        guard let data = staticAttachmentDataValue(
+            forKey: kCVImageBufferContentLightLevelInfoKey,
+            pixelBuffer: pixelBuffer
+        ),
+        data.count == 4
+        else {
+            return 0
+        }
+        return Float(readUInt16BE(data, at: 2))
     }
 
     private func logDiagnosticsIfNeeded(
@@ -533,15 +601,15 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         var primaries: [String] = []
         primaries.reserveCapacity(3)
         for _ in 0 ..< 3 {
-            let x = readUInt16BE(data, at: offset)
-            let y = readUInt16BE(data, at: offset + 2)
+            let x = Self.readUInt16BE(data, at: offset)
+            let y = Self.readUInt16BE(data, at: offset + 2)
             primaries.append("[\(x),\(y)]")
             offset += 4
         }
-        let whitePointX = readUInt16BE(data, at: offset)
-        let whitePointY = readUInt16BE(data, at: offset + 2)
-        let maxDisplayLuminance = readUInt32BE(data, at: offset + 4)
-        let minDisplayLuminance = readUInt32BE(data, at: offset + 8)
+        let whitePointX = Self.readUInt16BE(data, at: offset)
+        let whitePointY = Self.readUInt16BE(data, at: offset + 2)
+        let maxDisplayLuminance = Self.readUInt32BE(data, at: offset + 4)
+        let minDisplayLuminance = Self.readUInt32BE(data, at: offset + 8)
         return "primaries=\(primaries.joined(separator: ",")) white-point=[\(whitePointX),\(whitePointY)] max-display=\(maxDisplayLuminance) min-display=\(minDisplayLuminance)"
     }
 
@@ -557,12 +625,19 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         guard data.count == 4 else {
             return "invalid-bytes=\(data.count)"
         }
-        let maxContentLightLevel = readUInt16BE(data, at: 0)
-        let maxFrameAverageLightLevel = readUInt16BE(data, at: 2)
+        let maxContentLightLevel = Self.readUInt16BE(data, at: 0)
+        let maxFrameAverageLightLevel = Self.readUInt16BE(data, at: 2)
         return "max-cll=\(maxContentLightLevel) max-fall=\(maxFrameAverageLightLevel)"
     }
 
     private func attachmentDataValue(
+        forKey key: CFString,
+        pixelBuffer: CVPixelBuffer
+    ) -> Data? {
+        Self.staticAttachmentDataValue(forKey: key, pixelBuffer: pixelBuffer)
+    }
+
+    private static func staticAttachmentDataValue(
         forKey key: CFString,
         pixelBuffer: CVPixelBuffer
     ) -> Data? {
@@ -572,13 +647,13 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         )
     }
 
-    private func readUInt16BE(_ data: Data, at offset: Int) -> UInt16 {
+    private static func readUInt16BE(_ data: Data, at offset: Int) -> UInt16 {
         let b0 = UInt16(data[offset]) << 8
         let b1 = UInt16(data[offset + 1])
         return b0 | b1
     }
 
-    private func readUInt32BE(_ data: Data, at offset: Int) -> UInt32 {
+    private static func readUInt32BE(_ data: Data, at offset: Int) -> UInt32 {
         let b0 = UInt32(data[offset]) << 24
         let b1 = UInt32(data[offset + 1]) << 16
         let b2 = UInt32(data[offset + 2]) << 8

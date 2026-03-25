@@ -136,7 +136,8 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         let colorConfiguration = pixelBuffer.map {
             ShadowClientRealtimeSessionColorPipeline.configuration(
                 for: $0,
-                allowExtendedDynamicRange: surfaceContext.activeDynamicRangeMode == .hdr
+                allowExtendedDynamicRange: surfaceContext.activeDynamicRangeMode == .hdr,
+                negotiatedHDRMetadata: surfaceContext.activeHDRMetadata
             )
         }
         let renderTargetConfiguration = colorConfiguration.map { colorConfiguration in
