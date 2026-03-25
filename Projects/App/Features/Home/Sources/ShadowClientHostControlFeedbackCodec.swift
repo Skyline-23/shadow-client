@@ -33,6 +33,18 @@ public struct ShadowClientHDRMetadata: Equatable, Sendable {
         return "primaries=\(primariesSummary) white-point=[\(whitePoint.x),\(whitePoint.y)] max-display=\(maxDisplayLuminance) min-display=\(minDisplayLuminance) max-cll=\(maxContentLightLevel) max-fall=\(maxFrameAverageLightLevel) max-ffl=\(maxFullFrameLuminance)"
     }
 
+    var hasHDR10DisplayInfo: Bool {
+        !(displayPrimaries.allSatisfy { $0.x == 0 && $0.y == 0 } &&
+            whitePoint.x == 0 &&
+            whitePoint.y == 0 &&
+            maxDisplayLuminance == 0 &&
+            minDisplayLuminance == 0)
+    }
+
+    var hasHDR10ContentInfo: Bool {
+        maxContentLightLevel != 0 || maxFrameAverageLightLevel != 0
+    }
+
     var hdr10DisplayInfoData: Data {
         var data = Data()
         data.reserveCapacity(24)

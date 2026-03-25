@@ -153,6 +153,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             let didResetDrawablePool = applyColorConfiguration(
                 colorConfiguration,
                 renderTargetConfiguration,
+                pixelBuffer: pixelBuffer,
                 signature: renderTargetSignature,
                 to: view,
                 supportsExtendedDynamicRange: supportsExtendedDynamicRangeDisplay(for: view)
@@ -222,6 +223,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private func applyColorConfiguration(
         _ colorConfiguration: ShadowClientRealtimeSessionColorConfiguration,
         _ renderTargetConfiguration: ShadowClientSurfaceRenderTargetConfiguration,
+        pixelBuffer: CVPixelBuffer?,
         signature: RenderTargetSignature,
         to view: MTKView,
         supportsExtendedDynamicRange _: Bool
@@ -251,10 +253,14 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             }
             metalLayer.colorspace = renderTargetConfiguration.outputColorSpace
             metalLayer.wantsExtendedDynamicRangeContent = renderTargetConfiguration.prefersExtendedDynamicRange
+            let appliedHDRMetadata = ShadowClientSurfaceColorSpaceKit.renderedFrameHDRMetadata(
+                colorConfiguration: colorConfiguration,
+                pixelBuffer: pixelBuffer
+            )
             metalLayer.edrMetadata = ShadowClientSurfaceColorSpaceKit.edrMetadata(
                 colorConfiguration: colorConfiguration,
                 renderTargetConfiguration: renderTargetConfiguration,
-                hdrMetadata: surfaceContext.activeHDRMetadata,
+                hdrMetadata: appliedHDRMetadata,
                 currentHeadroom: currentExtendedDynamicRangeHeadroom(for: view)
             )
         }

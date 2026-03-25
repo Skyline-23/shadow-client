@@ -50,6 +50,19 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         var texCoord: SIMD2<Float>
     }
 
+    private struct SampleTrace {
+        let rawSamples: SIMD3<Int>
+        let nominalSamples: SIMD3<Int>
+        let sampledYUV: SIMD3<Float>
+        let adjustedYUV: SIMD3<Float>
+        let cscRGB: SIMD3<Float>
+        let clampedRGB: SIMD3<Float>
+        let decodedRGB: SIMD3<Float>
+        let scaledRGB: SIMD3<Float>
+        let toneMappedRGB: SIMD3<Float>
+        let gamutMappedRGB: SIMD3<Float>
+    }
+
     private enum Constants {
         static let bt601 = (
             SIMD3<Float>(1.0, 0.0, 1.4020),
@@ -467,6 +480,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             pixelBuffer: pixelBuffer,
             parameters: parameters
         ) ?? "nil"
+        let processingSummary = colorProcessingSummary(parameters: parameters)
         let masteringSummary = masteringDisplaySummary(for: pixelBuffer) ?? "nil"
         let contentLightSummary = contentLightLevelSummary(for: pixelBuffer) ?? "nil"
         let signature = [
@@ -481,7 +495,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             String(bitDepth),
             String(colorPixelFormat.rawValue),
             outputColorSpace.name as String? ?? "nil",
-            String(currentEDRHeadroom ?? 1.0),
+            processingSummary,
             masteringSummary,
             contentLightSummary,
         ].joined(separator: "|")
@@ -493,9 +507,13 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
 
         Self.logger.notice(
             """
-            YUV Metal diagnostics pixel-format=0x\(String(CVPixelBufferGetPixelFormatType(pixelBuffer), radix: 16), privacy: .public) drawable-format=\(colorPixelFormat.rawValue, privacy: .public) output-color-space=\(outputColorSpace.name as String? ?? "nil", privacy: .public) current-edr-headroom=\(currentEDRHeadroom ?? 1.0, privacy: .public) source-standard=\(sourceStandard, privacy: .public) primaries=\(primaries, privacy: .public) transfer=\(transfer, privacy: .public) matrix=\(matrix, privacy: .public) effective-matrix=\(effectiveMatrixStandard, privacy: .public) mastering=\(masteringSummary, privacy: .public) content-light=\(contentLightSummary, privacy: .public) chroma-location=\(chromaLocation, privacy: .public) range=\(fullRange ? "full" : "limited", privacy: .public) bit-depth=\(bitDepth, privacy: .public) csc-row0=[\(parameters.row0.x, privacy: .public),\(parameters.row0.y, privacy: .public),\(parameters.row0.z, privacy: .public)] csc-row1=[\(parameters.row1.x, privacy: .public),\(parameters.row1.y, privacy: .public),\(parameters.row1.z, privacy: .public)] csc-row2=[\(parameters.row2.x, privacy: .public),\(parameters.row2.y, privacy: .public),\(parameters.row2.z, privacy: .public)] offsets=[\(parameters.offsets.x, privacy: .public),\(parameters.offsets.y, privacy: .public),\(parameters.offsets.z, privacy: .public)] chroma-offset=[\(parameters.chromaOffset.x, privacy: .public),\(parameters.chromaOffset.y, privacy: .public)] bitness-scale=\(parameters.bitnessScaleFactor, privacy: .public) samples=\(sampleSummary, privacy: .public)
+            YUV Metal diagnostics pixel-format=0x\(String(CVPixelBufferGetPixelFormatType(pixelBuffer), radix: 16), privacy: .public) drawable-format=\(colorPixelFormat.rawValue, privacy: .public) output-color-space=\(outputColorSpace.name as String? ?? "nil", privacy: .public) current-edr-headroom=\(currentEDRHeadroom ?? 1.0, privacy: .public) source-standard=\(sourceStandard, privacy: .public) primaries=\(primaries, privacy: .public) transfer=\(transfer, privacy: .public) matrix=\(matrix, privacy: .public) effective-matrix=\(effectiveMatrixStandard, privacy: .public) processing=\(processingSummary, privacy: .public) mastering=\(masteringSummary, privacy: .public) content-light=\(contentLightSummary, privacy: .public) chroma-location=\(chromaLocation, privacy: .public) range=\(fullRange ? "full" : "limited", privacy: .public) bit-depth=\(bitDepth, privacy: .public) csc-row0=[\(parameters.row0.x, privacy: .public),\(parameters.row0.y, privacy: .public),\(parameters.row0.z, privacy: .public)] csc-row1=[\(parameters.row1.x, privacy: .public),\(parameters.row1.y, privacy: .public),\(parameters.row1.z, privacy: .public)] csc-row2=[\(parameters.row2.x, privacy: .public),\(parameters.row2.y, privacy: .public),\(parameters.row2.z, privacy: .public)] offsets=[\(parameters.offsets.x, privacy: .public),\(parameters.offsets.y, privacy: .public),\(parameters.offsets.z, privacy: .public)] chroma-offset=[\(parameters.chromaOffset.x, privacy: .public),\(parameters.chromaOffset.y, privacy: .public)] bitness-scale=\(parameters.bitnessScaleFactor, privacy: .public) samples=\(sampleSummary, privacy: .public)
             """
         )
+    }
+
+    private func colorProcessingSummary(parameters: CSCParameters) -> String {
+        "transfer=\(transferFunctionName(parameters.transferFunction)) decode=\(parameters.decodesTransfer != 0) scaleHDR=\(parameters.decodesTransfer != 0 && parameters.appliesToneMapToSDR == 0 && parameters.transferFunction != 0) toneMapSDR=\(parameters.appliesToneMapToSDR != 0) gamut=\(parameters.appliesGamutTransform != 0) hlgGamma=\(formatScalar(parameters.hlgSystemGamma)) sourceHeadroom=\(formatScalar(parameters.toneMapSourceHeadroom)) targetHeadroom=\(formatScalar(parameters.toneMapTargetHeadroom))"
     }
 
     private func masteringDisplaySummary(
@@ -572,13 +590,6 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         pixelBuffer: CVPixelBuffer,
         parameters: CSCParameters
     ) -> String? {
-        let pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
-        guard pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
-            pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-        else {
-            return nil
-        }
-
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
 
@@ -592,11 +603,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         let height = CVPixelBufferGetHeight(pixelBuffer)
         let yRowBytes = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
         let uvRowBytes = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1)
-        let yPointer = yBase.bindMemory(to: UInt8.self, capacity: yRowBytes * height)
-        let uvPointer = uvBase.bindMemory(
-            to: UInt8.self,
-            capacity: uvRowBytes * CVPixelBufferGetHeightOfPlane(pixelBuffer, 1)
-        )
+        let bitDepth = bitsPerChannel(for: pixelBuffer)
         let labels: [(String, CGFloat, CGFloat)] = [
             ("tl", 0.1, 0.1),
             ("tr", 0.9, 0.1),
@@ -606,53 +613,259 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         ]
 
         var parts: [String] = []
-        for (label, normalizedX, normalizedY) in labels {
-            let x = max(0, min(width - 1, Int(CGFloat(width - 1) * normalizedX)))
-            let y = max(0, min(height - 1, Int(CGFloat(height - 1) * normalizedY)))
-            let ySample = Int(yPointer[y * yRowBytes + x])
-            let uvX = (x / 2) * 2
-            let uvY = y / 2
-            let uvOffset = uvY * uvRowBytes + uvX
-            let cbSample = Int(uvPointer[uvOffset])
-            let crSample = Int(uvPointer[uvOffset + 1])
-            let predicted = predictedRGB(
-                y: ySample,
-                cb: cbSample,
-                cr: crSample,
-                parameters: parameters
+        if bitDepth > 8 {
+            let yPointer = yBase.bindMemory(
+                to: UInt16.self,
+                capacity: (yRowBytes / MemoryLayout<UInt16>.stride) * height
             )
-            parts.append("\(label)=Y\(ySample)/Cb\(cbSample)/Cr\(crSample)->RGB\(predicted)")
+            let uvPointer = uvBase.bindMemory(
+                to: UInt16.self,
+                capacity: (uvRowBytes / MemoryLayout<UInt16>.stride) * CVPixelBufferGetHeightOfPlane(pixelBuffer, 1)
+            )
+            let yStride = yRowBytes / MemoryLayout<UInt16>.stride
+            let uvStride = uvRowBytes / MemoryLayout<UInt16>.stride
+            for (label, normalizedX, normalizedY) in labels {
+                let point = samplePoint(
+                    width: width,
+                    height: height,
+                    normalizedX: normalizedX,
+                    normalizedY: normalizedY
+                )
+                let uvPoint = chromaSamplePoint(for: point)
+                let ySample = Int(yPointer[point.y * yStride + point.x])
+                let cbSample = Int(uvPointer[uvPoint.y * uvStride + uvPoint.x])
+                let crSample = Int(uvPointer[uvPoint.y * uvStride + uvPoint.x + 1])
+                let trace = sampleTrace(
+                    y: ySample,
+                    cb: cbSample,
+                    cr: crSample,
+                    sampleDivisor: 65535.0,
+                    nominalShift: 16 - bitDepth,
+                    parameters: parameters
+                )
+                parts.append(sampleTraceSummary(label: label, trace: trace))
+            }
+        } else {
+            let yPointer = yBase.bindMemory(to: UInt8.self, capacity: yRowBytes * height)
+            let uvPointer = uvBase.bindMemory(
+                to: UInt8.self,
+                capacity: uvRowBytes * CVPixelBufferGetHeightOfPlane(pixelBuffer, 1)
+            )
+            for (label, normalizedX, normalizedY) in labels {
+                let point = samplePoint(
+                    width: width,
+                    height: height,
+                    normalizedX: normalizedX,
+                    normalizedY: normalizedY
+                )
+                let uvPoint = chromaSamplePoint(for: point)
+                let ySample = Int(yPointer[point.y * yRowBytes + point.x])
+                let cbSample = Int(uvPointer[uvPoint.y * uvRowBytes + uvPoint.x])
+                let crSample = Int(uvPointer[uvPoint.y * uvRowBytes + uvPoint.x + 1])
+                let trace = sampleTrace(
+                    y: ySample,
+                    cb: cbSample,
+                    cr: crSample,
+                    sampleDivisor: 255.0,
+                    nominalShift: 0,
+                    parameters: parameters
+                )
+                parts.append(sampleTraceSummary(label: label, trace: trace))
+            }
         }
         return parts.joined(separator: " ")
     }
 
-    private func predictedRGB(
+    private func samplePoint(
+        width: Int,
+        height: Int,
+        normalizedX: CGFloat,
+        normalizedY: CGFloat
+    ) -> (x: Int, y: Int) {
+        (
+            max(0, min(width - 1, Int(CGFloat(width - 1) * normalizedX))),
+            max(0, min(height - 1, Int(CGFloat(height - 1) * normalizedY)))
+        )
+    }
+
+    private func chromaSamplePoint(
+        for point: (x: Int, y: Int)
+    ) -> (x: Int, y: Int) {
+        ((point.x / 2) * 2, point.y / 2)
+    }
+
+    private func sampleTrace(
         y: Int,
         cb: Int,
         cr: Int,
+        sampleDivisor: Float,
+        nominalShift: Int,
         parameters: CSCParameters
-    ) -> String {
-        var yuv = SIMD3<Float>(
-            Float(y) / 255.0,
-            Float(cb) / 255.0,
-            Float(cr) / 255.0
+    ) -> SampleTrace {
+        let sampledYUV = SIMD3<Float>(
+            Float(y) / sampleDivisor,
+            Float(cb) / sampleDivisor,
+            Float(cr) / sampleDivisor
         )
-        yuv *= parameters.bitnessScaleFactor
-        yuv -= parameters.offsets
+        let adjustedYUV = (sampledYUV * parameters.bitnessScaleFactor) - parameters.offsets
 
-        let rgb = SIMD3<Float>(
-            dot(parameters.row0, yuv),
-            dot(parameters.row1, yuv),
-            dot(parameters.row2, yuv)
+        let cscRGB = SIMD3<Float>(
+            dot(parameters.row0, adjustedYUV),
+            dot(parameters.row1, adjustedYUV),
+            dot(parameters.row2, adjustedYUV)
         )
-        let r = clampToByte(rgb.x * 255.0)
-        let g = clampToByte(rgb.y * 255.0)
-        let b = clampToByte(rgb.z * 255.0)
-        return "[\(r),\(g),\(b)]"
+        let clampedRGB = simd.max(cscRGB, SIMD3<Float>(repeating: 0))
+        let decodedRGB = decodeTransfer(clampedRGB, parameters: parameters)
+        let scaledRGB: SIMD3<Float>
+        if parameters.decodesTransfer != 0 &&
+            parameters.appliesToneMapToSDR == 0 &&
+            parameters.transferFunction != 0
+        {
+            scaledRGB = scaleHDRForEDR(decodedRGB, parameters: parameters)
+        } else {
+            scaledRGB = decodedRGB
+        }
+        let toneMappedRGB =
+            parameters.appliesToneMapToSDR != 0
+            ? toneMapToSDR(scaledRGB, parameters: parameters)
+            : scaledRGB
+        let gamutMappedRGB =
+            parameters.appliesGamutTransform != 0
+            ? applyGamutTransform(toneMappedRGB, parameters: parameters)
+            : toneMappedRGB
+
+        return .init(
+            rawSamples: SIMD3<Int>(y, cb, cr),
+            nominalSamples: SIMD3<Int>(
+                nominalSample(y, shift: nominalShift),
+                nominalSample(cb, shift: nominalShift),
+                nominalSample(cr, shift: nominalShift)
+            ),
+            sampledYUV: sampledYUV,
+            adjustedYUV: adjustedYUV,
+            cscRGB: cscRGB,
+            clampedRGB: clampedRGB,
+            decodedRGB: decodedRGB,
+            scaledRGB: scaledRGB,
+            toneMappedRGB: toneMappedRGB,
+            gamutMappedRGB: gamutMappedRGB
+        )
     }
 
-    private func clampToByte(_ value: Float) -> Int {
-        Int(max(0, min(255, lroundf(value))))
+    private func sampleTraceSummary(
+        label: String,
+        trace: SampleTrace
+    ) -> String {
+        "\(label)=raw\(formatSIMD(trace.rawSamples)) nominal\(formatSIMD(trace.nominalSamples)) sampled\(formatSIMD(trace.sampledYUV)) adjusted\(formatSIMD(trace.adjustedYUV)) csc\(formatSIMD(trace.cscRGB)) clamped\(formatSIMD(trace.clampedRGB)) decoded\(formatSIMD(trace.decodedRGB)) scaled\(formatSIMD(trace.scaledRGB)) tone\(formatSIMD(trace.toneMappedRGB)) final\(formatSIMD(trace.gamutMappedRGB))"
+    }
+
+    private func nominalSample(_ rawSample: Int, shift: Int) -> Int {
+        guard shift > 0 else {
+            return rawSample
+        }
+        return rawSample >> shift
+    }
+
+    private func decodeTransfer(
+        _ rgb: SIMD3<Float>,
+        parameters: CSCParameters
+    ) -> SIMD3<Float> {
+        guard parameters.decodesTransfer != 0 else {
+            return rgb
+        }
+        switch parameters.transferFunction {
+        case TransferFunctionKind.pq.rawValue:
+            return SIMD3<Float>(
+                pqEOTF(rgb.x),
+                pqEOTF(rgb.y),
+                pqEOTF(rgb.z)
+            )
+        case TransferFunctionKind.hlg.rawValue:
+            let sceneLinear = SIMD3<Float>(
+                hlgInverseOETF(rgb.x),
+                hlgInverseOETF(rgb.y),
+                hlgInverseOETF(rgb.z)
+            )
+            return SIMD3<Float>(
+                pow(max(sceneLinear.x, 0), parameters.hlgSystemGamma),
+                pow(max(sceneLinear.y, 0), parameters.hlgSystemGamma),
+                pow(max(sceneLinear.z, 0), parameters.hlgSystemGamma)
+            )
+        default:
+            return rgb
+        }
+    }
+
+    private func pqEOTF(_ value: Float) -> Float {
+        let normalized = max(value, 0)
+        let power = pow(normalized, 1 / 78.84375)
+        let numerator = max(power - 0.8359375, 0)
+        let denominator = max(18.8515625 - (18.6875 * power), 1e-6)
+        return pow(numerator / denominator, 1 / 0.1593017578125)
+    }
+
+    private func hlgInverseOETF(_ value: Float) -> Float {
+        let normalized = max(value, 0)
+        if normalized <= 0.5 {
+            return (normalized * normalized) / 3
+        }
+        return (exp((normalized - 0.55991073) / 0.17883277) + 0.28466892) / 12
+    }
+
+    private func scaleHDRForEDR(
+        _ rgb: SIMD3<Float>,
+        parameters: CSCParameters
+    ) -> SIMD3<Float> {
+        simd.max(
+            rgb * max(parameters.toneMapSourceHeadroom, 1),
+            SIMD3<Float>(repeating: 0)
+        )
+    }
+
+    private func toneMapToSDR(
+        _ rgb: SIMD3<Float>,
+        parameters: CSCParameters
+    ) -> SIMD3<Float> {
+        let scale = max(
+            parameters.toneMapSourceHeadroom / max(parameters.toneMapTargetHeadroom, 1e-6),
+            1
+        )
+        let scaled = simd.max(rgb * scale, SIMD3<Float>(repeating: 0))
+        return scaled / (SIMD3<Float>(repeating: 1) + scaled)
+    }
+
+    private func applyGamutTransform(
+        _ rgb: SIMD3<Float>,
+        parameters: CSCParameters
+    ) -> SIMD3<Float> {
+        SIMD3<Float>(
+            dot(parameters.gamutRow0, rgb),
+            dot(parameters.gamutRow1, rgb),
+            dot(parameters.gamutRow2, rgb)
+        )
+    }
+
+    private func transferFunctionName(_ rawValue: UInt32) -> String {
+        switch rawValue {
+        case TransferFunctionKind.pq.rawValue:
+            return "pq"
+        case TransferFunctionKind.hlg.rawValue:
+            return "hlg"
+        default:
+            return "linear"
+        }
+    }
+
+    private func formatSIMD(_ vector: SIMD3<Float>) -> String {
+        "[\(formatScalar(vector.x)),\(formatScalar(vector.y)),\(formatScalar(vector.z))]"
+    }
+
+    private func formatSIMD(_ vector: SIMD3<Int>) -> String {
+        "[\(vector.x),\(vector.y),\(vector.z)]"
+    }
+
+    private func formatScalar(_ value: Float) -> String {
+        String(format: "%.6f", Double(value))
     }
 
     private func cscMatrix(

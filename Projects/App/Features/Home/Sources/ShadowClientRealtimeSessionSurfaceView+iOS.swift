@@ -236,9 +236,9 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             let currentHeadroom = CGFloat(
                 currentExtendedDynamicRangeHeadroom(for: view)
             )
-            let appliedHDRMetadata = appliedEDRMetadata(
-                for: pixelBuffer,
-                hostHDRMetadata: surfaceContext.activeHDRMetadata
+            let appliedHDRMetadata = ShadowClientSurfaceColorSpaceKit.renderedFrameHDRMetadata(
+                colorConfiguration: colorConfiguration,
+                pixelBuffer: pixelBuffer
             )
             let edrMetadataSummary = ShadowClientSurfaceColorSpaceKit.edrMetadataDebugSummary(
                 colorConfiguration: colorConfiguration,
@@ -257,28 +257,6 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 currentHeadroom: currentHeadroom
             )
         }
-    }
-
-    private func appliedEDRMetadata(
-        for pixelBuffer: CVPixelBuffer?,
-        hostHDRMetadata: ShadowClientHDRMetadata?
-    ) -> ShadowClientHDRMetadata? {
-        guard let hostHDRMetadata else {
-            return nil
-        }
-        guard let pixelBuffer else {
-            return nil
-        }
-        guard frameCarriesStaticHDRMetadata(pixelBuffer) else {
-            return nil
-        }
-        return hostHDRMetadata
-    }
-
-    private func frameCarriesStaticHDRMetadata(_ pixelBuffer: CVPixelBuffer) -> Bool {
-        ShadowClientSurfaceColorSpaceKit.frameCarriesStaticHDRMetadata(
-            pixelBuffer
-        )
     }
 
     private func supportsExtendedDynamicRangeDisplay(for view: MTKView) -> Bool {

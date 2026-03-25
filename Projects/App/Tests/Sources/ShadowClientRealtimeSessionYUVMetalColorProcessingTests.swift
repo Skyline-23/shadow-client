@@ -34,6 +34,42 @@ func yuvMetalPipelinePreservesEncodedHDRPQOutputForHDRPQFrames() throws {
     #expect(descriptor.toneMapSourceHeadroom == 100.0)
 }
 
+@Test("YUV Metal pipeline preserves encoded Display P3 PQ output for direct HDR presentation")
+func yuvMetalPipelinePreservesEncodedDisplayP3PQOutputForDirectHDRPresentation() throws {
+    let pixelBuffer = try makeMetalColorProcessingPixelBuffer(
+        pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferColorPrimariesKey,
+        kCVImageBufferColorPrimaries_P3_D65,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferTransferFunctionKey,
+        kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferYCbCrMatrixKey,
+        kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+        .shouldPropagate
+    )
+
+    let descriptor = ShadowClientRealtimeSessionYUVMetalPipeline.colorProcessingDescriptor(
+        for: pixelBuffer,
+        outputColorSpace: CGColorSpace(name: CGColorSpace.displayP3_PQ) ?? CGColorSpaceCreateDeviceRGB(),
+        prefersExtendedDynamicRange: true
+    )
+
+    #expect(descriptor.transferFunction == .pq)
+    #expect(!descriptor.decodesTransfer)
+    #expect(!descriptor.appliesToneMapToSDR)
+    #expect(!descriptor.appliesGamutTransform)
+}
+
 @Test("YUV Metal pipeline tone-maps HDR PQ frames when rendering to SDR")
 func yuvMetalPipelineToneMapsHDRPQFramesWhenRenderingToSDR() throws {
     let pixelBuffer = try makeMetalColorProcessingPixelBuffer(

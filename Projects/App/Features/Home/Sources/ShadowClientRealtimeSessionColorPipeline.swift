@@ -60,7 +60,8 @@ enum ShadowClientRealtimeSessionColorPipeline {
 
     static func configuration(
         for pixelBuffer: CVPixelBuffer?,
-        allowExtendedDynamicRange: Bool = true
+        allowExtendedDynamicRange: Bool = true,
+        negotiatedHDRMetadata: ShadowClientHDRMetadata? = nil
     ) -> ShadowClientRealtimeSessionColorConfiguration {
         guard let pixelBuffer else {
             return ShadowClientRealtimeSessionColorConfiguration(
@@ -81,7 +82,8 @@ enum ShadowClientRealtimeSessionColorPipeline {
         applyAttachmentFallbacks(
             for: pixelBuffer,
             metadata: metadata,
-            prefersExtendedDynamicRange: prefersExtendedDynamicRange
+            prefersExtendedDynamicRange: prefersExtendedDynamicRange,
+            negotiatedHDRMetadata: negotiatedHDRMetadata
         )
         metadata = colorMetadata(for: pixelBuffer)
 
@@ -292,7 +294,8 @@ enum ShadowClientRealtimeSessionColorPipeline {
     private static func applyAttachmentFallbacks(
         for pixelBuffer: CVPixelBuffer,
         metadata: ShadowClientColorMetadata,
-        prefersExtendedDynamicRange: Bool
+        prefersExtendedDynamicRange: Bool,
+        negotiatedHDRMetadata: ShadowClientHDRMetadata?
     ) {
         if prefersExtendedDynamicRange {
             if !hasAttachment(forKey: kCVImageBufferColorPrimariesKey, pixelBuffer: pixelBuffer) {
@@ -336,6 +339,36 @@ enum ShadowClientRealtimeSessionColorPipeline {
                     pixelBuffer,
                     kCVImageBufferYCbCrMatrixKey,
                     matrix,
+                    .shouldPropagate
+                )
+            }
+
+            if !hasAttachment(
+                forKey: kCVImageBufferMasteringDisplayColorVolumeKey,
+                pixelBuffer: pixelBuffer
+            ),
+               let negotiatedHDRMetadata,
+               negotiatedHDRMetadata.hasHDR10DisplayInfo
+            {
+                CVBufferSetAttachment(
+                    pixelBuffer,
+                    kCVImageBufferMasteringDisplayColorVolumeKey,
+                    negotiatedHDRMetadata.hdr10DisplayInfoData as CFData,
+                    .shouldPropagate
+                )
+            }
+
+            if !hasAttachment(
+                forKey: kCVImageBufferContentLightLevelInfoKey,
+                pixelBuffer: pixelBuffer
+            ),
+               let negotiatedHDRMetadata,
+               negotiatedHDRMetadata.hasHDR10ContentInfo
+            {
+                CVBufferSetAttachment(
+                    pixelBuffer,
+                    kCVImageBufferContentLightLevelInfoKey,
+                    negotiatedHDRMetadata.hdr10ContentInfoData as CFData,
                     .shouldPropagate
                 )
             }

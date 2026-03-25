@@ -1,5 +1,6 @@
 import CoreGraphics
 import CoreVideo
+import Foundation
 import Metal
 import Testing
 @testable import ShadowClientFeatureHome
@@ -65,6 +66,126 @@ func colorPipelinePreservesDisplayP3HDRMetadataForPQFrames() throws {
     )
     #expect(
         ShadowClientRealtimeSessionColorPipeline.matrixStandard(for: pixelBuffer) == .rec2020
+    )
+}
+
+@Test("Color pipeline injects negotiated static HDR attachments when decoded frames are missing them")
+func colorPipelineInjectsNegotiatedStaticHDRAttachmentsWhenMissing() throws {
+    let pixelBuffer = try makePixelBuffer(pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+    let negotiatedHDRMetadata = ShadowClientHDRMetadata(
+        displayPrimaries: [
+            .init(x: 13250, y: 34500),
+            .init(x: 7500, y: 3000),
+            .init(x: 34000, y: 16000),
+        ],
+        whitePoint: .init(x: 15635, y: 16450),
+        maxDisplayLuminance: 1000,
+        minDisplayLuminance: 1,
+        maxContentLightLevel: 1200,
+        maxFrameAverageLightLevel: 600,
+        maxFullFrameLuminance: 400
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferColorPrimariesKey,
+        kCVImageBufferColorPrimaries_P3_D65,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferTransferFunctionKey,
+        kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferYCbCrMatrixKey,
+        kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+        .shouldPropagate
+    )
+
+    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(
+        for: pixelBuffer,
+        allowExtendedDynamicRange: true,
+        negotiatedHDRMetadata: negotiatedHDRMetadata
+    )
+
+    #expect(configuration.prefersExtendedDynamicRange)
+    #expect(
+        attachmentDataValue(
+            forKey: kCVImageBufferMasteringDisplayColorVolumeKey,
+            pixelBuffer: pixelBuffer
+        ) == negotiatedHDRMetadata.hdr10DisplayInfoData
+    )
+    #expect(
+        attachmentDataValue(
+            forKey: kCVImageBufferContentLightLevelInfoKey,
+            pixelBuffer: pixelBuffer
+        ) == negotiatedHDRMetadata.hdr10ContentInfoData
+    )
+}
+
+@Test("Color pipeline preserves decoder-provided static HDR attachments")
+func colorPipelinePreservesDecoderProvidedStaticHDRAttachments() throws {
+    let pixelBuffer = try makePixelBuffer(pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+    let existingDisplayInfo = Data(repeating: 0x11, count: 24)
+    let existingContentInfo = Data(repeating: 0x22, count: 4)
+    let negotiatedHDRMetadata = ShadowClientHDRMetadata(
+        displayPrimaries: [
+            .init(x: 13250, y: 34500),
+            .init(x: 7500, y: 3000),
+            .init(x: 34000, y: 16000),
+        ],
+        whitePoint: .init(x: 15635, y: 16450),
+        maxDisplayLuminance: 1000,
+        minDisplayLuminance: 1,
+        maxContentLightLevel: 1200,
+        maxFrameAverageLightLevel: 600,
+        maxFullFrameLuminance: 400
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferColorPrimariesKey,
+        kCVImageBufferColorPrimaries_P3_D65,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferTransferFunctionKey,
+        kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferMasteringDisplayColorVolumeKey,
+        existingDisplayInfo as CFData,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferContentLightLevelInfoKey,
+        existingContentInfo as CFData,
+        .shouldPropagate
+    )
+
+    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(
+        for: pixelBuffer,
+        allowExtendedDynamicRange: true,
+        negotiatedHDRMetadata: negotiatedHDRMetadata
+    )
+
+    #expect(configuration.prefersExtendedDynamicRange)
+    #expect(
+        attachmentDataValue(
+            forKey: kCVImageBufferMasteringDisplayColorVolumeKey,
+            pixelBuffer: pixelBuffer
+        ) == existingDisplayInfo
+    )
+    #expect(
+        attachmentDataValue(
+            forKey: kCVImageBufferContentLightLevelInfoKey,
+            pixelBuffer: pixelBuffer
+        ) == existingContentInfo
     )
 }
 
@@ -314,6 +435,22 @@ private func attachmentStringValue(
         return nil
     }
     return attachment as? String
+}
+
+private func attachmentDataValue(
+    forKey key: CFString,
+    pixelBuffer: CVPixelBuffer
+) -> Data? {
+    guard let attachment = CVBufferCopyAttachment(pixelBuffer, key, nil) else {
+        return nil
+    }
+    if let data = attachment as? Data {
+        return data
+    }
+    if let data = attachment as? NSData {
+        return Data(referencing: data)
+    }
+    return nil
 }
 
 private struct TestError: Error {

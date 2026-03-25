@@ -1087,13 +1087,22 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let isSurround = settings.enableSurroundAudio && !settings.lowLatencyMode
         let surroundAudioInfo = isSurround ? 393_279 : 131_075
         let localAudioPlayMode = settings.playAudioOnHost ? "1" : "0"
+        let clientDisplayCharacteristics = await ShadowClientApolloClientDisplayCharacteristicsResolver.current(
+            hdrEnabled: settings.enableHDR,
+            scalePercent: settings.resolutionScalePercent,
+            hiDPIEnabled: settings.requestHiDPI
+        )
+        Self.launchLogger.notice(
+            "Launch display profile gamut=\(clientDisplayCharacteristics.gamut.rawValue, privacy: .public) transfer=\(clientDisplayCharacteristics.transfer.rawValue, privacy: .public) scale=\(clientDisplayCharacteristics.scalePercent, privacy: .public) hidpi=\(clientDisplayCharacteristics.hiDPIEnabled, privacy: .public) hdr=\(settings.enableHDR, privacy: .public)"
+        )
         var parameters = Self.makeLaunchParameters(
             appID: appID,
             settings: settings,
             remoteInputKey: remoteInputKey,
             remoteInputKeyID: keyID,
             surroundAudioInfo: surroundAudioInfo,
-            localAudioPlayMode: localAudioPlayMode
+            localAudioPlayMode: localAudioPlayMode,
+            clientDisplayCharacteristics: clientDisplayCharacteristics
         )
 
         let resolvedCodecPreference = Self.resolvedLaunchCodecPreference(
@@ -1287,6 +1296,26 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         surroundAudioInfo: Int,
         localAudioPlayMode: String
     ) -> [String: String] {
+        makeLaunchParameters(
+            appID: appID,
+            settings: settings,
+            remoteInputKey: remoteInputKey,
+            remoteInputKeyID: remoteInputKeyID,
+            surroundAudioInfo: surroundAudioInfo,
+            localAudioPlayMode: localAudioPlayMode,
+            clientDisplayCharacteristics: nil
+        )
+    }
+
+    static func makeLaunchParameters(
+        appID: Int,
+        settings: ShadowClientGameStreamLaunchSettings,
+        remoteInputKey: Data,
+        remoteInputKeyID: UInt32,
+        surroundAudioInfo: Int,
+        localAudioPlayMode: String,
+        clientDisplayCharacteristics: ShadowClientApolloClientDisplayCharacteristics?
+    ) -> [String: String] {
         var parameters: [String: String] = [
             "appid": "\(appID)",
             "mode": "\(settings.width)x\(settings.height)x\(settings.fps)",
@@ -1309,6 +1338,10 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         parameters["clientDisplayHiDPI"] = settings.requestHiDPI ? "1" : "0"
         if settings.resolutionScalePercent != 100 {
             parameters["scaleFactor"] = "\(settings.resolutionScalePercent)"
+        }
+        if let clientDisplayCharacteristics {
+            parameters["clientDisplayGamut"] = clientDisplayCharacteristics.gamut.rawValue
+            parameters["clientDisplayTransfer"] = clientDisplayCharacteristics.transfer.rawValue
         }
 
         return parameters

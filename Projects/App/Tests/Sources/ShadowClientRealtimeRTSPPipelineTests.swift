@@ -3077,6 +3077,40 @@ func rtspRuntimePreservesApolloDisplayScaleContract() {
     #expect(resolved.prioritizeNetworkTraffic)
 }
 
+@Test("RTSP runtime latches the first negotiated HDR metadata")
+func rtspRuntimeLatchesFirstNegotiatedHDRMetadata() {
+    let firstMetadata = makeNegotiatedHDRMetadata(
+        maxDisplayLuminance: 1000,
+        maxContentLightLevel: 1200
+    )
+    let laterMetadata = makeNegotiatedHDRMetadata(
+        maxDisplayLuminance: 2000,
+        maxContentLightLevel: 2200
+    )
+
+    let latched = ShadowClientRealtimeRTSPSessionRuntime.resolvedNegotiatedHDRMetadata(
+        currentMetadata: firstMetadata,
+        event: .init(isEnabled: true, metadata: laterMetadata)
+    )
+
+    #expect(latched == firstMetadata)
+}
+
+@Test("RTSP runtime clears negotiated HDR metadata when HDR is disabled")
+func rtspRuntimeClearsNegotiatedHDRMetadataWhenHDRIsDisabled() {
+    let metadata = makeNegotiatedHDRMetadata(
+        maxDisplayLuminance: 1000,
+        maxContentLightLevel: 1200
+    )
+
+    let cleared = ShadowClientRealtimeRTSPSessionRuntime.resolvedNegotiatedHDRMetadata(
+        currentMetadata: metadata,
+        event: .init(isEnabled: false, metadata: metadata)
+    )
+
+    #expect(cleared == nil)
+}
+
 private func moonlightFrameHeader(
     lastPayloadLength: UInt16,
     frameHeaderSize: UInt16 = moonlightFrameHeaderSize,
@@ -3096,6 +3130,25 @@ private func moonlightFrameHeader(
 private func littleEndianBytes<T: FixedWidthInteger>(_ value: T) -> [UInt8] {
     let littleEndianValue = value.littleEndian
     return withUnsafeBytes(of: littleEndianValue) { Array($0) }
+}
+
+private func makeNegotiatedHDRMetadata(
+    maxDisplayLuminance: UInt16,
+    maxContentLightLevel: UInt16
+) -> ShadowClientHDRMetadata {
+    ShadowClientHDRMetadata(
+        displayPrimaries: [
+            .init(x: 13250, y: 34500),
+            .init(x: 7500, y: 3000),
+            .init(x: 34000, y: 16000),
+        ],
+        whitePoint: .init(x: 15635, y: 16450),
+        maxDisplayLuminance: maxDisplayLuminance,
+        minDisplayLuminance: 1,
+        maxContentLightLevel: maxContentLightLevel,
+        maxFrameAverageLightLevel: 600,
+        maxFullFrameLuminance: 400
+    )
 }
 
 private func makeVideoRTPPacket(
