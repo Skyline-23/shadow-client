@@ -355,10 +355,6 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     }
 
     nonisolated private static func sampleDrawableTextureRGBA(_ texture: any MTLTexture) -> String? {
-        guard texture.pixelFormat == .bgra8Unorm || texture.pixelFormat == .bgra8Unorm_srgb else {
-            return nil
-        }
-
         let labels: [(String, Int, Int)] = [
             ("tl", max(0, texture.width / 10), max(0, texture.height / 10)),
             ("tr", max(0, texture.width - 1 - texture.width / 10), max(0, texture.height / 10)),
@@ -366,22 +362,47 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             ("bl", max(0, texture.width / 10), max(0, texture.height - 1 - texture.height / 10)),
             ("br", max(0, texture.width - 1 - texture.width / 10), max(0, texture.height - 1 - texture.height / 10)),
         ]
-        var parts: [String] = []
-        var bytes = [UInt8](repeating: 0, count: 4)
-        for (label, x, y) in labels {
-            texture.getBytes(
-                &bytes,
-                bytesPerRow: 4,
-                from: MTLRegionMake2D(x, y, 1, 1),
-                mipmapLevel: 0
-            )
-            let blue = bytes[0]
-            let green = bytes[1]
-            let red = bytes[2]
-            let alpha = bytes[3]
-            parts.append("\(label)=\(red),\(green),\(blue),\(alpha)")
+
+        switch texture.pixelFormat {
+        case .bgra8Unorm, .bgra8Unorm_srgb:
+            var parts: [String] = []
+            var bytes = [UInt8](repeating: 0, count: 4)
+            for (label, x, y) in labels {
+                texture.getBytes(
+                    &bytes,
+                    bytesPerRow: 4,
+                    from: MTLRegionMake2D(x, y, 1, 1),
+                    mipmapLevel: 0
+                )
+                let blue = bytes[0]
+                let green = bytes[1]
+                let red = bytes[2]
+                let alpha = bytes[3]
+                parts.append("\(label)=\(red),\(green),\(blue),\(alpha)")
+            }
+            return parts.joined(separator: " ")
+        case .rgba16Float:
+            var parts: [String] = []
+            var words = [UInt16](repeating: 0, count: 4)
+            for (label, x, y) in labels {
+                texture.getBytes(
+                    &words,
+                    bytesPerRow: MemoryLayout<UInt16>.stride * words.count,
+                    from: MTLRegionMake2D(x, y, 1, 1),
+                    mipmapLevel: 0
+                )
+                let red = Float(Float16(bitPattern: words[0]))
+                let green = Float(Float16(bitPattern: words[1]))
+                let blue = Float(Float16(bitPattern: words[2]))
+                let alpha = Float(Float16(bitPattern: words[3]))
+                parts.append(
+                    "\(label)=[\(String(format: "%.6f", red)),\(String(format: "%.6f", green)),\(String(format: "%.6f", blue)),\(String(format: "%.6f", alpha))]"
+                )
+            }
+            return parts.joined(separator: " ")
+        default:
+            return nil
         }
-        return parts.joined(separator: " ")
     }
 
 }
