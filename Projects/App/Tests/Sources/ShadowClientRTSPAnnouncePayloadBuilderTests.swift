@@ -207,7 +207,16 @@ func rtspAnnouncePayloadIncludesApolloDisplayMetadata() {
         videoPort: 47_998,
         moonlightFeatureFlags: 3,
         encryptionEnabledFlags: 0,
-        clientDisplayCharacteristics: .init(gamut: .rec2020, transfer: .pq, scalePercent: 200, hiDPIEnabled: true)
+        clientDisplayCharacteristics: .init(
+            gamut: .rec2020,
+            transfer: .pq,
+            scalePercent: 200,
+            hiDPIEnabled: true,
+            currentEDRHeadroom: 2.4,
+            potentialEDRHeadroom: 6.5,
+            currentPeakLuminanceNits: 240,
+            potentialPeakLuminanceNits: 650
+        )
     )
 
     let attributes = rtspAnnounceAttributes(from: payload)
@@ -216,6 +225,10 @@ func rtspAnnouncePayloadIncludesApolloDisplayMetadata() {
     #expect(attributes["x-apollo-video[0].clientDisplayTransfer"] == "pq")
     #expect(attributes["x-apollo-video[0].clientDisplayScalePercent"] == "200")
     #expect(attributes["x-apollo-video[0].clientDisplayHiDPI"] == "1")
+    #expect(attributes["x-apollo-video[0].clientDisplayCurrentEDRHeadroom"] == "2.4")
+    #expect(attributes["x-apollo-video[0].clientDisplayPotentialEDRHeadroom"] == "6.5")
+    #expect(attributes["x-apollo-video[0].clientDisplayCurrentPeakLuminanceNits"] == "240")
+    #expect(attributes["x-apollo-video[0].clientDisplayPotentialPeakLuminanceNits"] == "650")
 }
 
 private func rtspAnnounceAttributes(from payload: Data) -> [String: String] {

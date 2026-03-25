@@ -78,6 +78,10 @@ enum ShadowClientRTSPAnnouncePayloadBuilder {
             ("x-apollo-video[0].clientDisplayTransfer", clientDisplayCharacteristics.transfer.rawValue),
             ("x-apollo-video[0].clientDisplayScalePercent", "\(clientDisplayCharacteristics.scalePercent)"),
             ("x-apollo-video[0].clientDisplayHiDPI", clientDisplayCharacteristics.hiDPIEnabled ? "1" : "0"),
+            ("x-apollo-video[0].clientDisplayCurrentEDRHeadroom", "\(clientDisplayCharacteristics.currentEDRHeadroom)"),
+            ("x-apollo-video[0].clientDisplayPotentialEDRHeadroom", "\(clientDisplayCharacteristics.potentialEDRHeadroom)"),
+            ("x-apollo-video[0].clientDisplayCurrentPeakLuminanceNits", "\(clientDisplayCharacteristics.currentPeakLuminanceNits)"),
+            ("x-apollo-video[0].clientDisplayPotentialPeakLuminanceNits", "\(clientDisplayCharacteristics.potentialPeakLuminanceNits)"),
         ]
         if reliableUDPMode == ShadowClientRTSPAnnounceProfile.reliableUDPModeStandard {
             attributes.append(

@@ -1093,7 +1093,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             hiDPIEnabled: settings.requestHiDPI
         )
         Self.launchLogger.notice(
-            "Launch display profile gamut=\(clientDisplayCharacteristics.gamut.rawValue, privacy: .public) transfer=\(clientDisplayCharacteristics.transfer.rawValue, privacy: .public) scale=\(clientDisplayCharacteristics.scalePercent, privacy: .public) hidpi=\(clientDisplayCharacteristics.hiDPIEnabled, privacy: .public) hdr=\(settings.enableHDR, privacy: .public)"
+            "Launch display profile gamut=\(clientDisplayCharacteristics.gamut.rawValue, privacy: .public) transfer=\(clientDisplayCharacteristics.transfer.rawValue, privacy: .public) scale=\(clientDisplayCharacteristics.scalePercent, privacy: .public) hidpi=\(clientDisplayCharacteristics.hiDPIEnabled, privacy: .public) hdr=\(settings.enableHDR, privacy: .public) current-edr-headroom=\(clientDisplayCharacteristics.currentEDRHeadroom, privacy: .public) potential-edr-headroom=\(clientDisplayCharacteristics.potentialEDRHeadroom, privacy: .public) current-peak-nits=\(clientDisplayCharacteristics.currentPeakLuminanceNits, privacy: .public) potential-peak-nits=\(clientDisplayCharacteristics.potentialPeakLuminanceNits, privacy: .public)"
         )
         var parameters = Self.makeLaunchParameters(
             appID: appID,
@@ -1342,6 +1342,10 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         if let clientDisplayCharacteristics {
             parameters["clientDisplayGamut"] = clientDisplayCharacteristics.gamut.rawValue
             parameters["clientDisplayTransfer"] = clientDisplayCharacteristics.transfer.rawValue
+            parameters["clientDisplayCurrentEDRHeadroom"] = "\(clientDisplayCharacteristics.currentEDRHeadroom)"
+            parameters["clientDisplayPotentialEDRHeadroom"] = "\(clientDisplayCharacteristics.potentialEDRHeadroom)"
+            parameters["clientDisplayCurrentPeakLuminanceNits"] = "\(clientDisplayCharacteristics.currentPeakLuminanceNits)"
+            parameters["clientDisplayPotentialPeakLuminanceNits"] = "\(clientDisplayCharacteristics.potentialPeakLuminanceNits)"
         }
 
         return parameters

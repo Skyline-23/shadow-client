@@ -24,6 +24,30 @@ struct ShadowClientApolloClientDisplayCharacteristics: Sendable {
     let transfer: ShadowClientApolloClientDisplayTransfer
     let scalePercent: Int
     let hiDPIEnabled: Bool
+    let currentEDRHeadroom: Float
+    let potentialEDRHeadroom: Float
+    let currentPeakLuminanceNits: Int
+    let potentialPeakLuminanceNits: Int
+
+    init(
+        gamut: ShadowClientApolloClientDisplayGamut,
+        transfer: ShadowClientApolloClientDisplayTransfer,
+        scalePercent: Int,
+        hiDPIEnabled: Bool,
+        currentEDRHeadroom: Float = 1.0,
+        potentialEDRHeadroom: Float = 1.0,
+        currentPeakLuminanceNits: Int = 100,
+        potentialPeakLuminanceNits: Int = 100
+    ) {
+        self.gamut = gamut
+        self.transfer = transfer
+        self.scalePercent = scalePercent
+        self.hiDPIEnabled = hiDPIEnabled
+        self.currentEDRHeadroom = currentEDRHeadroom
+        self.potentialEDRHeadroom = potentialEDRHeadroom
+        self.currentPeakLuminanceNits = currentPeakLuminanceNits
+        self.potentialPeakLuminanceNits = potentialPeakLuminanceNits
+    }
 }
 
 enum ShadowClientApolloClientDisplayCharacteristicsResolver {
@@ -34,24 +58,37 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
         hiDPIEnabled: Bool
     ) -> ShadowClientApolloClientDisplayCharacteristics {
         #if os(macOS)
-        let colorSpace = currentMacScreen()?.colorSpace?.cgColorSpace
+        let screen = currentMacScreen()
+        let colorSpace = screen?.colorSpace?.cgColorSpace
         let gamut = gamut(for: colorSpace)
         let transfer = transfer(for: colorSpace, hdrEnabled: hdrEnabled)
+        let currentEDRHeadroom = currentEDRHeadroom(for: screen)
+        let potentialEDRHeadroom = potentialEDRHeadroom(for: screen)
         return .init(
             gamut: gamut,
             transfer: transfer,
             scalePercent: scalePercent,
-            hiDPIEnabled: hiDPIEnabled
+            hiDPIEnabled: hiDPIEnabled,
+            currentEDRHeadroom: currentEDRHeadroom,
+            potentialEDRHeadroom: potentialEDRHeadroom,
+            currentPeakLuminanceNits: peakLuminanceNits(for: currentEDRHeadroom),
+            potentialPeakLuminanceNits: peakLuminanceNits(for: potentialEDRHeadroom)
         )
         #elseif os(iOS) || os(tvOS)
         let screen = currentUIKitScreen() ?? UIScreen.main
         let gamut = gamut(for: screen.traitCollection.displayGamut)
         let transfer: ShadowClientApolloClientDisplayTransfer = hdrEnabled ? .pq : .sdr
+        let currentEDRHeadroom = max(Float(screen.currentEDRHeadroom), 1.0)
+        let potentialEDRHeadroom = max(Float(screen.potentialEDRHeadroom), 1.0)
         return .init(
             gamut: gamut,
             transfer: transfer,
             scalePercent: scalePercent,
-            hiDPIEnabled: hiDPIEnabled
+            hiDPIEnabled: hiDPIEnabled,
+            currentEDRHeadroom: currentEDRHeadroom,
+            potentialEDRHeadroom: potentialEDRHeadroom,
+            currentPeakLuminanceNits: peakLuminanceNits(for: currentEDRHeadroom),
+            potentialPeakLuminanceNits: peakLuminanceNits(for: potentialEDRHeadroom)
         )
         #else
         return .init(
@@ -96,6 +133,14 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
             return .pq
         }
     }
+
+    private static func currentEDRHeadroom(for screen: NSScreen?) -> Float {
+        Float(max(screen?.maximumExtendedDynamicRangeColorComponentValue ?? 1.0, 1.0))
+    }
+
+    private static func potentialEDRHeadroom(for screen: NSScreen?) -> Float {
+        Float(max(screen?.maximumPotentialExtendedDynamicRangeColorComponentValue ?? 1.0, 1.0))
+    }
     #elseif os(iOS) || os(tvOS)
     @MainActor
     private static func currentUIKitScreen() -> UIScreen? {
@@ -115,4 +160,8 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
         }
     }
     #endif
+
+    private static func peakLuminanceNits(for headroom: Float) -> Int {
+        Int((max(headroom, 1.0) * 100.0).rounded())
+    }
 }

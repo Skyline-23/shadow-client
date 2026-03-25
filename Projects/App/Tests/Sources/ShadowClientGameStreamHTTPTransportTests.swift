@@ -204,7 +204,11 @@ func launchParameterBuilderIncludesApolloClientDisplayProfile() {
             gamut: .displayP3,
             transfer: .pq,
             scalePercent: 200,
-            hiDPIEnabled: true
+            hiDPIEnabled: true,
+            currentEDRHeadroom: 3.2,
+            potentialEDRHeadroom: 8.0,
+            currentPeakLuminanceNits: 320,
+            potentialPeakLuminanceNits: 800
         )
     )
 
@@ -212,4 +216,8 @@ func launchParameterBuilderIncludesApolloClientDisplayProfile() {
     #expect(parameters["clientDisplayTransfer"] == "pq")
     #expect(parameters["clientDisplayScalePercent"] == "200")
     #expect(parameters["clientDisplayHiDPI"] == "1")
+    #expect(parameters["clientDisplayCurrentEDRHeadroom"] == "3.2")
+    #expect(parameters["clientDisplayPotentialEDRHeadroom"] == "8.0")
+    #expect(parameters["clientDisplayCurrentPeakLuminanceNits"] == "320")
+    #expect(parameters["clientDisplayPotentialPeakLuminanceNits"] == "800")
 }
