@@ -595,8 +595,8 @@ public struct ShadowClientRemoteGamepadArrival: Equatable, Sendable {
 }
 
 public enum ShadowClientRemoteInputEvent: Equatable, Sendable {
-    case keyDown(keyCode: UInt16, characters: String?)
-    case keyUp(keyCode: UInt16, characters: String?)
+    case keyDown(keyCode: UInt16, characters: String?, modifiers: UInt8 = 0)
+    case keyUp(keyCode: UInt16, characters: String?, modifiers: UInt8 = 0)
     case text(String)
     case pointerMoved(x: Double, y: Double)
     case pointerPosition(x: Double, y: Double, referenceWidth: Double, referenceHeight: Double)
@@ -609,6 +609,9 @@ public enum ShadowClientRemoteInputEvent: Equatable, Sendable {
 public extension ShadowClientRemoteInputEvent {
     /// Sentinel key code used by software keyboards when no hardware scan code exists.
     static let softwareKeyboardSyntheticKeyCode: UInt16 = .max
+    static let modifierShift: UInt8 = 0x01
+    static let modifierControl: UInt8 = 0x02
+    static let modifierAlternate: UInt8 = 0x04
 
     private static let pretranslatedWindowsVirtualKeyMask: UInt16 = 0x8000
 

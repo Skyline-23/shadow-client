@@ -198,6 +198,27 @@ func hostInputCodecUsesPretranslatedVirtualKeys() {
     #expect(readUInt16LE(payload, at: 9) == 0x8041)
 }
 
+@Test("Host input codec preserves keyboard modifier bitmask")
+func hostInputCodecPreservesKeyboardModifierBitmask() {
+    let encoded = ShadowClientHostInputPacketCodec.encode(
+        .keyDown(
+            keyCode: ShadowClientRemoteInputEvent.pretranslatedWindowsVirtualKey(0x27),
+            characters: nil,
+            modifiers: ShadowClientRemoteInputEvent.modifierControl |
+                ShadowClientRemoteInputEvent.modifierAlternate
+        )
+    )
+
+    #expect(encoded != nil)
+    guard let payload = encoded?.payload else {
+        Issue.record("Expected keyboard payload")
+        return
+    }
+
+    #expect(payload[11] == (ShadowClientRemoteInputEvent.modifierControl |
+        ShadowClientRemoteInputEvent.modifierAlternate))
+}
+
 @Test("Host input codec encodes multi-controller gamepad packet on gamepad channel")
 func hostInputCodecEncodesGamepadStatePacket() {
     let state = ShadowClientRemoteGamepadState(

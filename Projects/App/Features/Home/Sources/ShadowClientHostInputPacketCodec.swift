@@ -50,7 +50,7 @@ enum ShadowClientHostInputPacketCodec {
 
     static func encode(_ event: ShadowClientRemoteInputEvent) -> EncodedInputPacket? {
         switch event {
-        case let .keyDown(keyCode, characters):
+        case let .keyDown(keyCode, characters, modifiers):
             guard let virtualKey = ShadowClientWindowsVirtualKeyMap.windowsVirtualKeyCode(
                 keyCode: keyCode,
                 characters: characters
@@ -61,10 +61,11 @@ enum ShadowClientHostInputPacketCodec {
                 channelID: Channel.keyboard,
                 payload: makeKeyboardPacket(
                     magic: PacketMagic.keyDown,
-                    virtualKey: normalizedHostKeyboardKeyCode(virtualKey)
+                    virtualKey: normalizedHostKeyboardKeyCode(virtualKey),
+                    modifiers: modifiers
                 )
             )
-        case let .keyUp(keyCode, characters):
+        case let .keyUp(keyCode, characters, modifiers):
             guard let virtualKey = ShadowClientWindowsVirtualKeyMap.windowsVirtualKeyCode(
                 keyCode: keyCode,
                 characters: characters
@@ -75,7 +76,8 @@ enum ShadowClientHostInputPacketCodec {
                 channelID: Channel.keyboard,
                 payload: makeKeyboardPacket(
                     magic: PacketMagic.keyUp,
-                    virtualKey: normalizedHostKeyboardKeyCode(virtualKey)
+                    virtualKey: normalizedHostKeyboardKeyCode(virtualKey),
+                    modifiers: modifiers
                 )
             )
         case let .text(text):

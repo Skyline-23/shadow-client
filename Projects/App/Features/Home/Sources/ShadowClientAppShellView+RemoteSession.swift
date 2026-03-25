@@ -219,7 +219,47 @@ extension ShadowClientAppShellView {
 
         let inserted = String(String.UnicodeScalarView(newScalars[prefixCount..<newSuffixIndex]))
         if !inserted.isEmpty {
-            remoteDesktopRuntime.sendInput(.text(inserted))
+            sendRemoteSessionSoftwareKeyboardInsertedText(inserted)
+        }
+    }
+
+    @MainActor
+    private func sendRemoteSessionSoftwareKeyboardInsertedText(_ text: String) {
+        var bufferedText = String()
+
+        for scalar in text.unicodeScalars {
+            let character = String(scalar)
+
+            guard let virtualKey = ShadowClientWindowsVirtualKeyMap.windowsVirtualKeyCode(
+                keyCode: ShadowClientRemoteInputEvent.softwareKeyboardSyntheticKeyCode,
+                characters: character
+            ) else {
+                bufferedText.unicodeScalars.append(scalar)
+                continue
+            }
+
+            if !bufferedText.isEmpty {
+                remoteDesktopRuntime.sendInput(.text(bufferedText))
+                bufferedText.removeAll(keepingCapacity: true)
+            }
+
+            let translatedKeyCode = ShadowClientRemoteInputEvent.pretranslatedWindowsVirtualKey(virtualKey)
+            remoteDesktopRuntime.sendInput(
+                .keyDown(
+                    keyCode: translatedKeyCode,
+                    characters: character
+                )
+            )
+            remoteDesktopRuntime.sendInput(
+                .keyUp(
+                    keyCode: translatedKeyCode,
+                    characters: character
+                )
+            )
+        }
+
+        if !bufferedText.isEmpty {
+            remoteDesktopRuntime.sendInput(.text(bufferedText))
         }
     }
 

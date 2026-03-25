@@ -235,14 +235,26 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         if handleLocalSessionTerminateShortcutIfNeeded(event) {
             return
         }
-        emit(.keyDown(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers))
+        emit(
+            .keyDown(
+                keyCode: event.keyCode,
+                characters: event.charactersIgnoringModifiers,
+                modifiers: packetModifierMask(from: event.modifierFlags)
+            )
+        )
     }
 
     override func keyUp(with event: NSEvent) {
         if locallyHandledKeyCodes.remove(event.keyCode) != nil {
             return
         }
-        emit(.keyUp(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers))
+        emit(
+            .keyUp(
+                keyCode: event.keyCode,
+                characters: event.charactersIgnoringModifiers,
+                modifiers: packetModifierMask(from: event.modifierFlags)
+            )
+        )
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -261,7 +273,13 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         }
 
         requestInputFocusIfNeeded(allowWindowActivation: true)
-        emit(.keyDown(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers))
+        emit(
+            .keyDown(
+                keyCode: event.keyCode,
+                characters: event.charactersIgnoringModifiers,
+                modifiers: packetModifierMask(from: event.modifierFlags)
+            )
+        )
         return true
     }
 
@@ -654,6 +672,21 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         default:
             return nil
         }
+    }
+
+    private func packetModifierMask(from flags: NSEvent.ModifierFlags) -> UInt8 {
+        let normalizedFlags = flags.intersection(.deviceIndependentFlagsMask)
+        var mask: UInt8 = 0
+        if normalizedFlags.contains(.shift) {
+            mask |= ShadowClientRemoteInputEvent.modifierShift
+        }
+        if normalizedFlags.contains(.control) {
+            mask |= ShadowClientRemoteInputEvent.modifierControl
+        }
+        if normalizedFlags.contains(.option) {
+            mask |= ShadowClientRemoteInputEvent.modifierAlternate
+        }
+        return mask
     }
 
     private func activatePointerCaptureIfNeeded() {

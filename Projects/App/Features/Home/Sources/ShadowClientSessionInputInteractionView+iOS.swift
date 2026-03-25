@@ -1,5 +1,6 @@
 import ShadowUIFoundation
 #if os(iOS)
+import GameController
 import SwiftUI
 import UIKit
 
@@ -130,6 +131,13 @@ struct ShadowClientSessionInputInteractionPlatformView: UIViewRepresentable {
 final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerDelegate, UIPointerInteractionDelegate {
     private enum Constants {
         static let indirectPointerScrollScale = 0.12
+        static let supplementalKeyboardDispatchDelayNanoseconds: UInt64 = 15_000_000
+        static let supplementalKeyboardSuppressionWindowSeconds = 0.05
+    }
+
+    private struct KeyboardEventSignature: Hashable {
+        let hidUsage: UInt16
+        let isPressed: Bool
     }
 
     var referenceVideoSize: CGSize?
@@ -149,6 +157,9 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
     private var lastPrimaryDragLocation: CGPoint?
     private var hardwareKeyboardCaptureEnabled = true
     private var locallyHandledKeyCodes = Set<UInt16>()
+    private var activeModifierFlags: UIKeyModifierFlags = []
+    private var observedGameControllerKeyboardInput: GCKeyboardInput?
+    private var recentUIKitKeyboardEvents: [KeyboardEventSignature: TimeInterval] = [:]
 
     override var canBecomeFirstResponder: Bool { true }
 
@@ -181,27 +192,34 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
     func setHardwareKeyboardCaptureEnabled(_ enabled: Bool) {
         hardwareKeyboardCaptureEnabled = enabled
         requestInputFocusIfNeeded()
+        refreshSupplementalHardwareKeyboardCapture()
     }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
         guard window != nil else {
+            releaseActiveModifierKeysIfNeeded()
+            refreshSupplementalHardwareKeyboardCapture()
             resignFirstResponder()
             return
         }
         requestInputFocusIfNeeded()
+        refreshSupplementalHardwareKeyboardCapture()
     }
 
     func requestInputFocusIfNeeded() {
         guard window != nil else {
+            refreshSupplementalHardwareKeyboardCapture()
             return
         }
 
         if hardwareKeyboardCaptureEnabled {
             requestHardwareKeyboardFirstResponder()
         } else if isFirstResponder {
+            releaseActiveModifierKeysIfNeeded()
             resignFirstResponder()
         }
+        refreshSupplementalHardwareKeyboardCapture()
     }
 
     private func requestHardwareKeyboardFirstResponder() {
@@ -543,46 +561,124 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
                 continue
             }
 
-            if isPressed, handleLocalSessionTerminateShortcutIfNeeded(key) {
-                locallyHandledKeyCodes.insert(UInt16(key.keyCode.rawValue))
-                continue
-            }
-
-            if isPressed, handleLocalClipboardCopyShortcutIfNeeded(key) {
-                locallyHandledKeyCodes.insert(UInt16(key.keyCode.rawValue))
-                continue
-            }
-
-            if isPressed, handleLocalClipboardPasteShortcutIfNeeded(key) {
-                locallyHandledKeyCodes.insert(UInt16(key.keyCode.rawValue))
-                continue
-            }
-
             let hidUsage = UInt16(key.keyCode.rawValue)
-            if !isPressed, locallyHandledKeyCodes.remove(hidUsage) != nil {
-                continue
-            }
-
-            guard let virtualKey = ShadowClientWindowsVirtualKeyMap.windowsVirtualKeyCode(
-                keyboardHIDUsage: key.keyCode,
-                characters: key.charactersIgnoringModifiers
+            recordRecentUIKitKeyboardEvent(hidUsage: hidUsage, isPressed: isPressed)
+            guard handleKeyboardHIDUsage(
+                hidUsage,
+                modifierFlags: key.modifierFlags,
+                charactersIgnoringModifiers: key.charactersIgnoringModifiers,
+                isPressed: isPressed
             ) else {
                 unhandledPresses.insert(press)
                 continue
             }
-
-            let translatedKeyCode = ShadowClientRemoteInputEvent.pretranslatedWindowsVirtualKey(virtualKey)
-            let inputEvent: ShadowClientRemoteInputEvent = isPressed
-                ? .keyDown(keyCode: translatedKeyCode, characters: key.charactersIgnoringModifiers)
-                : .keyUp(keyCode: translatedKeyCode, characters: key.charactersIgnoringModifiers)
-            emit(inputEvent)
         }
 
         return unhandledPresses
     }
 
+    @discardableResult
+    private func handleKeyboardHIDUsage(
+        _ hidUsage: UInt16,
+        modifierFlags: UIKeyModifierFlags,
+        charactersIgnoringModifiers: String?,
+        isPressed: Bool
+    ) -> Bool {
+        if isPressed,
+           handleLocalSessionTerminateShortcutIfNeeded(
+               hidUsage: hidUsage,
+               modifierFlags: modifierFlags,
+               charactersIgnoringModifiers: charactersIgnoringModifiers
+           ) {
+            locallyHandledKeyCodes.insert(hidUsage)
+            return true
+        }
+
+        if isPressed,
+           handleLocalClipboardCopyShortcutIfNeeded(
+               hidUsage: hidUsage,
+               modifierFlags: modifierFlags,
+               charactersIgnoringModifiers: charactersIgnoringModifiers
+           ) {
+            locallyHandledKeyCodes.insert(hidUsage)
+            return true
+        }
+
+        if isPressed,
+           handleLocalClipboardPasteShortcutIfNeeded(
+               hidUsage: hidUsage,
+               modifierFlags: modifierFlags,
+               charactersIgnoringModifiers: charactersIgnoringModifiers
+           ) {
+            locallyHandledKeyCodes.insert(hidUsage)
+            return true
+        }
+
+        if !isPressed, locallyHandledKeyCodes.remove(hidUsage) != nil {
+            return true
+        }
+
+        guard let keyCode = UIKeyboardHIDUsage(rawValue: Int(hidUsage)) else {
+            return false
+        }
+
+        let currentModifier = modifierMapping(for: keyCode)
+        var nextModifierFlags = trackedModifierFlags(modifierFlags)
+        if let currentModifier {
+            if isPressed {
+                nextModifierFlags.insert(currentModifier.flag)
+            } else {
+                nextModifierFlags.remove(currentModifier.flag)
+            }
+        }
+        synchronizeModifierKeys(
+            with: nextModifierFlags,
+            currentModifier: currentModifier,
+            isPressed: isPressed
+        )
+
+        if currentModifier != nil {
+            return true
+        }
+
+        let packetModifiers = packetModifierMask(from: nextModifierFlags)
+        guard let virtualKey = ShadowClientWindowsVirtualKeyMap.windowsVirtualKeyCode(
+            keyboardHIDUsage: keyCode,
+            characters: charactersIgnoringModifiers
+        ) else {
+            return false
+        }
+
+        let translatedKeyCode = ShadowClientRemoteInputEvent.pretranslatedWindowsVirtualKey(virtualKey)
+        let inputEvent: ShadowClientRemoteInputEvent = isPressed
+            ? .keyDown(
+                keyCode: translatedKeyCode,
+                characters: charactersIgnoringModifiers,
+                modifiers: packetModifiers
+            )
+            : .keyUp(
+                keyCode: translatedKeyCode,
+                characters: charactersIgnoringModifiers,
+                modifiers: packetModifiers
+            )
+        emit(inputEvent)
+        return true
+    }
+
     private func handleLocalSessionTerminateShortcutIfNeeded(_ key: UIKey) -> Bool {
-        let activeFlags = key.modifierFlags
+        handleLocalSessionTerminateShortcutIfNeeded(
+            hidUsage: UInt16(key.keyCode.rawValue),
+            modifierFlags: key.modifierFlags,
+            charactersIgnoringModifiers: key.charactersIgnoringModifiers
+        )
+    }
+
+    private func handleLocalSessionTerminateShortcutIfNeeded(
+        hidUsage: UInt16,
+        modifierFlags: UIKeyModifierFlags,
+        charactersIgnoringModifiers: String?
+    ) -> Bool {
+        let activeFlags = modifierFlags
         let commandTerminateFlags: UIKeyModifierFlags = [.command, .alternate, .shift]
         let controlTerminateFlags: UIKeyModifierFlags = [.control, .alternate, .shift]
 
@@ -596,7 +692,9 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
             return false
         }
 
-        let isQKey = key.keyCode == .keyboardQ || key.charactersIgnoringModifiers.lowercased() == "q"
+        let isQKey =
+            hidUsage == UInt16(UIKeyboardHIDUsage.keyboardQ.rawValue) ||
+            charactersIgnoringModifiers?.lowercased() == "q"
         guard isQKey else {
             return false
         }
@@ -606,13 +704,26 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
     }
 
     private func handleLocalClipboardPasteShortcutIfNeeded(_ key: UIKey) -> Bool {
-        let activeFlags = key.modifierFlags
+        handleLocalClipboardPasteShortcutIfNeeded(
+            hidUsage: UInt16(key.keyCode.rawValue),
+            modifierFlags: key.modifierFlags,
+            charactersIgnoringModifiers: key.charactersIgnoringModifiers
+        )
+    }
+
+    private func handleLocalClipboardPasteShortcutIfNeeded(
+        hidUsage: UInt16,
+        modifierFlags: UIKeyModifierFlags,
+        charactersIgnoringModifiers: String?
+    ) -> Bool {
+        let activeFlags = modifierFlags
         let requiredFlags: UIKeyModifierFlags = [.command]
         guard requiredFlags.isSubset(of: activeFlags),
               !activeFlags.contains(.control),
               !activeFlags.contains(.alternate),
               !activeFlags.contains(.shift),
-              key.keyCode == .keyboardV || key.charactersIgnoringModifiers.lowercased() == "v"
+              hidUsage == UInt16(UIKeyboardHIDUsage.keyboardV.rawValue) ||
+                  charactersIgnoringModifiers?.lowercased() == "v"
         else {
             return false
         }
@@ -622,19 +733,250 @@ final class ShadowClientIOSSessionInputCaptureView: UIView, UIGestureRecognizerD
     }
 
     private func handleLocalClipboardCopyShortcutIfNeeded(_ key: UIKey) -> Bool {
-        let activeFlags = key.modifierFlags
+        handleLocalClipboardCopyShortcutIfNeeded(
+            hidUsage: UInt16(key.keyCode.rawValue),
+            modifierFlags: key.modifierFlags,
+            charactersIgnoringModifiers: key.charactersIgnoringModifiers
+        )
+    }
+
+    private func handleLocalClipboardCopyShortcutIfNeeded(
+        hidUsage: UInt16,
+        modifierFlags: UIKeyModifierFlags,
+        charactersIgnoringModifiers: String?
+    ) -> Bool {
+        let activeFlags = modifierFlags
         let requiredFlags: UIKeyModifierFlags = [.command]
         guard requiredFlags.isSubset(of: activeFlags),
               !activeFlags.contains(.control),
               !activeFlags.contains(.alternate),
               !activeFlags.contains(.shift),
-              key.keyCode == .keyboardC || key.charactersIgnoringModifiers.lowercased() == "c"
+              hidUsage == UInt16(UIKeyboardHIDUsage.keyboardC.rawValue) ||
+                  charactersIgnoringModifiers?.lowercased() == "c"
         else {
             return false
         }
 
         onCopyClipboardCommand?()
         return true
+    }
+
+    private func trackedModifierFlags(_ flags: UIKeyModifierFlags) -> UIKeyModifierFlags {
+        let trackedFlags: UIKeyModifierFlags = [.command, .alternate, .control, .shift, .alphaShift]
+        return flags.intersection(trackedFlags)
+    }
+
+    private func synchronizeModifierKeys(
+        with nextFlags: UIKeyModifierFlags,
+        currentModifier: (flag: UIKeyModifierFlags, keyCode: UInt16)?,
+        isPressed: Bool
+    ) {
+        let previousFlags = activeModifierFlags
+
+        for mapping in modifierMappings {
+            let wasPressed = previousFlags.contains(mapping.flag)
+            let isNowPressed = nextFlags.contains(mapping.flag)
+            guard wasPressed != isNowPressed else {
+                continue
+            }
+
+            let keyCode = currentModifier?.flag == mapping.flag ? currentModifier!.keyCode : mapping.keyCode
+            emitModifierEvent(keyCode: keyCode, isPressed: isPressed ? isNowPressed : false)
+        }
+
+        activeModifierFlags = nextFlags
+    }
+
+    private func emitModifierEvent(keyCode: UInt16, isPressed: Bool) {
+        emit(
+            isPressed
+                ? .keyDown(keyCode: keyCode, characters: nil)
+                : .keyUp(keyCode: keyCode, characters: nil)
+        )
+    }
+
+    private func releaseActiveModifierKeysIfNeeded() {
+        guard !activeModifierFlags.isEmpty else {
+            return
+        }
+
+        synchronizeModifierKeys(with: [], currentModifier: nil, isPressed: false)
+    }
+
+    private func modifierMapping(
+        for keyCode: UIKeyboardHIDUsage
+    ) -> (flag: UIKeyModifierFlags, keyCode: UInt16)? {
+        switch UInt16(keyCode.rawValue) {
+        case 0xE0, 0xE4:
+            return (
+                .control,
+                ShadowClientRemoteInputEvent.pretranslatedWindowsVirtualKey(0x11)
+            )
+        case 0xE1, 0xE5:
+            return (
+                .shift,
+                ShadowClientRemoteInputEvent.pretranslatedWindowsVirtualKey(0x10)
+            )
+        case 0xE2, 0xE6:
+            return (
+                .alternate,
+                ShadowClientRemoteInputEvent.pretranslatedWindowsVirtualKey(0x12)
+            )
+        case 0xE3, 0xE7:
+            return (
+                .command,
+                ShadowClientRemoteInputEvent.pretranslatedWindowsVirtualKey(0x5B)
+            )
+        case 0x39:
+            return (
+                .alphaShift,
+                ShadowClientRemoteInputEvent.pretranslatedWindowsVirtualKey(0x14)
+            )
+        default:
+            return nil
+        }
+    }
+
+    private var modifierMappings: [(flag: UIKeyModifierFlags, keyCode: UInt16)] {
+        [
+            (
+                .command,
+                ShadowClientRemoteInputEvent.pretranslatedWindowsVirtualKey(0x5B)
+            ),
+            (
+                .control,
+                ShadowClientRemoteInputEvent.pretranslatedWindowsVirtualKey(0x11)
+            ),
+            (
+                .alternate,
+                ShadowClientRemoteInputEvent.pretranslatedWindowsVirtualKey(0x12)
+            ),
+            (
+                .shift,
+                ShadowClientRemoteInputEvent.pretranslatedWindowsVirtualKey(0x10)
+            ),
+            (
+                .alphaShift,
+                ShadowClientRemoteInputEvent.pretranslatedWindowsVirtualKey(0x14)
+            ),
+        ]
+    }
+
+    private func packetModifierMask(from flags: UIKeyModifierFlags) -> UInt8 {
+        var mask: UInt8 = 0
+        if flags.contains(.shift) {
+            mask |= ShadowClientRemoteInputEvent.modifierShift
+        }
+        if flags.contains(.control) {
+            mask |= ShadowClientRemoteInputEvent.modifierControl
+        }
+        if flags.contains(.alternate) {
+            mask |= ShadowClientRemoteInputEvent.modifierAlternate
+        }
+        return mask
+    }
+
+    private func refreshSupplementalHardwareKeyboardCapture() {
+        let targetKeyboardInput: GCKeyboardInput?
+        if hardwareKeyboardCaptureEnabled, window != nil {
+            targetKeyboardInput = GCKeyboard.coalesced?.keyboardInput
+        } else {
+            targetKeyboardInput = nil
+        }
+
+        if observedGameControllerKeyboardInput === targetKeyboardInput {
+            return
+        }
+
+        observedGameControllerKeyboardInput?.keyChangedHandler = nil
+        observedGameControllerKeyboardInput = targetKeyboardInput
+        observedGameControllerKeyboardInput?.keyChangedHandler = { [weak self] _, _, keyCode, pressed in
+            guard let self else {
+                return
+            }
+            Task { @MainActor [weak self] in
+                self?.scheduleSupplementalHardwareKeyboardEvent(
+                    hidUsage: UInt16(truncatingIfNeeded: Int(keyCode.rawValue)),
+                    isPressed: pressed
+                )
+            }
+        }
+    }
+
+    private func scheduleSupplementalHardwareKeyboardEvent(
+        hidUsage: UInt16,
+        isPressed: Bool
+    ) {
+        let modifierFlags = supplementalModifierFlagsSnapshot(
+            forHIDUsage: hidUsage,
+            isPressed: isPressed
+        )
+        let signature = KeyboardEventSignature(hidUsage: hidUsage, isPressed: isPressed)
+
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(
+                nanoseconds: Constants.supplementalKeyboardDispatchDelayNanoseconds
+            )
+            guard let self,
+                  self.hardwareKeyboardCaptureEnabled,
+                  self.window != nil,
+                  !self.wasUIKitKeyboardEventRecentlyObserved(signature),
+                  !modifierFlags.contains(.command)
+            else {
+                return
+            }
+
+            _ = self.handleKeyboardHIDUsage(
+                hidUsage,
+                modifierFlags: modifierFlags,
+                charactersIgnoringModifiers: nil,
+                isPressed: isPressed
+            )
+        }
+    }
+
+    private func supplementalModifierFlagsSnapshot(
+        forHIDUsage hidUsage: UInt16,
+        isPressed: Bool
+    ) -> UIKeyModifierFlags {
+        var flags = activeModifierFlags
+        if let keyCode = UIKeyboardHIDUsage(rawValue: Int(hidUsage)),
+           let currentModifier = modifierMapping(for: keyCode) {
+            if isPressed {
+                flags.insert(currentModifier.flag)
+            } else {
+                flags.remove(currentModifier.flag)
+            }
+        }
+        return trackedModifierFlags(flags)
+    }
+
+    private func recordRecentUIKitKeyboardEvent(hidUsage: UInt16, isPressed: Bool) {
+        let now = ProcessInfo.processInfo.systemUptime
+        recentUIKitKeyboardEvents[
+            KeyboardEventSignature(hidUsage: hidUsage, isPressed: isPressed)
+        ] = now
+        pruneRecentUIKitKeyboardEvents(referenceTime: now)
+    }
+
+    private func wasUIKitKeyboardEventRecentlyObserved(
+        _ signature: KeyboardEventSignature
+    ) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let timestamp = recentUIKitKeyboardEvents[signature] else {
+            return false
+        }
+        if now - timestamp > Constants.supplementalKeyboardSuppressionWindowSeconds {
+            recentUIKitKeyboardEvents.removeValue(forKey: signature)
+            return false
+        }
+        return true
+    }
+
+    private func pruneRecentUIKitKeyboardEvents(referenceTime: TimeInterval) {
+        recentUIKitKeyboardEvents = recentUIKitKeyboardEvents.filter {
+            referenceTime - $0.value <= Constants.supplementalKeyboardSuppressionWindowSeconds
+        }
     }
 
     private func emitAbsolutePointerPosition(at location: CGPoint) {
