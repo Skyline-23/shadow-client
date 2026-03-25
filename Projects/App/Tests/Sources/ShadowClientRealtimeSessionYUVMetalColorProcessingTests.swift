@@ -200,6 +200,69 @@ func yuvMetalPipelineDerivesPQSourceHeadroomFromHDRMetadataAttachmentsWhenToneMa
     #expect(descriptor.toneMapSourceHeadroom == 10.0)
 }
 
+@Test("YUV Metal pipeline derives PQ source headroom from HDR metadata attachments for linear HDR output")
+func yuvMetalPipelineDerivesPQSourceHeadroomFromHDRMetadataAttachmentsForLinearHDROutput() throws {
+    let pixelBuffer = try makeMetalColorProcessingPixelBuffer(
+        pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferColorPrimariesKey,
+        kCVImageBufferColorPrimaries_ITU_R_2020,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferTransferFunctionKey,
+        kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferYCbCrMatrixKey,
+        kCVImageBufferYCbCrMatrix_ITU_R_2020,
+        .shouldPropagate
+    )
+
+    let metadata = ShadowClientHDRMetadata(
+        displayPrimaries: [
+            .init(x: 13250, y: 34500),
+            .init(x: 7500, y: 3000),
+            .init(x: 34000, y: 16000),
+        ],
+        whitePoint: .init(x: 15635, y: 16450),
+        maxDisplayLuminance: 1600,
+        minDisplayLuminance: 1,
+        maxContentLightLevel: 1600,
+        maxFrameAverageLightLevel: 640,
+        maxFullFrameLuminance: 0
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferMasteringDisplayColorVolumeKey,
+        metadata.hdr10DisplayInfoData as CFData,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferContentLightLevelInfoKey,
+        metadata.hdr10ContentInfoData as CFData,
+        .shouldPropagate
+    )
+
+    let descriptor = ShadowClientRealtimeSessionYUVMetalPipeline.colorProcessingDescriptor(
+        for: pixelBuffer,
+        outputColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) ?? CGColorSpaceCreateDeviceRGB(),
+        prefersExtendedDynamicRange: true
+    )
+
+    #expect(descriptor.transferFunction == .pq)
+    #expect(descriptor.decodesTransfer)
+    #expect(!descriptor.appliesToneMapToSDR)
+    #expect(descriptor.appliesGamutTransform)
+    #expect(descriptor.toneMapSourceHeadroom == 16.0)
+}
+
 @Test("YUV Metal pipeline preserves the encoded YCbCr matrix for Display P3 PQ frames rendered to linear HDR output")
 func yuvMetalPipelinePreservesEncodedCSCMatrixForDisplayP3PQFramesUsingBT709Matrix() throws {
     let pixelBuffer = try makeMetalColorProcessingPixelBuffer(

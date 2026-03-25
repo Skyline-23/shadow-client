@@ -406,8 +406,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             : Constants.identity3x3
         let sourceHeadroom = sourceHeadroom(
             for: pixelBuffer,
-            transferFunction: transferFunction,
-            appliesToneMapToSDR: appliesToneMapToSDR
+            transferFunction: transferFunction
         )
 
         return .init(
@@ -436,18 +435,17 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
 
     private static func sourceHeadroom(
         for pixelBuffer: CVPixelBuffer,
-        transferFunction: TransferFunctionKind,
-        appliesToneMapToSDR: Bool
+        transferFunction: TransferFunctionKind
     ) -> Float {
         switch transferFunction {
         case .pq:
-            // PQ EOTF is absolute and normalized to 10,000 nits. Converting PQ-decoded
-            // values into EDR's 100-nit reference white therefore uses a fixed 100x scale
-            // for direct HDR presentation. Frame metadata is still used for CAEDRMetadata
-            // and for SDR tone mapping, where source peak headroom needs the negotiated peak.
-            if appliesToneMapToSDR,
-               let metadataHeadroom = hdrMetadataHeadroom(for: pixelBuffer)
-            {
+            // CAEDRMetadata expects drawable values proportional to the optical output
+            // of the reference display described by the attached HDR10 metadata. When
+            // metadata is present, use its negotiated peak luminance as the working
+            // headroom so a mastered 1600-nit frame produces values around 16.0 when
+            // opticalOutputScale is 100. Fall back to the absolute PQ reference only
+            // when the frame lacks mastering/content-light metadata entirely.
+            if let metadataHeadroom = hdrMetadataHeadroom(for: pixelBuffer) {
                 return metadataHeadroom
             }
             return 100.0
