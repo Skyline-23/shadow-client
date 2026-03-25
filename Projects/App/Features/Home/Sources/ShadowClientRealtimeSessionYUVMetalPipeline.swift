@@ -404,9 +404,10 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         let gamutRows = appliesGamutTransform
             ? Constants.rec2020ToDisplayP3
             : Constants.identity3x3
-        let hdrReferenceWhiteScale = hdrReferenceWhiteScale(
+        let sourceHeadroom = sourceHeadroom(
             for: pixelBuffer,
-            transferFunction: transferFunction
+            transferFunction: transferFunction,
+            appliesToneMapToSDR: appliesToneMapToSDR
         )
 
         return .init(
@@ -415,7 +416,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             appliesToneMapToSDR: appliesToneMapToSDR,
             appliesGamutTransform: appliesGamutTransform,
             hlgSystemGamma: 1.2,
-            toneMapSourceHeadroom: hdrReferenceWhiteScale,
+            toneMapSourceHeadroom: sourceHeadroom,
             toneMapTargetHeadroom: ShadowClientRealtimeSessionColorPipeline.hdrToSdrToneMapTargetHeadroom,
             gamutRow0: gamutRows.0,
             gamutRow1: gamutRows.1,
@@ -433,16 +434,20 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         return ShadowClientRealtimeSessionColorPipeline.matrixStandard(for: pixelBuffer)
     }
 
-    private static func hdrReferenceWhiteScale(
+    private static func sourceHeadroom(
         for pixelBuffer: CVPixelBuffer,
-        transferFunction: TransferFunctionKind
+        transferFunction: TransferFunctionKind,
+        appliesToneMapToSDR: Bool
     ) -> Float {
         switch transferFunction {
         case .pq:
-            // PQ EOTF returns absolute luminance normalized to 10,000 nits.
-            // EDR treats 1.0 as SDR reference white (100 nits), so source headroom
-            // should come from negotiated/frame HDR metadata rather than a fixed 100x scale.
-            if let metadataHeadroom = hdrMetadataHeadroom(for: pixelBuffer) {
+            // PQ EOTF is absolute and normalized to 10,000 nits. Converting PQ-decoded
+            // values into EDR's 100-nit reference white therefore uses a fixed 100x scale
+            // for direct HDR presentation. Frame metadata is still used for CAEDRMetadata
+            // and for SDR tone mapping, where source peak headroom needs the negotiated peak.
+            if appliesToneMapToSDR,
+               let metadataHeadroom = hdrMetadataHeadroom(for: pixelBuffer)
+            {
                 return metadataHeadroom
             }
             return 100.0

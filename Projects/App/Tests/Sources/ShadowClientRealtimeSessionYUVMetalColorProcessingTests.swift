@@ -137,8 +137,8 @@ func yuvMetalPipelineDecodesPQForLinearDisplayP3HDROutput() throws {
     #expect(descriptor.toneMapSourceHeadroom == 100.0)
 }
 
-@Test("YUV Metal pipeline derives PQ source headroom from HDR metadata attachments")
-func yuvMetalPipelineDerivesPQSourceHeadroomFromHDRMetadataAttachments() throws {
+@Test("YUV Metal pipeline derives PQ source headroom from HDR metadata attachments when tone-mapping to SDR")
+func yuvMetalPipelineDerivesPQSourceHeadroomFromHDRMetadataAttachmentsWhenToneMappingToSDR() throws {
     let pixelBuffer = try makeMetalColorProcessingPixelBuffer(
         pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
     )
@@ -189,14 +189,14 @@ func yuvMetalPipelineDerivesPQSourceHeadroomFromHDRMetadataAttachments() throws 
 
     let descriptor = ShadowClientRealtimeSessionYUVMetalPipeline.colorProcessingDescriptor(
         for: pixelBuffer,
-        outputColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) ?? CGColorSpaceCreateDeviceRGB(),
-        prefersExtendedDynamicRange: true
+        outputColorSpace: CGColorSpace(name: CGColorSpace.itur_709) ?? CGColorSpaceCreateDeviceRGB(),
+        prefersExtendedDynamicRange: false
     )
 
     #expect(descriptor.transferFunction == .pq)
     #expect(descriptor.decodesTransfer)
-    #expect(!descriptor.appliesToneMapToSDR)
-    #expect(descriptor.appliesGamutTransform)
+    #expect(descriptor.appliesToneMapToSDR)
+    #expect(!descriptor.appliesGamutTransform)
     #expect(descriptor.toneMapSourceHeadroom == 10.0)
 }
 
