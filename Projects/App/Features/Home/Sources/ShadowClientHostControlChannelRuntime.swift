@@ -38,6 +38,7 @@ actor ShadowClientHostControlChannelRuntime {
     private var controlEncryptionCodec: ShadowClientHostControlEncryptionCodec?
     private var controlEncryptionSequenceNumber: UInt32 = 0
     private var receivedControllerFeedbackEventCount: Int = 0
+    private var receivedHDRModeEventCount: Int = 0
     private var receivedControlMessageTypeCounts: [UInt16: Int] = [:]
     private var controlDecryptFailureCount: Int = 0
 
@@ -561,6 +562,7 @@ actor ShadowClientHostControlChannelRuntime {
             from: packet,
             command: command
         ) {
+            reportHDRModeEventIfNeeded(hdrModeEvent)
             await onHDRMode?(hdrModeEvent)
         }
 
@@ -630,6 +632,21 @@ actor ShadowClientHostControlChannelRuntime {
 
         logger.notice(
             "RUMBLE TRACE control feedback #\(self.receivedControllerFeedbackEventCount, privacy: .public): \(self.controllerFeedbackSummary(for: event), privacy: .public)"
+        )
+    }
+
+    private func reportHDRModeEventIfNeeded(
+        _ event: ShadowClientHostHDRModeEvent
+    ) {
+        receivedHDRModeEventCount &+= 1
+        guard receivedHDRModeEventCount <= 12 ||
+                receivedHDRModeEventCount.isMultiple(of: 120)
+        else {
+            return
+        }
+
+        logger.notice(
+            "RUMBLE TRACE hdrMode #\(self.receivedHDRModeEventCount, privacy: .public): \(event.debugSummary, privacy: .public)"
         )
     }
 

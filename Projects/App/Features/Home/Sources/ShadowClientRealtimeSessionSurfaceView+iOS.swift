@@ -82,6 +82,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private var lastRenderedDrawableSize: CGSize = .zero
     private var hasDumpedCurrentSessionDrawableSample = false
     private var hasLoggedRenderPathForCurrentSession = false
+    private var lastLoggedEDRMetadataSummary: String?
 
     init?(
         device: MTLDevice,
@@ -127,6 +128,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         if pixelBuffer == nil {
             hasDumpedCurrentSessionDrawableSample = false
             hasLoggedRenderPathForCurrentSession = false
+            lastLoggedEDRMetadataSummary = nil
         }
         let colorConfiguration = pixelBuffer.map {
             ShadowClientRealtimeSessionColorPipeline.configuration(
@@ -143,9 +145,11 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             )
         }
 
-        if let renderTargetConfiguration, pixelBuffer != nil {
+        if let colorConfiguration, let renderTargetConfiguration, pixelBuffer != nil {
             applyColorConfiguration(
+                colorConfiguration,
                 renderTargetConfiguration,
+                pixelBuffer: pixelBuffer,
                 to: view,
                 supportsExtendedDynamicRange: supportsExtendedDynamicRangeDisplay(for: view)
             )
@@ -174,7 +178,8 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 drawableSize: drawableSize,
                 colorPixelFormat: view.colorPixelFormat,
                 outputColorSpace: renderTargetConfiguration.outputColorSpace,
-                prefersExtendedDynamicRange: renderTargetConfiguration.prefersExtendedDynamicRange
+                prefersExtendedDynamicRange: renderTargetConfiguration.prefersExtendedDynamicRange,
+                currentEDRHeadroom: currentExtendedDynamicRangeHeadroom(for: view)
             )
             if didRender {
                 commandBuffer.present(drawable)
@@ -215,7 +220,9 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     }
 
     private func applyColorConfiguration(
+        _ colorConfiguration: ShadowClientRealtimeSessionColorConfiguration,
         _ renderTargetConfiguration: ShadowClientSurfaceRenderTargetConfiguration,
+        pixelBuffer: CVPixelBuffer?,
         to view: MTKView,
         supportsExtendedDynamicRange _: Bool
     ) {
@@ -223,20 +230,65 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             view.colorPixelFormat = renderTargetConfiguration.targetPixelFormat
         }
 
-        if #available(iOS 16.0, tvOS 16.0, *),
-           let metalLayer = view.layer as? CAMetalLayer
-        {
+        if let metalLayer = view.layer as? CAMetalLayer {
             metalLayer.colorspace = renderTargetConfiguration.outputColorSpace
             metalLayer.wantsExtendedDynamicRangeContent = renderTargetConfiguration.prefersExtendedDynamicRange
+            let currentHeadroom = CGFloat(
+                currentExtendedDynamicRangeHeadroom(for: view)
+            )
+            let appliedHDRMetadata = appliedEDRMetadata(
+                for: pixelBuffer,
+                hostHDRMetadata: surfaceContext.activeHDRMetadata
+            )
+            let edrMetadataSummary = ShadowClientSurfaceColorSpaceKit.edrMetadataDebugSummary(
+                colorConfiguration: colorConfiguration,
+                renderTargetConfiguration: renderTargetConfiguration,
+                hdrMetadata: appliedHDRMetadata,
+                currentHeadroom: currentHeadroom
+            )
+            if edrMetadataSummary != lastLoggedEDRMetadataSummary {
+                logger.notice("Surface EDR metadata applied \(edrMetadataSummary, privacy: .public)")
+                lastLoggedEDRMetadataSummary = edrMetadataSummary
+            }
+            metalLayer.edrMetadata = ShadowClientSurfaceColorSpaceKit.edrMetadata(
+                colorConfiguration: colorConfiguration,
+                renderTargetConfiguration: renderTargetConfiguration,
+                hdrMetadata: appliedHDRMetadata,
+                currentHeadroom: currentHeadroom
+            )
         }
     }
 
-    private func supportsExtendedDynamicRangeDisplay(for view: MTKView) -> Bool {
-        guard #available(iOS 16.0, tvOS 16.0, *) else {
-            return false
+    private func appliedEDRMetadata(
+        for pixelBuffer: CVPixelBuffer?,
+        hostHDRMetadata: ShadowClientHDRMetadata?
+    ) -> ShadowClientHDRMetadata? {
+        guard let hostHDRMetadata else {
+            return nil
         }
+        guard let pixelBuffer else {
+            return nil
+        }
+        guard frameCarriesStaticHDRMetadata(pixelBuffer) else {
+            return nil
+        }
+        return hostHDRMetadata
+    }
+
+    private func frameCarriesStaticHDRMetadata(_ pixelBuffer: CVPixelBuffer) -> Bool {
+        ShadowClientSurfaceColorSpaceKit.frameCarriesStaticHDRMetadata(
+            pixelBuffer
+        )
+    }
+
+    private func supportsExtendedDynamicRangeDisplay(for view: MTKView) -> Bool {
         let screen = view.window?.screen ?? UIScreen.main
         return screen.potentialEDRHeadroom > 1.0
+    }
+
+    private func currentExtendedDynamicRangeHeadroom(for view: MTKView) -> Float {
+        let screen = view.window?.screen ?? UIScreen.main
+        return Float(max(screen.currentEDRHeadroom, 1.0))
     }
 
     private func screenColorSpace(for view: MTKView) -> CGColorSpace? {

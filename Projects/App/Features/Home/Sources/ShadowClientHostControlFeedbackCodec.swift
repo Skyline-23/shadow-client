@@ -26,6 +26,13 @@ public struct ShadowClientHDRMetadata: Equatable, Sendable {
     public let maxFrameAverageLightLevel: UInt16
     public let maxFullFrameLuminance: UInt16
 
+    var debugSummary: String {
+        let primariesSummary = displayPrimaries
+            .map { "[\($0.x),\($0.y)]" }
+            .joined(separator: ",")
+        return "primaries=\(primariesSummary) white-point=[\(whitePoint.x),\(whitePoint.y)] max-display=\(maxDisplayLuminance) min-display=\(minDisplayLuminance) max-cll=\(maxContentLightLevel) max-fall=\(maxFrameAverageLightLevel) max-ffl=\(maxFullFrameLuminance)"
+    }
+
     var hdr10DisplayInfoData: Data {
         var data = Data()
         data.reserveCapacity(24)
@@ -64,6 +71,10 @@ public struct ShadowClientHDRMetadata: Equatable, Sendable {
 struct ShadowClientHostHDRModeEvent: Equatable, Sendable {
     let isEnabled: Bool
     let metadata: ShadowClientHDRMetadata?
+
+    var debugSummary: String {
+        "enabled=\(isEnabled) metadata=\(metadata?.debugSummary ?? "nil")"
+    }
 }
 
 enum ShadowClientHostControllerFeedbackEvent: Equatable, Sendable {

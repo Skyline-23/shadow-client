@@ -314,6 +314,16 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     sessionSurfaceContext.updateAudioOutputState(audioState)
                 }
             },
+            onHDRMode: { [sessionSurfaceContext] hdrModeEvent in
+                await MainActor.run {
+                    sessionSurfaceContext.updateActiveDynamicRangeMode(
+                        hdrModeEvent.isEnabled ? .hdr : .sdr
+                    )
+                    sessionSurfaceContext.updateActiveHDRMetadata(
+                        hdrModeEvent.metadata
+                    )
+                }
+            },
             onControllerFeedback: { [sessionSurfaceContext] feedbackEvent in
                 sessionSurfaceContext.publishControllerFeedbackEvent(feedbackEvent)
             },

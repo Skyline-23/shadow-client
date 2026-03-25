@@ -161,7 +161,8 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         drawableSize: CGSize,
         colorPixelFormat: MTLPixelFormat,
         outputColorSpace: CGColorSpace,
-        prefersExtendedDynamicRange: Bool
+        prefersExtendedDynamicRange: Bool,
+        currentEDRHeadroom: Float? = nil
     ) -> Bool {
         guard canRender(pixelBuffer),
               let pipelineState = pipelineStates[colorPixelFormat],
@@ -194,11 +195,14 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         var parameters = cscParameters(
             for: pixelBuffer,
             outputColorSpace: outputColorSpace,
-            prefersExtendedDynamicRange: prefersExtendedDynamicRange
+            prefersExtendedDynamicRange: prefersExtendedDynamicRange,
+            currentEDRHeadroom: currentEDRHeadroom
         )
         logDiagnosticsIfNeeded(
             pixelBuffer: pixelBuffer,
             colorPixelFormat: colorPixelFormat,
+            outputColorSpace: outputColorSpace,
+            currentEDRHeadroom: currentEDRHeadroom,
             parameters: parameters
         )
 
@@ -289,9 +293,14 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
     private func cscParameters(
         for pixelBuffer: CVPixelBuffer,
         outputColorSpace: CGColorSpace,
-        prefersExtendedDynamicRange: Bool
+        prefersExtendedDynamicRange: Bool,
+        currentEDRHeadroom: Float?
     ) -> CSCParameters {
-        let matrix = cscMatrix(for: pixelBuffer)
+        let matrix = cscMatrix(
+            for: pixelBuffer,
+            outputColorSpace: outputColorSpace,
+            prefersExtendedDynamicRange: prefersExtendedDynamicRange
+        )
         let fullRange = isFullRange(pixelBuffer)
         let bitDepth = bitsPerChannel(for: pixelBuffer)
         let channelRange = Float((1 << bitDepth) - 1)
@@ -304,7 +313,8 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         let colorProcessing = Self.colorProcessingDescriptor(
             for: pixelBuffer,
             outputColorSpace: outputColorSpace,
-            prefersExtendedDynamicRange: prefersExtendedDynamicRange
+            prefersExtendedDynamicRange: prefersExtendedDynamicRange,
+            currentEDRHeadroom: currentEDRHeadroom
         )
 
         return CSCParameters(
@@ -335,7 +345,8 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
     static func colorProcessingDescriptor(
         for pixelBuffer: CVPixelBuffer,
         outputColorSpace: CGColorSpace,
-        prefersExtendedDynamicRange: Bool
+        prefersExtendedDynamicRange: Bool,
+        currentEDRHeadroom: Float? = nil
     ) -> ColorProcessingDescriptor {
         let transfer = staticAttachmentStringValue(
             forKey: kCVImageBufferTransferFunctionKey,
@@ -383,8 +394,8 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         let hdrReferenceWhiteScale: Float
         switch transferFunction {
         case .pq:
-            // ST 2084 PQ is absolute (normalized to 10,000 nits). Apple EDR render targets
-            // expect reference white near 1.0, so remap 100 nit reference white to 1.0.
+            // ST 2084 PQ is absolute (normalized to 10,000 nits). EDR uses 1.0 as SDR white,
+            // so 100 nit reference white maps back to 1.0 in linear EDR space.
             hdrReferenceWhiteScale = 100.0
         case .hlg:
             hdrReferenceWhiteScale = 1.0
@@ -406,9 +417,21 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         )
     }
 
+    static func effectiveMatrixStandard(
+        for pixelBuffer: CVPixelBuffer,
+        outputColorSpace: CGColorSpace,
+        prefersExtendedDynamicRange: Bool
+    ) -> ShadowClientRealtimeSessionSourceColorSpaceStandard {
+        _ = outputColorSpace
+        _ = prefersExtendedDynamicRange
+        return ShadowClientRealtimeSessionColorPipeline.matrixStandard(for: pixelBuffer)
+    }
+
     private func logDiagnosticsIfNeeded(
         pixelBuffer: CVPixelBuffer,
         colorPixelFormat: MTLPixelFormat,
+        outputColorSpace: CGColorSpace,
+        currentEDRHeadroom: Float?,
         parameters: CSCParameters
     ) {
         let primaries = attachmentStringValue(
@@ -431,12 +454,21 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             pixelBuffer: pixelBuffer
         ) ?? "nil"
         let sourceStandard = String(describing: ShadowClientRealtimeSessionColorPipeline.sourceStandard(for: pixelBuffer))
+        let effectiveMatrixStandard = String(
+            describing: Self.effectiveMatrixStandard(
+                for: pixelBuffer,
+                outputColorSpace: outputColorSpace,
+                prefersExtendedDynamicRange: parameters.decodesTransfer != 0 && parameters.appliesToneMapToSDR == 0
+            )
+        )
         let fullRange = isFullRange(pixelBuffer)
         let bitDepth = bitsPerChannel(for: pixelBuffer)
         let sampleSummary = sampledDiagnostics(
             pixelBuffer: pixelBuffer,
             parameters: parameters
         ) ?? "nil"
+        let masteringSummary = masteringDisplaySummary(for: pixelBuffer) ?? "nil"
+        let contentLightSummary = contentLightLevelSummary(for: pixelBuffer) ?? "nil"
         let signature = [
             String(CVPixelBufferGetPixelFormatType(pixelBuffer)),
             primaries,
@@ -444,9 +476,14 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             matrix,
             chromaLocation,
             sourceStandard,
+            effectiveMatrixStandard,
             fullRange ? "full" : "limited",
             String(bitDepth),
             String(colorPixelFormat.rawValue),
+            outputColorSpace.name as String? ?? "nil",
+            String(currentEDRHeadroom ?? 1.0),
+            masteringSummary,
+            contentLightSummary,
         ].joined(separator: "|")
 
         guard signature != lastLoggedDiagnosticsSignature else {
@@ -456,9 +493,79 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
 
         Self.logger.notice(
             """
-            YUV Metal diagnostics pixel-format=0x\(String(CVPixelBufferGetPixelFormatType(pixelBuffer), radix: 16), privacy: .public) drawable-format=\(colorPixelFormat.rawValue, privacy: .public) source-standard=\(sourceStandard, privacy: .public) primaries=\(primaries, privacy: .public) transfer=\(transfer, privacy: .public) matrix=\(matrix, privacy: .public) chroma-location=\(chromaLocation, privacy: .public) range=\(fullRange ? "full" : "limited", privacy: .public) bit-depth=\(bitDepth, privacy: .public) csc-row0=[\(parameters.row0.x, privacy: .public),\(parameters.row0.y, privacy: .public),\(parameters.row0.z, privacy: .public)] csc-row1=[\(parameters.row1.x, privacy: .public),\(parameters.row1.y, privacy: .public),\(parameters.row1.z, privacy: .public)] csc-row2=[\(parameters.row2.x, privacy: .public),\(parameters.row2.y, privacy: .public),\(parameters.row2.z, privacy: .public)] offsets=[\(parameters.offsets.x, privacy: .public),\(parameters.offsets.y, privacy: .public),\(parameters.offsets.z, privacy: .public)] chroma-offset=[\(parameters.chromaOffset.x, privacy: .public),\(parameters.chromaOffset.y, privacy: .public)] bitness-scale=\(parameters.bitnessScaleFactor, privacy: .public) samples=\(sampleSummary, privacy: .public)
+            YUV Metal diagnostics pixel-format=0x\(String(CVPixelBufferGetPixelFormatType(pixelBuffer), radix: 16), privacy: .public) drawable-format=\(colorPixelFormat.rawValue, privacy: .public) output-color-space=\(outputColorSpace.name as String? ?? "nil", privacy: .public) current-edr-headroom=\(currentEDRHeadroom ?? 1.0, privacy: .public) source-standard=\(sourceStandard, privacy: .public) primaries=\(primaries, privacy: .public) transfer=\(transfer, privacy: .public) matrix=\(matrix, privacy: .public) effective-matrix=\(effectiveMatrixStandard, privacy: .public) mastering=\(masteringSummary, privacy: .public) content-light=\(contentLightSummary, privacy: .public) chroma-location=\(chromaLocation, privacy: .public) range=\(fullRange ? "full" : "limited", privacy: .public) bit-depth=\(bitDepth, privacy: .public) csc-row0=[\(parameters.row0.x, privacy: .public),\(parameters.row0.y, privacy: .public),\(parameters.row0.z, privacy: .public)] csc-row1=[\(parameters.row1.x, privacy: .public),\(parameters.row1.y, privacy: .public),\(parameters.row1.z, privacy: .public)] csc-row2=[\(parameters.row2.x, privacy: .public),\(parameters.row2.y, privacy: .public),\(parameters.row2.z, privacy: .public)] offsets=[\(parameters.offsets.x, privacy: .public),\(parameters.offsets.y, privacy: .public),\(parameters.offsets.z, privacy: .public)] chroma-offset=[\(parameters.chromaOffset.x, privacy: .public),\(parameters.chromaOffset.y, privacy: .public)] bitness-scale=\(parameters.bitnessScaleFactor, privacy: .public) samples=\(sampleSummary, privacy: .public)
             """
         )
+    }
+
+    private func masteringDisplaySummary(
+        for pixelBuffer: CVPixelBuffer
+    ) -> String? {
+        guard let data = attachmentDataValue(
+            forKey: kCVImageBufferMasteringDisplayColorVolumeKey,
+            pixelBuffer: pixelBuffer
+        ) else {
+            return nil
+        }
+        guard data.count == 24 else {
+            return "invalid-bytes=\(data.count)"
+        }
+
+        var offset = 0
+        var primaries: [String] = []
+        primaries.reserveCapacity(3)
+        for _ in 0 ..< 3 {
+            let x = readUInt16BE(data, at: offset)
+            let y = readUInt16BE(data, at: offset + 2)
+            primaries.append("[\(x),\(y)]")
+            offset += 4
+        }
+        let whitePointX = readUInt16BE(data, at: offset)
+        let whitePointY = readUInt16BE(data, at: offset + 2)
+        let maxDisplayLuminance = readUInt32BE(data, at: offset + 4)
+        let minDisplayLuminance = readUInt32BE(data, at: offset + 8)
+        return "primaries=\(primaries.joined(separator: ",")) white-point=[\(whitePointX),\(whitePointY)] max-display=\(maxDisplayLuminance) min-display=\(minDisplayLuminance)"
+    }
+
+    private func contentLightLevelSummary(
+        for pixelBuffer: CVPixelBuffer
+    ) -> String? {
+        guard let data = attachmentDataValue(
+            forKey: kCVImageBufferContentLightLevelInfoKey,
+            pixelBuffer: pixelBuffer
+        ) else {
+            return nil
+        }
+        guard data.count == 4 else {
+            return "invalid-bytes=\(data.count)"
+        }
+        let maxContentLightLevel = readUInt16BE(data, at: 0)
+        let maxFrameAverageLightLevel = readUInt16BE(data, at: 2)
+        return "max-cll=\(maxContentLightLevel) max-fall=\(maxFrameAverageLightLevel)"
+    }
+
+    private func attachmentDataValue(
+        forKey key: CFString,
+        pixelBuffer: CVPixelBuffer
+    ) -> Data? {
+        ShadowClientSurfaceColorSpaceKit.staticHDRAttachmentData(
+            forKey: key,
+            pixelBuffer: pixelBuffer
+        )
+    }
+
+    private func readUInt16BE(_ data: Data, at offset: Int) -> UInt16 {
+        let b0 = UInt16(data[offset]) << 8
+        let b1 = UInt16(data[offset + 1])
+        return b0 | b1
+    }
+
+    private func readUInt32BE(_ data: Data, at offset: Int) -> UInt32 {
+        let b0 = UInt32(data[offset]) << 24
+        let b1 = UInt32(data[offset + 1]) << 16
+        let b2 = UInt32(data[offset + 2]) << 8
+        let b3 = UInt32(data[offset + 3])
+        return b0 | b1 | b2 | b3
     }
 
     private func sampledDiagnostics(
@@ -548,8 +655,16 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         Int(max(0, min(255, lroundf(value))))
     }
 
-    private func cscMatrix(for pixelBuffer: CVPixelBuffer) -> (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>) {
-        switch ShadowClientRealtimeSessionColorPipeline.matrixStandard(for: pixelBuffer) {
+    private func cscMatrix(
+        for pixelBuffer: CVPixelBuffer,
+        outputColorSpace: CGColorSpace,
+        prefersExtendedDynamicRange: Bool
+    ) -> (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>) {
+        switch Self.effectiveMatrixStandard(
+            for: pixelBuffer,
+            outputColorSpace: outputColorSpace,
+            prefersExtendedDynamicRange: prefersExtendedDynamicRange
+        ) {
         case .rec2020:
             return Constants.bt2020
         case .displayP3:

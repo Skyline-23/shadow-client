@@ -148,9 +148,10 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             )
         }
 
-        if let renderTargetConfiguration, pixelBuffer != nil {
+        if let colorConfiguration, let renderTargetConfiguration, pixelBuffer != nil {
             let renderTargetSignature = Self.renderTargetSignature(for: renderTargetConfiguration)
             let didResetDrawablePool = applyColorConfiguration(
+                colorConfiguration,
                 renderTargetConfiguration,
                 signature: renderTargetSignature,
                 to: view,
@@ -185,7 +186,8 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 drawableSize: drawableSize,
                 colorPixelFormat: view.colorPixelFormat,
                 outputColorSpace: renderTargetConfiguration.outputColorSpace,
-                prefersExtendedDynamicRange: renderTargetConfiguration.prefersExtendedDynamicRange
+                prefersExtendedDynamicRange: renderTargetConfiguration.prefersExtendedDynamicRange,
+                currentEDRHeadroom: Float(currentExtendedDynamicRangeHeadroom(for: view))
             )
             if didRender {
                 commandBuffer.present(drawable)
@@ -218,6 +220,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     }
 
     private func applyColorConfiguration(
+        _ colorConfiguration: ShadowClientRealtimeSessionColorConfiguration,
         _ renderTargetConfiguration: ShadowClientSurfaceRenderTargetConfiguration,
         signature: RenderTargetSignature,
         to view: MTKView,
@@ -248,8 +251,9 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             }
             metalLayer.colorspace = renderTargetConfiguration.outputColorSpace
             metalLayer.wantsExtendedDynamicRangeContent = renderTargetConfiguration.prefersExtendedDynamicRange
-            metalLayer.edrMetadata = edrMetadata(
-                for: renderTargetConfiguration,
+            metalLayer.edrMetadata = ShadowClientSurfaceColorSpaceKit.edrMetadata(
+                colorConfiguration: colorConfiguration,
+                renderTargetConfiguration: renderTargetConfiguration,
                 hdrMetadata: surfaceContext.activeHDRMetadata,
                 currentHeadroom: currentExtendedDynamicRangeHeadroom(for: view)
             )
@@ -289,44 +293,5 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         return max(screen?.maximumExtendedDynamicRangeColorComponentValue ?? 1, 1.0)
     }
 
-    @available(macOS 10.15, *)
-    private func edrMetadata(
-        for renderTargetConfiguration: ShadowClientSurfaceRenderTargetConfiguration,
-        hdrMetadata: ShadowClientHDRMetadata?,
-        currentHeadroom: CGFloat
-    ) -> CAEDRMetadata? {
-        guard renderTargetConfiguration.prefersExtendedDynamicRange else {
-            return nil
-        }
-        guard renderTargetConfiguration.outputColorSpace.name == CGColorSpace.itur_2100_PQ else {
-            return nil
-        }
-
-        if let hdrMetadata {
-            let displayInfo = hdrMetadata.displayPrimaries.allSatisfy({ $0.x == 0 && $0.y == 0 }) &&
-                hdrMetadata.whitePoint.x == 0 &&
-                hdrMetadata.whitePoint.y == 0 &&
-                hdrMetadata.maxDisplayLuminance == 0 &&
-                hdrMetadata.minDisplayLuminance == 0
-                ? nil
-                : hdrMetadata.hdr10DisplayInfoData
-            let contentInfo = hdrMetadata.maxContentLightLevel == 0 &&
-                hdrMetadata.maxFrameAverageLightLevel == 0
-                ? nil
-                : hdrMetadata.hdr10ContentInfoData
-            return CAEDRMetadata.hdr10(
-                displayInfo: displayInfo,
-                contentInfo: contentInfo,
-                opticalOutputScale: 10_000.0
-            )
-        }
-
-        let peakLuminance = Float(max(currentHeadroom, 1.0) * 100.0)
-        return CAEDRMetadata.hdr10(
-            minLuminance: 0.0001,
-            maxLuminance: peakLuminance,
-            opticalOutputScale: 100.0
-        )
-    }
 }
 #endif

@@ -68,6 +68,55 @@ func colorPipelinePreservesDisplayP3HDRMetadataForPQFrames() throws {
     )
 }
 
+@Test("Color pipeline preserves Display P3 HDR metadata when PQ frames use a BT.709 matrix")
+func colorPipelinePreservesDisplayP3HDRMetadataForPQFramesUsingBT709Matrix() throws {
+    let pixelBuffer = try makePixelBuffer(pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferColorPrimariesKey,
+        kCVImageBufferColorPrimaries_P3_D65,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferTransferFunctionKey,
+        kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferYCbCrMatrixKey,
+        kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+        .shouldPropagate
+    )
+
+    let configuration = ShadowClientRealtimeSessionColorPipeline.configuration(
+        for: pixelBuffer,
+        allowExtendedDynamicRange: true
+    )
+    #expect(configuration.prefersExtendedDynamicRange)
+    #expect(configuration.renderColorSpace.name == CGColorSpace.displayP3_PQ)
+    #expect(configuration.displayColorSpace.name == CGColorSpace.displayP3_PQ)
+    #expect(
+        attachmentStringValue(
+            forKey: kCVImageBufferColorPrimariesKey,
+            pixelBuffer: pixelBuffer
+        ) == (kCVImageBufferColorPrimaries_P3_D65 as String)
+    )
+    #expect(
+        attachmentStringValue(
+            forKey: kCVImageBufferYCbCrMatrixKey,
+            pixelBuffer: pixelBuffer
+        ) == (kCVImageBufferYCbCrMatrix_ITU_R_709_2 as String)
+    )
+    #expect(
+        ShadowClientRealtimeSessionColorPipeline.sourceStandard(for: pixelBuffer) == .displayP3
+    )
+    #expect(
+        ShadowClientRealtimeSessionColorPipeline.matrixStandard(for: pixelBuffer) == .rec709
+    )
+}
+
 @Test("Color pipeline keeps SDR output for BT.709 frames")
 func colorPipelineKeepsSDRForBT709Frames() throws {
     let pixelBuffer = try makePixelBuffer(pixelFormat: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)

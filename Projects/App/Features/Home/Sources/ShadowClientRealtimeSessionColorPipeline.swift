@@ -241,7 +241,7 @@ enum ShadowClientRealtimeSessionColorPipeline {
         if matchesColorPrimariesDisplayP3(colorPrimaries) || matchesYCbCrMatrixDisplayP3(yCbCrMatrix) {
             return .displayP3
         }
-        if isHDRTransfer || matchesColorPrimaries2020(colorPrimaries) || matchesYCbCrMatrix2020(yCbCrMatrix) {
+        if matchesColorPrimaries2020(colorPrimaries) || matchesYCbCrMatrix2020(yCbCrMatrix) {
             return .rec2020
         }
         if matchesYCbCrMatrix709(yCbCrMatrix) {
@@ -255,6 +255,10 @@ enum ShadowClientRealtimeSessionColorPipeline {
         }
         if matchesColorPrimaries601(colorPrimaries) {
             return .rec601
+        }
+
+        if isHDRTransfer {
+            return .rec2020
         }
 
         // Match Moonlight's default when colorspace metadata is missing.
@@ -291,11 +295,21 @@ enum ShadowClientRealtimeSessionColorPipeline {
         prefersExtendedDynamicRange: Bool
     ) {
         if prefersExtendedDynamicRange {
-            if !metadata.isBT2020 {
+            if !hasAttachment(forKey: kCVImageBufferColorPrimariesKey, pixelBuffer: pixelBuffer) {
+                let primaries: CFString = switch metadata.sourceStandard {
+                case .displayP3:
+                    kCVImageBufferColorPrimaries_P3_D65
+                case .rec709:
+                    kCVImageBufferColorPrimaries_ITU_R_709_2
+                case .rec601:
+                    kCVImageBufferColorPrimaries_SMPTE_C
+                case .rec2020:
+                    kCVImageBufferColorPrimaries_ITU_R_2020
+                }
                 CVBufferSetAttachment(
                     pixelBuffer,
                     kCVImageBufferColorPrimariesKey,
-                    kCVImageBufferColorPrimaries_ITU_R_2020,
+                    primaries,
                     .shouldPropagate
                 )
             }
@@ -310,10 +324,18 @@ enum ShadowClientRealtimeSessionColorPipeline {
             }
 
             if !hasAttachment(forKey: kCVImageBufferYCbCrMatrixKey, pixelBuffer: pixelBuffer) {
+                let matrix: CFString = switch metadata.matrixStandard {
+                case .rec2020:
+                    kCVImageBufferYCbCrMatrix_ITU_R_2020
+                case .displayP3, .rec709:
+                    kCVImageBufferYCbCrMatrix_ITU_R_709_2
+                case .rec601:
+                    kCVImageBufferYCbCrMatrix_ITU_R_601_4
+                }
                 CVBufferSetAttachment(
                     pixelBuffer,
                     kCVImageBufferYCbCrMatrixKey,
-                    kCVImageBufferYCbCrMatrix_ITU_R_2020,
+                    matrix,
                     .shouldPropagate
                 )
             }

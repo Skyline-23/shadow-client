@@ -64,6 +64,76 @@ func yuvMetalPipelineToneMapsHDRPQFramesWhenRenderingToSDR() throws {
     #expect(descriptor.toneMapSourceHeadroom == 100.0)
 }
 
+@Test("YUV Metal pipeline decodes PQ and applies gamut mapping for linear Display P3 HDR output")
+func yuvMetalPipelineDecodesPQForLinearDisplayP3HDROutput() throws {
+    let pixelBuffer = try makeMetalColorProcessingPixelBuffer(
+        pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferColorPrimariesKey,
+        kCVImageBufferColorPrimaries_ITU_R_2020,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferTransferFunctionKey,
+        kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferYCbCrMatrixKey,
+        kCVImageBufferYCbCrMatrix_ITU_R_2020,
+        .shouldPropagate
+    )
+
+    let descriptor = ShadowClientRealtimeSessionYUVMetalPipeline.colorProcessingDescriptor(
+        for: pixelBuffer,
+        outputColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) ?? CGColorSpaceCreateDeviceRGB(),
+        prefersExtendedDynamicRange: true
+    )
+
+    #expect(descriptor.transferFunction == .pq)
+    #expect(descriptor.decodesTransfer)
+    #expect(!descriptor.appliesToneMapToSDR)
+    #expect(descriptor.appliesGamutTransform)
+    #expect(descriptor.toneMapSourceHeadroom == 100.0)
+}
+
+@Test("YUV Metal pipeline preserves the encoded YCbCr matrix for Display P3 PQ frames rendered to linear HDR output")
+func yuvMetalPipelinePreservesEncodedCSCMatrixForDisplayP3PQFramesUsingBT709Matrix() throws {
+    let pixelBuffer = try makeMetalColorProcessingPixelBuffer(
+        pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferColorPrimariesKey,
+        kCVImageBufferColorPrimaries_P3_D65,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferTransferFunctionKey,
+        kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferYCbCrMatrixKey,
+        kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+        .shouldPropagate
+    )
+
+    let effectiveMatrix = ShadowClientRealtimeSessionYUVMetalPipeline.effectiveMatrixStandard(
+        for: pixelBuffer,
+        outputColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) ?? CGColorSpaceCreateDeviceRGB(),
+        prefersExtendedDynamicRange: true
+    )
+
+    #expect(effectiveMatrix == .rec709)
+}
+
 private func makeMetalColorProcessingPixelBuffer(pixelFormat: OSType) throws -> CVPixelBuffer {
     var pixelBuffer: CVPixelBuffer?
     let attributes: [CFString: Any] = [

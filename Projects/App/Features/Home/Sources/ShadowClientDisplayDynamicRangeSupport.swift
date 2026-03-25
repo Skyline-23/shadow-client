@@ -18,9 +18,6 @@ enum ShadowClientDisplayDynamicRangeSupport {
         }
         return screen.maximumPotentialExtendedDynamicRangeColorComponentValue > 1.0
         #elseif os(iOS) || os(tvOS)
-        guard #available(iOS 16.0, tvOS 16.0, *) else {
-            return false
-        }
         let screen = currentUIKitScreen() ?? UIScreen.main
         return screen.potentialEDRHeadroom > 1.0
         #else
