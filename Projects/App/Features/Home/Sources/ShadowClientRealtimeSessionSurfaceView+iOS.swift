@@ -68,6 +68,17 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         }
     }
 
+    private struct DrawableSampleRegion {
+        let minX: Int
+        let minY: Int
+        let width: Int
+        let height: Int
+
+        var summary: String {
+            "[x=\(minX),y=\(minY),w=\(width),h=\(height)]"
+        }
+    }
+
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "SurfaceView.iOS")
     private let surfaceContext: ShadowClientRealtimeSessionSurfaceContext
     private let frameStore: ShadowClientRealtimeSessionFrameStore
@@ -186,7 +197,12 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 commandBuffer.present(drawable)
                 scheduleDrawableTextureSampleIfNeeded(
                     drawable: drawable,
-                    commandBuffer: commandBuffer
+                    commandBuffer: commandBuffer,
+                    videoSize: CGSize(
+                        width: CVPixelBufferGetWidth(pixelBuffer),
+                        height: CVPixelBufferGetHeight(pixelBuffer)
+                    ),
+                    drawableSize: drawableSize
                 )
                 commandBuffer.commit()
                 surfaceContext.recordPresentedVideoFrame()
@@ -209,7 +225,14 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         if pixelBuffer != nil {
             scheduleDrawableTextureSampleIfNeeded(
                 drawable: drawable,
-                commandBuffer: commandBuffer
+                commandBuffer: commandBuffer,
+                videoSize: pixelBuffer.map {
+                    CGSize(
+                        width: CVPixelBufferGetWidth($0),
+                        height: CVPixelBufferGetHeight($0)
+                    )
+                },
+                drawableSize: drawableSize
             )
         }
         commandBuffer.commit()
@@ -282,7 +305,9 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
 
     private func scheduleDrawableTextureSampleIfNeeded(
         drawable: CAMetalDrawable,
-        commandBuffer: MTLCommandBuffer
+        commandBuffer: MTLCommandBuffer,
+        videoSize: CGSize?,
+        drawableSize: CGSize
     ) {
         guard !hasDumpedCurrentSessionDrawableSample else {
             return
@@ -309,6 +334,12 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
 
         hasDumpedCurrentSessionDrawableSample = true
         let sampledTextureBox = SampledTextureBox(texture: stagingTexture)
+        let contentRegion = Self.drawableSampleRegion(
+            videoSize: videoSize,
+            drawableSize: drawableSize,
+            textureWidth: texture.width,
+            textureHeight: texture.height
+        )
         guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else {
             logger.error("Drawable sample blit encoder allocation failed")
             return
@@ -332,13 +363,24 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 return
             }
 
-            let sampledRGBA = Self.sampleDrawableTextureRGBA(sampledTextureBox.texture)
-            guard let sampledRGBA else {
+            let fullSampledRGBA = Self.sampleDrawableTextureRGBA(sampledTextureBox.texture)
+            guard let fullSampledRGBA else {
                 self.logger.error("Drawable texture sample failed")
                 return
             }
 
-            self.logger.notice("Drawable samples RGBA=\(sampledRGBA, privacy: .public)")
+            guard let contentRegion else {
+                self.logger.notice("Drawable samples full=\(fullSampledRGBA, privacy: .public)")
+                return
+            }
+
+            let contentSampledRGBA = Self.sampleDrawableTextureRGBA(
+                sampledTextureBox.texture,
+                region: contentRegion
+            ) ?? "unavailable"
+            self.logger.notice(
+                "Drawable samples full=\(fullSampledRGBA, privacy: .public) content-region=\(contentRegion.summary, privacy: .public) content=\(contentSampledRGBA, privacy: .public)"
+            )
         }
     }
 
@@ -358,13 +400,67 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         return commandQueue.device.makeTexture(descriptor: descriptor)
     }
 
-    nonisolated private static func sampleDrawableTextureRGBA(_ texture: any MTLTexture) -> String? {
+    nonisolated private static func drawableSampleRegion(
+        videoSize: CGSize?,
+        drawableSize: CGSize,
+        textureWidth: Int,
+        textureHeight: Int
+    ) -> DrawableSampleRegion? {
+        guard let videoSize,
+              videoSize.width > 0,
+              videoSize.height > 0,
+              drawableSize.width > 0,
+              drawableSize.height > 0,
+              textureWidth > 0,
+              textureHeight > 0
+        else {
+            return nil
+        }
+
+        let widthScale = drawableSize.width / videoSize.width
+        let heightScale = drawableSize.height / videoSize.height
+        let scale = min(widthScale, heightScale)
+        let scaledWidth = videoSize.width * scale
+        let scaledHeight = videoSize.height * scale
+        let originX = (drawableSize.width - scaledWidth) * 0.5
+        let originY = (drawableSize.height - scaledHeight) * 0.5
+
+        let normalizedMinX = originX / drawableSize.width
+        let normalizedMaxX = (originX + scaledWidth) / drawableSize.width
+        let normalizedMinY = originY / drawableSize.height
+        let normalizedMaxY = (originY + scaledHeight) / drawableSize.height
+
+        let minX = max(0, min(textureWidth - 1, Int(round(normalizedMinX * CGFloat(textureWidth - 1)))))
+        let maxX = max(0, min(textureWidth - 1, Int(round(normalizedMaxX * CGFloat(textureWidth - 1)))))
+        let minY = max(0, min(textureHeight - 1, Int(round(normalizedMinY * CGFloat(textureHeight - 1)))))
+        let maxY = max(0, min(textureHeight - 1, Int(round(normalizedMaxY * CGFloat(textureHeight - 1)))))
+        let width = max(1, maxX - minX + 1)
+        let height = max(1, maxY - minY + 1)
+
+        return DrawableSampleRegion(
+            minX: minX,
+            minY: minY,
+            width: width,
+            height: height
+        )
+    }
+
+    nonisolated private static func sampleDrawableTextureRGBA(
+        _ texture: any MTLTexture,
+        region: DrawableSampleRegion? = nil
+    ) -> String? {
+        let minX = region?.minX ?? 0
+        let minY = region?.minY ?? 0
+        let width = region?.width ?? texture.width
+        let height = region?.height ?? texture.height
+        let maxX = min(texture.width - 1, minX + max(0, width - 1))
+        let maxY = min(texture.height - 1, minY + max(0, height - 1))
         let labels: [(String, Int, Int)] = [
-            ("tl", max(0, texture.width / 10), max(0, texture.height / 10)),
-            ("tr", max(0, texture.width - 1 - texture.width / 10), max(0, texture.height / 10)),
-            ("c", max(0, texture.width / 2), max(0, texture.height / 2)),
-            ("bl", max(0, texture.width / 10), max(0, texture.height - 1 - texture.height / 10)),
-            ("br", max(0, texture.width - 1 - texture.width / 10), max(0, texture.height - 1 - texture.height / 10)),
+            ("tl", sampleCoordinate(lowerBound: minX, upperBound: maxX, fraction: 0.1), sampleCoordinate(lowerBound: minY, upperBound: maxY, fraction: 0.1)),
+            ("tr", sampleCoordinate(lowerBound: minX, upperBound: maxX, fraction: 0.9), sampleCoordinate(lowerBound: minY, upperBound: maxY, fraction: 0.1)),
+            ("c", sampleCoordinate(lowerBound: minX, upperBound: maxX, fraction: 0.5), sampleCoordinate(lowerBound: minY, upperBound: maxY, fraction: 0.5)),
+            ("bl", sampleCoordinate(lowerBound: minX, upperBound: maxX, fraction: 0.1), sampleCoordinate(lowerBound: minY, upperBound: maxY, fraction: 0.9)),
+            ("br", sampleCoordinate(lowerBound: minX, upperBound: maxX, fraction: 0.9), sampleCoordinate(lowerBound: minY, upperBound: maxY, fraction: 0.9)),
         ]
 
         switch texture.pixelFormat {
@@ -407,6 +503,12 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         default:
             return nil
         }
+    }
+
+    nonisolated private static func sampleCoordinate(lowerBound: Int, upperBound: Int, fraction: CGFloat) -> Int {
+        let clampedFraction = Swift.min(Swift.max(fraction, 0), 1)
+        let span = CGFloat(upperBound - lowerBound)
+        return lowerBound + Int(round(span * clampedFraction))
     }
 
 }
