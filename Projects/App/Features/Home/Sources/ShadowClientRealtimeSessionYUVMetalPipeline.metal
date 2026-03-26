@@ -21,11 +21,11 @@ struct ShadowYUVCSCParameters {
     uint transferFunction;
     uint decodesTransfer;
     uint appliesToneMapToSDR;
-    uint appliesToneMapToEDR;
     uint appliesGamutTransform;
     float hlgSystemGamma;
     float toneMapSourceHeadroom;
     float toneMapTargetHeadroom;
+    float _padding;
     float3 gamutRow0;
     float3 gamutRow1;
     float3 gamutRow2;
@@ -79,27 +79,6 @@ float3 toneMapToSDR(float3 rgb, constant ShadowYUVCSCParameters& params) {
     return scaled / (1.0 + scaled);
 }
 
-float3 toneMapToEDR(float3 rgb, constant ShadowYUVCSCParameters& params) {
-    const float sourceHeadroom = max(params.toneMapSourceHeadroom, 1.0);
-    const float targetHeadroom = max(params.toneMapTargetHeadroom, 1.0);
-    const float targetHighlightSpan = max(targetHeadroom - 1.0, 0.0);
-    if (targetHighlightSpan <= 0.0 || sourceHeadroom <= 1.0) {
-        return max(rgb, 0.0);
-    }
-
-    const float3 base = min(rgb, 1.0);
-    const float3 highlights = max(rgb - 1.0, 0.0);
-    const float3 normalizedHighlights = min(highlights / max(sourceHeadroom - 1.0, 1e-6), 1.0);
-    const float logBase = log(10.0);
-    const float3 compressedHighlights = float3(
-        log(1.0 + (normalizedHighlights.r * 9.0)) / logBase,
-        log(1.0 + (normalizedHighlights.g * 9.0)) / logBase,
-        log(1.0 + (normalizedHighlights.b * 9.0)) / logBase
-    ) * targetHighlightSpan;
-
-    return base + compressedHighlights;
-}
-
 float3 applyGamutTransform(float3 rgb, constant ShadowYUVCSCParameters& params) {
     return float3(
         dot(params.gamutRow0, rgb),
@@ -151,14 +130,11 @@ fragment half4 shadowYUVBiplanarFragment(
     if (params.decodesTransfer != 0) {
         processed = decodeTransfer(processed, params);
     }
-    const float3 decoded = processed;
-    if (params.decodesTransfer != 0 && params.transferFunction != 0) {
-        processed = scaleHDRForEDR(decoded, params);
+    if (params.decodesTransfer != 0 && params.appliesToneMapToSDR == 0 && params.transferFunction != 0) {
+        processed = scaleHDRForEDR(processed, params);
     }
     if (params.appliesToneMapToSDR != 0) {
-        processed = toneMapToSDR(decoded, params);
-    } else if (params.appliesToneMapToEDR != 0) {
-        processed = toneMapToEDR(processed, params);
+        processed = toneMapToSDR(processed, params);
     }
     if (params.appliesGamutTransform != 0) {
         processed = applyGamutTransform(processed, params);

@@ -30,7 +30,6 @@ func yuvMetalPipelinePreservesEncodedHDRPQOutputForHDRPQFrames() throws {
     #expect(descriptor.transferFunction == .pq)
     #expect(!descriptor.decodesTransfer)
     #expect(!descriptor.appliesToneMapToSDR)
-    #expect(!descriptor.appliesToneMapToEDR)
     #expect(!descriptor.appliesGamutTransform)
     #expect(descriptor.toneMapSourceHeadroom == 100.0)
 }
@@ -68,7 +67,6 @@ func yuvMetalPipelinePreservesEncodedDisplayP3PQOutputForDirectHDRPresentation()
     #expect(descriptor.transferFunction == .pq)
     #expect(!descriptor.decodesTransfer)
     #expect(!descriptor.appliesToneMapToSDR)
-    #expect(!descriptor.appliesToneMapToEDR)
     #expect(!descriptor.appliesGamutTransform)
 }
 
@@ -99,7 +97,6 @@ func yuvMetalPipelineToneMapsHDRPQFramesWhenRenderingToSDR() throws {
     #expect(descriptor.transferFunction == .pq)
     #expect(descriptor.decodesTransfer)
     #expect(descriptor.appliesToneMapToSDR)
-    #expect(!descriptor.appliesToneMapToEDR)
     #expect(descriptor.toneMapSourceHeadroom == 100.0)
 }
 
@@ -136,7 +133,6 @@ func yuvMetalPipelineDecodesPQForLinearDisplayP3HDROutput() throws {
     #expect(descriptor.transferFunction == .pq)
     #expect(descriptor.decodesTransfer)
     #expect(!descriptor.appliesToneMapToSDR)
-    #expect(!descriptor.appliesToneMapToEDR)
     #expect(descriptor.appliesGamutTransform)
     #expect(descriptor.toneMapSourceHeadroom == 100.0)
 }
@@ -200,7 +196,6 @@ func yuvMetalPipelineDerivesPQSourceHeadroomFromHDRMetadataAttachmentsWhenToneMa
     #expect(descriptor.transferFunction == .pq)
     #expect(descriptor.decodesTransfer)
     #expect(descriptor.appliesToneMapToSDR)
-    #expect(!descriptor.appliesToneMapToEDR)
     #expect(!descriptor.appliesGamutTransform)
     #expect(descriptor.toneMapSourceHeadroom == 10.0)
 }
@@ -264,75 +259,8 @@ func yuvMetalPipelineDerivesPQSourceHeadroomFromHDRMetadataAttachmentsForLinearH
     #expect(descriptor.transferFunction == .pq)
     #expect(descriptor.decodesTransfer)
     #expect(!descriptor.appliesToneMapToSDR)
-    #expect(!descriptor.appliesToneMapToEDR)
     #expect(descriptor.appliesGamutTransform)
     #expect(descriptor.toneMapSourceHeadroom == 16.0)
-}
-
-@Test("YUV Metal pipeline applies current-headroom HDR to EDR roll-off for constrained linear HDR output")
-func yuvMetalPipelineAppliesCurrentHeadroomHDRToEDRRollOffForLinearHDROutput() throws {
-    let pixelBuffer = try makeMetalColorProcessingPixelBuffer(
-        pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
-    )
-    CVBufferSetAttachment(
-        pixelBuffer,
-        kCVImageBufferColorPrimariesKey,
-        kCVImageBufferColorPrimaries_ITU_R_2020,
-        .shouldPropagate
-    )
-    CVBufferSetAttachment(
-        pixelBuffer,
-        kCVImageBufferTransferFunctionKey,
-        kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
-        .shouldPropagate
-    )
-    CVBufferSetAttachment(
-        pixelBuffer,
-        kCVImageBufferYCbCrMatrixKey,
-        kCVImageBufferYCbCrMatrix_ITU_R_2020,
-        .shouldPropagate
-    )
-
-    let metadata = ShadowClientHDRMetadata(
-        displayPrimaries: [
-            .init(x: 13250, y: 34500),
-            .init(x: 7500, y: 3000),
-            .init(x: 34000, y: 16000),
-        ],
-        whitePoint: .init(x: 15635, y: 16450),
-        maxDisplayLuminance: 1600,
-        minDisplayLuminance: 1,
-        maxContentLightLevel: 1600,
-        maxFrameAverageLightLevel: 640,
-        maxFullFrameLuminance: 0
-    )
-    CVBufferSetAttachment(
-        pixelBuffer,
-        kCVImageBufferMasteringDisplayColorVolumeKey,
-        metadata.hdr10DisplayInfoData as CFData,
-        .shouldPropagate
-    )
-    CVBufferSetAttachment(
-        pixelBuffer,
-        kCVImageBufferContentLightLevelInfoKey,
-        metadata.hdr10ContentInfoData as CFData,
-        .shouldPropagate
-    )
-
-    let descriptor = ShadowClientRealtimeSessionYUVMetalPipeline.colorProcessingDescriptor(
-        for: pixelBuffer,
-        outputColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) ?? CGColorSpaceCreateDeviceRGB(),
-        prefersExtendedDynamicRange: true,
-        currentEDRHeadroom: 1.2
-    )
-
-    #expect(descriptor.transferFunction == .pq)
-    #expect(descriptor.decodesTransfer)
-    #expect(!descriptor.appliesToneMapToSDR)
-    #expect(descriptor.appliesToneMapToEDR)
-    #expect(descriptor.appliesGamutTransform)
-    #expect(descriptor.toneMapSourceHeadroom == 16.0)
-    #expect(abs(descriptor.toneMapTargetHeadroom - 1.2) < 0.001)
 }
 
 @Test("YUV Metal pipeline preserves the encoded YCbCr matrix for Display P3 PQ frames rendered to linear HDR output")

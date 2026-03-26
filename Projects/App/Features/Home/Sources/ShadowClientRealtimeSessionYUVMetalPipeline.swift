@@ -16,11 +16,11 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         var transferFunction: UInt32
         var decodesTransfer: UInt32
         var appliesToneMapToSDR: UInt32
-        var appliesToneMapToEDR: UInt32
         var appliesGamutTransform: UInt32
         var hlgSystemGamma: Float
         var toneMapSourceHeadroom: Float
         var toneMapTargetHeadroom: Float
+        var _padding: Float
         var gamutRow0: SIMD3<Float>
         var gamutRow1: SIMD3<Float>
         var gamutRow2: SIMD3<Float>
@@ -36,7 +36,6 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         let transferFunction: TransferFunctionKind
         let decodesTransfer: Bool
         let appliesToneMapToSDR: Bool
-        let appliesToneMapToEDR: Bool
         let appliesGamutTransform: Bool
         let hlgSystemGamma: Float
         let toneMapSourceHeadroom: Float
@@ -345,11 +344,11 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             transferFunction: colorProcessing.transferFunction.rawValue,
             decodesTransfer: colorProcessing.decodesTransfer ? 1 : 0,
             appliesToneMapToSDR: colorProcessing.appliesToneMapToSDR ? 1 : 0,
-            appliesToneMapToEDR: colorProcessing.appliesToneMapToEDR ? 1 : 0,
             appliesGamutTransform: colorProcessing.appliesGamutTransform ? 1 : 0,
             hlgSystemGamma: colorProcessing.hlgSystemGamma,
             toneMapSourceHeadroom: colorProcessing.toneMapSourceHeadroom,
             toneMapTargetHeadroom: colorProcessing.toneMapTargetHeadroom,
+            _padding: 0,
             gamutRow0: colorProcessing.gamutRow0,
             gamutRow1: colorProcessing.gamutRow1,
             gamutRow2: colorProcessing.gamutRow2
@@ -398,7 +397,6 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         let appliesToneMapToSDR =
             carriesHDRTransfer &&
             !prefersExtendedDynamicRange
-        let currentHeadroom = max(currentEDRHeadroom ?? 1.0, 1.0)
         let appliesGamutTransform =
             sourceStandard == .rec2020 &&
             outputColorSpace.name == CGColorSpace.extendedLinearDisplayP3
@@ -410,26 +408,15 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             for: pixelBuffer,
             transferFunction: transferFunction
         )
-        let appliesToneMapToEDR =
-            carriesHDRTransfer &&
-            prefersExtendedDynamicRange &&
-            usesLinearHDROutput &&
-            currentHeadroom > 1.0 &&
-            currentHeadroom + 0.001 < sourceHeadroom
-        let toneMapTargetHeadroom =
-            appliesToneMapToEDR
-            ? currentHeadroom
-            : ShadowClientRealtimeSessionColorPipeline.hdrToSdrToneMapTargetHeadroom
 
         return .init(
             transferFunction: transferFunction,
             decodesTransfer: decodesTransfer,
             appliesToneMapToSDR: appliesToneMapToSDR,
-            appliesToneMapToEDR: appliesToneMapToEDR,
             appliesGamutTransform: appliesGamutTransform,
             hlgSystemGamma: 1.2,
             toneMapSourceHeadroom: sourceHeadroom,
-            toneMapTargetHeadroom: toneMapTargetHeadroom,
+            toneMapTargetHeadroom: ShadowClientRealtimeSessionColorPipeline.hdrToSdrToneMapTargetHeadroom,
             gamutRow0: gamutRows.0,
             gamutRow1: gamutRows.1,
             gamutRow2: gamutRows.2
@@ -597,7 +584,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
     }
 
     private func colorProcessingSummary(parameters: CSCParameters) -> String {
-        "transfer=\(transferFunctionName(parameters.transferFunction)) decode=\(parameters.decodesTransfer != 0) scaleHDR=\(parameters.decodesTransfer != 0 && parameters.appliesToneMapToSDR == 0 && parameters.appliesToneMapToEDR == 0 && parameters.transferFunction != 0) toneMapSDR=\(parameters.appliesToneMapToSDR != 0) toneMapEDR=\(parameters.appliesToneMapToEDR != 0) gamut=\(parameters.appliesGamutTransform != 0) hlgGamma=\(formatScalar(parameters.hlgSystemGamma)) sourceHeadroom=\(formatScalar(parameters.toneMapSourceHeadroom)) targetHeadroom=\(formatScalar(parameters.toneMapTargetHeadroom))"
+        "transfer=\(transferFunctionName(parameters.transferFunction)) decode=\(parameters.decodesTransfer != 0) scaleHDR=\(parameters.decodesTransfer != 0 && parameters.appliesToneMapToSDR == 0 && parameters.transferFunction != 0) toneMapSDR=\(parameters.appliesToneMapToSDR != 0) gamut=\(parameters.appliesGamutTransform != 0) hlgGamma=\(formatScalar(parameters.hlgSystemGamma)) sourceHeadroom=\(formatScalar(parameters.toneMapSourceHeadroom)) targetHeadroom=\(formatScalar(parameters.toneMapTargetHeadroom))"
     }
 
     private func masteringDisplaySummary(
@@ -808,19 +795,18 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         let clampedRGB = simd.max(cscRGB, SIMD3<Float>(repeating: 0))
         let decodedRGB = decodeTransfer(clampedRGB, parameters: parameters)
         let scaledRGB: SIMD3<Float>
-        if parameters.decodesTransfer != 0 && parameters.transferFunction != 0 {
+        if parameters.decodesTransfer != 0 &&
+            parameters.appliesToneMapToSDR == 0 &&
+            parameters.transferFunction != 0
+        {
             scaledRGB = scaleHDRForEDR(decodedRGB, parameters: parameters)
         } else {
             scaledRGB = decodedRGB
         }
-        let toneMappedRGB: SIMD3<Float>
-        if parameters.appliesToneMapToSDR != 0 {
-            toneMappedRGB = toneMapToSDR(decodedRGB, parameters: parameters)
-        } else if parameters.appliesToneMapToEDR != 0 {
-            toneMappedRGB = toneMapToEDR(scaledRGB, parameters: parameters)
-        } else {
-            toneMappedRGB = scaledRGB
-        }
+        let toneMappedRGB =
+            parameters.appliesToneMapToSDR != 0
+            ? toneMapToSDR(scaledRGB, parameters: parameters)
+            : scaledRGB
         let gamutMappedRGB =
             parameters.appliesGamutTransform != 0
             ? applyGamutTransform(toneMappedRGB, parameters: parameters)
@@ -924,32 +910,6 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         )
         let scaled = simd.max(rgb * scale, SIMD3<Float>(repeating: 0))
         return scaled / (SIMD3<Float>(repeating: 1) + scaled)
-    }
-
-    private func toneMapToEDR(
-        _ rgb: SIMD3<Float>,
-        parameters: CSCParameters
-    ) -> SIMD3<Float> {
-        let sourceHeadroom = max(parameters.toneMapSourceHeadroom, 1)
-        let targetHeadroom = max(parameters.toneMapTargetHeadroom, 1)
-        let targetHighlightSpan = max(targetHeadroom - 1, 0)
-        guard targetHighlightSpan > 0, sourceHeadroom > 1 else {
-            return simd.max(rgb, SIMD3<Float>(repeating: 0))
-        }
-
-        let base = simd.min(rgb, SIMD3<Float>(repeating: 1))
-        let highlights = simd.max(rgb - SIMD3<Float>(repeating: 1), SIMD3<Float>(repeating: 0))
-        let normalizedHighlights = simd.min(
-            highlights / max(sourceHeadroom - 1, 1e-6),
-            SIMD3<Float>(repeating: 1)
-        )
-        let compressedHighlights = SIMD3<Float>(
-            log1p(normalizedHighlights.x * 9) / log(10),
-            log1p(normalizedHighlights.y * 9) / log(10),
-            log1p(normalizedHighlights.z * 9) / log(10)
-        ) * targetHighlightSpan
-
-        return base + compressedHighlights
     }
 
     private func applyGamutTransform(
