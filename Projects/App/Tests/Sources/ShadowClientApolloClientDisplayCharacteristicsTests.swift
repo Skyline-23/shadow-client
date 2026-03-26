@@ -4,9 +4,11 @@ import Testing
 
 @Test("Mac transfer contract keeps Display P3 HDR desktops on SDR transfer")
 func macTransferContractKeepsDisplayP3HDRDesktopsOnSDRTransfer() {
-    let transfer = ShadowClientApolloClientDisplayCharacteristicsResolver.macTransferContract(
-        for: CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB(),
-        hdrEnabled: true
+    let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
+        hdrEnabled: true,
+        environment: .colorManagedDesktop(
+            CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
+        )
     )
 
     #expect(transfer == .sdr)
@@ -14,9 +16,11 @@ func macTransferContractKeepsDisplayP3HDRDesktopsOnSDRTransfer() {
 
 @Test("Mac transfer contract preserves explicit PQ displays")
 func macTransferContractPreservesExplicitPQDisplays() {
-    let transfer = ShadowClientApolloClientDisplayCharacteristicsResolver.macTransferContract(
-        for: CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB(),
-        hdrEnabled: true
+    let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
+        hdrEnabled: true,
+        environment: .colorManagedDesktop(
+            CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
+        )
     )
 
     #expect(transfer == .pq)
@@ -24,9 +28,11 @@ func macTransferContractPreservesExplicitPQDisplays() {
 
 @Test("Mac transfer contract preserves explicit HLG displays")
 func macTransferContractPreservesExplicitHLGDisplays() {
-    let transfer = ShadowClientApolloClientDisplayCharacteristicsResolver.macTransferContract(
-        for: CGColorSpace(name: CGColorSpace.itur_2100_HLG) ?? CGColorSpaceCreateDeviceRGB(),
-        hdrEnabled: true
+    let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
+        hdrEnabled: true,
+        environment: .colorManagedDesktop(
+            CGColorSpace(name: CGColorSpace.itur_2100_HLG) ?? CGColorSpaceCreateDeviceRGB()
+        )
     )
 
     #expect(transfer == .hlg)
@@ -34,9 +40,11 @@ func macTransferContractPreservesExplicitHLGDisplays() {
 
 @Test("Mac transfer contract falls back to SDR when HDR is disabled")
 func macTransferContractFallsBackToSDRWhenHDRIsDisabled() {
-    let transfer = ShadowClientApolloClientDisplayCharacteristicsResolver.macTransferContract(
-        for: CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB(),
-        hdrEnabled: false
+    let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
+        hdrEnabled: false,
+        environment: .colorManagedDesktop(
+            CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
+        )
     )
 
     #expect(transfer == .sdr)
@@ -44,8 +52,9 @@ func macTransferContractFallsBackToSDRWhenHDRIsDisabled() {
 
 @Test("UIKit transfer contract keeps HDR-capable clients on SDR desktop transfer")
 func uikitTransferContractKeepsHDRCapableClientsOnSDRTransfer() {
-    let transfer = ShadowClientApolloClientDisplayCharacteristicsResolver.uikitTransferContract(
-        hdrEnabled: true
+    let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
+        hdrEnabled: true,
+        environment: .compositedUIKit
     )
 
     #expect(transfer == .sdr)
@@ -53,8 +62,9 @@ func uikitTransferContractKeepsHDRCapableClientsOnSDRTransfer() {
 
 @Test("UIKit transfer contract stays SDR when HDR is disabled")
 func uikitTransferContractFallsBackToSDRWhenHDRIsDisabled() {
-    let transfer = ShadowClientApolloClientDisplayCharacteristicsResolver.uikitTransferContract(
-        hdrEnabled: false
+    let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
+        hdrEnabled: false,
+        environment: .compositedUIKit
     )
 
     #expect(transfer == .sdr)

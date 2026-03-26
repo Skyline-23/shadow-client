@@ -61,7 +61,10 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
         let screen = currentMacScreen()
         let colorSpace = screen?.colorSpace?.cgColorSpace
         let gamut = gamut(for: colorSpace)
-        let transfer = macTransferContract(for: colorSpace, hdrEnabled: hdrEnabled)
+        let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
+            hdrEnabled: hdrEnabled,
+            environment: .colorManagedDesktop(colorSpace)
+        )
         let currentEDRHeadroom = currentEDRHeadroom(for: screen)
         let potentialEDRHeadroom = potentialEDRHeadroom(for: screen)
         return .init(
@@ -77,11 +80,10 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
         #elseif os(iOS) || os(tvOS)
         let screen = currentUIKitScreen() ?? UIScreen.main
         let gamut = gamut(for: screen.traitCollection.displayGamut)
-        #if os(iOS)
-        let transfer = uikitTransferContract(hdrEnabled: hdrEnabled)
-        #else
-        let transfer: ShadowClientApolloClientDisplayTransfer = hdrEnabled ? .pq : .sdr
-        #endif
+        let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
+            hdrEnabled: hdrEnabled,
+            environment: .compositedUIKit
+        )
         let currentEDRHeadroom = max(Float(screen.currentEDRHeadroom), 1.0)
         let potentialEDRHeadroom = max(Float(screen.potentialEDRHeadroom), 1.0)
         return .init(
@@ -147,39 +149,6 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
         }
     }
     #endif
-
-    static func macTransferContract(
-        for colorSpace: CGColorSpace?,
-        hdrEnabled: Bool
-    ) -> ShadowClientApolloClientDisplayTransfer {
-        guard hdrEnabled else {
-            return .sdr
-        }
-        switch colorSpace?.name {
-        case CGColorSpace.itur_2100_HLG, CGColorSpace.displayP3_HLG:
-            return .hlg
-        case CGColorSpace.itur_2100_PQ, CGColorSpace.displayP3_PQ:
-            return .pq
-        default:
-            // macOS can composite EDR highlights over an SDR desktop without the
-            // active screen color space becoming PQ. Advertising PQ here makes
-            // Apollo treat a Display P3 desktop like a full PQ target.
-            return .sdr
-        }
-    }
-
-    static func uikitTransferContract(
-        hdrEnabled: Bool
-    ) -> ShadowClientApolloClientDisplayTransfer {
-        guard hdrEnabled else {
-            return .sdr
-        }
-
-        // UIKit still composites app content into an SDR-referred desktop/UI
-        // surface and lets EDR/HDR content extend above it. Advertising PQ here
-        // makes Apollo treat the entire client like a full-frame PQ target.
-        return .sdr
-    }
 
     private static func peakLuminanceNits(for headroom: Float) -> Int {
         Int((max(headroom, 1.0) * 100.0).rounded())
