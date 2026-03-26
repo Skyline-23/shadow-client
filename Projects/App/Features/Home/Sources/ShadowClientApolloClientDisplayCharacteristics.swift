@@ -61,7 +61,7 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
         let screen = currentMacScreen()
         let colorSpace = screen?.colorSpace?.cgColorSpace
         let gamut = gamut(for: colorSpace)
-        let transfer = transfer(for: colorSpace, hdrEnabled: hdrEnabled)
+        let transfer = macTransferContract(for: colorSpace, hdrEnabled: hdrEnabled)
         let currentEDRHeadroom = currentEDRHeadroom(for: screen)
         let potentialEDRHeadroom = potentialEDRHeadroom(for: screen)
         return .init(
@@ -117,23 +117,6 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
         }
     }
 
-    private static func transfer(
-        for colorSpace: CGColorSpace?,
-        hdrEnabled: Bool
-    ) -> ShadowClientApolloClientDisplayTransfer {
-        guard hdrEnabled else {
-            return .sdr
-        }
-        switch colorSpace?.name {
-        case CGColorSpace.itur_2100_HLG:
-            return .hlg
-        case CGColorSpace.itur_2100_PQ:
-            return .pq
-        default:
-            return .pq
-        }
-    }
-
     private static func currentEDRHeadroom(for screen: NSScreen?) -> Float {
         Float(max(screen?.maximumExtendedDynamicRangeColorComponentValue ?? 1.0, 1.0))
     }
@@ -160,6 +143,26 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
         }
     }
     #endif
+
+    static func macTransferContract(
+        for colorSpace: CGColorSpace?,
+        hdrEnabled: Bool
+    ) -> ShadowClientApolloClientDisplayTransfer {
+        guard hdrEnabled else {
+            return .sdr
+        }
+        switch colorSpace?.name {
+        case CGColorSpace.itur_2100_HLG, CGColorSpace.displayP3_HLG:
+            return .hlg
+        case CGColorSpace.itur_2100_PQ, CGColorSpace.displayP3_PQ:
+            return .pq
+        default:
+            // macOS can composite EDR highlights over an SDR desktop without the
+            // active screen color space becoming PQ. Advertising PQ here makes
+            // Apollo treat a Display P3 desktop like a full PQ target.
+            return .sdr
+        }
+    }
 
     private static func peakLuminanceNits(for headroom: Float) -> Int {
         Int((max(headroom, 1.0) * 100.0).rounded())
