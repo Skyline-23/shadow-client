@@ -41,3 +41,21 @@ func macTransferContractFallsBackToSDRWhenHDRIsDisabled() {
 
     #expect(transfer == .sdr)
 }
+
+@Test("UIKit transfer contract keeps HDR-capable clients on SDR desktop transfer")
+func uikitTransferContractKeepsHDRCapableClientsOnSDRTransfer() {
+    let transfer = ShadowClientApolloClientDisplayCharacteristicsResolver.uikitTransferContract(
+        hdrEnabled: true
+    )
+
+    #expect(transfer == .sdr)
+}
+
+@Test("UIKit transfer contract stays SDR when HDR is disabled")
+func uikitTransferContractFallsBackToSDRWhenHDRIsDisabled() {
+    let transfer = ShadowClientApolloClientDisplayCharacteristicsResolver.uikitTransferContract(
+        hdrEnabled: false
+    )
+
+    #expect(transfer == .sdr)
+}

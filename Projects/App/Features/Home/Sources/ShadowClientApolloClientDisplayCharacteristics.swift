@@ -77,7 +77,11 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
         #elseif os(iOS) || os(tvOS)
         let screen = currentUIKitScreen() ?? UIScreen.main
         let gamut = gamut(for: screen.traitCollection.displayGamut)
+        #if os(iOS)
+        let transfer = uikitTransferContract(hdrEnabled: hdrEnabled)
+        #else
         let transfer: ShadowClientApolloClientDisplayTransfer = hdrEnabled ? .pq : .sdr
+        #endif
         let currentEDRHeadroom = max(Float(screen.currentEDRHeadroom), 1.0)
         let potentialEDRHeadroom = max(Float(screen.potentialEDRHeadroom), 1.0)
         return .init(
@@ -162,6 +166,19 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
             // Apollo treat a Display P3 desktop like a full PQ target.
             return .sdr
         }
+    }
+
+    static func uikitTransferContract(
+        hdrEnabled: Bool
+    ) -> ShadowClientApolloClientDisplayTransfer {
+        guard hdrEnabled else {
+            return .sdr
+        }
+
+        // UIKit still composites app content into an SDR-referred desktop/UI
+        // surface and lets EDR/HDR content extend above it. Advertising PQ here
+        // makes Apollo treat the entire client like a full-frame PQ target.
+        return .sdr
     }
 
     private static func peakLuminanceNits(for headroom: Float) -> Int {
