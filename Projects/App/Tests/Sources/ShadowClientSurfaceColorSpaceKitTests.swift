@@ -34,8 +34,8 @@ func surfaceColorSpaceKitPreservesHDROutputColorSpaceWhenP3ScreenColorSpaceIsPro
     #expect(resolved.name == hdr.name)
 }
 
-@Test("Surface color space kit uses linear HDR output for Metal YUV rendering on P3 screens")
-func surfaceColorSpaceKitUsesLinearHDROutputForMetalYUVOnP3Screens() {
+@Test("Surface color space kit preserves direct PQ HDR output for Metal YUV rendering on P3 screens")
+func surfaceColorSpaceKitPreservesDirectPQHDROutputForMetalYUVOnP3Screens() {
     let sdr = CGColorSpace(name: CGColorSpace.itur_709) ?? CGColorSpaceCreateDeviceRGB()
     let hdr = CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
     let screen = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
@@ -49,7 +49,7 @@ func surfaceColorSpaceKitUsesLinearHDROutputForMetalYUVOnP3Screens() {
         renderBackend: .metalYUV
     )
 
-    #expect(resolved.name == CGColorSpace.extendedLinearDisplayP3)
+    #expect(resolved.name == CGColorSpace.itur_2100_PQ)
 }
 
 @Test("Surface color space kit preserves direct Display P3 PQ output for Metal YUV rendering")
@@ -70,8 +70,8 @@ func surfaceColorSpaceKitPreservesDirectDisplayP3PQOutputForMetalYUV() {
     #expect(resolved.name == CGColorSpace.displayP3_PQ)
 }
 
-@Test("Surface color space kit avoids direct Display P3 PQ output on SDR P3 screens")
-func surfaceColorSpaceKitAvoidsDirectDisplayP3PQOutputOnSDRP3Screens() {
+@Test("Surface color space kit preserves direct Display P3 PQ output on P3 screens")
+func surfaceColorSpaceKitPreservesDirectDisplayP3PQOutputOnP3Screens() {
     let sdr = CGColorSpace(name: CGColorSpace.itur_709) ?? CGColorSpaceCreateDeviceRGB()
     let hdr = CGColorSpace(name: CGColorSpace.displayP3_PQ) ?? CGColorSpaceCreateDeviceRGB()
     let screen = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
@@ -85,11 +85,11 @@ func surfaceColorSpaceKitAvoidsDirectDisplayP3PQOutputOnSDRP3Screens() {
         renderBackend: .metalYUV
     )
 
-    #expect(resolved.name == CGColorSpace.extendedLinearDisplayP3)
+    #expect(resolved.name == CGColorSpace.displayP3_PQ)
 }
 
-@Test("Surface color space kit avoids direct Display P3 PQ output when screen transfer is unknown")
-func surfaceColorSpaceKitAvoidsDirectDisplayP3PQOutputWhenScreenTransferIsUnknown() {
+@Test("Surface color space kit preserves direct Display P3 PQ output when screen transfer is unknown")
+func surfaceColorSpaceKitPreservesDirectDisplayP3PQOutputWhenScreenTransferIsUnknown() {
     let sdr = CGColorSpace(name: CGColorSpace.itur_709) ?? CGColorSpaceCreateDeviceRGB()
     let hdr = CGColorSpace(name: CGColorSpace.displayP3_PQ) ?? CGColorSpaceCreateDeviceRGB()
 
@@ -102,11 +102,11 @@ func surfaceColorSpaceKitAvoidsDirectDisplayP3PQOutputWhenScreenTransferIsUnknow
         renderBackend: .metalYUV
     )
 
-    #expect(resolved.name == CGColorSpace.extendedLinearDisplayP3)
+    #expect(resolved.name == CGColorSpace.displayP3_PQ)
 }
 
-@Test("Surface color space kit uses float linear HDR targets for Metal YUV on P3 screens")
-func surfaceColorSpaceKitUsesFloatLinearHDRTargetsForMetalYUVOnP3Screens() {
+@Test("Surface color space kit preserves direct 10-bit PQ targets for Metal YUV on P3 screens")
+func surfaceColorSpaceKitPreservesDirectPQTargetsForMetalYUVOnP3Screens() {
     let hdr = CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
     let colorConfiguration = ShadowClientRealtimeSessionColorConfiguration(
         renderColorSpace: hdr,
@@ -125,8 +125,8 @@ func surfaceColorSpaceKitUsesFloatLinearHDRTargetsForMetalYUVOnP3Screens() {
     )
 
     #expect(configuration.prefersExtendedDynamicRange)
-    #expect(configuration.targetPixelFormat == .rgba16Float)
-    #expect(configuration.outputColorSpace.name == CGColorSpace.extendedLinearDisplayP3)
+    #expect(configuration.targetPixelFormat == .bgr10a2Unorm)
+    #expect(configuration.outputColorSpace.name == CGColorSpace.itur_2100_PQ)
 }
 
 @Test("Surface color space kit preserves 10-bit PQ targets for Display P3 HDR Metal YUV output")
@@ -153,8 +153,8 @@ func surfaceColorSpaceKitPreservesDirectDisplayP3PQTargetsForMetalYUV() {
     #expect(configuration.outputColorSpace.name == CGColorSpace.displayP3_PQ)
 }
 
-@Test("Surface color space kit maps HDR Metal YUV output to linear Display P3 on P3 screens")
-func surfaceColorSpaceKitMapsHDRMetalYUVOutputToLinearDisplayP3OnP3Screens() {
+@Test("Surface color space kit preserves direct HDR Metal YUV output on P3 screens")
+func surfaceColorSpaceKitPreservesDirectHDRMetalYUVOutputOnP3Screens() {
     let hdr = CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
     let colorConfiguration = ShadowClientRealtimeSessionColorConfiguration(
         renderColorSpace: hdr,
@@ -173,8 +173,8 @@ func surfaceColorSpaceKitMapsHDRMetalYUVOutputToLinearDisplayP3OnP3Screens() {
     )
 
     #expect(configuration.prefersExtendedDynamicRange)
-    #expect(configuration.targetPixelFormat == .rgba16Float)
-    #expect(configuration.outputColorSpace.name == CGColorSpace.extendedLinearDisplayP3)
+    #expect(configuration.targetPixelFormat == .bgr10a2Unorm)
+    #expect(configuration.outputColorSpace.name == CGColorSpace.itur_2100_PQ)
 }
 
 @Test("Surface color space kit creates HDR10 EDR metadata for linear Metal YUV output")
@@ -218,8 +218,8 @@ func surfaceColorSpaceKitCreatesHDR10EDRMetadataForLinearMetalYUVOutput() {
     #expect(metadata != nil)
 }
 
-@Test("Surface color space kit preserves attachment-derived EDR metadata for direct PQ Metal YUV output")
-func surfaceColorSpaceKitPreservesEDRMetadataForDirectPQMetalYUVOutput() {
+@Test("Surface color space kit skips system tone-mapping metadata for direct PQ Metal YUV output")
+func surfaceColorSpaceKitSkipsEDRMetadataForDirectPQMetalYUVOutput() {
     let hdr = CGColorSpace(name: CGColorSpace.displayP3_PQ) ?? CGColorSpaceCreateDeviceRGB()
     let colorConfiguration = ShadowClientRealtimeSessionColorConfiguration(
         renderColorSpace: hdr,
@@ -261,8 +261,8 @@ func surfaceColorSpaceKitPreservesEDRMetadataForDirectPQMetalYUVOutput() {
         currentHeadroom: 8.0
     )
 
-    #expect(metadata != nil)
-    #expect(summary.contains("source=frame-attachments-hdr10"))
+    #expect(metadata == nil)
+    #expect(summary.contains("source=direct-color-space"))
 }
 
 @Test("Surface color space kit reads static HDR attachments from HDR frames")

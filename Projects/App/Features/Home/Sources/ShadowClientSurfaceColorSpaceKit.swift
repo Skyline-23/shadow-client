@@ -145,6 +145,12 @@ enum ShadowClientSurfaceColorSpaceKit {
         guard renderTargetConfiguration.prefersExtendedDynamicRange else {
             return nil
         }
+        guard shouldApplySystemToneMapping(
+            colorConfiguration: colorConfiguration,
+            renderTargetConfiguration: renderTargetConfiguration
+        ) else {
+            return nil
+        }
 
         let sourceHDRColorSpaceName =
             colorConfiguration.displayColorSpace.name ??
@@ -205,6 +211,12 @@ enum ShadowClientSurfaceColorSpaceKit {
         guard renderTargetConfiguration.prefersExtendedDynamicRange else {
             return "enabled=false output-color-space=\(outputColorSpaceName) source-color-space=\(sourceHDRColorSpaceName)"
         }
+        guard shouldApplySystemToneMapping(
+            colorConfiguration: colorConfiguration,
+            renderTargetConfiguration: renderTargetConfiguration
+        ) else {
+            return "enabled=true source=direct-color-space output-color-space=\(outputColorSpaceName) source-color-space=\(sourceHDRColorSpaceName)"
+        }
 
         let opticalOutputScale = opticalOutputScale(for: renderTargetConfiguration)
         if isHLGLikeColorSpaceName(
@@ -242,11 +254,9 @@ enum ShadowClientSurfaceColorSpaceKit {
         if prefersExtendedDynamicRange {
             if renderBackend == .metalYUV,
                prefersDirectHDRPresentation(
-                   screenColorSpace: screenColorSpace,
                    hdrSourceColorSpace: hdrSourceColorSpace,
                    hdrDisplayColorSpace: hdrDisplayColorSpace
-               )
-            {
+               ) {
                 return hdrDisplayColorSpace
             }
             if renderBackend == .metalYUV,
@@ -291,15 +301,12 @@ enum ShadowClientSurfaceColorSpaceKit {
     }
 
     private static func prefersDirectHDRPresentation(
-        screenColorSpace: CGColorSpace?,
         hdrSourceColorSpace: CGColorSpace?,
         hdrDisplayColorSpace: CGColorSpace
     ) -> Bool {
         let displayFamily = hdrColorFamily(for: hdrDisplayColorSpace.name)
         let sourceFamily = hdrColorFamily(for: hdrSourceColorSpace?.name ?? hdrDisplayColorSpace.name)
-        let screenFamily = hdrColorFamily(for: screenColorSpace?.name)
         let transferKind = hdrTransferKind(for: hdrDisplayColorSpace.name)
-        let screenTransferKind = hdrTransferKind(for: screenColorSpace?.name)
 
         guard transferKind == .pq || transferKind == .hlg else {
             return false
@@ -309,13 +316,7 @@ enum ShadowClientSurfaceColorSpaceKit {
         else {
             return false
         }
-        guard screenFamily != .unknown else {
-            return false
-        }
-        guard screenFamily == displayFamily else {
-            return false
-        }
-        return screenTransferKind == transferKind
+        return true
     }
 
     private static func preferredLinearHDROutputColorSpace(
@@ -359,6 +360,19 @@ enum ShadowClientSurfaceColorSpaceKit {
         default:
             return false
         }
+    }
+
+    private static func shouldApplySystemToneMapping(
+        colorConfiguration: ShadowClientRealtimeSessionColorConfiguration,
+        renderTargetConfiguration: ShadowClientSurfaceRenderTargetConfiguration
+    ) -> Bool {
+        guard renderTargetConfiguration.prefersExtendedDynamicRange else {
+            return false
+        }
+        guard renderTargetConfiguration.renderBackend == .metalYUV else {
+            return true
+        }
+        return isLinearHDROutputColorSpace(renderTargetConfiguration.outputColorSpace)
     }
 
     private static func isHLGLikeColorSpaceName(_ name: CFString?) -> Bool {
