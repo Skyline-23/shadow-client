@@ -9,6 +9,7 @@ enum ShadowClientMacOSPointerInputPolicy {
     static func motionEvent(
         locationInView: CGPoint,
         previousLocationInView: CGPoint?,
+        relativeMotionDelta: CGSize?,
         containerBounds: CGRect,
         videoSize: CGSize?,
         isCaptured: Bool,
@@ -23,6 +24,13 @@ enum ShadowClientMacOSPointerInputPolicy {
         }
 
         if isCaptured {
+            if let relativeMotionDelta {
+                let deltaX = relativeMotionDelta.width
+                let deltaY = -relativeMotionDelta.height
+                if deltaX != 0 || deltaY != 0 {
+                    return .pointerMoved(x: deltaX, y: deltaY)
+                }
+            }
             guard let previousLocationInView else {
                 return nil
             }
@@ -124,6 +132,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
     private var locallyHandledKeyCodes = Set<UInt16>()
     private var pendingRecaptureAfterActivation = false
     private var lastPointerLocationInView: CGPoint?
+    private var hasScheduledFocusRetry = false
 
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { true }
@@ -373,6 +382,7 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
         guard let motionEvent = ShadowClientMacOSPointerInputPolicy.motionEvent(
             locationInView: locationInView,
             previousLocationInView: previousLocationInView,
+            relativeMotionDelta: CGSize(width: event.deltaX, height: event.deltaY),
             containerBounds: bounds,
             videoSize: referenceVideoSize,
             isCaptured: isCursorHidden,
@@ -433,11 +443,15 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
             window.makeKey()
         }
         if window.firstResponder !== self {
-            if !window.makeFirstResponder(self), !loggedFocusFailure {
-                loggedFocusFailure = true
-                logger.notice("Input capture failed to become first responder")
-            } else if window.firstResponder === self {
+            if window.makeFirstResponder(self) {
                 loggedFocusFailure = false
+                hasScheduledFocusRetry = false
+            } else {
+                if !loggedFocusFailure {
+                    loggedFocusFailure = true
+                    logger.notice("Input capture failed to become first responder")
+                }
+                scheduleInputFocusRetry(forceRecapture: forceRecapture)
             }
         }
 
@@ -539,6 +553,24 @@ final class ShadowClientMacOSInputCaptureNSView: NSView {
 
         pendingRecaptureAfterActivation = false
         requestInputFocusIfNeeded(forceRecapture: true, allowWindowActivation: !window.isKeyWindow)
+    }
+
+    private func scheduleInputFocusRetry(forceRecapture: Bool) {
+        guard !hasScheduledFocusRetry else {
+            return
+        }
+
+        hasScheduledFocusRetry = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                return
+            }
+            self.hasScheduledFocusRetry = false
+            self.requestInputFocusIfNeeded(
+                forceRecapture: forceRecapture,
+                allowWindowActivation: true
+            )
+        }
     }
 
     private func updatePointerCaptureLocation(

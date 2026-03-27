@@ -9,6 +9,7 @@ func macOSInputCaptureUsesRelativePointerMotionWhenCaptured() {
     let motion = ShadowClientMacOSPointerInputPolicy.motionEvent(
         locationInView: CGPoint(x: 140, y: 120),
         previousLocationInView: CGPoint(x: 100, y: 150),
+        relativeMotionDelta: nil,
         containerBounds: CGRect(x: 0, y: 0, width: 300, height: 200),
         videoSize: CGSize(width: 1920, height: 1080),
         isCaptured: true,
@@ -23,6 +24,7 @@ func macOSInputCaptureUsesAbsolutePointerPositionWhenNotCaptured() {
     let motion = ShadowClientMacOSPointerInputPolicy.motionEvent(
         locationInView: CGPoint(x: 150, y: 80),
         previousLocationInView: CGPoint(x: 120, y: 90),
+        relativeMotionDelta: nil,
         containerBounds: CGRect(x: 0, y: 0, width: 300, height: 200),
         videoSize: CGSize(width: 1920, height: 1080),
         isCaptured: false,
@@ -60,6 +62,7 @@ func macOSInputCaptureAnchorsFirstCapturedMotion() {
     let motion = ShadowClientMacOSPointerInputPolicy.motionEvent(
         locationInView: CGPoint(x: 150, y: 80),
         previousLocationInView: CGPoint(x: 120, y: 90),
+        relativeMotionDelta: CGSize(width: 24, height: -18),
         containerBounds: CGRect(x: 0, y: 0, width: 300, height: 200),
         videoSize: CGSize(width: 1920, height: 1080),
         isCaptured: true,
@@ -74,6 +77,21 @@ func macOSInputCaptureAnchorsFirstCapturedMotion() {
             referenceHeight: 1080
         )
     )
+}
+
+@Test("macOS input capture prefers event delta while captured")
+func macOSInputCapturePrefersEventDeltaWhileCaptured() {
+    let motion = ShadowClientMacOSPointerInputPolicy.motionEvent(
+        locationInView: CGPoint(x: 299, y: 100),
+        previousLocationInView: CGPoint(x: 299, y: 100),
+        relativeMotionDelta: CGSize(width: 14, height: -9),
+        containerBounds: CGRect(x: 0, y: 0, width: 300, height: 200),
+        videoSize: CGSize(width: 1920, height: 1080),
+        isCaptured: true,
+        pendingCapturedAnchor: false
+    )
+
+    #expect(motion == .pointerMoved(x: 14, y: 9))
 }
 
 @Test("macOS input capture syncs one absolute pointer position before first captured button event")
