@@ -35,12 +35,15 @@ enum ShadowClientRealtimeSessionHDRCompositor {
         hasMetalRenderer: Bool
     ) -> SinkCapabilities {
         let supportsFrameGatedHDR = potentialEDRHeadroom > 1.0 && hasMetalRenderer
-        let supportsPartialHDROverlay = supportsFrameGatedHDR
 
+        // The current compositor can gate whole-frame HDR rendering, but it does not yet
+        // consume overlay-region HDR metadata with transport-level correctness. Keep
+        // partial-overlay advertising disabled until the renderer applies that metadata
+        // honestly across the overlay path.
         return .init(
             supportsFrameGatedHDR: supportsFrameGatedHDR,
-            supportsHDRTileOverlay: supportsPartialHDROverlay,
-            supportsPerFrameHDRMetadata: supportsPartialHDROverlay
+            supportsHDRTileOverlay: false,
+            supportsPerFrameHDRMetadata: false
         )
     }
 

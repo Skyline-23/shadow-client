@@ -35,8 +35,8 @@ func hdrCompositorKeepsEDREnabledForPartialOverlayRegions() {
     #expect(allowsExtendedDynamicRange)
 }
 
-@Test("HDR compositor sink capability requires EDR headroom and Metal")
-func hdrCompositorSinkCapabilityRequiresEDRAndMetal() {
+@Test("HDR compositor sink capability advertises only frame-gated HDR until overlay metadata is consumed")
+func hdrCompositorSinkCapabilityAdvertisesOnlyFrameGatedHDR() {
     let missingMetal = ShadowClientRealtimeSessionHDRCompositor.sinkCapabilities(
         potentialEDRHeadroom: 2.0,
         hasMetalRenderer: false
@@ -57,6 +57,6 @@ func hdrCompositorSinkCapabilityRequiresEDRAndMetal() {
     #expect(!missingEDR.supportsHDRTileOverlay)
     #expect(!missingEDR.supportsPerFrameHDRMetadata)
     #expect(available.supportsFrameGatedHDR)
-    #expect(available.supportsHDRTileOverlay)
-    #expect(available.supportsPerFrameHDRMetadata)
+    #expect(!available.supportsHDRTileOverlay)
+    #expect(!available.supportsPerFrameHDRMetadata)
 }
