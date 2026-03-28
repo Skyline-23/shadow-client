@@ -159,8 +159,8 @@ func rtspAnnouncePayloadMapsSurroundAudio() {
     #expect(stereoAttributes["x-shadow-audio.surround.quality"] == "0")
 }
 
-@Test("RTSP ANNOUNCE payload includes legacy control channel hint for plaintext reliable UDP")
-func rtspAnnouncePayloadIncludesLegacyControlChannelHint() {
+@Test("RTSP ANNOUNCE payload omits plaintext control channel hint for reliable UDP")
+func rtspAnnouncePayloadOmitsPlaintextControlChannelHint() {
     let payload = ShadowClientRTSPAnnouncePayloadBuilder.build(
         hostAddress: "192.168.1.10",
         videoConfiguration: .init(
@@ -183,15 +183,15 @@ func rtspAnnouncePayloadIncludesLegacyControlChannelHint() {
     let attributes = rtspAnnounceAttributes(from: payload)
 
     #expect(attributes["x-nv-general.useReliableUdp"] == "1")
-    #expect(attributes["x-nv-ri.useControlChannel"] == "1")
+    #expect(attributes["x-nv-ri.useControlChannel"] == nil)
     #expect(attributes["x-nv-general.featureFlags"] == "135")
     #expect(attributes["x-shadow-general.useReliableUdp"] == "1")
     #expect(attributes["x-shadow-general.featureFlags"] == "135")
     #expect(attributes["x-shadow-general.transportFeatureFlags"] == "3")
 }
 
-@Test("RTSP ANNOUNCE payload omits legacy control channel hint for encrypted control-v2 mode")
-func rtspAnnouncePayloadOmitsLegacyControlChannelHintWhenEncryptedControlIsEnabled() {
+@Test("RTSP ANNOUNCE payload omits plaintext control channel hint for encrypted control-v2 mode")
+func rtspAnnouncePayloadOmitsPlaintextControlChannelHintWhenEncryptedControlIsEnabled() {
     let payload = ShadowClientRTSPAnnouncePayloadBuilder.build(
         hostAddress: "192.168.1.11",
         videoConfiguration: .init(

@@ -316,7 +316,7 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         var fecCurrentBlockNumber = (multiFecBlocks >> 4) & 0x03
         var fecLastBlockNumber = (multiFecBlocks >> 6) & 0x03
         if !multiFECCapable {
-            // Moonlight queue behavior for legacy servers: normalize to single-block metadata.
+            // Moonlight queue behavior for older servers: normalize to single-block metadata.
             fecCurrentBlockNumber = 0
             fecLastBlockNumber = 0
         }

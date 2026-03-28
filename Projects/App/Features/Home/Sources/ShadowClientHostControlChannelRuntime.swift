@@ -35,7 +35,7 @@ actor ShadowClientHostControlChannelRuntime {
     private var controlReliableSequenceNumber: UInt16 = 0
     private var outgoingReliableSequenceByChannel: [UInt8: UInt16] = [:]
     private var connectID: UInt32 = 0
-    private var controlChannelMode: ShadowClientHostControlChannelMode = .plaintext
+    private var controlChannelMode: ShadowClientHostControlChannelMode?
     private var controlEncryptionCodec: ShadowClientHostControlEncryptionCodec?
     private var controlEncryptionSequenceNumber: UInt32 = 0
     private var receivedControllerFeedbackEventCount: Int = 0
@@ -67,7 +67,7 @@ actor ShadowClientHostControlChannelRuntime {
         host: NWEndpoint.Host,
         port: NWEndpoint.Port,
         connectData: UInt32?,
-        mode: ShadowClientHostControlChannelMode = .plaintext
+        mode: ShadowClientHostControlChannelMode
     ) async throws {
         stop()
         do {
@@ -151,7 +151,7 @@ actor ShadowClientHostControlChannelRuntime {
         connection?.cancel()
         connection = nil
         controlEncryptionCodec = nil
-        controlChannelMode = .plaintext
+        controlChannelMode = nil
         resetSessionState()
     }
 
@@ -187,6 +187,9 @@ actor ShadowClientHostControlChannelRuntime {
         guard let connection else {
             return
         }
+        guard let controlChannelMode else {
+            return
+        }
 
         let request = controlChannelMode.makeIDRRequest(lastSeenFrameIndex: lastSeenFrameIndex)
         do {
@@ -209,6 +212,9 @@ actor ShadowClientHostControlChannelRuntime {
         endFrameIndex: UInt32
     ) async {
         guard let connection else {
+            return
+        }
+        guard let controlChannelMode else {
             return
         }
 
@@ -321,6 +327,10 @@ actor ShadowClientHostControlChannelRuntime {
     }
 
     private func sendBootstrapStartMessages(over connection: NWConnection) async throws {
+        guard let controlChannelMode else {
+            throw ShadowClientHostControlChannelError.connectionClosed
+        }
+
         try await sendReliableControlMessage(
             type: controlChannelMode.startAType,
             payload: controlChannelMode.startAPayload,
@@ -705,7 +715,7 @@ actor ShadowClientHostControlChannelRuntime {
 
     private func controlMessageName(_ type: UInt16) -> String {
         switch type {
-        case ShadowClientHostControlMessageProfile.startATypeLegacy:
+        case ShadowClientHostControlMessageProfile.startATypeV1:
             return "startA-v1"
         case ShadowClientHostControlMessageProfile.startATypeEncryptedV2:
             return "startA-encryptedV2"

@@ -8,7 +8,7 @@ enum ShadowClientHostControlChannelMode: Sendable {
     var startAType: UInt16 {
         switch self {
         case .plaintext:
-            return ShadowClientHostControlMessageProfile.startATypeLegacy
+            return ShadowClientHostControlMessageProfile.startATypeV1
         case .encryptedV2:
             return ShadowClientHostControlMessageProfile.startATypeEncryptedV2
         }

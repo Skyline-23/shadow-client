@@ -51,7 +51,7 @@ enum ShadowClientRTSPAnnouncePayloadBuilder {
             clientDisplayCharacteristics.modeIsLogical
         )
 
-        var attributes: [(String, String)] = [
+        let attributes: [(String, String)] = [
             ("x-ml-general.featureFlags", "\(moonlightFeatureFlags)"),
             ("x-ss-general.encryptionEnabled", "\(encryptionEnabledFlags)"),
             ("x-ss-video[0].chromaSamplingType", ShadowClientRTSPAnnounceProfile.chromaSamplingType(yuv444Enabled: videoConfiguration.enableYUV444)),
@@ -134,12 +134,6 @@ enum ShadowClientRTSPAnnouncePayloadBuilder {
             ("x-shadow-sink.supportsHDRTileOverlay", supportsHDRTileOverlay),
             ("x-shadow-sink.supportsPerFrameHDRMetadata", supportsPerFrameHDRMetadata),
         ]
-        if reliableUDPMode == ShadowClientRTSPAnnounceProfile.reliableUDPModeStandard {
-            attributes.append(
-                ("x-nv-ri.useControlChannel", ShadowClientRTSPAnnounceProfile.useControlChannelEnabled)
-            )
-        }
-
         var payload = ""
         payload += "v=\(ShadowClientRTSPAnnounceProfile.sdpVersion)\r\n"
         payload += "o=\(ShadowClientRTSPAnnounceProfile.sdpOriginUsername) \(ShadowClientRTSPAnnounceProfile.sdpOriginSessionID) \(ShadowClientRTSPAnnounceProfile.sdpOriginSessionVersion) \(ShadowClientRTSPAnnounceProfile.sdpOriginNetworkType) \(ShadowClientRTSPAnnounceProfile.sdpOriginAddressType) \(safeHost)\r\n"

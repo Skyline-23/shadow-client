@@ -73,7 +73,7 @@ enum ShadowClientHostControlMessageProfile {
     static let mouseChannelID: UInt8 = 0x03
     static let gamepadChannelBaseID: UInt8 = 0x10
 
-    static let startATypeLegacy: UInt16 = 0x0305
+    static let startATypeV1: UInt16 = 0x0305
     static let startATypeEncryptedV2: UInt16 = 0x0302
     static let startBType: UInt16 = 0x0307
     static let invalidateReferenceFramesType: UInt16 = 0x0301
@@ -130,7 +130,6 @@ enum ShadowClientRTSPAnnounceProfile {
 
     static let reliableUDPModeStandard = "1"
     static let reliableUDPModeEncrypted = "13"
-    static let useControlChannelEnabled = "1"
 
     // Match Moonlight Gen5 baseline flags so Apollo-host parsing stays on the
     // expected feature path instead of host defaults.

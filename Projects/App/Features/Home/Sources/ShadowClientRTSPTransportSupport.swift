@@ -40,6 +40,51 @@ private struct ShadowClientRTSPResponse {
     let body: Data
 }
 
+struct ShadowClientApolloControlTransportNegotiation: Sendable {
+    let controlChannelMode: ShadowClientHostControlChannelMode
+    let controlModeLabel: String
+    let audioEncryptionConfiguration: ShadowClientRealtimeAudioEncryptionConfiguration?
+    let audioEncryptionLabel: String
+
+    static func resolve(
+        handshakeNegotiation: ShadowClientHostHandshakeNegotiation,
+        remoteInputKey: Data?,
+        remoteInputKeyID: UInt32?
+    ) throws -> Self {
+        guard handshakeNegotiation.supportsSessionIdentifierV1 else {
+            throw ShadowClientRTSPInterleavedClientError.requestFailed(
+                "Apollo transport requires negotiated session ID ping support."
+            )
+        }
+        guard handshakeNegotiation.controlChannelEncryptionEnabled,
+              let remoteInputKey
+        else {
+            throw ShadowClientRTSPInterleavedClientError.requestFailed(
+                "Apollo transport requires encrypted control stream v2 support."
+            )
+        }
+
+        let audioEncryptionConfiguration: ShadowClientRealtimeAudioEncryptionConfiguration?
+        if handshakeNegotiation.audioEncryptionEnabled,
+           let remoteInputKeyID
+        {
+            audioEncryptionConfiguration = .init(
+                key: remoteInputKey,
+                keyID: remoteInputKeyID
+            )
+        } else {
+            audioEncryptionConfiguration = nil
+        }
+
+        return Self(
+            controlChannelMode: .encryptedV2(key: remoteInputKey),
+            controlModeLabel: "encrypted-v2",
+            audioEncryptionConfiguration: audioEncryptionConfiguration,
+            audioEncryptionLabel: handshakeNegotiation.audioEncryptionEnabled ? "encrypted" : "plaintext"
+        )
+    }
+}
+
 struct ShadowClientRTPPacket {
     let isRTP: Bool
     let channel: Int
@@ -238,7 +283,7 @@ actor ShadowClientRTSPInterleavedClient {
     private var prePlayVideoPingWarmupTask: Task<Void, Never>?
     private var controlConnectData: UInt32?
     private var controlChannelRuntime: ShadowClientHostControlChannelRuntime?
-    private var controlChannelMode: ShadowClientHostControlChannelMode = .plaintext
+    private var controlChannelMode: ShadowClientHostControlChannelMode?
     private var hasStartedControlChannelBootstrap = false
     private var useSessionIdentifierV1 = false
     private var remoteInputKey: Data?
@@ -316,7 +361,7 @@ actor ShadowClientRTSPInterleavedClient {
         videoPingPayload = nil
         audioTrackDescriptor = nil
         controlConnectData = nil
-        controlChannelMode = .plaintext
+        controlChannelMode = nil
         useSessionIdentifierV1 = false
         audioEncryptionConfiguration = nil
         negotiatedClientPortBase = defaultClientPortBase
@@ -736,8 +781,9 @@ actor ShadowClientRTSPInterleavedClient {
                     parsedControlServerPort = NWEndpoint.Port(rawValue: parsedPort)
                     logger.notice("RTSP negotiated UDP control server port \(parsedPort, privacy: .public)")
                 } else {
-                    parsedControlServerPort = NWEndpoint.Port(rawValue: ShadowClientRealtimeSessionDefaults.fallbackControlPort)
-                    logger.notice("RTSP control server port missing in SETUP transport; using fallback \(ShadowClientRealtimeSessionDefaults.fallbackControlPort, privacy: .public)")
+                    throw ShadowClientRTSPInterleavedClientError.requestFailed(
+                        "RTSP control server port missing in SETUP transport"
+                    )
                 }
                 if let parsed = ShadowClientRTSPTransportHeaderParser.parseHostControlConnectData(
                     from: response.headers[ShadowClientRTSPRequestDefaults.responseHeaderConnectData]
@@ -788,34 +834,16 @@ actor ShadowClientRTSPInterleavedClient {
             supportsEncryptedControlChannelV2: ShadowClientHostSessionDefaults.supportsEncryptedControlChannelV2 && remoteInputKey != nil,
             supportsEncryptedAudioTransport: remoteInputKey != nil && remoteInputKeyID != nil
         )
-        useSessionIdentifierV1 = handshakeNegotiation.supportsSessionIdentifierV1
-        if handshakeNegotiation.controlChannelEncryptionEnabled, let remoteInputKey
-        {
-            controlChannelMode = .encryptedV2(key: remoteInputKey)
-        } else {
-            controlChannelMode = .plaintext
-        }
-        let controlModeLabel: String
-        switch controlChannelMode {
-        case .plaintext:
-            controlModeLabel = "plaintext"
-        case .encryptedV2:
-            controlModeLabel = "encrypted-v2"
-        }
-        if handshakeNegotiation.audioEncryptionEnabled,
-           let remoteInputKey,
-           let remoteInputKeyID
-        {
-            audioEncryptionConfiguration = .init(
-                key: remoteInputKey,
-                keyID: remoteInputKeyID
-            )
-        } else {
-            audioEncryptionConfiguration = nil
-        }
-        let audioEncryptionLabel = handshakeNegotiation.audioEncryptionEnabled ? "encrypted" : "plaintext"
+        let apolloTransportNegotiation = try ShadowClientApolloControlTransportNegotiation.resolve(
+            handshakeNegotiation: handshakeNegotiation,
+            remoteInputKey: remoteInputKey,
+            remoteInputKeyID: remoteInputKeyID
+        )
+        useSessionIdentifierV1 = true
+        controlChannelMode = apolloTransportNegotiation.controlChannelMode
+        audioEncryptionConfiguration = apolloTransportNegotiation.audioEncryptionConfiguration
         logger.notice(
-            "RTSP negotiation session-id-v1=\(handshakeNegotiation.supportsSessionIdentifierV1, privacy: .public) ml-flags=\(handshakeNegotiation.moonlightFeatureFlags, privacy: .public) ss-feature-flags=\(hostFeatureFlags, privacy: .public) encryption-supported=\(encryptionSupportedFlags, privacy: .public) encryption-requested=\(encryptionRequestedFlags, privacy: .public) encryption-enabled=\(handshakeNegotiation.encryptionEnabledFlags, privacy: .public) control-mode=\(controlModeLabel, privacy: .public) audio-mode=\(audioEncryptionLabel, privacy: .public)"
+            "RTSP negotiation session-id-v1=\(handshakeNegotiation.supportsSessionIdentifierV1, privacy: .public) ml-flags=\(handshakeNegotiation.moonlightFeatureFlags, privacy: .public) ss-feature-flags=\(hostFeatureFlags, privacy: .public) encryption-supported=\(encryptionSupportedFlags, privacy: .public) encryption-requested=\(encryptionRequestedFlags, privacy: .public) encryption-enabled=\(handshakeNegotiation.encryptionEnabledFlags, privacy: .public) control-mode=\(apolloTransportNegotiation.controlModeLabel, privacy: .public) audio-mode=\(apolloTransportNegotiation.audioEncryptionLabel, privacy: .public)"
         )
 
         let clientDisplayCharacteristics = await ShadowClientApolloClientDisplayCharacteristicsResolver.current(
@@ -1549,6 +1577,10 @@ actor ShadowClientRTSPInterleavedClient {
             logger.notice("RTSP control bootstrap skipped (no negotiated control server port)")
             return true
         }
+        guard let controlChannelMode else {
+            logger.error("RTSP control bootstrap failed because Apollo control mode negotiation did not complete")
+            return false
+        }
 
         if controlChannelRuntime != nil {
             return true
@@ -1610,7 +1642,7 @@ actor ShadowClientRTSPInterleavedClient {
         }
         prePlayVideoUDPSocket = nil
         controlConnectData = nil
-        controlChannelMode = .plaintext
+        controlChannelMode = nil
         useSessionIdentifierV1 = false
         remoteInputKey = nil
         remoteInputKeyID = nil
