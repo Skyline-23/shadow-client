@@ -617,7 +617,7 @@ actor ShadowClientRTSPInterleavedClient {
                 {
                     logger.notice("RTSP audio ping payload token \(token, privacy: .public)")
                 } else {
-                    logger.notice("RTSP audio ping payload token unavailable; legacy ping fallback only")
+                    logger.notice("RTSP audio ping payload token unavailable")
                 }
                 logger.notice("RTSP audio SETUP ok for \(controlURL, privacy: .public)")
                 audioSetupSucceeded = true
@@ -699,7 +699,7 @@ actor ShadowClientRTSPInterleavedClient {
         {
             logger.notice("RTSP video ping payload token \(token, privacy: .public)")
         } else {
-            logger.notice("RTSP video ping payload token unavailable; legacy ping fallback only")
+            logger.notice("RTSP video ping payload token unavailable")
         }
         logger.notice("RTSP video SETUP ok for payload type \(track.rtpPayloadType, privacy: .public) via \(selectedSetupURL ?? track.controlURL, privacy: .public)")
         await prepareAudioPingBeforePlay(host: controlHost)
@@ -1897,10 +1897,14 @@ actor ShadowClientRTSPInterleavedClient {
                 sequence: 1,
                 negotiatedPayload: pingPayload
             )
-            for initialVideoPing in initialVideoPings {
-                try await udpSocket.send(initialVideoPing)
+            if initialVideoPings.isEmpty {
+                rtspLogger.notice("RTSP UDP video initial ping skipped because the host did not negotiate a ping payload")
+            } else {
+                for initialVideoPing in initialVideoPings {
+                    try await udpSocket.send(initialVideoPing)
+                }
+                rtspLogger.notice("RTSP UDP video initial ping sent (variants=\(initialVideoPings.count, privacy: .public), bytes=\(initialVideoPings.first?.count ?? 0, privacy: .public))")
             }
-            rtspLogger.notice("RTSP UDP video initial ping sent (variants=\(initialVideoPings.count, privacy: .public), bytes=\(initialVideoPings.first?.count ?? 0, privacy: .public))")
         } catch {
             rtspLogger.error("RTSP UDP video initial ping failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -1939,13 +1943,22 @@ actor ShadowClientRTSPInterleavedClient {
             var sequence: UInt32 = 1
             var loggedPingCount = 0
             var loggedPingError = false
+            var loggedSkip = false
             while !Task.isCancelled {
                 sequence &+= 1
+                let pingPackets = ShadowClientHostPingPacketCodec.makePingPackets(
+                    sequence: sequence,
+                    negotiatedPayload: pingPayload
+                )
+                guard !pingPackets.isEmpty else {
+                    if !loggedSkip {
+                        rtspLogger.notice("RTSP UDP video ping loop disabled because the host did not negotiate a ping payload")
+                        loggedSkip = true
+                    }
+                    try? await Task.sleep(for: ShadowClientRealtimeSessionDefaults.pingInterval)
+                    continue
+                }
                 do {
-                    let pingPackets = ShadowClientHostPingPacketCodec.makePingPackets(
-                        sequence: sequence,
-                        negotiatedPayload: pingPayload
-                    )
                     for pingPacket in pingPackets {
                         try await sendableVideoSocket.send(pingPacket)
                     }
@@ -2207,31 +2220,37 @@ actor ShadowClientRTSPInterleavedClient {
                 sequence: 1,
                 negotiatedPayload: videoPingPayload
             )
-            for packet in prePlayPings {
-                try await socket.send(packet)
+            if prePlayPings.isEmpty {
+                logger.notice("RTSP UDP video pre-PLAY ping skipped because the host did not negotiate a ping payload")
+            } else {
+                for packet in prePlayPings {
+                    try await socket.send(packet)
+                }
+                logger.notice(
+                    "RTSP UDP video pre-PLAY ping sent (variants=\(prePlayPings.count, privacy: .public), bytes=\(prePlayPings.first?.count ?? 0, privacy: .public))"
+                )
             }
-            logger.notice(
-                "RTSP UDP video pre-PLAY ping sent (variants=\(prePlayPings.count, privacy: .public), bytes=\(prePlayPings.first?.count ?? 0, privacy: .public))"
-            )
             prePlayVideoPingWarmupTask?.cancel()
-            let payload = videoPingPayload
-            prePlayVideoPingWarmupTask = Task { [logger] in
-                var sequence: UInt32 = 1
-                var loggedSendCount = 0
-                while !Task.isCancelled {
-                    sequence &+= 1
-                    let pingPackets = ShadowClientHostPingPacketCodec.makePingPackets(
-                        sequence: sequence,
-                        negotiatedPayload: payload
-                    )
-                    for packet in pingPackets {
-                        try? await socket.send(packet)
+            if !prePlayPings.isEmpty {
+                let payload = videoPingPayload
+                prePlayVideoPingWarmupTask = Task { [logger] in
+                    var sequence: UInt32 = 1
+                    var loggedSendCount = 0
+                    while !Task.isCancelled {
+                        sequence &+= 1
+                        let pingPackets = ShadowClientHostPingPacketCodec.makePingPackets(
+                            sequence: sequence,
+                            negotiatedPayload: payload
+                        )
+                        for packet in pingPackets {
+                            try? await socket.send(packet)
+                        }
+                        if loggedSendCount < 2 {
+                            logger.debug("RTSP UDP video pre-PLAY warmup ping sent (sequence=\(sequence, privacy: .public), variants=\(pingPackets.count, privacy: .public))")
+                            loggedSendCount += 1
+                        }
+                        try? await Task.sleep(for: ShadowClientRealtimeSessionDefaults.pingInterval)
                     }
-                    if loggedSendCount < 2 {
-                        logger.debug("RTSP UDP video pre-PLAY warmup ping sent (sequence=\(sequence, privacy: .public), variants=\(pingPackets.count, privacy: .public))")
-                        loggedSendCount += 1
-                    }
-                    try? await Task.sleep(for: ShadowClientRealtimeSessionDefaults.pingInterval)
                 }
             }
         } catch {
@@ -2277,48 +2296,54 @@ actor ShadowClientRTSPInterleavedClient {
                 sequence: 1,
                 negotiatedPayload: audioPingPayload
             )
-            for packet in prePlayPings {
-                try await ShadowClientRealtimeAudioTransportBootstrap.send(
-                    bytes: packet,
-                    over: connection
+            if prePlayPings.isEmpty {
+                logger.notice("RTSP UDP audio pre-PLAY ping skipped because the host did not negotiate a ping payload")
+            } else {
+                for packet in prePlayPings {
+                    try await ShadowClientRealtimeAudioTransportBootstrap.send(
+                        bytes: packet,
+                        over: connection
+                    )
+                }
+                logger.notice(
+                    "RTSP UDP audio pre-PLAY ping sent (variants=\(prePlayPings.count, privacy: .public), bytes=\(prePlayPings.first?.count ?? 0, privacy: .public))"
                 )
             }
-            logger.notice(
-                "RTSP UDP audio pre-PLAY ping sent (variants=\(prePlayPings.count, privacy: .public), bytes=\(prePlayPings.first?.count ?? 0, privacy: .public))"
-            )
 
             prePlayAudioPingWarmupTask?.cancel()
-            let payload = audioPingPayload
-            prePlayAudioPingWarmupTask = Task { [logger] in
-                var sequence: UInt32 = 1
-                var loggedSendCount = 0
-                var loggedPingError = false
-                while !Task.isCancelled {
-                    sequence &+= 1
-                    let pingPackets = ShadowClientHostPingPacketCodec.makePingPackets(
-                        sequence: sequence,
-                        negotiatedPayload: payload
-                    )
-                    do {
-                        for packet in pingPackets {
-                            try await ShadowClientRealtimeAudioTransportBootstrap.send(
-                                bytes: packet,
-                                over: connection
-                            )
+            if !prePlayPings.isEmpty {
+                let payload = audioPingPayload
+                prePlayAudioPingWarmupTask = Task { [logger] in
+                    var sequence: UInt32 = 1
+                    var loggedSendCount = 0
+                    var loggedPingError = false
+                    while !Task.isCancelled {
+                        sequence &+= 1
+                        let pingPackets = ShadowClientHostPingPacketCodec.makePingPackets(
+                            sequence: sequence,
+                            negotiatedPayload: payload
+                        )
+                        do {
+                            for packet in pingPackets {
+                                try await ShadowClientRealtimeAudioTransportBootstrap.send(
+                                    bytes: packet,
+                                    over: connection
+                                )
+                            }
+                            if loggedSendCount < 2 {
+                                logger.debug(
+                                    "RTSP UDP audio pre-PLAY warmup ping sent (sequence=\(sequence, privacy: .public), variants=\(pingPackets.count, privacy: .public))"
+                                )
+                                loggedSendCount += 1
+                            }
+                        } catch {
+                            if !loggedPingError {
+                                logger.error("RTSP UDP audio pre-PLAY ping failed: \(error.localizedDescription, privacy: .public)")
+                                loggedPingError = true
+                            }
                         }
-                        if loggedSendCount < 2 {
-                            logger.debug(
-                                "RTSP UDP audio pre-PLAY warmup ping sent (sequence=\(sequence, privacy: .public), variants=\(pingPackets.count, privacy: .public))"
-                            )
-                            loggedSendCount += 1
-                        }
-                    } catch {
-                        if !loggedPingError {
-                            logger.error("RTSP UDP audio pre-PLAY ping failed: \(error.localizedDescription, privacy: .public)")
-                            loggedPingError = true
-                        }
+                        try? await Task.sleep(for: ShadowClientRealtimeSessionDefaults.pingInterval)
                     }
-                    try? await Task.sleep(for: ShadowClientRealtimeSessionDefaults.pingInterval)
                 }
             }
         } catch {

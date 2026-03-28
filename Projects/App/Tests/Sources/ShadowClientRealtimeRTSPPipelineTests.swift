@@ -684,15 +684,14 @@ func sunshinePingPacketCodecEmitsStrictV2Packet() {
     #expect(Data(packets[0].suffix(4)) == Data([0x00, 0x00, 0x00, 0x07]))
 }
 
-@Test("Host ping packet codec emits legacy ASCII ping when negotiated payload is unavailable")
-func sunshinePingPacketCodecEmitsLegacyAsciiFallback() {
+@Test("Host ping packet codec emits no packets when negotiated payload is unavailable")
+func sunshinePingPacketCodecSkipsLegacyFallback() {
     let packets = ShadowClientHostPingPacketCodec.makePingPackets(
         sequence: 42,
         negotiatedPayload: nil
     )
 
-    #expect(packets.count == 1)
-    #expect(packets[0] == Data("PING".utf8))
+    #expect(packets.isEmpty)
 }
 
 @Test("H264 depacketizer emits access unit for single NAL packet on marker")

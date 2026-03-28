@@ -482,7 +482,6 @@ func remoteDesktopRuntimeLoadsApolloAdminProfileForSelectedHost() async {
             uuid: "CURRENT-UUID",
             displayModeOverride: "2560x1440x120",
             permissions: 65535,
-            enableLegacyOrdering: true,
             allowClientCommands: true,
             alwaysUseVirtualDisplay: true,
             connected: true
@@ -507,7 +506,6 @@ func remoteDesktopRuntimeLoadsApolloAdminProfileForSelectedHost() async {
             uuid: "CURRENT-UUID",
             displayModeOverride: "2560x1440x120",
             permissions: 65535,
-            enableLegacyOrdering: true,
             allowClientCommands: true,
             alwaysUseVirtualDisplay: true,
             connected: true
@@ -543,7 +541,6 @@ func remoteDesktopRuntimeUpdatesApolloAdminProfileForSelectedHost() async {
         uuid: "CURRENT-UUID",
         displayModeOverride: "",
         permissions: 65535,
-        enableLegacyOrdering: true,
         allowClientCommands: true,
         alwaysUseVirtualDisplay: false,
         connected: true
@@ -577,7 +574,6 @@ func remoteDesktopRuntimeUpdatesApolloAdminProfileForSelectedHost() async {
             uuid: "CURRENT-UUID",
             displayModeOverride: "2560x1440x120",
             permissions: 65535,
-            enableLegacyOrdering: true,
             allowClientCommands: true,
             alwaysUseVirtualDisplay: true,
             connected: true
@@ -613,7 +609,6 @@ func remoteDesktopRuntimeDisconnectsSelectedApolloClient() async {
         uuid: "CURRENT-UUID",
         displayModeOverride: "",
         permissions: 65535,
-        enableLegacyOrdering: true,
         allowClientCommands: true,
         alwaysUseVirtualDisplay: false,
         connected: true
@@ -665,7 +660,6 @@ func remoteDesktopRuntimeUnpairsSelectedApolloClient() async {
         uuid: "CURRENT-UUID",
         displayModeOverride: "",
         permissions: 65535,
-        enableLegacyOrdering: true,
         allowClientCommands: true,
         alwaysUseVirtualDisplay: false,
         connected: true
@@ -3378,7 +3372,6 @@ private actor FakeApolloAdminClient: ShadowClientApolloAdminClient {
             uuid: profile.uuid,
             displayModeOverride: profile.displayModeOverride,
             permissions: profile.permissions,
-            enableLegacyOrdering: profile.enableLegacyOrdering,
             allowClientCommands: profile.allowClientCommands,
             alwaysUseVirtualDisplay: profile.alwaysUseVirtualDisplay,
             connected: false,

@@ -706,7 +706,7 @@ actor ShadowClientHostControlChannelRuntime {
     private func controlMessageName(_ type: UInt16) -> String {
         switch type {
         case ShadowClientHostControlMessageProfile.startATypeLegacy:
-            return "startA-legacy"
+            return "startA-v1"
         case ShadowClientHostControlMessageProfile.startATypeEncryptedV2:
             return "startA-encryptedV2"
         case ShadowClientHostControlMessageProfile.startBType:

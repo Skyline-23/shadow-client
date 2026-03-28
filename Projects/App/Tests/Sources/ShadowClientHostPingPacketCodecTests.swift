@@ -14,12 +14,12 @@ func hostPingCodecAppendsSequenceAfterPayload() {
     #expect(packets[0] == payload + Data([0x01, 0x02, 0x03, 0x04]))
 }
 
-@Test("Host ping codec falls back to legacy ASCII ping when payload is absent")
-func hostPingCodecFallsBackToLegacyAsciiPing() {
+@Test("Host ping codec emits no packets when payload is absent")
+func hostPingCodecSkipsPingWithoutNegotiatedPayload() {
     let packets = ShadowClientHostPingPacketCodec.makePingPackets(
         sequence: 7,
         negotiatedPayload: nil
     )
 
-    #expect(packets == [Data("PING".utf8)])
+    #expect(packets.isEmpty)
 }

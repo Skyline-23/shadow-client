@@ -958,6 +958,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
         over connection: NWConnection,
         pingPayload: Data?
     ) {
+        guard pingPayload != nil else {
+            logger.notice("Audio UDP ping loop disabled because the host did not negotiate a ping payload")
+            return
+        }
         pingTask = Task.detached {
             var sequence: UInt32 = 1
             while !Task.isCancelled {
@@ -987,6 +991,10 @@ public final class ShadowClientRealtimeAudioSessionRuntime: @unchecked Sendable 
             sequence: 1,
             negotiatedPayload: pingPayload
         )
+        guard !initialPackets.isEmpty else {
+            logger.notice("Audio UDP initial ping skipped because the host did not negotiate a ping payload")
+            return
+        }
         for packet in initialPackets {
             try await Self.send(bytes: packet, over: connection)
         }

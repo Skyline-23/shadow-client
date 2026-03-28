@@ -41,7 +41,6 @@ func apolloAdminClientParserReturnsCurrentClientProfile() throws {
             uuid: "CURRENT-UUID",
             displayModeOverride: "2560x1440x120",
             permissions: 65535,
-            enableLegacyOrdering: true,
             allowClientCommands: true,
             alwaysUseVirtualDisplay: true,
             connected: true

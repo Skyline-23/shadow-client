@@ -45,7 +45,6 @@ public enum ShadowClientRealtimeSessionDefaults {
     public static let pingInterval: Duration = .milliseconds(500)
     public static let describeResponsePreviewByteCount = 512
     public static let ignoredRTPControlPayloadType = 127
-    public static let defaultPingASCII = "PING"
     public static let initialVideoDatagramTimeout: Duration = .seconds(10)
     public static let postStartVideoDatagramInactivityTimeoutSeconds: TimeInterval = 4.0
     public static let postStartVideoDatagramInactivityFallbackThresholdSeconds: TimeInterval = 12.0

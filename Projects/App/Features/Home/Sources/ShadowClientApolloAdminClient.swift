@@ -17,7 +17,6 @@ public struct ShadowClientApolloAdminClientProfile: Equatable, Sendable {
     public let uuid: String
     public let displayModeOverride: String
     public let permissions: UInt32
-    public let enableLegacyOrdering: Bool
     public let allowClientCommands: Bool
     public let alwaysUseVirtualDisplay: Bool
     public let connected: Bool
@@ -29,7 +28,6 @@ public struct ShadowClientApolloAdminClientProfile: Equatable, Sendable {
         uuid: String,
         displayModeOverride: String,
         permissions: UInt32 = 0,
-        enableLegacyOrdering: Bool = true,
         allowClientCommands: Bool = true,
         alwaysUseVirtualDisplay: Bool,
         connected: Bool,
@@ -40,7 +38,6 @@ public struct ShadowClientApolloAdminClientProfile: Equatable, Sendable {
         self.uuid = uuid
         self.displayModeOverride = displayModeOverride
         self.permissions = permissions
-        self.enableLegacyOrdering = enableLegacyOrdering
         self.allowClientCommands = allowClientCommands
         self.alwaysUseVirtualDisplay = alwaysUseVirtualDisplay
         self.connected = connected
@@ -226,7 +223,6 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
                 name: profile.name,
                 displayMode: profile.displayModeOverride,
                 permissions: profile.permissions,
-                enableLegacyOrdering: profile.enableLegacyOrdering,
                 allowClientCommands: profile.allowClientCommands,
                 alwaysUseVirtualDisplay: profile.alwaysUseVirtualDisplay,
                 doCommands: profile.doCommands,
@@ -427,7 +423,6 @@ private struct ApolloNamedCert: Decodable {
     let uuid: String
     let displayMode: String
     let permissions: UInt32
-    let enableLegacyOrdering: Bool
     let allowClientCommands: Bool
     let alwaysUseVirtualDisplay: Bool
     let connected: Bool
@@ -439,7 +434,6 @@ private struct ApolloNamedCert: Decodable {
         case uuid
         case displayMode = "display_mode"
         case permissions = "perm"
-        case enableLegacyOrdering = "enable_legacy_ordering"
         case allowClientCommands = "allow_client_commands"
         case alwaysUseVirtualDisplay = "always_use_virtual_display"
         case connected
@@ -453,7 +447,6 @@ private struct ApolloNamedCert: Decodable {
             uuid: uuid,
             displayModeOverride: displayMode,
             permissions: permissions,
-            enableLegacyOrdering: enableLegacyOrdering,
             allowClientCommands: allowClientCommands,
             alwaysUseVirtualDisplay: alwaysUseVirtualDisplay,
             connected: connected,
@@ -477,7 +470,6 @@ private struct ApolloUpdateClientPayload: Encodable {
     let name: String
     let displayMode: String
     let permissions: UInt32
-    let enableLegacyOrdering: Bool
     let allowClientCommands: Bool
     let alwaysUseVirtualDisplay: Bool
     let doCommands: [ShadowClientApolloAdminClientProfile.Command]
@@ -488,7 +480,6 @@ private struct ApolloUpdateClientPayload: Encodable {
         case name
         case displayMode = "display_mode"
         case permissions = "perm"
-        case enableLegacyOrdering = "enable_legacy_ordering"
         case allowClientCommands = "allow_client_commands"
         case alwaysUseVirtualDisplay = "always_use_virtual_display"
         case doCommands = "do"

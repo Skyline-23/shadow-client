@@ -1330,7 +1330,7 @@ enum ShadowClientGameStreamTLSFailure: Equatable, Sendable {
 }
 
 enum ShadowClientGameStreamHTTPTransport {
-    // Preserve the legacy protocol token expected by Apollo/GameStream endpoints.
+    // Preserve the protocol token expected by Apollo/GameStream endpoints.
     private static let shadowClientCompatibleUniqueID = "0123456789ABCDEF"
     private static let logger = Logger(
         subsystem: "com.skyline23.shadow-client",

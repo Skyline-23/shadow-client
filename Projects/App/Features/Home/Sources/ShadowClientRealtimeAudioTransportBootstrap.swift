@@ -121,6 +121,10 @@ enum ShadowClientRealtimeAudioTransportBootstrap {
             sequence: 1,
             negotiatedPayload: pingPayload
         )
+        guard !initialPackets.isEmpty else {
+            logger.notice("\(messagePrefix, privacy: .public) skipped because the host did not negotiate a ping payload")
+            return
+        }
         for packet in initialPackets {
             try await send(bytes: packet, over: connection)
         }
@@ -139,6 +143,10 @@ enum ShadowClientRealtimeAudioTransportBootstrap {
             sequence: 1,
             negotiatedPayload: pingPayload
         )
+        guard !initialPackets.isEmpty else {
+            logger.notice("\(messagePrefix, privacy: .public) skipped because the host did not negotiate a ping payload")
+            return
+        }
         for packet in initialPackets {
             try await send(bytes: packet, over: socket)
         }
@@ -156,6 +164,10 @@ enum ShadowClientRealtimeAudioTransportBootstrap {
         successLogLimit: Int = 3
     ) -> Task<Void, Never> {
         Task.detached {
+            guard pingPayload != nil else {
+                logger.notice("\(successMessagePrefix, privacy: .public) disabled because the host did not negotiate a ping payload")
+                return
+            }
             var sequence: UInt32 = 1
             var loggedPingCount = 0
             var loggedPingError = false
@@ -195,6 +207,10 @@ enum ShadowClientRealtimeAudioTransportBootstrap {
         successLogLimit: Int = 3
     ) -> Task<Void, Never> {
         Task.detached {
+            guard pingPayload != nil else {
+                logger.notice("\(successMessagePrefix, privacy: .public) disabled because the host did not negotiate a ping payload")
+                return
+            }
             var sequence: UInt32 = 1
             var loggedPingCount = 0
             var loggedPingError = false
