@@ -5,8 +5,6 @@ public enum ShadowClientGameStreamCommand: String, Sendable {
     case launch
     case resume
     case cancel
-    case pair
-    case unpair
 }
 
 public enum ShadowClientGameStreamLaunchDefaults {
