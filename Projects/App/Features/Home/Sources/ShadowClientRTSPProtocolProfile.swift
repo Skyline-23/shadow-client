@@ -7,7 +7,6 @@ enum ShadowClientRTSPProtocolProfile {
     static let rtspsSchemePrefix = "rtsps://"
 
     static let defaultPort = 554
-    static let legacyFirstFrameBootstrapPort: UInt16 = 47_996
     static let fallbackVideoPayloadType = 96
     static let clientPortBase: UInt16 = 50_000
     static let clientPortProbeCount = 16

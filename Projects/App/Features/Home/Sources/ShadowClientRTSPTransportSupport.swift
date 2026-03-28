@@ -946,11 +946,8 @@ actor ShadowClientRTSPInterleavedClient {
             if didStartHostControl {
                 logger.debug("RTSP control path negotiated; Apollo control bootstrap ready")
             } else {
-                logger.debug("RTSP control path negotiated; Apollo bootstrap unavailable, trying legacy first-frame compatibility probe")
+                logger.error("RTSP control path negotiated; Apollo control bootstrap unavailable")
             }
-        }
-        if !didStartHostControl {
-            await attemptLegacyFirstFrameBootstrap(host: remoteHost ?? .init(host))
         }
         return track
     }
@@ -2331,34 +2328,6 @@ actor ShadowClientRTSPInterleavedClient {
             prePlayAudioUDPConnection = nil
             logger.error("RTSP UDP audio pre-PLAY ping setup failed: \(error.localizedDescription, privacy: .public)")
         }
-    }
-
-    private func attemptLegacyFirstFrameBootstrap(host: NWEndpoint.Host) async {
-        guard let port = NWEndpoint.Port(
-            rawValue: ShadowClientRTSPProtocolProfile.legacyFirstFrameBootstrapPort
-        ) else {
-            return
-        }
-
-        let bootstrapConnection = NWConnection(
-            host: host,
-            port: port,
-            using: ShadowClientStreamingTrafficPolicy.tcpParameters(
-                trafficClass: ShadowClientStreamingTrafficPolicy.rtsp(
-                    prioritized: prioritizeNetworkTraffic
-                )
-            )
-        )
-        do {
-            try await waitForReady(
-                bootstrapConnection,
-                timeout: .milliseconds(700)
-            )
-            logger.notice("RTSP legacy first-frame bootstrap connected on \(port.rawValue, privacy: .public)")
-        } catch {
-            logger.debug("RTSP legacy first-frame bootstrap skipped: \(error.localizedDescription, privacy: .public)")
-        }
-        bootstrapConnection.cancel()
     }
 
     private func sendRequest(
