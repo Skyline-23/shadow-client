@@ -2,8 +2,8 @@ import CoreGraphics
 import Testing
 @testable import ShadowClientFeatureHome
 
-@Test("Mac transfer contract keeps Display P3 HDR desktops on SDR transfer")
-func macTransferContractKeepsDisplayP3HDRDesktopsOnSDRTransfer() {
+@Test("Mac transfer contract defaults HDR desktops to PQ transfer")
+func macTransferContractDefaultsHDRDesktopsToPQTransfer() {
     let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
         hdrEnabled: true,
         environment: .colorManagedDesktop(
@@ -11,7 +11,7 @@ func macTransferContractKeepsDisplayP3HDRDesktopsOnSDRTransfer() {
         )
     )
 
-    #expect(transfer == .sdr)
+    #expect(transfer == .pq)
 }
 
 @Test("Mac transfer contract preserves explicit PQ displays")
@@ -50,14 +50,14 @@ func macTransferContractFallsBackToSDRWhenHDRIsDisabled() {
     #expect(transfer == .sdr)
 }
 
-@Test("UIKit transfer contract keeps HDR-capable clients on SDR desktop transfer")
-func uikitTransferContractKeepsHDRCapableClientsOnSDRTransfer() {
+@Test("UIKit transfer contract defaults HDR-capable clients to PQ transfer")
+func uikitTransferContractDefaultsHDRCapableClientsToPQTransfer() {
     let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
         hdrEnabled: true,
         environment: .compositedUIKit
     )
 
-    #expect(transfer == .sdr)
+    #expect(transfer == .pq)
 }
 
 @Test("UIKit transfer contract stays SDR when HDR is disabled")
@@ -68,4 +68,31 @@ func uikitTransferContractFallsBackToSDRWhenHDRIsDisabled() {
     )
 
     #expect(transfer == .sdr)
+}
+
+@Test("Apollo sink capability remains frame-gated capable on SDR transfers")
+func apolloSinkCapabilityRemainsFrameGatedCapableOnSDRTransfers() {
+    let characteristics = ShadowClientApolloClientDisplayCharacteristics(
+        gamut: .displayP3,
+        transfer: .sdr,
+        scalePercent: 100,
+        hiDPIEnabled: false
+    )
+
+    #expect(characteristics.supportsFrameGatedHDR)
+    #expect(!characteristics.supportsHDRTileOverlay)
+    #expect(characteristics.supportsPerFrameHDRMetadata)
+    #expect(characteristics.requestedDynamicRangeTransport(hdrRequested: true) == .sdr)
+}
+
+@Test("Apollo sink request promotes HDR sink transfers to frame-gated transport")
+func apolloSinkRequestPromotesHDRSinkTransfersToFrameGatedTransport() {
+    let characteristics = ShadowClientApolloClientDisplayCharacteristics(
+        gamut: .displayP3,
+        transfer: .pq,
+        scalePercent: 100,
+        hiDPIEnabled: false
+    )
+
+    #expect(characteristics.requestedDynamicRangeTransport(hdrRequested: true) == .frameGatedHDR)
 }

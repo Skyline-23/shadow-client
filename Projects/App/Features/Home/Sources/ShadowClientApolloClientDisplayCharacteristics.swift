@@ -19,6 +19,13 @@ enum ShadowClientApolloClientDisplayTransfer: String, Sendable {
     case hlg
 }
 
+enum ShadowClientApolloDynamicRangeTransport: String, Sendable {
+    case sdr
+    case fullFrameHDR = "full-frame-hdr"
+    case frameGatedHDR = "frame-gated-hdr"
+    case sdrBaseHDROverlay = "sdr-base-hdr-overlay"
+}
+
 struct ShadowClientApolloClientDisplayCharacteristics: Sendable {
     let gamut: ShadowClientApolloClientDisplayGamut
     let transfer: ShadowClientApolloClientDisplayTransfer
@@ -47,6 +54,47 @@ struct ShadowClientApolloClientDisplayCharacteristics: Sendable {
         self.potentialEDRHeadroom = potentialEDRHeadroom
         self.currentPeakLuminanceNits = currentPeakLuminanceNits
         self.potentialPeakLuminanceNits = potentialPeakLuminanceNits
+    }
+}
+
+extension ShadowClientApolloClientDisplayCharacteristics {
+    var modeIsLogical: Bool {
+        hiDPIEnabled
+    }
+
+    var supportsFrameGatedHDR: Bool {
+        true
+    }
+
+    var supportsHDRTileOverlay: Bool {
+        false
+    }
+
+    var supportsPerFrameHDRMetadata: Bool {
+        true
+    }
+
+    func requestedDynamicRangeTransport(
+        hdrRequested: Bool
+    ) -> ShadowClientApolloDynamicRangeTransport {
+        guard hdrRequested else {
+            return .sdr
+        }
+
+        if transfer == .pq || transfer == .hlg {
+            return .frameGatedHDR
+        }
+
+        return .sdr
+    }
+}
+
+enum ShadowClientApolloSinkContractProfile {
+    static let enabled = "1"
+    static let disabled = "0"
+
+    static func boolString(_ value: Bool) -> String {
+        value ? enabled : disabled
     }
 }
 

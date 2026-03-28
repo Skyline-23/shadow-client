@@ -1331,11 +1331,28 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             "bitrate": "\(settings.bitrateKbps)",
         ]
 
+        let sinkScalePercent = clientDisplayCharacteristics?.scalePercent ?? settings.resolutionScalePercent
+        let sinkHiDPI = clientDisplayCharacteristics?.hiDPIEnabled ?? settings.requestHiDPI
+        let sinkModeIsLogical = clientDisplayCharacteristics?.modeIsLogical ?? settings.requestHiDPI
+        let requestedDynamicRangeTransport = clientDisplayCharacteristics?
+            .requestedDynamicRangeTransport(hdrRequested: settings.enableHDR)
+            .rawValue ?? (settings.enableHDR ? ShadowClientApolloDynamicRangeTransport.frameGatedHDR.rawValue : ShadowClientApolloDynamicRangeTransport.sdr.rawValue)
+        let supportsFrameGatedHDR = clientDisplayCharacteristics?.supportsFrameGatedHDR ?? false
+        let supportsHDRTileOverlay = clientDisplayCharacteristics?.supportsHDRTileOverlay ?? false
+        let supportsPerFrameHDRMetadata = clientDisplayCharacteristics?.supportsPerFrameHDRMetadata ?? false
+
         if settings.preferVirtualDisplay {
             parameters["virtualDisplay"] = "1"
         }
         parameters["clientDisplayScalePercent"] = "\(settings.resolutionScalePercent)"
         parameters["clientDisplayHiDPI"] = settings.requestHiDPI ? "1" : "0"
+        parameters["clientSinkScalePercent"] = "\(sinkScalePercent)"
+        parameters["clientSinkHiDPI"] = ShadowClientApolloSinkContractProfile.boolString(sinkHiDPI)
+        parameters["clientSinkModeIsLogical"] = ShadowClientApolloSinkContractProfile.boolString(sinkModeIsLogical)
+        parameters["requestedDynamicRangeTransport"] = requestedDynamicRangeTransport
+        parameters["clientSinkSupportsFrameGatedHDR"] = ShadowClientApolloSinkContractProfile.boolString(supportsFrameGatedHDR)
+        parameters["clientSinkSupportsHDRTileOverlay"] = ShadowClientApolloSinkContractProfile.boolString(supportsHDRTileOverlay)
+        parameters["clientSinkSupportsPerFrameHDRMetadata"] = ShadowClientApolloSinkContractProfile.boolString(supportsPerFrameHDRMetadata)
         if settings.resolutionScalePercent != 100 {
             parameters["scaleFactor"] = "\(settings.resolutionScalePercent)"
         }
@@ -1346,6 +1363,12 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             parameters["clientDisplayPotentialEDRHeadroom"] = "\(clientDisplayCharacteristics.potentialEDRHeadroom)"
             parameters["clientDisplayCurrentPeakLuminanceNits"] = "\(clientDisplayCharacteristics.currentPeakLuminanceNits)"
             parameters["clientDisplayPotentialPeakLuminanceNits"] = "\(clientDisplayCharacteristics.potentialPeakLuminanceNits)"
+            parameters["clientSinkGamut"] = clientDisplayCharacteristics.gamut.rawValue
+            parameters["clientSinkTransfer"] = clientDisplayCharacteristics.transfer.rawValue
+            parameters["clientSinkCurrentEDRHeadroom"] = "\(clientDisplayCharacteristics.currentEDRHeadroom)"
+            parameters["clientSinkPotentialEDRHeadroom"] = "\(clientDisplayCharacteristics.potentialEDRHeadroom)"
+            parameters["clientSinkCurrentPeakLuminanceNits"] = "\(clientDisplayCharacteristics.currentPeakLuminanceNits)"
+            parameters["clientSinkPotentialPeakLuminanceNits"] = "\(clientDisplayCharacteristics.potentialPeakLuminanceNits)"
         }
 
         return parameters

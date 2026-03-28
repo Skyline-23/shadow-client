@@ -17,9 +17,10 @@ enum ShadowClientApolloClientDisplayTransferContract {
 
         switch environment {
         case .compositedUIKit:
-            // UIKit keeps app content in an SDR-referred desktop/UI composition
-            // surface and lets HDR/EDR content extend above that surface.
-            return .sdr
+            // Apollo's current Shadow HDR transport negotiates an explicit HDR
+            // transfer function for sink capability instead of inferring it from
+            // the UI composition surface.
+            return .pq
         case let .colorManagedDesktop(colorSpace):
             switch colorSpace?.name {
             case CGColorSpace.itur_2100_HLG, CGColorSpace.displayP3_HLG:
@@ -27,9 +28,9 @@ enum ShadowClientApolloClientDisplayTransferContract {
             case CGColorSpace.itur_2100_PQ, CGColorSpace.displayP3_PQ:
                 return .pq
             default:
-                // macOS can composite EDR highlights over an SDR desktop without
-                // the active screen color space becoming PQ.
-                return .sdr
+                // Apollo's macOS bridge currently defaults HDR transport to PQ
+                // unless the sink explicitly advertises HLG.
+                return .pq
             }
         }
     }
