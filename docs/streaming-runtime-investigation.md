@@ -31,7 +31,7 @@ Next steps:
 
 Latest reproduced sessions:
 
-- Before fixing Apollo host colorspace signaling:
+- Before fixing Lumen host colorspace signaling:
   - Actual session codec is HEVC, not AV1.
   - First decoded frame metadata:
     - `pixel-format=0x34323076`
@@ -64,8 +64,8 @@ Latest reproduced sessions:
       - `c=8,77,255,255`
       - `bl=255,255,255,255`
       - `br=254,254,254,255`
-- After fixing Apollo host `encoderCscMode` request to `Rec.709 limited`:
-  - Apollo host source review:
+- After fixing Lumen host `encoderCscMode` request to `Rec.709 limited`:
+  - Lumen host source review:
     - `external/sunshine/src/video.h` defines `encoderCscMode`
     - `external/sunshine/src/rtsp.cpp` stores the announced value
     - `external/sunshine/src/video_colorspace.cpp` maps the value into the common colorspace enum
@@ -112,7 +112,7 @@ Excluded by logs:
   - The same over-bright behavior reproduces in HEVC and AV1 sessions.
 - Not a simple codec-selection mismatch.
   - HEVC reproductions announce and decode as `h265`; AV1 reproductions announce and decode as `av1`.
-- Not the old Apollo-host `encoderCscMode=0` request alone.
+- Not the old Lumen-host `encoderCscMode=0` request alone.
   - Fixing the request changed AV1 metadata to `709/709/709`, but the over-bright presentation remained.
 - Not an HDR / EDR presentation path inside the client.
   - The affected sessions are `hdr=false`.
@@ -126,14 +126,14 @@ Current understanding:
 - The client-side Metal YUV path is currently behaving consistently with the decoded buffers it receives.
 - The remaining likely causes are now upstream or host/display-facing:
   - decoder-provided YUV content is already brighter than expected before client-side presentation
-  - Apollo host's Windows capture / colorspace conversion path is emitting brighter SDR content than expected
-  - host Windows HDR / Advanced Color is affecting Apollo capture through the scRGB path
+  - Lumen host's Windows capture / colorspace conversion path is emitting brighter SDR content than expected
+  - host Windows HDR / Advanced Color is affecting Lumen capture through the scRGB path
   - SDR output colorspace labeling / display interpretation still differs from Moonlight in a way that only shows up on-device
 
 Next steps:
 
 - Reproduce the same scene with host Windows HDR / Advanced Color disabled and compare brightness immediately.
-- If the issue changes with host HDR off, log Apollo's Windows capture format and verify whether the host is going through the scRGB capture/conversion path.
+- If the issue changes with host HDR off, log Lumen's Windows capture format and verify whether the host is going through the scRGB capture/conversion path.
 - Compare the same scene against Moonlight on the same hardware, if available, using the same stream settings.
 - If the issue persists even with host HDR off, re-check the client SDR output colorspace choice against Moonlight for the same stream metadata.
 
