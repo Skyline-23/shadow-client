@@ -1035,6 +1035,32 @@ func remoteDesktopRuntimeAllowsExternalPairWithoutLocalCandidate() async {
     #expect(await pairingClient.startRequests() == ["external-host.example.invalid"])
 }
 
+@Test("Remote desktop runtime still pairs saved host when serverinfo is unavailable")
+@MainActor
+func remoteDesktopRuntimePairsSavedHostWhenServerInfoIsUnavailable() async {
+    let pairingClient = RecordingLumenPairingClient(successfulHosts: ["wifi-route.example.invalid"])
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: FakeGameStreamMetadataClient(serverInfoByHost: [:], appListByHost: [:]),
+        controlClient: RecordingGameStreamControlClient(),
+        pairingClient: pairingClient
+    )
+
+    runtime.refreshHosts(
+        candidates: ["wifi-route.example.invalid"],
+        preferredHost: "wifi-route.example.invalid"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(runtime.hosts.count == 1)
+    #expect(runtime.hosts.first?.lastError != nil)
+
+    runtime.pairSelectedHost()
+    await waitForPairingState(runtime)
+
+    #expect(runtime.pairingState == .paired("Paired"))
+    #expect(await pairingClient.startRequests() == ["wifi-route.example.invalid"])
+}
+
 @Test("Remote desktop runtime tries selected external host before local fallback when unique ID matches")
 @MainActor
 func remoteDesktopRuntimeTriesSelectedExternalHostBeforeLocalFallback() async {
@@ -1358,6 +1384,45 @@ func remoteDesktopRuntimePrefersReachableLocalRouteWhenMerging() async {
 
     #expect(runtime.hosts.count == 1)
     #expect(runtime.hosts.first?.host == "192.168.0.20")
+}
+
+@Test("Remote desktop runtime ignores unreachable preferred route when a merged local route is reachable")
+@MainActor
+func remoteDesktopRuntimeIgnoresUnreachablePreferredRouteWhenMergedLocalRouteIsReachable() async {
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.20": .init(
+                host: "192.168.0.20",
+                localHost: "192.168.0.20",
+                remoteHost: "wifi-route.example.invalid",
+                manualHost: nil,
+                displayName: "Example-PC",
+                pairStatus: .notPaired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient()
+    )
+
+    runtime.refreshHosts(
+        candidates: ["wifi-route.example.invalid", "192.168.0.20"],
+        preferredHost: "wifi-route.example.invalid"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    #expect(runtime.hosts.count == 1)
+    #expect(runtime.hosts.first?.host == "192.168.0.20")
+    #expect(runtime.hosts.first?.lastError == nil)
+    #expect(runtime.hosts.first?.pairStatus == .notPaired)
 }
 
 @Test("Remote desktop runtime matches preferred hosts that include the HTTPS port")

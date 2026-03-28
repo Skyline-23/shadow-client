@@ -5,7 +5,11 @@ enum ShadowClientRemoteHostActionKit {
         guard let selectedHost else {
             return false
         }
-        return selectedHost.isReachable && selectedHost.pairStatus != .paired
+        return canPair(host: selectedHost)
+    }
+
+    static func canPair(host: ShadowClientRemoteHostDescriptor) -> Bool {
+        host.pairStatus != .paired
     }
 
     static func canRefreshApps(selectedHost: ShadowClientRemoteHostDescriptor?) -> Bool {
@@ -23,7 +27,7 @@ enum ShadowClientRemoteHostActionKit {
     }
 
     static func shouldShowPairAction(host: ShadowClientRemoteHostDescriptor) -> Bool {
-        host.isReachable && host.pairStatus != .paired
+        canPair(host: host)
     }
 
     static func rowActionColor(

@@ -6428,7 +6428,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             $0.host.lowercased() == selectedReachableHost
         })
         let normalizedPreferredRoute = normalizeCandidate(preferredHost ?? preferredRoute)
-        let preferredActiveRoute = candidateRoutes.first(where: {
+        let preferredRouteCandidates = reachableHostNames.isEmpty
+            ? candidateRoutes
+            : activeRouteCandidates
+        let preferredActiveRoute = preferredRouteCandidates.first(where: {
             candidate(normalizedPreferredRoute, matches: $0, hostAliasesByHost: hostAliasesByHost)
         })
         let savedActiveRoute = group
@@ -6436,7 +6439,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             .routes
             .allEndpoints
             .first(where: { savedEndpoint in
-                candidateRoutes.contains(where: { $0 == savedEndpoint })
+                preferredRouteCandidates.contains(where: { $0 == savedEndpoint })
             })
 
         let active: ShadowClientRemoteHostEndpoint
