@@ -3,7 +3,7 @@ import Testing
 import ShadowClientFeatureSession
 @testable import ShadowClientFeatureHome
 
-@Test("Remote desktop runtime pairs selected host through injected Apollo pairing client")
+@Test("Remote desktop runtime pairs selected host through injected Lumen pairing client")
 @MainActor
 func remoteDesktopRuntimePairsSelectedHost() async {
     let metadata = FakeControlTestMetadataClient(
@@ -22,7 +22,7 @@ func remoteDesktopRuntimePairsSelectedHost() async {
         ],
         appListByHost: [:]
     )
-    let pairingClient = FakeApolloPairingClient()
+    let pairingClient = FakeLumenPairingClient()
     let runtime = ShadowClientRemoteDesktopRuntime(
         metadataClient: metadata,
         controlClient: FakeControlClient(),
@@ -65,7 +65,7 @@ func remoteDesktopRuntimeRetriesTransientPairingTimeout() async {
         ],
         appListByHost: [:]
     )
-    let pairingClient = FakeApolloPairingClient(
+    let pairingClient = FakeLumenPairingClient(
         simulatedStartFailures: [ShadowClientGameStreamError.requestFailed("The request timed out.")]
     )
     let runtime = ShadowClientRemoteDesktopRuntime(
@@ -109,7 +109,7 @@ func remoteDesktopRuntimeDoesNotRetryRejectedChallenge() async {
         ],
         appListByHost: [:]
     )
-    let pairingClient = FakeApolloPairingClient(
+    let pairingClient = FakeLumenPairingClient(
         initialSession: .init(
             pairingID: "pairing-rejected",
             userCode: "ZXCVBN",
@@ -122,7 +122,7 @@ func remoteDesktopRuntimeDoesNotRetryRejectedChallenge() async {
             clientCertificateRequired: true,
             status: .rejected,
             serverUniqueID: "HOST-3",
-            serviceType: "apollo",
+            serviceType: "_shadow._tcp",
             controlHTTPSPort: 47984,
             expiresInSeconds: 60,
             pollIntervalSeconds: 1
@@ -167,7 +167,7 @@ func remoteDesktopRuntimeDoesNotRetryCertificateRequiredFailure() async {
         ],
         appListByHost: [:]
     )
-    let pairingClient = FakeApolloPairingClient(
+    let pairingClient = FakeLumenPairingClient(
         simulatedStartFailures: [
             ShadowClientGameStreamError.requestFailed("TLSV1_ALERT_CERTIFICATE_REQUIRED: certificate required"),
         ]
@@ -194,7 +194,7 @@ func remoteDesktopRuntimeDoesNotRetryCertificateRequiredFailure() async {
 
 @Test("Remote desktop runtime auto-approves pairing when Lumen admin credentials are supplied")
 @MainActor
-func remoteDesktopRuntimeAutoApprovesPairingWithApolloAdminCredentials() async {
+func remoteDesktopRuntimeAutoApprovesPairingWithLumenAdminCredentials() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
             "192.168.0.24": .init(
@@ -211,7 +211,7 @@ func remoteDesktopRuntimeAutoApprovesPairingWithApolloAdminCredentials() async {
         ],
         appListByHost: [:]
     )
-    let pairingClient = FakeApolloPairingClient(
+    let pairingClient = FakeLumenPairingClient(
         initialSession: .init(
             pairingID: "pairing-pending",
             userCode: "PAIR24",
@@ -224,7 +224,7 @@ func remoteDesktopRuntimeAutoApprovesPairingWithApolloAdminCredentials() async {
             clientCertificateRequired: true,
             status: .pending,
             serverUniqueID: "HOST-24",
-            serviceType: "apollo",
+            serviceType: "_shadow._tcp",
             controlHTTPSPort: 47984,
             expiresInSeconds: 60,
             pollIntervalSeconds: 0
@@ -242,19 +242,19 @@ func remoteDesktopRuntimeAutoApprovesPairingWithApolloAdminCredentials() async {
                 clientCertificateRequired: true,
                 status: .approved,
                 serverUniqueID: "HOST-24",
-                serviceType: "apollo",
+                serviceType: "_shadow._tcp",
                 controlHTTPSPort: 47984,
                 expiresInSeconds: 58,
                 pollIntervalSeconds: 0
             ),
         ]
     )
-    let adminClient = FakeApolloAdminClient(profile: nil)
+    let adminClient = FakeLumenAdminClient(profile: nil)
     let runtime = ShadowClientRemoteDesktopRuntime(
         metadataClient: metadata,
         controlClient: FakeControlClient(),
         pairingClient: pairingClient,
-        apolloAdminClient: adminClient
+        lumenAdminClient: adminClient
     )
 
     runtime.refreshHosts(candidates: ["192.168.0.24"], preferredHost: "192.168.0.24")
@@ -453,9 +453,9 @@ func remoteDesktopRuntimePrefersLocalRouteForAppQueries() async {
     #expect(await metadata.recordedAppListHosts().last == "192.168.0.20")
 }
 
-@Test("Remote desktop runtime loads Apollo admin profile for the selected host")
+@Test("Remote desktop runtime loads Lumen admin profile for the selected host")
 @MainActor
-func remoteDesktopRuntimeLoadsApolloAdminProfileForSelectedHost() async {
+func remoteDesktopRuntimeLoadsLumenAdminProfileForSelectedHost() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
             "192.168.0.20": .init(
@@ -476,7 +476,7 @@ func remoteDesktopRuntimeLoadsApolloAdminProfileForSelectedHost() async {
             ],
         ]
     )
-    let adminClient = FakeApolloAdminClient(
+    let adminClient = FakeLumenAdminClient(
         profile: .init(
             name: "Current Device",
             uuid: "CURRENT-UUID",
@@ -490,18 +490,18 @@ func remoteDesktopRuntimeLoadsApolloAdminProfileForSelectedHost() async {
     let runtime = ShadowClientRemoteDesktopRuntime(
         metadataClient: metadata,
         controlClient: FakeControlClient(),
-        apolloAdminClient: adminClient
+        lumenAdminClient: adminClient
     )
 
     runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
     await waitForControlHostLoaded(runtime)
 
-    runtime.refreshSelectedHostApolloAdmin(username: "apollo", password: "secret")
-    await waitForApolloAdminState(runtime)
+    runtime.refreshSelectedHostLumenAdmin(username: "lumen", password: "secret")
+    await waitForLumenAdminState(runtime)
 
-    #expect(runtime.selectedHostApolloAdminState == .loaded)
+    #expect(runtime.selectedHostLumenAdminState == .loaded)
     #expect(
-        runtime.selectedHostApolloAdminProfile == .init(
+        runtime.selectedHostLumenAdminProfile == .init(
             name: "Current Device",
             uuid: "CURRENT-UUID",
             displayModeOverride: "2560x1440x120",
@@ -513,9 +513,9 @@ func remoteDesktopRuntimeLoadsApolloAdminProfileForSelectedHost() async {
     )
 }
 
-@Test("Remote desktop runtime updates Apollo admin profile for the selected host")
+@Test("Remote desktop runtime updates Lumen admin profile for the selected host")
 @MainActor
-func remoteDesktopRuntimeUpdatesApolloAdminProfileForSelectedHost() async {
+func remoteDesktopRuntimeUpdatesLumenAdminProfileForSelectedHost() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
             "192.168.0.20": .init(
@@ -536,7 +536,7 @@ func remoteDesktopRuntimeUpdatesApolloAdminProfileForSelectedHost() async {
             ],
         ]
     )
-    let initialProfile = ShadowClientApolloAdminClientProfile(
+    let initialProfile = ShadowClientLumenAdminClientProfile(
         name: "Current Device",
         uuid: "CURRENT-UUID",
         displayModeOverride: "",
@@ -545,31 +545,31 @@ func remoteDesktopRuntimeUpdatesApolloAdminProfileForSelectedHost() async {
         alwaysUseVirtualDisplay: false,
         connected: true
     )
-    let adminClient = FakeApolloAdminClient(profile: initialProfile)
+    let adminClient = FakeLumenAdminClient(profile: initialProfile)
     let runtime = ShadowClientRemoteDesktopRuntime(
         metadataClient: metadata,
         controlClient: FakeControlClient(),
-        apolloAdminClient: adminClient
+        lumenAdminClient: adminClient
     )
 
     runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
     await waitForControlHostLoaded(runtime)
 
-    runtime.refreshSelectedHostApolloAdmin(username: "apollo", password: "secret")
-    await waitForApolloAdminState(runtime)
+    runtime.refreshSelectedHostLumenAdmin(username: "lumen", password: "secret")
+    await waitForLumenAdminState(runtime)
 
-    runtime.updateSelectedHostApolloAdmin(
-        username: "apollo",
+    runtime.updateSelectedHostLumenAdmin(
+        username: "lumen",
         password: "secret",
         displayModeOverride: "2560x1440x120",
         alwaysUseVirtualDisplay: true,
         permissions: 65535
     )
-    await waitForApolloAdminState(runtime)
+    await waitForLumenAdminState(runtime)
 
-    #expect(runtime.selectedHostApolloAdminState == .loaded)
+    #expect(runtime.selectedHostLumenAdminState == .loaded)
     #expect(
-        runtime.selectedHostApolloAdminProfile == .init(
+        runtime.selectedHostLumenAdminProfile == .init(
             name: "Current Device",
             uuid: "CURRENT-UUID",
             displayModeOverride: "2560x1440x120",
@@ -581,9 +581,9 @@ func remoteDesktopRuntimeUpdatesApolloAdminProfileForSelectedHost() async {
     )
 }
 
-@Test("Remote desktop runtime disconnects the selected Apollo client")
+@Test("Remote desktop runtime disconnects the selected Lumen client")
 @MainActor
-func remoteDesktopRuntimeDisconnectsSelectedApolloClient() async {
+func remoteDesktopRuntimeDisconnectsSelectedLumenClient() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
             "192.168.0.20": .init(
@@ -604,7 +604,7 @@ func remoteDesktopRuntimeDisconnectsSelectedApolloClient() async {
             ],
         ]
     )
-    let initialProfile = ShadowClientApolloAdminClientProfile(
+    let initialProfile = ShadowClientLumenAdminClientProfile(
         name: "Current Device",
         uuid: "CURRENT-UUID",
         displayModeOverride: "",
@@ -613,28 +613,28 @@ func remoteDesktopRuntimeDisconnectsSelectedApolloClient() async {
         alwaysUseVirtualDisplay: false,
         connected: true
     )
-    let adminClient = FakeApolloAdminClient(profile: initialProfile)
+    let adminClient = FakeLumenAdminClient(profile: initialProfile)
     let runtime = ShadowClientRemoteDesktopRuntime(
         metadataClient: metadata,
         controlClient: FakeControlClient(),
-        apolloAdminClient: adminClient
+        lumenAdminClient: adminClient
     )
 
     runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
     await waitForControlHostLoaded(runtime)
-    runtime.refreshSelectedHostApolloAdmin(username: "apollo", password: "secret")
-    await waitForApolloAdminState(runtime)
+    runtime.refreshSelectedHostLumenAdmin(username: "lumen", password: "secret")
+    await waitForLumenAdminState(runtime)
 
-    runtime.disconnectSelectedHostApolloAdmin(username: "apollo", password: "secret")
-    await waitForApolloAdminState(runtime)
+    runtime.disconnectSelectedHostLumenAdmin(username: "lumen", password: "secret")
+    await waitForLumenAdminState(runtime)
 
-    #expect(runtime.selectedHostApolloAdminState == .loaded)
-    #expect(runtime.selectedHostApolloAdminProfile?.connected == false)
+    #expect(runtime.selectedHostLumenAdminState == .loaded)
+    #expect(runtime.selectedHostLumenAdminProfile?.connected == false)
 }
 
-@Test("Remote desktop runtime unpairs the selected Apollo client")
+@Test("Remote desktop runtime unpairs the selected Lumen client")
 @MainActor
-func remoteDesktopRuntimeUnpairsSelectedApolloClient() async {
+func remoteDesktopRuntimeUnpairsSelectedLumenClient() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
             "192.168.0.20": .init(
@@ -655,7 +655,7 @@ func remoteDesktopRuntimeUnpairsSelectedApolloClient() async {
             ],
         ]
     )
-    let initialProfile = ShadowClientApolloAdminClientProfile(
+    let initialProfile = ShadowClientLumenAdminClientProfile(
         name: "Current Device",
         uuid: "CURRENT-UUID",
         displayModeOverride: "",
@@ -664,27 +664,27 @@ func remoteDesktopRuntimeUnpairsSelectedApolloClient() async {
         alwaysUseVirtualDisplay: false,
         connected: true
     )
-    let adminClient = FakeApolloAdminClient(profile: initialProfile)
+    let adminClient = FakeLumenAdminClient(profile: initialProfile)
     let runtime = ShadowClientRemoteDesktopRuntime(
         metadataClient: metadata,
         controlClient: FakeControlClient(),
-        apolloAdminClient: adminClient
+        lumenAdminClient: adminClient
     )
 
     runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
     await waitForControlHostLoaded(runtime)
-    runtime.refreshSelectedHostApolloAdmin(username: "apollo", password: "secret")
-    await waitForApolloAdminState(runtime)
+    runtime.refreshSelectedHostLumenAdmin(username: "lumen", password: "secret")
+    await waitForLumenAdminState(runtime)
 
-    runtime.unpairSelectedHostApolloAdmin(username: "apollo", password: "secret")
+    runtime.unpairSelectedHostLumenAdmin(username: "lumen", password: "secret")
     await waitForHostCatalogReadyAfterUnpair(runtime)
 
-    #expect(runtime.selectedHostApolloAdminProfile == nil)
+    #expect(runtime.selectedHostLumenAdminProfile == nil)
 }
 
-@Test("Remote desktop runtime surfaces Apollo launch permission denial")
+@Test("Remote desktop runtime surfaces Lumen launch permission denial")
 @MainActor
-func remoteDesktopRuntimeSurfacesApolloLaunchPermissionDenial() async {
+func remoteDesktopRuntimeSurfacesLumenLaunchPermissionDenial() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
             "192.168.0.20": .init(
@@ -2457,12 +2457,12 @@ func remoteDesktopRuntimeUsesClipboardActionForActiveSession() async {
     )
     await waitForLaunchState(runtime)
 
-    runtime.syncClipboard("hello apollo")
+    runtime.syncClipboard("hello lumen")
     await waitForClipboardCalls(control, expectedCount: 1)
 
     let clipboardCalls = await control.clipboardCalls()
     #expect(clipboardCalls == [
-        .init(host: "192.168.0.28", httpsPort: 47984, text: "hello apollo")
+        .init(host: "192.168.0.28", httpsPort: 47984, text: "hello lumen")
     ])
     #expect(await sessionInput.inputCalls().isEmpty)
 }
@@ -2674,7 +2674,7 @@ func remoteDesktopRuntimeSurfacesClipboardWritePermissionDenial() async {
     )
 }
 
-@Test("Remote desktop runtime copies Apollo host clipboard into the local clipboard")
+@Test("Remote desktop runtime copies Lumen host clipboard into the local clipboard")
 @MainActor
 func remoteDesktopRuntimePullsClipboardIntoLocalClipboard() async {
     let metadata = FakeControlTestMetadataClient(
@@ -2788,9 +2788,9 @@ func remoteDesktopRuntimeSurfacesClipboardReadPermissionDenial() async {
     )
 }
 
-@Test("Remote desktop runtime surfaces Apollo host termination as a recovery issue")
+@Test("Remote desktop runtime surfaces Lumen host termination as a recovery issue")
 @MainActor
-func remoteDesktopRuntimeSurfacesApolloHostTerminationIssue() async {
+func remoteDesktopRuntimeSurfacesLumenHostTerminationIssue() async {
     let runtime = ShadowClientRemoteDesktopRuntime(
         metadataClient: FakeControlTestMetadataClient(serverInfoByHost: [:], appListByHost: [:]),
         controlClient: FakeControlClient()
@@ -3225,7 +3225,7 @@ private actor FakeClipboardClient: ShadowClientClipboardClient {
     }
 }
 
-private actor FakeApolloPairingClient: ShadowClientApolloPairingClient {
+private actor FakeLumenPairingClient: ShadowClientLumenPairingClient {
     struct StartCall: Equatable {
         let host: String
         let httpsPort: Int
@@ -3240,11 +3240,11 @@ private actor FakeApolloPairingClient: ShadowClientApolloPairingClient {
     private var recordedStartCalls: [StartCall] = []
     private var recordedStatusCalls: [StatusCall] = []
     private var simulatedStartFailures: [any Error & Sendable]
-    private var simulatedStatusSessions: [ShadowClientApolloPairingSession]
-    private let initialSession: ShadowClientApolloPairingSession
+    private var simulatedStatusSessions: [ShadowClientLumenPairingSession]
+    private let initialSession: ShadowClientLumenPairingSession
 
     init(
-        initialSession: ShadowClientApolloPairingSession = .init(
+        initialSession: ShadowClientLumenPairingSession = .init(
             pairingID: "pairing-approved",
             userCode: "ABC123",
             deviceName: "Shadow Client",
@@ -3256,13 +3256,13 @@ private actor FakeApolloPairingClient: ShadowClientApolloPairingClient {
             clientCertificateRequired: true,
             status: .approved,
             serverUniqueID: "HOST-1",
-            serviceType: "apollo",
+            serviceType: "_shadow._tcp",
             controlHTTPSPort: 47984,
             expiresInSeconds: 60,
             pollIntervalSeconds: 1
         ),
         simulatedStartFailures: [any Error & Sendable] = [],
-        simulatedStatusSessions: [ShadowClientApolloPairingSession] = []
+        simulatedStatusSessions: [ShadowClientLumenPairingSession] = []
     ) {
         self.initialSession = initialSession
         self.simulatedStartFailures = simulatedStartFailures
@@ -3274,7 +3274,7 @@ private actor FakeApolloPairingClient: ShadowClientApolloPairingClient {
         httpsPort: Int,
         deviceName: String?,
         platform: String?
-    ) async throws -> ShadowClientApolloPairingSession {
+    ) async throws -> ShadowClientLumenPairingSession {
         _ = deviceName
         _ = platform
         recordedStartCalls.append(.init(host: host, httpsPort: httpsPort))
@@ -3290,7 +3290,7 @@ private actor FakeApolloPairingClient: ShadowClientApolloPairingClient {
         host: String,
         httpsPort: Int,
         pairingID: String
-    ) async throws -> ShadowClientApolloPairingSession {
+    ) async throws -> ShadowClientLumenPairingSession {
         recordedStatusCalls.append(.init(host: host, httpsPort: httpsPort, pairingID: pairingID))
 
         if !simulatedStatusSessions.isEmpty {
@@ -3309,7 +3309,7 @@ private actor FakeApolloPairingClient: ShadowClientApolloPairingClient {
     }
 }
 
-private actor FakeApolloAdminClient: ShadowClientApolloAdminClient {
+private actor FakeLumenAdminClient: ShadowClientLumenAdminClient {
     struct ApproveCall: Equatable {
         let host: String
         let httpsPort: Int
@@ -3318,10 +3318,10 @@ private actor FakeApolloAdminClient: ShadowClientApolloAdminClient {
         let pairingID: String
     }
 
-    private var profile: ShadowClientApolloAdminClientProfile?
+    private var profile: ShadowClientLumenAdminClientProfile?
     private var recordedApproveCalls: [ApproveCall] = []
 
-    init(profile: ShadowClientApolloAdminClientProfile?) {
+    init(profile: ShadowClientLumenAdminClientProfile?) {
         self.profile = profile
     }
 
@@ -3330,7 +3330,7 @@ private actor FakeApolloAdminClient: ShadowClientApolloAdminClient {
         httpsPort: Int,
         username: String,
         password: String
-    ) async throws -> ShadowClientApolloAdminClientProfile? {
+    ) async throws -> ShadowClientLumenAdminClientProfile? {
         _ = host
         _ = httpsPort
         _ = username
@@ -3343,8 +3343,8 @@ private actor FakeApolloAdminClient: ShadowClientApolloAdminClient {
         httpsPort: Int,
         username: String,
         password: String,
-        profile: ShadowClientApolloAdminClientProfile
-    ) async throws -> ShadowClientApolloAdminClientProfile {
+        profile: ShadowClientLumenAdminClientProfile
+    ) async throws -> ShadowClientLumenAdminClientProfile {
         _ = host
         _ = httpsPort
         _ = username
@@ -3744,12 +3744,12 @@ private func waitForClipboardText(
 }
 
 @MainActor
-private func waitForApolloAdminState(
+private func waitForLumenAdminState(
     _ runtime: ShadowClientRemoteDesktopRuntime,
     maxAttempts: Int = 50
 ) async {
     for _ in 0..<maxAttempts {
-        switch runtime.selectedHostApolloAdminState {
+        switch runtime.selectedHostLumenAdminState {
         case .loading, .saving:
             break
         case .idle, .loaded, .failed:

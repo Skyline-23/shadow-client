@@ -219,8 +219,8 @@ func rtspAnnouncePayloadOmitsPlaintextControlChannelHintWhenEncryptedControlIsEn
     #expect(attributes["x-shadow-general.encryptionEnabled"] == "1")
 }
 
-@Test("RTSP ANNOUNCE payload includes Apollo display metadata")
-func rtspAnnouncePayloadIncludesApolloDisplayMetadata() {
+@Test("RTSP ANNOUNCE payload includes Lumen display metadata")
+func rtspAnnouncePayloadIncludesLumenDisplayMetadata() {
     let payload = ShadowClientRTSPAnnouncePayloadBuilder.build(
         hostAddress: "192.168.1.12",
         videoConfiguration: .init(
@@ -253,14 +253,14 @@ func rtspAnnouncePayloadIncludesApolloDisplayMetadata() {
 
     let attributes = rtspAnnounceAttributes(from: payload)
 
-    #expect(attributes["x-apollo-video[0].clientDisplayGamut"] == "rec2020")
-    #expect(attributes["x-apollo-video[0].clientDisplayTransfer"] == "pq")
-    #expect(attributes["x-apollo-video[0].clientDisplayScalePercent"] == "200")
-    #expect(attributes["x-apollo-video[0].clientDisplayHiDPI"] == "1")
-    #expect(attributes["x-apollo-video[0].clientDisplayCurrentEDRHeadroom"] == "2.4")
-    #expect(attributes["x-apollo-video[0].clientDisplayPotentialEDRHeadroom"] == "6.5")
-    #expect(attributes["x-apollo-video[0].clientDisplayCurrentPeakLuminanceNits"] == "240")
-    #expect(attributes["x-apollo-video[0].clientDisplayPotentialPeakLuminanceNits"] == "650")
+    #expect(attributes["x-shadow-video[0].clientDisplayGamut"] == "rec2020")
+    #expect(attributes["x-shadow-video[0].clientDisplayTransfer"] == "pq")
+    #expect(attributes["x-shadow-video[0].clientDisplayScalePercent"] == "200")
+    #expect(attributes["x-shadow-video[0].clientDisplayHiDPI"] == "1")
+    #expect(attributes["x-shadow-video[0].clientDisplayCurrentEDRHeadroom"] == "2.4")
+    #expect(attributes["x-shadow-video[0].clientDisplayPotentialEDRHeadroom"] == "6.5")
+    #expect(attributes["x-shadow-video[0].clientDisplayCurrentPeakLuminanceNits"] == "240")
+    #expect(attributes["x-shadow-video[0].clientDisplayPotentialPeakLuminanceNits"] == "650")
     #expect(attributes["x-shadow-sink.gamut"] == "rec2020")
     #expect(attributes["x-shadow-sink.transfer"] == "pq")
     #expect(attributes["x-shadow-sink.scalePercent"] == "200")

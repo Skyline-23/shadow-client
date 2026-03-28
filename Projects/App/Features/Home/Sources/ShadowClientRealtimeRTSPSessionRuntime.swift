@@ -2515,7 +2515,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     ) -> ShadowClientMoonlightNVRTPDepacketizer.TailTruncationStrategy {
         switch codec {
         case .h264, .h265:
-            // H264/H265 tolerate trailing zero padding and the Apollo host doesn't guarantee valid lastPayloadLength.
+            // H264/H265 tolerate trailing zero padding and the Lumen host doesn't guarantee valid lastPayloadLength.
             return .passthroughForAnnexBCodecs
         case .av1, .prores:
             return .trimUsingLastPacketLength
@@ -3190,7 +3190,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         if isLikelyRTSPTransportTerminationError(error) {
             return true
         }
-        // Runtime policy for Apollo-host UDP path: keep session alive and continue
+        // Runtime policy for Lumen-host UDP path: keep session alive and continue
         // in-session receive recovery for non-cancellation failures instead of
         // surfacing terminal transport errors to the launcher.
         return true
@@ -3466,7 +3466,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         _ = observedPayloadType
         _ = videoPayloadCandidates
         _ = baseThreshold
-        // Mirror Moonlight behavior on Apollo-host video sockets: switch to the
+        // Mirror Moonlight behavior on Lumen-host video sockets: switch to the
         // first valid non-audio/control payload type immediately so we don't
         // drop initial keyframe packets while probing mismatched PT values.
         return 1

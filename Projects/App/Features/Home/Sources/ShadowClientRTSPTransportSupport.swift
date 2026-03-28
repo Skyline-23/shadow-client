@@ -139,7 +139,7 @@ enum ShadowClientRTPPacketPayloadParser {
         }
 
         if hasExtension {
-            // Moonlight/Apollo-host RTP video packets carry a fixed 4-byte extension preamble
+            // Moonlight/Lumen-host RTP video packets carry a fixed 4-byte extension preamble
             // before NV packet data. The extension length field is not used in the same way
             // as generic RFC3550 streams, so we intentionally skip only these 4 bytes.
             headerLength += 4
@@ -460,7 +460,7 @@ actor ShadowClientRTSPInterleavedClient {
             logger.notice(
                 "RTSP DESCRIBE retry on fresh TCP connection after failure: \(error.localizedDescription, privacy: .public)"
             )
-            // Some Apollo/GameStream stacks close the RTSP socket after OPTIONS.
+            // Some Lumen/GameStream stacks close the RTSP socket after OPTIONS.
             // Retry DESCRIBE on a fresh socket before failing the handshake.
             try await reconnect(host: host, port: port)
             do {
@@ -482,7 +482,7 @@ actor ShadowClientRTSPInterleavedClient {
         logger.notice("RTSP DESCRIBE parsed body bytes \(describe.body.count, privacy: .public), characters \(sdp.count, privacy: .public)")
 
         // Keep one RTSP socket for the SETUP/ANNOUNCE/PLAY sequence, like Moonlight.
-        // Apollo can acknowledge PLAY on a new socket but still keep UDP routing tied
+        // Lumen can acknowledge PLAY on a new socket but still keep UDP routing tied
         // to the transport state negotiated on the original connection.
         try await reconnect(host: host, port: port)
         let contentBase =
@@ -2947,7 +2947,7 @@ actor ShadowClientRTSPInterleavedClient {
                 minimumIncompleteLength: ShadowClientRealtimeSessionDefaults.minimumTransportReadLength,
                 maximumLength: ShadowClientRealtimeSessionDefaults.maximumTransportReadLength
             ) { content, _, isComplete, error in
-                // Apollo can close/reset a RTSP TCP socket right after writing a valid
+                // Lumen can close/reset a RTSP TCP socket right after writing a valid
                 // response chunk. In that case Network.framework may deliver `content`
                 // together with a terminal error. Keep the bytes and let response parsing
                 // decide whether the message is complete.

@@ -2337,7 +2337,7 @@ private final class ShadowClientServerTrustURLSessionDelegate: NSObject, URLSess
             }
         }
 
-        // Apollo commonly presents a self-signed leaf certificate and doesn't match the
+        // Lumen commonly presents a self-signed leaf certificate and doesn't match the
         // public host name. Treat the leaf as the trust anchor and evaluate under basic X509
         // so we can apply our own TOFU/pinning policy instead of system CA/hostname rules.
         let trustPolicy = SecPolicyCreateBasicX509()

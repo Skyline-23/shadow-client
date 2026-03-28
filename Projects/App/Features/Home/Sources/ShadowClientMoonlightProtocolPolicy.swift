@@ -2,7 +2,7 @@ import Foundation
 
 enum ShadowClientMoonlightProtocolPolicy {
     enum Audio {
-        // Moonlight/Apollo-host Opus + FEC RTP defaults.
+        // Moonlight/Lumen-host Opus + FEC RTP defaults.
         static let primaryPayloadType = 97
         static let fecWrapperPayloadType = 127
         static let dynamicPayloadTypeRange = 96 ... 127

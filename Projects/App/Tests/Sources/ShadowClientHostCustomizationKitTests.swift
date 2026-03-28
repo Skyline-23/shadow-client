@@ -3,7 +3,7 @@ import Testing
 @testable import ShadowClientFeatureHome
 
 @MainActor
-@Test("Host customization kit binds friendly name note WOL fields and Apollo credentials through the store")
+@Test("Host customization kit binds friendly name note WOL fields and Lumen credentials through the store")
 func hostCustomizationKitBindingsRoundTrip() async {
     let suiteName = "ShadowClientHostCustomizationKitTests.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suiteName)!
@@ -28,20 +28,20 @@ func hostCustomizationKitBindingsRoundTrip() async {
     let notes = ShadowClientHostCustomizationKit.notesBinding(store: store, host: host)
     let wakeMAC = ShadowClientHostCustomizationKit.wakeOnLANMACAddressBinding(store: store, host: host)
     let wakePort = ShadowClientHostCustomizationKit.wakeOnLANPortBinding(store: store, host: host)
-    let username = ShadowClientHostCustomizationKit.apolloAdminUsernameBinding(store: store, host: host)
-    let password = ShadowClientHostCustomizationKit.apolloAdminPasswordBinding(store: store, host: host)
+    let username = ShadowClientHostCustomizationKit.lumenAdminUsernameBinding(store: store, host: host)
+    let password = ShadowClientHostCustomizationKit.lumenAdminPasswordBinding(store: store, host: host)
 
     friendlyName.wrappedValue = "Desk"
     notes.wrappedValue = "Main room"
     wakeMAC.wrappedValue = "aa-bb-cc-dd-ee-ff"
     wakePort.wrappedValue = "7"
-    username.wrappedValue = "apollo"
+    username.wrappedValue = "lumen"
     password.wrappedValue = "secret"
 
     #expect(ShadowClientHostCustomizationKit.friendlyName(store: store, host: host) == "Desk")
     #expect(ShadowClientHostCustomizationKit.notes(store: store, host: host) == "Main room")
     #expect(ShadowClientHostCustomizationKit.wakeOnLANMACAddress(store: store, host: host) == "AA-BB-CC-DD-EE-FF")
     #expect(ShadowClientHostCustomizationKit.wakeOnLANPort(store: store, host: host) == "7")
-    #expect(ShadowClientHostCustomizationKit.apolloAdminUsername(store: store, host: host) == "apollo")
-    #expect(ShadowClientHostCustomizationKit.apolloAdminPassword(store: store, host: host) == "secret")
+    #expect(ShadowClientHostCustomizationKit.lumenAdminUsername(store: store, host: host) == "lumen")
+    #expect(ShadowClientHostCustomizationKit.lumenAdminPassword(store: store, host: host) == "secret")
 }

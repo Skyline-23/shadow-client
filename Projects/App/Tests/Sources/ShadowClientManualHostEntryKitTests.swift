@@ -12,8 +12,8 @@ func manualHostEntryKitNormalization() {
     #expect(ShadowClientManualHostEntryKit.normalizedDraft("   ") == "")
 }
 
-@Test("Manual host entry kit submission candidate defaults to the Apollo connect port")
-func manualHostEntryKitSubmissionCandidateDefaultsToApolloConnectPort() {
+@Test("Manual host entry kit submission candidate defaults to the Lumen connect port")
+func manualHostEntryKitSubmissionCandidateDefaultsToLumenConnectPort() {
     #expect(ShadowClientManualHostEntryKit.submissionCandidate("ExampleHost") == "examplehost:47989")
     #expect(ShadowClientManualHostEntryKit.submissionCandidate("https://ExampleHost:47984") == "examplehost:47989")
     #expect(ShadowClientManualHostEntryKit.submissionCandidate("https://ExampleHost:47989") == "examplehost:47989")

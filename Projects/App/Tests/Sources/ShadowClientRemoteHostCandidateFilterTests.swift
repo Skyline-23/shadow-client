@@ -32,16 +32,16 @@ func remoteHostCandidateFilterClassifiesNumericLoopbackAndLinkLocalAddresses() {
     #expect(!ShadowClientRemoteHostCandidateFilter.isLinkLocalHost("test-route-host.local"))
 }
 
-@Test("Remote host candidate filter preserves explicit default Apollo service ports")
-func remoteHostCandidateFilterPreservesExplicitDefaultApolloServicePorts() {
+@Test("Remote host candidate filter preserves explicit default Lumen service ports")
+func remoteHostCandidateFilterPreservesExplicitDefaultLumenServicePorts() {
     let candidates = ShadowClientRemoteHostCandidateFilter.filteredCandidates(
         discoveredHosts: [
-            "dual-apollo.example.invalid:47989",
-            "dual-apollo.example.invalid:48989",
+            "dual-lumen.example.invalid:47989",
+            "dual-lumen.example.invalid:48989",
         ],
         manualHost: nil,
         localInterfaceHosts: []
     )
 
-    #expect(candidates == ["dual-apollo.example.invalid:47984", "dual-apollo.example.invalid:48984"])
+    #expect(candidates == ["dual-lumen.example.invalid:47984", "dual-lumen.example.invalid:48984"])
 }

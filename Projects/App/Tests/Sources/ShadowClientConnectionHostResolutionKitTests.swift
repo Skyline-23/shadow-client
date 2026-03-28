@@ -2,8 +2,8 @@
 @testable import ShadowClientFeatureHome
 import Testing
 
-@Test("Connection host resolution upgrades a plain Apollo hostname to its connect candidate")
-func connectionHostResolutionUpgradesPlainApolloHostname() {
+@Test("Connection host resolution upgrades a plain Lumen hostname to its connect candidate")
+func connectionHostResolutionUpgradesPlainLumenHostname() {
     let resolved = ShadowClientConnectionHostResolutionKit.resolvedConnectHost(
         requestedHost: "test-route-host.local",
         discoveredHosts: [],
@@ -17,7 +17,7 @@ func connectionHostResolutionUpgradesPlainApolloHostname() {
                 httpsPort: 48_984,
                 appVersion: nil,
                 gfeVersion: nil,
-                uniqueID: "apollo",
+                uniqueID: "lumen",
                 lastError: nil,
                 localHost: "192.168.10.50:48989"
             )
@@ -27,7 +27,7 @@ func connectionHostResolutionUpgradesPlainApolloHostname() {
     #expect(resolved == "test-route-host.local:48989")
 }
 
-@Test("Connection host resolution upgrades a plain local route to the known Apollo connect candidate")
+@Test("Connection host resolution upgrades a plain local route to the known Lumen connect candidate")
 func connectionHostResolutionUpgradesPlainLocalRoute() {
     let resolved = ShadowClientConnectionHostResolutionKit.resolvedConnectHost(
         requestedHost: "192.168.10.50",
@@ -42,7 +42,7 @@ func connectionHostResolutionUpgradesPlainLocalRoute() {
                 httpsPort: 48_984,
                 appVersion: nil,
                 gfeVersion: nil,
-                uniqueID: "apollo",
+                uniqueID: "lumen",
                 lastError: nil,
                 localHost: "192.168.10.50:48989"
             )

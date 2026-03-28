@@ -6,8 +6,8 @@ public struct ShadowClientHostCustomizationSnapshot: Sendable {
     public let notes: [String: String]
     public let wakeOnLANMACAddresses: [String: String]
     public let wakeOnLANPorts: [String: String]
-    public let apolloAdminUsernames: [String: String]
-    public let apolloAdminPasswords: [String: String]
+    public let lumenAdminUsernames: [String: String]
+    public let lumenAdminPasswords: [String: String]
 }
 
 public actor ShadowClientHostCustomizationPersistence {
@@ -23,8 +23,8 @@ public actor ShadowClientHostCustomizationPersistence {
             notes: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.hostNotes),
             wakeOnLANMACAddresses: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.hostWakeOnLANMACAddresses),
             wakeOnLANPorts: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.hostWakeOnLANPorts),
-            apolloAdminUsernames: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.apolloAdminUsernames),
-            apolloAdminPasswords: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.apolloAdminPasswords)
+            lumenAdminUsernames: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.lumenAdminUsernames),
+            lumenAdminPasswords: decodeMap(forKey: ShadowClientAppSettings.StorageKeys.lumenAdminPasswords)
         )
     }
 
@@ -68,24 +68,24 @@ public actor ShadowClientHostCustomizationPersistence {
         persistMap(ports, forKey: ShadowClientAppSettings.StorageKeys.hostWakeOnLANPorts)
     }
 
-    public func saveApolloAdminUsername(_ value: String?, forHostID hostID: String) {
-        var usernames = decodeMap(forKey: ShadowClientAppSettings.StorageKeys.apolloAdminUsernames)
+    public func saveLumenAdminUsername(_ value: String?, forHostID hostID: String) {
+        var usernames = decodeMap(forKey: ShadowClientAppSettings.StorageKeys.lumenAdminUsernames)
         if let value, !value.isEmpty {
             usernames[hostID] = value
         } else {
             usernames.removeValue(forKey: hostID)
         }
-        persistMap(usernames, forKey: ShadowClientAppSettings.StorageKeys.apolloAdminUsernames)
+        persistMap(usernames, forKey: ShadowClientAppSettings.StorageKeys.lumenAdminUsernames)
     }
 
-    public func saveApolloAdminPassword(_ value: String?, forHostID hostID: String) {
-        var passwords = decodeMap(forKey: ShadowClientAppSettings.StorageKeys.apolloAdminPasswords)
+    public func saveLumenAdminPassword(_ value: String?, forHostID hostID: String) {
+        var passwords = decodeMap(forKey: ShadowClientAppSettings.StorageKeys.lumenAdminPasswords)
         if let value, !value.isEmpty {
             passwords[hostID] = value
         } else {
             passwords.removeValue(forKey: hostID)
         }
-        persistMap(passwords, forKey: ShadowClientAppSettings.StorageKeys.apolloAdminPasswords)
+        persistMap(passwords, forKey: ShadowClientAppSettings.StorageKeys.lumenAdminPasswords)
     }
 
     public func removeHost(_ hostID: String) {
@@ -93,8 +93,8 @@ public actor ShadowClientHostCustomizationPersistence {
         saveNote(nil, forHostID: hostID)
         saveWakeOnLANMACAddress(nil, forHostID: hostID)
         saveWakeOnLANPort(nil, forHostID: hostID)
-        saveApolloAdminUsername(nil, forHostID: hostID)
-        saveApolloAdminPassword(nil, forHostID: hostID)
+        saveLumenAdminUsername(nil, forHostID: hostID)
+        saveLumenAdminPassword(nil, forHostID: hostID)
     }
 
     private func decodeMap(forKey key: String) -> [String: String] {
@@ -126,8 +126,8 @@ public final class ShadowClientHostCustomizationStore: ObservableObject {
     @Published private var notes: [String: String] = [:]
     @Published private var wakeOnLANMACAddresses: [String: String] = [:]
     @Published private var wakeOnLANPorts: [String: String] = [:]
-    @Published private var apolloAdminUsernames: [String: String] = [:]
-    @Published private var apolloAdminPasswords: [String: String] = [:]
+    @Published private var lumenAdminUsernames: [String: String] = [:]
+    @Published private var lumenAdminPasswords: [String: String] = [:]
 
     private let persistence: ShadowClientHostCustomizationPersistence
 
@@ -144,8 +144,8 @@ public final class ShadowClientHostCustomizationStore: ObservableObject {
             notes = snapshot.notes
             wakeOnLANMACAddresses = snapshot.wakeOnLANMACAddresses
             wakeOnLANPorts = snapshot.wakeOnLANPorts
-            apolloAdminUsernames = snapshot.apolloAdminUsernames
-            apolloAdminPasswords = snapshot.apolloAdminPasswords
+            lumenAdminUsernames = snapshot.lumenAdminUsernames
+            lumenAdminPasswords = snapshot.lumenAdminPasswords
         }
     }
 
@@ -165,12 +165,12 @@ public final class ShadowClientHostCustomizationStore: ObservableObject {
         wakeOnLANPorts[hostID] ?? ""
     }
 
-    public func apolloAdminUsername(forHostID hostID: String) -> String {
-        apolloAdminUsernames[hostID] ?? ""
+    public func lumenAdminUsername(forHostID hostID: String) -> String {
+        lumenAdminUsernames[hostID] ?? ""
     }
 
-    public func apolloAdminPassword(forHostID hostID: String) -> String {
-        apolloAdminPasswords[hostID] ?? ""
+    public func lumenAdminPassword(forHostID hostID: String) -> String {
+        lumenAdminPasswords[hostID] ?? ""
     }
 
     public func setAlias(_ value: String, forHostID hostID: String) {
@@ -229,29 +229,29 @@ public final class ShadowClientHostCustomizationStore: ObservableObject {
         }
     }
 
-    public func setApolloAdminUsername(_ value: String, forHostID hostID: String) {
+    public func setLumenAdminUsername(_ value: String, forHostID hostID: String) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            apolloAdminUsernames.removeValue(forKey: hostID)
+            lumenAdminUsernames.removeValue(forKey: hostID)
         } else {
-            apolloAdminUsernames[hostID] = value
+            lumenAdminUsernames[hostID] = value
         }
 
         Task {
-            await persistence.saveApolloAdminUsername(trimmed.isEmpty ? nil : value, forHostID: hostID)
+            await persistence.saveLumenAdminUsername(trimmed.isEmpty ? nil : value, forHostID: hostID)
         }
     }
 
-    public func setApolloAdminPassword(_ value: String, forHostID hostID: String) {
+    public func setLumenAdminPassword(_ value: String, forHostID hostID: String) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            apolloAdminPasswords.removeValue(forKey: hostID)
+            lumenAdminPasswords.removeValue(forKey: hostID)
         } else {
-            apolloAdminPasswords[hostID] = value
+            lumenAdminPasswords[hostID] = value
         }
 
         Task {
-            await persistence.saveApolloAdminPassword(trimmed.isEmpty ? nil : value, forHostID: hostID)
+            await persistence.saveLumenAdminPassword(trimmed.isEmpty ? nil : value, forHostID: hostID)
         }
     }
 
@@ -260,8 +260,8 @@ public final class ShadowClientHostCustomizationStore: ObservableObject {
         notes.removeValue(forKey: hostID)
         wakeOnLANMACAddresses.removeValue(forKey: hostID)
         wakeOnLANPorts.removeValue(forKey: hostID)
-        apolloAdminUsernames.removeValue(forKey: hostID)
-        apolloAdminPasswords.removeValue(forKey: hostID)
+        lumenAdminUsernames.removeValue(forKey: hostID)
+        lumenAdminPasswords.removeValue(forKey: hostID)
 
         Task {
             await persistence.removeHost(hostID)

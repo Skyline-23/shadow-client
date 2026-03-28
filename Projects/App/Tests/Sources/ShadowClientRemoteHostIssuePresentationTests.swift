@@ -5,7 +5,7 @@ import Testing
 func hostIssueMapperSurfacesSelectedHostAppPermissionDenial() {
     let host = ShadowClientRemoteHostDescriptor(
         host: "192.168.0.40",
-        displayName: "Apollo-PC",
+        displayName: "Lumen-PC",
         pairStatus: .paired,
         currentGameID: 0,
         serverState: "SUNSHINE_SERVER_FREE",
@@ -70,7 +70,7 @@ func hostIssueMapperPrefersActiveSessionIssue() {
 func hostIssueMapperIgnoresPermissionFailuresForNonSelectedHost() {
     let host = ShadowClientRemoteHostDescriptor(
         host: "192.168.0.40",
-        displayName: "Apollo-PC",
+        displayName: "Lumen-PC",
         pairStatus: .paired,
         currentGameID: 0,
         serverState: "SUNSHINE_SERVER_FREE",

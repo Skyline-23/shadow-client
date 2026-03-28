@@ -187,8 +187,8 @@ func gameStreamParserMapsHostAppListWithoutStatusMessage() throws {
     #expect(apps[1] == .init(id: 1093255277, title: "Steam Big Picture", hdrSupported: true, isAppCollectorGame: false))
 }
 
-@Test("GameStream parser rejects Apollo applist permission sentinel")
-func gameStreamParserRejectsApolloAppListPermissionSentinel() {
+@Test("GameStream parser rejects Lumen applist permission sentinel")
+func gameStreamParserRejectsLumenAppListPermissionSentinel() {
     let xml = """
     <root status_code="200" status_message="OK">
       <App>
@@ -203,7 +203,7 @@ func gameStreamParserRejectsApolloAppListPermissionSentinel() {
 
     do {
         _ = try ShadowClientGameStreamXMLParsers.parseAppList(xml: xml)
-        Issue.record("Expected Apollo permission sentinel to be rejected")
+        Issue.record("Expected Lumen permission sentinel to be rejected")
     } catch let error as ShadowClientGameStreamError {
         #expect(error == .responseRejected(code: 403, message: "Permission denied"))
     } catch {
@@ -321,7 +321,7 @@ func metadataClientUsesExplicitCustomHTTPSPortsForPinnedHosts() async throws {
     }
 
     let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
-    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "apollo-host.example.invalid")
+    await pinnedStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "lumen-host.example.invalid")
 
     let transport = ScriptedRequestTransport(
         script: [
@@ -332,7 +332,7 @@ func metadataClientUsesExplicitCustomHTTPSPortsForPinnedHosts() async throws {
                 result: .success(
                     """
                     <root status_code="200">
-                        <hostname>Apollo-Mac</hostname>
+                        <hostname>Lumen-Mac</hostname>
                         <PairStatus>1</PairStatus>
                         <currentgame>0</currentgame>
                         <state>SUNSHINE_SERVER_FREE</state>
@@ -350,8 +350,8 @@ func metadataClientUsesExplicitCustomHTTPSPortsForPinnedHosts() async throws {
         transport: transport
     )
 
-    let info = try await client.fetchServerInfo(host: "apollo-host.example.invalid:48984")
-    #expect(info.displayName == "Apollo-Mac")
+    let info = try await client.fetchServerInfo(host: "lumen-host.example.invalid:48984")
+    #expect(info.displayName == "Lumen-Mac")
     #expect(info.httpsPort == 48984)
     #expect(
         await transport.callsWithPort() == [
@@ -504,7 +504,7 @@ func metadataClientPreservesPinnedHTTPSTransportFailureAfterHTTPFallback() async
     let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
     await pinnedStore.setCertificateDER(
         Data([0x01, 0x02, 0x03]),
-        forHost: "apollo-host.example.invalid",
+        forHost: "lumen-host.example.invalid",
         httpsPort: 48984
     )
 
@@ -515,7 +515,7 @@ func metadataClientPreservesPinnedHTTPSTransportFailureAfterHTTPFallback() async
     )
 
     do {
-        _ = try await client.fetchServerInfo(host: "apollo-host.example.invalid:48984")
+        _ = try await client.fetchServerInfo(host: "lumen-host.example.invalid:48984")
         Issue.record("Expected combined HTTPS/HTTP fallback failure")
     } catch let error as ShadowClientGameStreamError {
         #expect(
@@ -860,14 +860,14 @@ func remoteDesktopRuntimeRefreshesHostsAndLoadsApps() async {
     }
 }
 
-@Test("Remote desktop runtime surfaces Apollo app list permission denial")
+@Test("Remote desktop runtime surfaces Lumen app list permission denial")
 @MainActor
-func remoteDesktopRuntimeSurfacesApolloAppListPermissionDenial() async {
+func remoteDesktopRuntimeSurfacesLumenAppListPermissionDenial() async {
     let client = FakeGameStreamMetadataClient(
         serverInfoByHost: [
             "192.168.0.40": .init(
                 host: "192.168.0.40",
-                displayName: "Apollo-PC",
+                displayName: "Lumen-PC",
                 pairStatus: .paired,
                 currentGameID: 0,
                 serverState: "SUNSHINE_SERVER_FREE",
@@ -895,7 +895,7 @@ func remoteDesktopRuntimeSurfacesApolloAppListPermissionDenial() async {
     if case let .failed(message) = runtime.appState {
         #expect(message == "Lumen denied List Apps permission for this paired client.")
     } else {
-        Issue.record("Expected failed app state for Apollo permission denial, got \(runtime.appState)")
+        Issue.record("Expected failed app state for Lumen permission denial, got \(runtime.appState)")
     }
 }
 
@@ -1006,7 +1006,7 @@ func remoteDesktopRuntimeAllowsExternalPairWithoutLocalCandidate() async {
         ],
         appListByHost: [:]
     )
-    let pairingClient = RecordingApolloPairingClient(successfulHosts: ["external-host.example.invalid"])
+    let pairingClient = RecordingLumenPairingClient(successfulHosts: ["external-host.example.invalid"])
     let pairingRouteStore = ShadowClientPairingRouteStore(
         defaultsSuiteName: "shadow-client.pairing.external-only.\(UUID().uuidString)"
     )
@@ -1065,7 +1065,7 @@ func remoteDesktopRuntimeTriesSelectedExternalHostBeforeLocalFallback() async {
         ],
         appListByHost: [:]
     )
-    let pairingClient = RecordingApolloPairingClient(successfulHosts: ["192.168.0.20"])
+    let pairingClient = RecordingLumenPairingClient(successfulHosts: ["192.168.0.20"])
     let pairingRouteStore = ShadowClientPairingRouteStore(
         defaultsSuiteName: "shadow-client.pairing.local-preferred.\(UUID().uuidString)"
     )
@@ -1256,20 +1256,20 @@ func remoteDesktopRuntimeDeleteRemovesExplicitServiceRouteCertificatesBeforeRetu
     let routeCertificate = Data([0x47, 0x98, 0x04])
     await pinnedStore.setCertificateDER(
         routeCertificate,
-        forHost: "apollo-route.example.invalid",
+        forHost: "lumen-route.example.invalid",
         httpsPort: 47984
     )
     await pinnedStore.bindHost(
-        "apollo-route.example.invalid",
+        "lumen-route.example.invalid",
         httpsPort: 47984,
         toMachineID: "LEGACY-APOLLO-47984"
     )
 
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "apollo-route.example.invalid:47984": .init(
-                host: "apollo-route.example.invalid",
-                displayName: "Apollo-47984",
+            "lumen-route.example.invalid:47984": .init(
+                host: "lumen-route.example.invalid",
+                displayName: "Lumen-47984",
                 pairStatus: .unknown,
                 currentGameID: 0,
                 serverState: "SUNSHINE_SERVER_FREE",
@@ -1290,22 +1290,22 @@ func remoteDesktopRuntimeDeleteRemovesExplicitServiceRouteCertificatesBeforeRetu
     )
 
     runtime.refreshHosts(
-        candidates: ["apollo-route.example.invalid:47984"],
-        preferredHost: "apollo-route.example.invalid:47984"
+        candidates: ["lumen-route.example.invalid:47984"],
+        preferredHost: "lumen-route.example.invalid:47984"
     )
     await waitForHostCatalogReady(runtime)
 
-    runtime.deleteHost("apollo-route.example.invalid")
+    runtime.deleteHost("lumen-route.example.invalid")
 
     #expect(runtime.hosts.isEmpty)
     #expect(
         await pinnedStore.certificateDER(
-            forHost: "apollo-route.example.invalid",
+            forHost: "lumen-route.example.invalid",
             httpsPort: 47984
         ) == nil
     )
-    #expect(await pinnedStore.certificateDER(forHost: "apollo-route.example.invalid") == nil)
-    #expect(await pinnedStore.machineID(forHost: "apollo-route.example.invalid") == nil)
+    #expect(await pinnedStore.certificateDER(forHost: "lumen-route.example.invalid") == nil)
+    #expect(await pinnedStore.machineID(forHost: "lumen-route.example.invalid") == nil)
 }
 
 @Test("Remote desktop runtime prefers reachable local route when merging host routes")
@@ -1882,11 +1882,11 @@ func remoteDesktopRuntimePropagatesPinnedCertificatesAcrossDiscoveredRoutes() as
     )
 }
 
-@Test("Remote desktop runtime does not reuse an unrelated pinned certificate for a preferred custom Apollo route")
+@Test("Remote desktop runtime does not reuse an unrelated pinned certificate for a preferred custom Lumen route")
 @MainActor
-func remoteDesktopRuntimeDoesNotReusePinnedCertificateForUnrelatedPreferredApolloRoute() async {
+func remoteDesktopRuntimeDoesNotReusePinnedCertificateForUnrelatedPreferredLumenRoute() async {
     let certificateStore = ShadowClientPinnedHostCertificateStore(
-        defaultsSuiteName: "shadow-client.runtime.unrelated-preferred-apollo-cert.\(UUID().uuidString)"
+        defaultsSuiteName: "shadow-client.runtime.unrelated-preferred-lumen-cert.\(UUID().uuidString)"
     )
     let pcCertificate = Data([0xDE, 0xAD, 0xBE, 0xEF])
     await certificateStore.setCertificateDER(pcCertificate, forHost: "192.168.10.52")
@@ -1933,11 +1933,11 @@ func remoteDesktopRuntimeDoesNotReusePinnedCertificateForUnrelatedPreferredApoll
     )
     await waitForHostCatalogReady(runtime)
 
-    let apolloRequest = await metadataClient.recordedServerInfoRequests().last(where: {
+    let lumenRequest = await metadataClient.recordedServerInfoRequests().last(where: {
         $0.host == "test-route-host.local:48984"
     })
 
-    #expect(apolloRequest?.pinnedServerCertificateDER == nil)
+    #expect(lumenRequest?.pinnedServerCertificateDER == nil)
 }
 
 @Test("Remote desktop runtime still publishes hosts that fail with a certificate mismatch during discovery")
@@ -1977,9 +1977,9 @@ func remoteDesktopRuntimePublishesCertificateMismatchHosts() async {
     await waitForHostCatalogReady(runtime)
 
     #expect(runtime.hosts.count == 2)
-    let apolloHost = runtime.hosts.first(where: { $0.host == "test-route-host.local" })
-    #expect(apolloHost?.httpsPort == 48984)
-    #expect(apolloHost?.lastError == "Host rejected request (401): Server certificate mismatch")
+    let lumenHost = runtime.hosts.first(where: { $0.host == "test-route-host.local" })
+    #expect(lumenHost?.httpsPort == 48984)
+    #expect(lumenHost?.lastError == "Host rejected request (401): Server certificate mismatch")
 }
 
 @Test("Remote desktop runtime does not reuse pinned certificates across explicit service ports")
@@ -1987,14 +1987,14 @@ func remoteDesktopRuntimePublishesCertificateMismatchHosts() async {
 func remoteDesktopRuntimeDoesNotReusePinnedCertificatesAcrossExplicitServicePorts() async {
     let defaultsSuite = "shadow-client.runtime.explicit-port-pins.\(UUID().uuidString)"
     let certificateStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
-    await certificateStore.bindHost("dual-apollo.example.invalid", httpsPort: 48984, toMachineID: "APOLLO-48984")
+    await certificateStore.bindHost("dual-lumen.example.invalid", httpsPort: 48984, toMachineID: "APOLLO-48984")
     await certificateStore.setCertificateDER(Data([0x48, 0x98, 0x04]), forMachineID: "APOLLO-48984")
 
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "dual-apollo.example.invalid:48984": .init(
-                host: "dual-apollo.example.invalid",
-                displayName: "Apollo-48984",
+            "dual-lumen.example.invalid:48984": .init(
+                host: "dual-lumen.example.invalid",
+                displayName: "Lumen-48984",
                 pairStatus: .paired,
                 currentGameID: 0,
                 serverState: "SUNSHINE_SERVER_FREE",
@@ -2003,9 +2003,9 @@ func remoteDesktopRuntimeDoesNotReusePinnedCertificatesAcrossExplicitServicePort
                 gfeVersion: nil,
                 uniqueID: "APOLLO-48984"
             ),
-            "dual-apollo.example.invalid:47984": .init(
-                host: "dual-apollo.example.invalid",
-                displayName: "Apollo-47984",
+            "dual-lumen.example.invalid:47984": .init(
+                host: "dual-lumen.example.invalid",
+                displayName: "Lumen-47984",
                 pairStatus: .paired,
                 currentGameID: 0,
                 serverState: "SUNSHINE_SERVER_FREE",
@@ -2024,16 +2024,16 @@ func remoteDesktopRuntimeDoesNotReusePinnedCertificatesAcrossExplicitServicePort
     )
 
     runtime.refreshHosts(
-        candidates: ["dual-apollo.example.invalid:48984", "dual-apollo.example.invalid:47984"],
-        preferredHost: "dual-apollo.example.invalid:47984"
+        candidates: ["dual-lumen.example.invalid:48984", "dual-lumen.example.invalid:47984"],
+        preferredHost: "dual-lumen.example.invalid:47984"
     )
     await waitForHostCatalogReady(runtime)
 
     let request48984 = await metadataClient.recordedServerInfoRequests().first(where: {
-        $0.host == "dual-apollo.example.invalid:48984"
+        $0.host == "dual-lumen.example.invalid:48984"
     })
     let request47984 = await metadataClient.recordedServerInfoRequests().first(where: {
-        $0.host == "dual-apollo.example.invalid:47984"
+        $0.host == "dual-lumen.example.invalid:47984"
     })
 
     #expect(request48984?.pinnedServerCertificateDER == Data([0x48, 0x98, 0x04]))
@@ -2045,9 +2045,9 @@ func remoteDesktopRuntimeDoesNotReusePinnedCertificatesAcrossExplicitServicePort
 func remoteDesktopRuntimeKeepsSameHostExplicitPortsSeparateOnMismatch() async {
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "dual-apollo.example.invalid:48984": .init(
-                host: "dual-apollo.example.invalid",
-                displayName: "Apollo-48984",
+            "dual-lumen.example.invalid:48984": .init(
+                host: "dual-lumen.example.invalid",
+                displayName: "Lumen-48984",
                 pairStatus: .paired,
                 currentGameID: 0,
                 serverState: "SUNSHINE_SERVER_FREE",
@@ -2059,7 +2059,7 @@ func remoteDesktopRuntimeKeepsSameHostExplicitPortsSeparateOnMismatch() async {
         ],
         appListByHost: [:],
         serverInfoFailureByHost: [
-            "dual-apollo.example.invalid:47984": .responseRejected(
+            "dual-lumen.example.invalid:47984": .responseRejected(
                 code: 401,
                 message: "Server certificate mismatch"
             ),
@@ -2071,33 +2071,33 @@ func remoteDesktopRuntimeKeepsSameHostExplicitPortsSeparateOnMismatch() async {
     )
 
     runtime.refreshHosts(
-        candidates: ["dual-apollo.example.invalid:48984", "dual-apollo.example.invalid:47984"],
-        preferredHost: "dual-apollo.example.invalid:47984"
+        candidates: ["dual-lumen.example.invalid:48984", "dual-lumen.example.invalid:47984"],
+        preferredHost: "dual-lumen.example.invalid:47984"
     )
     await waitForHostCatalogReady(runtime)
 
     #expect(runtime.hosts.count == 2)
     let https48984Host = runtime.hosts.first(where: { $0.httpsPort == 48984 })
     let https47984Host = runtime.hosts.first(where: { $0.httpsPort == 47984 })
-    #expect(https48984Host?.host == "dual-apollo.example.invalid")
+    #expect(https48984Host?.host == "dual-lumen.example.invalid")
     #expect(https48984Host?.lastError == nil)
-    #expect(https47984Host?.host == "dual-apollo.example.invalid")
+    #expect(https47984Host?.host == "dual-lumen.example.invalid")
     #expect(https47984Host?.lastError == "Host rejected request (401): Server certificate mismatch")
 }
 
-@Test("Remote desktop runtime does not synchronize pinned certificates across Apollo service ports")
+@Test("Remote desktop runtime does not synchronize pinned certificates across Lumen service ports")
 @MainActor
-func remoteDesktopRuntimeKeepsApolloServicePinsPortScoped() async {
+func remoteDesktopRuntimeKeepsLumenServicePinsPortScoped() async {
     let defaultsSuite = "shadow-client.runtime.port-scoped-pins.\(UUID().uuidString)"
     let pinnedStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
     let sharedCertificate = Data([0x10, 0x20, 0x30])
     await pinnedStore.setCertificateDER(
         sharedCertificate,
-        forHost: "dual-apollo.example.invalid",
+        forHost: "dual-lumen.example.invalid",
         httpsPort: 47984
     )
     await pinnedStore.bindHost(
-        "dual-apollo.example.invalid",
+        "dual-lumen.example.invalid",
         httpsPort: 47984,
         toMachineID: "APOLLO-SHARED"
     )
@@ -2105,9 +2105,9 @@ func remoteDesktopRuntimeKeepsApolloServicePinsPortScoped() async {
 
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "dual-apollo.example.invalid:48984": .init(
-                host: "dual-apollo.example.invalid",
-                displayName: "Apollo-48984",
+            "dual-lumen.example.invalid:48984": .init(
+                host: "dual-lumen.example.invalid",
+                displayName: "Lumen-48984",
                 pairStatus: .paired,
                 currentGameID: 0,
                 serverState: "SUNSHINE_SERVER_FREE",
@@ -2116,9 +2116,9 @@ func remoteDesktopRuntimeKeepsApolloServicePinsPortScoped() async {
                 gfeVersion: nil,
                 uniqueID: "APOLLO-SHARED"
             ),
-            "dual-apollo.example.invalid:47984": .init(
-                host: "dual-apollo.example.invalid",
-                displayName: "Apollo-47984",
+            "dual-lumen.example.invalid:47984": .init(
+                host: "dual-lumen.example.invalid",
+                displayName: "Lumen-47984",
                 pairStatus: .paired,
                 currentGameID: 0,
                 serverState: "SUNSHINE_SERVER_FREE",
@@ -2137,33 +2137,33 @@ func remoteDesktopRuntimeKeepsApolloServicePinsPortScoped() async {
     )
 
     runtime.refreshHosts(
-        candidates: ["dual-apollo.example.invalid:48984", "dual-apollo.example.invalid:47984"],
-        preferredHost: "dual-apollo.example.invalid:48984"
+        candidates: ["dual-lumen.example.invalid:48984", "dual-lumen.example.invalid:47984"],
+        preferredHost: "dual-lumen.example.invalid:48984"
     )
     await waitForHostCatalogReady(runtime)
 
     let requests = await metadataClient.recordedServerInfoRequests()
-    let https48984Request = requests.first(where: { $0.host == "dual-apollo.example.invalid:48984" })
-    let https47984Request = requests.first(where: { $0.host == "dual-apollo.example.invalid:47984" })
+    let https48984Request = requests.first(where: { $0.host == "dual-lumen.example.invalid:48984" })
+    let https47984Request = requests.first(where: { $0.host == "dual-lumen.example.invalid:47984" })
 
     #expect(https48984Request?.pinnedServerCertificateDER == nil)
     #expect(https47984Request?.pinnedServerCertificateDER == sharedCertificate)
     #expect(
         await pinnedStore.certificateDER(
-            forHost: "dual-apollo.example.invalid",
+            forHost: "dual-lumen.example.invalid",
             httpsPort: 48984
         ) == nil
     )
 }
 
-@Test("Remote desktop runtime refreshes app list on the exact selected Apollo service port")
+@Test("Remote desktop runtime refreshes app list on the exact selected Lumen service port")
 @MainActor
-func remoteDesktopRuntimeRefreshesAppsOnExactSelectedApolloPort() async {
+func remoteDesktopRuntimeRefreshesAppsOnExactSelectedLumenPort() async {
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "dual-apollo.example.invalid:47984": .init(
-                host: "dual-apollo.example.invalid",
-                displayName: "Apollo-47984",
+            "dual-lumen.example.invalid:47984": .init(
+                host: "dual-lumen.example.invalid",
+                displayName: "Lumen-47984",
                 pairStatus: .paired,
                 currentGameID: 0,
                 serverState: "SUNSHINE_SERVER_FREE",
@@ -2172,9 +2172,9 @@ func remoteDesktopRuntimeRefreshesAppsOnExactSelectedApolloPort() async {
                 gfeVersion: nil,
                 uniqueID: "APOLLO-SHARED"
             ),
-            "dual-apollo.example.invalid:48984": .init(
-                host: "dual-apollo.example.invalid",
-                displayName: "Apollo-48984",
+            "dual-lumen.example.invalid:48984": .init(
+                host: "dual-lumen.example.invalid",
+                displayName: "Lumen-48984",
                 pairStatus: .paired,
                 currentGameID: 0,
                 serverState: "SUNSHINE_SERVER_FREE",
@@ -2185,7 +2185,7 @@ func remoteDesktopRuntimeRefreshesAppsOnExactSelectedApolloPort() async {
             ),
         ],
         appListByHost: [
-            "dual-apollo.example.invalid:48984": [
+            "dual-lumen.example.invalid:48984": [
                 .init(id: 1, title: "Desktop", hdrSupported: false, isAppCollectorGame: false),
             ],
         ]
@@ -2196,8 +2196,8 @@ func remoteDesktopRuntimeRefreshesAppsOnExactSelectedApolloPort() async {
     )
 
     runtime.refreshHosts(
-        candidates: ["dual-apollo.example.invalid:48984", "dual-apollo.example.invalid:47984"],
-        preferredHost: "dual-apollo.example.invalid:48984"
+        candidates: ["dual-lumen.example.invalid:48984", "dual-lumen.example.invalid:47984"],
+        preferredHost: "dual-lumen.example.invalid:48984"
     )
     await waitForHostCatalogReady(runtime)
 
@@ -2207,19 +2207,19 @@ func remoteDesktopRuntimeRefreshesAppsOnExactSelectedApolloPort() async {
     await waitForAppCatalogReady(runtime)
 
     #expect(await metadataClient.recordedAppListRequests().last == .init(
-        host: "dual-apollo.example.invalid",
+        host: "dual-lumen.example.invalid",
         httpsPort: 48984
     ))
 }
 
-@Test("Remote desktop runtime launches on the exact selected Apollo service port")
+@Test("Remote desktop runtime launches on the exact selected Lumen service port")
 @MainActor
-func remoteDesktopRuntimeLaunchesOnExactSelectedApolloPort() async {
+func remoteDesktopRuntimeLaunchesOnExactSelectedLumenPort() async {
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
-            "dual-apollo.example.invalid:47984": .init(
-                host: "dual-apollo.example.invalid",
-                displayName: "Apollo-47984",
+            "dual-lumen.example.invalid:47984": .init(
+                host: "dual-lumen.example.invalid",
+                displayName: "Lumen-47984",
                 pairStatus: .paired,
                 currentGameID: 0,
                 serverState: "SUNSHINE_SERVER_FREE",
@@ -2228,9 +2228,9 @@ func remoteDesktopRuntimeLaunchesOnExactSelectedApolloPort() async {
                 gfeVersion: nil,
                 uniqueID: "APOLLO-SHARED"
             ),
-            "dual-apollo.example.invalid:48984": .init(
-                host: "dual-apollo.example.invalid",
-                displayName: "Apollo-48984",
+            "dual-lumen.example.invalid:48984": .init(
+                host: "dual-lumen.example.invalid",
+                displayName: "Lumen-48984",
                 pairStatus: .paired,
                 currentGameID: 0,
                 serverState: "SUNSHINE_SERVER_FREE",
@@ -2249,8 +2249,8 @@ func remoteDesktopRuntimeLaunchesOnExactSelectedApolloPort() async {
     )
 
     runtime.refreshHosts(
-        candidates: ["dual-apollo.example.invalid:48984", "dual-apollo.example.invalid:47984"],
-        preferredHost: "dual-apollo.example.invalid:48984"
+        candidates: ["dual-lumen.example.invalid:48984", "dual-lumen.example.invalid:47984"],
+        preferredHost: "dual-lumen.example.invalid:48984"
     )
     await waitForHostCatalogReady(runtime)
 
@@ -2268,7 +2268,7 @@ func remoteDesktopRuntimeLaunchesOnExactSelectedApolloPort() async {
     await waitForLaunchRequest(controlClient)
 
     #expect(await controlClient.launchRequests().last == .init(
-        host: "dual-apollo.example.invalid",
+        host: "dual-lumen.example.invalid",
         httpsPort: 48984,
         appID: 1
     ))
@@ -2823,7 +2823,7 @@ private actor RecordingGameStreamControlClient: ShadowClientGameStreamControlCli
     }
 }
 
-private actor RecordingApolloPairingClient: ShadowClientApolloPairingClient {
+private actor RecordingLumenPairingClient: ShadowClientLumenPairingClient {
     private let successfulHosts: Set<String>
     private var recordedStartHosts: [String] = []
 
@@ -2836,7 +2836,7 @@ private actor RecordingApolloPairingClient: ShadowClientApolloPairingClient {
         httpsPort: Int,
         deviceName: String?,
         platform: String?
-    ) async throws -> ShadowClientApolloPairingSession {
+    ) async throws -> ShadowClientLumenPairingSession {
         _ = httpsPort
         _ = deviceName
         _ = platform
@@ -2855,7 +2855,7 @@ private actor RecordingApolloPairingClient: ShadowClientApolloPairingClient {
                 clientCertificateRequired: true,
                 status: .approved,
                 serverUniqueID: "HOST-1",
-                serviceType: "apollo",
+                serviceType: "_shadow._tcp",
                 controlHTTPSPort: 47984,
                 expiresInSeconds: 60,
                 pollIntervalSeconds: 1
@@ -2869,7 +2869,7 @@ private actor RecordingApolloPairingClient: ShadowClientApolloPairingClient {
         host: String,
         httpsPort: Int,
         pairingID: String
-    ) async throws -> ShadowClientApolloPairingSession {
+    ) async throws -> ShadowClientLumenPairingSession {
         _ = host
         _ = httpsPort
         _ = pairingID

@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import ShadowClientFeatureHome
 
-@Test("Apollo admin client parser returns the current paired client profile")
-func apolloAdminClientParserReturnsCurrentClientProfile() throws {
+@Test("Lumen admin client parser returns the current paired client profile")
+func lumenAdminClientParserReturnsCurrentClientProfile() throws {
     let data = Data(
         """
         {
@@ -30,7 +30,7 @@ func apolloAdminClientParserReturnsCurrentClientProfile() throws {
         """.utf8
     )
 
-    let profile = try NativeShadowClientApolloAdminClient.parseCurrentClientProfile(
+    let profile = try NativeShadowClientLumenAdminClient.parseCurrentClientProfile(
         data: data,
         currentClientUUID: "CURRENT-UUID"
     )
@@ -48,8 +48,8 @@ func apolloAdminClientParserReturnsCurrentClientProfile() throws {
     )
 }
 
-@Test("Apollo admin client parser returns nil when the current client is missing")
-func apolloAdminClientParserReturnsNilWhenCurrentClientIsMissing() throws {
+@Test("Lumen admin client parser returns nil when the current client is missing")
+func lumenAdminClientParserReturnsNilWhenCurrentClientIsMissing() throws {
     let data = Data(
         """
         {
@@ -68,7 +68,7 @@ func apolloAdminClientParserReturnsNilWhenCurrentClientIsMissing() throws {
         """.utf8
     )
 
-    let profile = try NativeShadowClientApolloAdminClient.parseCurrentClientProfile(
+    let profile = try NativeShadowClientLumenAdminClient.parseCurrentClientProfile(
         data: data,
         currentClientUUID: "CURRENT-UUID"
     )

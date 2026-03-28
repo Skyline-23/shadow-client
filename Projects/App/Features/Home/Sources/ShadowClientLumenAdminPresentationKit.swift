@@ -1,9 +1,9 @@
 import Foundation
 
-enum ShadowClientApolloAdminPresentationKit {
+enum ShadowClientLumenAdminPresentationKit {
     static func stateLabel(
-        state: ShadowClientApolloAdminClientState,
-        selectedProfile: ShadowClientApolloAdminClientProfile?
+        state: ShadowClientLumenAdminClientState,
+        selectedProfile: ShadowClientLumenAdminClientProfile?
     ) -> String {
         switch state {
         case .idle:
@@ -19,21 +19,21 @@ enum ShadowClientApolloAdminPresentationKit {
         }
     }
 
-    static func summary(_ profile: ShadowClientApolloAdminClientProfile) -> String {
+    static func summary(_ profile: ShadowClientLumenAdminClientProfile) -> String {
         let displayMode = profile.displayModeOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayDescription = displayMode.isEmpty ? "Display mode override: automatic" : "Display mode override: \(displayMode)"
         let virtualDisplayDescription = profile.alwaysUseVirtualDisplay
             ? "Always use virtual display: ON"
             : "Always use virtual display: OFF"
         let connectedDescription = profile.connected ? "Connected" : "Not connected"
-        let permissionsDescription = ShadowClientApolloPermission.summary(for: profile.permissions)
+        let permissionsDescription = ShadowClientLumenPermission.summary(for: profile.permissions)
         return [displayDescription, virtualDisplayDescription, permissionsDescription, connectedDescription].joined(separator: "\n")
     }
 
     static func displayModeDraft(
         hostID: String,
         drafts: [String: String],
-        profile: ShadowClientApolloAdminClientProfile?
+        profile: ShadowClientLumenAdminClientProfile?
     ) -> String {
         if let draft = drafts[hostID] {
             return draft
@@ -44,7 +44,7 @@ enum ShadowClientApolloAdminPresentationKit {
     static func alwaysUseVirtualDisplayDraft(
         hostID: String,
         drafts: [String: Bool],
-        profile: ShadowClientApolloAdminClientProfile?
+        profile: ShadowClientLumenAdminClientProfile?
     ) -> Bool {
         if let draft = drafts[hostID] {
             return draft
@@ -55,7 +55,7 @@ enum ShadowClientApolloAdminPresentationKit {
     static func permissionDraft(
         hostID: String,
         drafts: [String: UInt32],
-        profile: ShadowClientApolloAdminClientProfile?
+        profile: ShadowClientLumenAdminClientProfile?
     ) -> UInt32 {
         if let draft = drafts[hostID] {
             return draft

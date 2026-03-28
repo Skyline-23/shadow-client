@@ -153,9 +153,9 @@ extension ShadowClientAppShellView {
             connectionHost = ""
         }
         hostCustomizationStore.removeHost(host.id)
-        apolloDisplayModeDrafts.removeValue(forKey: host.id)
-        apolloAlwaysUseVirtualDisplayDrafts.removeValue(forKey: host.id)
-        apolloPermissionDrafts.removeValue(forKey: host.id)
+        lumenDisplayModeDrafts.removeValue(forKey: host.id)
+        lumenAlwaysUseVirtualDisplayDrafts.removeValue(forKey: host.id)
+        lumenPermissionDrafts.removeValue(forKey: host.id)
         remoteDesktopRuntime.deleteHost(host.id)
     }
 

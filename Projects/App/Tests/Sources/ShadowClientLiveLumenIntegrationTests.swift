@@ -4,9 +4,9 @@ import ShadowClientFeatureSession
 @testable import ShadowClientFeatureHome
 @testable import ShadowClientFeatureConnection
 
-@Test("Live Apollo metadata client fetches server info and app list")
-func liveApolloFetchesServerInfoAndAppList() async throws {
-    guard let config = LiveApolloIntegrationConfiguration.enabledFromEnvironment() else {
+@Test("Live Lumen metadata client fetches server info and app list")
+func liveLumenFetchesServerInfoAndAppList() async throws {
+    guard let config = LiveLumenIntegrationConfiguration.enabledFromEnvironment() else {
         return
     }
 
@@ -23,16 +23,16 @@ func liveApolloFetchesServerInfoAndAppList() async throws {
     })
 
     if config.requirePairedHost, serverInfo.pairStatus != .paired {
-        throw LiveApolloIntegrationError.unpairedHost(
+        throw LiveLumenIntegrationError.unpairedHost(
             host: config.host,
             pairStatus: "\(serverInfo.pairStatus)"
         )
     }
 }
 
-@Test("Live Apollo control client launch returns non-empty RTSP session URL")
-func liveApolloLaunchReturnsRTSPSessionURL() async throws {
-    guard let config = LiveApolloIntegrationConfiguration.enabledFromEnvironment() else {
+@Test("Live Lumen control client launch returns non-empty RTSP session URL")
+func liveLumenLaunchReturnsRTSPSessionURL() async throws {
+    guard let config = LiveLumenIntegrationConfiguration.enabledFromEnvironment() else {
         return
     }
 
@@ -44,13 +44,13 @@ func liveApolloLaunchReturnsRTSPSessionURL() async throws {
 
     if config.requireRemoteInputMaterial {
         guard let remoteInputKey = launchContext.launchResult.remoteInputKey, !remoteInputKey.isEmpty else {
-            throw LiveApolloIntegrationError.missingRemoteInputKey(
+            throw LiveLumenIntegrationError.missingRemoteInputKey(
                 host: config.host,
                 appID: launchContext.app.id
             )
         }
         guard let remoteInputKeyID = launchContext.launchResult.remoteInputKeyID, remoteInputKeyID > 0 else {
-            throw LiveApolloIntegrationError.missingRemoteInputKeyID(
+            throw LiveLumenIntegrationError.missingRemoteInputKeyID(
                 host: config.host,
                 appID: launchContext.app.id
             )
@@ -58,9 +58,9 @@ func liveApolloLaunchReturnsRTSPSessionURL() async throws {
     }
 }
 
-@Test("Live Apollo realtime session reaches rendering with active audio and negotiated codec")
-func liveApolloRealtimeSessionReachesRenderingWithAudioAndCodec() async throws {
-    guard let config = LiveApolloIntegrationConfiguration.enabledFromEnvironment() else {
+@Test("Live Lumen realtime session reaches rendering with active audio and negotiated codec")
+func liveLumenRealtimeSessionReachesRenderingWithAudioAndCodec() async throws {
+    guard let config = LiveLumenIntegrationConfiguration.enabledFromEnvironment() else {
         return
     }
 
@@ -68,7 +68,7 @@ func liveApolloRealtimeSessionReachesRenderingWithAudioAndCodec() async throws {
     guard let rawSessionURL = launchContext.launchResult.sessionURL else {
         let message = "Live launch returned nil session URL"
         Issue.record("\(message). host=\(config.host), appID=\(launchContext.app.id), verb=\(launchContext.launchResult.verb)")
-        throw LiveApolloIntegrationError.missingSessionURL(
+        throw LiveLumenIntegrationError.missingSessionURL(
             host: config.host,
             appID: launchContext.app.id,
             verb: launchContext.launchResult.verb,
@@ -80,7 +80,7 @@ func liveApolloRealtimeSessionReachesRenderingWithAudioAndCodec() async throws {
     guard !sessionURL.isEmpty else {
         let message = "Live launch returned empty session URL"
         Issue.record("\(message). host=\(config.host), appID=\(launchContext.app.id), verb=\(launchContext.launchResult.verb)")
-        throw LiveApolloIntegrationError.emptySessionURL(
+        throw LiveLumenIntegrationError.emptySessionURL(
             host: config.host,
             appID: launchContext.app.id,
             verb: launchContext.launchResult.verb,
@@ -113,7 +113,7 @@ func liveApolloRealtimeSessionReachesRenderingWithAudioAndCodec() async throws {
             }
             guard activeVideoCodec != nil else {
                 try? await runtime.disconnect()
-                throw LiveApolloIntegrationError.missingNegotiatedVideoCodec(
+                throw LiveLumenIntegrationError.missingNegotiatedVideoCodec(
                     host: config.host,
                     appID: launchContext.app.id
                 )
@@ -130,7 +130,7 @@ func liveApolloRealtimeSessionReachesRenderingWithAudioAndCodec() async throws {
                     break
                 case let .failed(message, stateTrace):
                     try? await runtime.disconnect()
-                    throw LiveApolloIntegrationError.audioPipelineFailed(
+                    throw LiveLumenIntegrationError.audioPipelineFailed(
                         host: config.host,
                         appID: launchContext.app.id,
                         message: message,
@@ -138,7 +138,7 @@ func liveApolloRealtimeSessionReachesRenderingWithAudioAndCodec() async throws {
                     )
                 case let .timedOut(lastState, stateTrace):
                     try? await runtime.disconnect()
-                    throw LiveApolloIntegrationError.audioPipelineTimedOut(
+                    throw LiveLumenIntegrationError.audioPipelineTimedOut(
                         host: config.host,
                         appID: launchContext.app.id,
                         lastState: lastState,
@@ -152,7 +152,7 @@ func liveApolloRealtimeSessionReachesRenderingWithAudioAndCodec() async throws {
                 "Live realtime session entered failed state. host=\(config.host), appID=\(launchContext.app.id), message=\(message), states=\(stateTrace.joined(separator: " -> "))"
             )
             try? await runtime.disconnect()
-            throw LiveApolloIntegrationError.renderingFailed(
+            throw LiveLumenIntegrationError.renderingFailed(
                 host: config.host,
                 appID: launchContext.app.id,
                 message: message,
@@ -163,7 +163,7 @@ func liveApolloRealtimeSessionReachesRenderingWithAudioAndCodec() async throws {
                 "Live realtime session timed out waiting for rendering. host=\(config.host), appID=\(launchContext.app.id), sessionURL=\(sessionURL), lastState=\(lastState), states=\(stateTrace.joined(separator: " -> "))"
             )
             try? await runtime.disconnect()
-            throw LiveApolloIntegrationError.renderingTimedOut(
+            throw LiveLumenIntegrationError.renderingTimedOut(
                 host: config.host,
                 appID: launchContext.app.id,
                 lastState: lastState,
@@ -182,13 +182,13 @@ func liveApolloRealtimeSessionReachesRenderingWithAudioAndCodec() async throws {
     }
 }
 
-private struct LiveApolloLaunchContext: Sendable {
+private struct LiveLumenLaunchContext: Sendable {
     let serverInfo: ShadowClientGameStreamServerInfo
     let app: ShadowClientRemoteAppDescriptor
     let launchResult: ShadowClientGameStreamLaunchResult
 }
 
-private struct LiveApolloIntegrationConfiguration: Sendable {
+private struct LiveLumenIntegrationConfiguration: Sendable {
     let host: String
     let preferredAppID: Int
     let fallbackHTTPSPort: Int
@@ -333,7 +333,7 @@ private enum LiveAudioWaitResult: Sendable {
     case timedOut(lastState: String, stateTrace: [String])
 }
 
-private func liveLaunchContext(config: LiveApolloIntegrationConfiguration) async throws -> LiveApolloLaunchContext {
+private func liveLaunchContext(config: LiveLumenIntegrationConfiguration) async throws -> LiveLumenLaunchContext {
     let metadataClient = NativeGameStreamMetadataClient()
     let controlClient = NativeGameStreamControlClient()
 
@@ -343,7 +343,7 @@ private func liveLaunchContext(config: LiveApolloIntegrationConfiguration) async
 
     guard !apps.isEmpty else {
         Issue.record("Live app list was empty. host=\(config.host), httpsPort=\(appListPort)")
-        throw LiveApolloIntegrationError.emptyAppList
+        throw LiveLumenIntegrationError.emptyAppList
     }
 
     let app = apps.first(where: { $0.id == config.preferredAppID }) ?? apps[0]
@@ -357,7 +357,7 @@ private func liveLaunchContext(config: LiveApolloIntegrationConfiguration) async
         settings: config.launchSettings()
     )
 
-    return LiveApolloLaunchContext(
+    return LiveLumenLaunchContext(
         serverInfo: serverInfo,
         app: app,
         launchResult: launchResult
@@ -477,7 +477,7 @@ private func describeAudioState(_ state: ShadowClientRealtimeAudioOutputState) -
     }
 }
 
-private enum LiveApolloIntegrationError: Error {
+private enum LiveLumenIntegrationError: Error {
     case emptyAppList
     case unpairedHost(host: String, pairStatus: String)
     case missingSessionURL(host: String, appID: Int, verb: String, message: String)

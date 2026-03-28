@@ -1,6 +1,6 @@
 import Foundation
 
-enum ShadowClientApolloPermission: CaseIterable, Sendable {
+enum ShadowClientLumenPermission: CaseIterable, Sendable {
     case listApps
     case viewStreams
     case launchApps
@@ -39,12 +39,12 @@ enum ShadowClientApolloPermission: CaseIterable, Sendable {
         }
     }
 
-    static func contains(_ permission: ShadowClientApolloPermission, in rawValue: UInt32) -> Bool {
+    static func contains(_ permission: ShadowClientLumenPermission, in rawValue: UInt32) -> Bool {
         rawValue & permission.bit != 0
     }
 
     static func updating(
-        _ permission: ShadowClientApolloPermission,
+        _ permission: ShadowClientLumenPermission,
         enabled: Bool,
         in rawValue: UInt32
     ) -> UInt32 {

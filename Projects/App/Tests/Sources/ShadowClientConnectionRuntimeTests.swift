@@ -101,8 +101,8 @@ func nativeHostProbeConnectorUsesExplicitPortFromHostEntry() async {
     )
 }
 
-@Test("Native host probe connector forwards explicit Apollo connect candidates without falling back to default ports")
-func nativeHostProbeConnectorForwardsExplicitApolloConnectCandidatePorts() async throws {
+@Test("Native host probe connector forwards explicit Lumen connect candidates without falling back to default ports")
+func nativeHostProbeConnectorForwardsExplicitLumenConnectCandidatePorts() async throws {
     let capture = HostProbeCapture()
     let client = NativeHostProbeConnectionClient(requiredPorts: [47984, 47989, 48010]) { host, ports in
         await capture.recordInvocation(host: host, ports: ports)

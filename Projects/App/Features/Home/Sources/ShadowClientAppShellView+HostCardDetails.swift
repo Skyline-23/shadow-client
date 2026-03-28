@@ -227,7 +227,7 @@ extension ShadowClientAppShellView {
                     VStack(alignment: .leading, spacing: 10) {
                         ShadowUIHostInsetField {
                             ShadowClientPlatformTextField(
-                                text: hostApolloAdminUsernameBinding(host),
+                                text: hostLumenAdminUsernameBinding(host),
                                 placeholder: "Admin username",
                                 accessibilityLabel: "Lumen admin username",
                                 fontWeight: .semibold
@@ -236,7 +236,7 @@ extension ShadowClientAppShellView {
 
                         ShadowUIHostInsetField {
                             ShadowClientPlatformTextField(
-                                text: hostApolloAdminPasswordBinding(host),
+                                text: hostLumenAdminPasswordBinding(host),
                                 placeholder: "Admin password",
                                 accessibilityLabel: "Lumen admin password",
                                 fontWeight: .semibold,
@@ -247,15 +247,15 @@ extension ShadowClientAppShellView {
                         ViewThatFits(in: .horizontal) {
                             HStack(spacing: 10) {
                                 Button("Sync Lumen Client") {
-                                    remoteDesktopRuntime.refreshSelectedHostApolloAdmin(
-                                        username: hostApolloAdminUsername(host),
-                                        password: hostApolloAdminPassword(host)
+                                    remoteDesktopRuntime.refreshSelectedHostLumenAdmin(
+                                        username: hostLumenAdminUsername(host),
+                                        password: hostLumenAdminPassword(host)
                                     )
                                 }
                                 .buttonStyle(.bordered)
                                 .disabled(remoteDesktopRuntime.selectedHostID != host.id)
 
-                                Text(hostApolloAdminStateLabel(for: host))
+                                Text(hostLumenAdminStateLabel(for: host))
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(Color.white.opacity(0.68))
                                     .lineLimit(1)
@@ -263,15 +263,15 @@ extension ShadowClientAppShellView {
 
                             VStack(alignment: .leading, spacing: 8) {
                                 Button("Sync Lumen Client") {
-                                    remoteDesktopRuntime.refreshSelectedHostApolloAdmin(
-                                        username: hostApolloAdminUsername(host),
-                                        password: hostApolloAdminPassword(host)
+                                    remoteDesktopRuntime.refreshSelectedHostLumenAdmin(
+                                        username: hostLumenAdminUsername(host),
+                                        password: hostLumenAdminPassword(host)
                                     )
                                 }
                                 .buttonStyle(.bordered)
                                 .disabled(remoteDesktopRuntime.selectedHostID != host.id)
 
-                                Text(hostApolloAdminStateLabel(for: host))
+                                Text(hostLumenAdminStateLabel(for: host))
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(Color.white.opacity(0.68))
                             }
@@ -279,19 +279,19 @@ extension ShadowClientAppShellView {
                     }
                 }
 
-                if hostApolloAdminProfile(host) != nil {
+                if hostLumenAdminProfile(host) != nil {
                     ShadowUIHostInsetCard {
                         VStack(alignment: .leading, spacing: 10) {
                             ShadowUIHostInsetField {
                                 ShadowClientPlatformTextField(
-                                    text: hostApolloDisplayModeBinding(for: host),
+                                    text: hostLumenDisplayModeBinding(for: host),
                                     placeholder: "Display mode override",
                                     accessibilityLabel: "Lumen display mode override",
                                     fontWeight: .semibold
                                 )
                             }
 
-                            Toggle(isOn: hostApolloAlwaysUseVirtualDisplayBinding(for: host)) {
+                            Toggle(isOn: hostLumenAlwaysUseVirtualDisplayBinding(for: host)) {
                                 Text("Always use virtual display")
                                     .font(.callout.weight(.semibold))
                                     .foregroundStyle(.white)
@@ -303,8 +303,8 @@ extension ShadowClientAppShellView {
                                     .font(.caption.weight(.bold))
                                     .foregroundStyle(Color.white.opacity(0.68))
 
-                                ForEach(ShadowClientApolloPermission.allCases, id: \.self) { permission in
-                                    Toggle(isOn: hostApolloPermissionBinding(for: host, permission: permission)) {
+                                ForEach(ShadowClientLumenPermission.allCases, id: \.self) { permission in
+                                    Toggle(isOn: hostLumenPermissionBinding(for: host, permission: permission)) {
                                         Text(permission.label)
                                             .font(.callout.weight(.semibold))
                                             .foregroundStyle(.white)
@@ -314,12 +314,12 @@ extension ShadowClientAppShellView {
                             }
 
                             Button("Save Lumen Overrides") {
-                                remoteDesktopRuntime.updateSelectedHostApolloAdmin(
-                                    username: hostApolloAdminUsername(host),
-                                    password: hostApolloAdminPassword(host),
-                                    displayModeOverride: hostApolloDisplayModeDraft(for: host),
-                                    alwaysUseVirtualDisplay: hostApolloAlwaysUseVirtualDisplayDraft(for: host),
-                                    permissions: hostApolloPermissionDraft(for: host)
+                                remoteDesktopRuntime.updateSelectedHostLumenAdmin(
+                                    username: hostLumenAdminUsername(host),
+                                    password: hostLumenAdminPassword(host),
+                                    displayModeOverride: hostLumenDisplayModeDraft(for: host),
+                                    alwaysUseVirtualDisplay: hostLumenAlwaysUseVirtualDisplayDraft(for: host),
+                                    permissions: hostLumenPermissionDraft(for: host)
                                 )
                             }
                             .buttonStyle(.borderedProminent)
@@ -328,18 +328,18 @@ extension ShadowClientAppShellView {
                             ViewThatFits(in: .horizontal) {
                                 HStack(spacing: 10) {
                                     Button("Disconnect Client") {
-                                        remoteDesktopRuntime.disconnectSelectedHostApolloAdmin(
-                                            username: hostApolloAdminUsername(host),
-                                            password: hostApolloAdminPassword(host)
+                                        remoteDesktopRuntime.disconnectSelectedHostLumenAdmin(
+                                            username: hostLumenAdminUsername(host),
+                                            password: hostLumenAdminPassword(host)
                                         )
                                     }
                                     .buttonStyle(.bordered)
                                     .disabled(remoteDesktopRuntime.selectedHostID != host.id)
 
                                     Button("Unpair Client") {
-                                        remoteDesktopRuntime.unpairSelectedHostApolloAdmin(
-                                            username: hostApolloAdminUsername(host),
-                                            password: hostApolloAdminPassword(host)
+                                        remoteDesktopRuntime.unpairSelectedHostLumenAdmin(
+                                            username: hostLumenAdminUsername(host),
+                                            password: hostLumenAdminPassword(host)
                                         )
                                     }
                                     .buttonStyle(.bordered)
@@ -348,18 +348,18 @@ extension ShadowClientAppShellView {
 
                                 VStack(spacing: 8) {
                                     Button("Disconnect Client") {
-                                        remoteDesktopRuntime.disconnectSelectedHostApolloAdmin(
-                                            username: hostApolloAdminUsername(host),
-                                            password: hostApolloAdminPassword(host)
+                                        remoteDesktopRuntime.disconnectSelectedHostLumenAdmin(
+                                            username: hostLumenAdminUsername(host),
+                                            password: hostLumenAdminPassword(host)
                                         )
                                     }
                                     .buttonStyle(.bordered)
                                     .disabled(remoteDesktopRuntime.selectedHostID != host.id)
 
                                     Button("Unpair Client") {
-                                        remoteDesktopRuntime.unpairSelectedHostApolloAdmin(
-                                            username: hostApolloAdminUsername(host),
-                                            password: hostApolloAdminPassword(host)
+                                        remoteDesktopRuntime.unpairSelectedHostLumenAdmin(
+                                            username: hostLumenAdminUsername(host),
+                                            password: hostLumenAdminPassword(host)
                                         )
                                     }
                                     .buttonStyle(.bordered)
@@ -375,7 +375,7 @@ extension ShadowClientAppShellView {
 
     @ViewBuilder
     func remoteDesktopHostStatusCallout(_ host: ShadowClientRemoteHostDescriptor) -> some View {
-        let lumenSummary = hostApolloAdminProfile(host).map(hostApolloAdminSummary)
+        let lumenSummary = hostLumenAdminProfile(host).map(hostLumenAdminSummary)
         let callouts = ShadowClientHostSpotlightPresentationKit.statusCallouts(
             host: host,
             issue: hostPresentationIssue(host),
@@ -486,8 +486,8 @@ extension ShadowClientAppShellView {
                     connectionHost = connectionCandidate(for: selectedHost)
                 }
                 remoteDesktopRuntime.pairSelectedHost(
-                    username: remoteDesktopRuntime.selectedHost.map { hostApolloAdminUsername($0) },
-                    password: remoteDesktopRuntime.selectedHost.map { hostApolloAdminPassword($0) }
+                    username: remoteDesktopRuntime.selectedHost.map { hostLumenAdminUsername($0) },
+                    password: remoteDesktopRuntime.selectedHost.map { hostLumenAdminPassword($0) }
                 )
             }
             .accessibilityIdentifier("shadow.home.hosts.start-pairing")

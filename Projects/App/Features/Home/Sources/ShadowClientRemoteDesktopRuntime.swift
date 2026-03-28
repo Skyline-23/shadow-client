@@ -307,7 +307,7 @@ public struct ShadowClientRemoteSessionIssue: Equatable, Sendable {
     }
 }
 
-public enum ShadowClientApolloAdminClientState: Equatable, Sendable {
+public enum ShadowClientLumenAdminClientState: Equatable, Sendable {
     case idle
     case loading
     case saving
@@ -1394,16 +1394,16 @@ private enum ShadowClientRemoteDesktopCommand: Sendable {
     case selectHost(String)
     case wakeSelectedHost(macAddress: String, port: UInt16)
     case refreshSelectedHostApps
-    case refreshSelectedHostApolloAdmin(username: String, password: String)
-    case updateSelectedHostApolloAdmin(
+    case refreshSelectedHostLumenAdmin(username: String, password: String)
+    case updateSelectedHostLumenAdmin(
         username: String,
         password: String,
         displayModeOverride: String,
         alwaysUseVirtualDisplay: Bool,
         permissions: UInt32
     )
-    case disconnectSelectedHostApolloAdmin(username: String, password: String)
-    case unpairSelectedHostApolloAdmin(username: String, password: String)
+    case disconnectSelectedHostLumenAdmin(username: String, password: String)
+    case unpairSelectedHostLumenAdmin(username: String, password: String)
 }
 
 private struct ShadowClientLaunchRequestContext: Sendable {
@@ -1551,17 +1551,17 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @Published public private(set) var launchState: ShadowClientRemoteLaunchState = .idle
     @Published public private(set) var activeSession: ShadowClientActiveRemoteSession?
     @Published public private(set) var sessionIssue: ShadowClientRemoteSessionIssue?
-    @Published public private(set) var selectedHostApolloAdminProfile: ShadowClientApolloAdminClientProfile?
-    @Published public private(set) var selectedHostApolloAdminState: ShadowClientApolloAdminClientState = .idle
+    @Published public private(set) var selectedHostLumenAdminProfile: ShadowClientLumenAdminClientProfile?
+    @Published public private(set) var selectedHostLumenAdminState: ShadowClientLumenAdminClientState = .idle
     @Published public private(set) var selectedHostWakeState: ShadowClientRemoteHostWakeState = .idle
     public let sessionPresentationMode: ShadowClientRemoteSessionPresentationMode
     public let sessionSurfaceContext: ShadowClientRealtimeSessionSurfaceContext
 
     private let metadataClient: any ShadowClientGameStreamMetadataClient
     private let controlClient: any ShadowClientGameStreamControlClient
-    private let pairingClient: any ShadowClientApolloPairingClient
+    private let pairingClient: any ShadowClientLumenPairingClient
     private let wakeOnLANClient: any ShadowClientWakeOnLANClient
-    private let apolloAdminClient: any ShadowClientApolloAdminClient
+    private let lumenAdminClient: any ShadowClientLumenAdminClient
     private let clipboardClient: any ShadowClientClipboardClient
     private let sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient
     private let sessionInputClient: any ShadowClientRemoteSessionInputClient
@@ -1608,9 +1608,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
         controlClient: any ShadowClientGameStreamControlClient = NativeGameStreamControlClient(),
-        pairingClient: any ShadowClientApolloPairingClient = NativeShadowClientApolloPairingClient(),
+        pairingClient: any ShadowClientLumenPairingClient = NativeShadowClientLumenPairingClient(),
         wakeOnLANClient: any ShadowClientWakeOnLANClient = NativeShadowClientWakeOnLANClient(),
-        apolloAdminClient: any ShadowClientApolloAdminClient = NativeShadowClientApolloAdminClient(),
+        lumenAdminClient: any ShadowClientLumenAdminClient = NativeShadowClientLumenAdminClient(),
         clipboardClient: any ShadowClientClipboardClient = NativeShadowClientClipboardClient(),
         sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient = NoopShadowClientRemoteSessionConnectionClient(),
         sessionInputClient: any ShadowClientRemoteSessionInputClient = NoopShadowClientRemoteSessionInputClient(),
@@ -1630,7 +1630,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         self.controlClient = controlClient
         self.pairingClient = pairingClient
         self.wakeOnLANClient = wakeOnLANClient
-        self.apolloAdminClient = apolloAdminClient
+        self.lumenAdminClient = lumenAdminClient
         self.clipboardClient = clipboardClient
         self.sessionConnectionClient = sessionConnectionClient
         self.sessionInputClient = sessionInputClient
@@ -1741,23 +1741,23 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             performWakeSelectedHost(macAddress: macAddress, port: port)
         case .refreshSelectedHostApps:
             performRefreshSelectedHostApps()
-        case let .refreshSelectedHostApolloAdmin(username, password):
-            performRefreshSelectedHostApolloAdmin(username: username, password: password)
-        case let .updateSelectedHostApolloAdmin(username, password, displayModeOverride, alwaysUseVirtualDisplay, permissions):
-            performUpdateSelectedHostApolloAdmin(
+        case let .refreshSelectedHostLumenAdmin(username, password):
+            performRefreshSelectedHostLumenAdmin(username: username, password: password)
+        case let .updateSelectedHostLumenAdmin(username, password, displayModeOverride, alwaysUseVirtualDisplay, permissions):
+            performUpdateSelectedHostLumenAdmin(
                 username: username,
                 password: password,
                 displayModeOverride: displayModeOverride,
                 alwaysUseVirtualDisplay: alwaysUseVirtualDisplay,
                 permissions: permissions
             )
-        case let .disconnectSelectedHostApolloAdmin(username, password):
-            performDisconnectSelectedHostApolloAdmin(
+        case let .disconnectSelectedHostLumenAdmin(username, password):
+            performDisconnectSelectedHostLumenAdmin(
                 username: username,
                 password: password
             )
-        case let .unpairSelectedHostApolloAdmin(username, password):
-            performUnpairSelectedHostApolloAdmin(
+        case let .unpairSelectedHostLumenAdmin(username, password):
+            performUnpairSelectedHostLumenAdmin(
                 username: username,
                 password: password
             )
@@ -1822,7 +1822,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             apps = []
             cachedAppsByHostID = [:]
             selectedHostID = nil
-            clearSelectedHostApolloAdminState()
+            clearSelectedHostLumenAdminState()
             clearSelectedHostWakeState()
             pendingSelectedHostID = nil
             hostState = .idle
@@ -2109,7 +2109,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         pairGeneration &+= 1
         let currentPairGeneration = pairGeneration
         let pairingClient = pairingClient
-        let apolloAdminClient = apolloAdminClient
+        let lumenAdminClient = lumenAdminClient
         let pairingRouteStore = pairingRouteStore
         let currentHosts = latestResolvedHostDescriptors.isEmpty ? hosts : latestResolvedHostDescriptors
         let currentLatestHostCandidates = latestHostCandidates
@@ -2165,7 +2165,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                                !trimmedUsername.isEmpty,
                                !trimmedPassword.isEmpty,
                                startedPairing.status == .pending {
-                                try await apolloAdminClient.approvePairingRequest(
+                                try await lumenAdminClient.approvePairingRequest(
                                     host: candidate.host,
                                     httpsPort: controlHTTPSPort,
                                     username: trimmedUsername,
@@ -2174,7 +2174,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                                 )
                             }
 
-                            _ = try await Self.awaitApolloPairingApproval(
+                            _ = try await Self.awaitLumenPairingApproval(
                                 pairingClient: pairingClient,
                                 host: candidate.host,
                                 httpsPort: candidate.httpsPort
@@ -2280,12 +2280,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
     }
 
-    private static func awaitApolloPairingApproval(
-        pairingClient: any ShadowClientApolloPairingClient,
+    private static func awaitLumenPairingApproval(
+        pairingClient: any ShadowClientLumenPairingClient,
         host: String,
         httpsPort: Int,
-        initialSession: ShadowClientApolloPairingSession
-    ) async throws -> ShadowClientApolloPairingSession {
+        initialSession: ShadowClientLumenPairingSession
+    ) async throws -> ShadowClientLumenPairingSession {
         var currentSession = initialSession
 
         while true {
@@ -2327,7 +2327,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             selectedHostID = remainingHosts.first?.id
             apps = []
             appState = remainingHosts.isEmpty ? .idle : appState
-            clearSelectedHostApolloAdminState()
+            clearSelectedHostLumenAdminState()
             clearSelectedHostWakeState()
         }
 
@@ -3964,7 +3964,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         serverCodecModeSupport: Int
     ) -> ShadowClientVideoCodecPreference {
         if serverCodecModeSupport == 0 {
-            // Sunshine always advertises ServerCodecModeSupport, but Apollo can omit it.
+            // Sunshine always advertises ServerCodecModeSupport, but Lumen can omit it.
             // Keep the client-decoder-derived preference in that case instead of forcing H.264.
             return ShadowClientVideoCodecSupport().resolvePreferredCodec(
                 preferredCodec,
@@ -4284,7 +4284,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         pendingSelectedHostID = nil
         selectedHostID = resolvedHost.id
-        clearSelectedHostApolloAdminState()
+        clearSelectedHostLumenAdminState()
         clearSelectedHostWakeState()
         performRefreshSelectedHostApps()
     }
@@ -4295,9 +4295,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    public func refreshSelectedHostApolloAdmin(username: String, password: String) {
+    public func refreshSelectedHostLumenAdmin(username: String, password: String) {
         commandContinuation.yield(
-            .refreshSelectedHostApolloAdmin(
+            .refreshSelectedHostLumenAdmin(
                 username: username,
                 password: password
             )
@@ -4305,7 +4305,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    public func updateSelectedHostApolloAdmin(
+    public func updateSelectedHostLumenAdmin(
         username: String,
         password: String,
         displayModeOverride: String,
@@ -4313,7 +4313,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         permissions: UInt32
     ) {
         commandContinuation.yield(
-            .updateSelectedHostApolloAdmin(
+            .updateSelectedHostLumenAdmin(
                 username: username,
                 password: password,
                 displayModeOverride: displayModeOverride,
@@ -4324,9 +4324,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    public func disconnectSelectedHostApolloAdmin(username: String, password: String) {
+    public func disconnectSelectedHostLumenAdmin(username: String, password: String) {
         commandContinuation.yield(
-            .disconnectSelectedHostApolloAdmin(
+            .disconnectSelectedHostLumenAdmin(
                 username: username,
                 password: password
             )
@@ -4334,9 +4334,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    public func unpairSelectedHostApolloAdmin(username: String, password: String) {
+    public func unpairSelectedHostLumenAdmin(username: String, password: String) {
         commandContinuation.yield(
-            .unpairSelectedHostApolloAdmin(
+            .unpairSelectedHostLumenAdmin(
                 username: username,
                 password: password
             )
@@ -4479,12 +4479,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    private func performRefreshSelectedHostApolloAdmin(
+    private func performRefreshSelectedHostLumenAdmin(
         username: String,
         password: String
     ) {
         guard let selectedHost else {
-            clearSelectedHostApolloAdminState()
+            clearSelectedHostLumenAdminState()
             clearSelectedHostWakeState()
             return
         }
@@ -4492,21 +4492,21 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
-            selectedHostApolloAdminProfile = nil
-            selectedHostApolloAdminState = .failed("Lumen admin credentials are required.")
+            selectedHostLumenAdminProfile = nil
+            selectedHostLumenAdminState = .failed("Lumen admin credentials are required.")
             return
         }
 
-        selectedHostApolloAdminState = .loading
-        selectedHostApolloAdminProfile = nil
+        selectedHostLumenAdminState = .loading
+        selectedHostLumenAdminProfile = nil
 
-        let apolloAdminClient = apolloAdminClient
+        let lumenAdminClient = lumenAdminClient
         let host = selectedHost.host
         let httpsPort = selectedHost.httpsPort
         let selectedHostID = selectedHost.id
         Task { [weak self] in
             do {
-                let profile = try await apolloAdminClient.fetchCurrentClientProfile(
+                let profile = try await lumenAdminClient.fetchCurrentClientProfile(
                     host: host,
                     httpsPort: httpsPort,
                     username: trimmedUsername,
@@ -4516,23 +4516,23 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     guard let self, self.selectedHostID == selectedHostID else {
                         return
                     }
-                    self.selectedHostApolloAdminProfile = profile
-                    self.selectedHostApolloAdminState = .loaded
+                    self.selectedHostLumenAdminProfile = profile
+                    self.selectedHostLumenAdminState = .loaded
                 }
             } catch {
                 await MainActor.run { [weak self] in
                     guard let self, self.selectedHostID == selectedHostID else {
                         return
                     }
-                    self.selectedHostApolloAdminProfile = nil
-                    self.selectedHostApolloAdminState = .failed(error.localizedDescription)
+                    self.selectedHostLumenAdminProfile = nil
+                    self.selectedHostLumenAdminState = .failed(error.localizedDescription)
                 }
             }
         }
     }
 
     @MainActor
-    private func performUpdateSelectedHostApolloAdmin(
+    private func performUpdateSelectedHostLumenAdmin(
         username: String,
         password: String,
         displayModeOverride: String,
@@ -4540,26 +4540,26 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         permissions: UInt32
     ) {
         guard let selectedHost,
-              let currentProfile = selectedHostApolloAdminProfile
+              let currentProfile = selectedHostLumenAdminProfile
         else {
-            selectedHostApolloAdminState = .failed("Sync Lumen client metadata first.")
+            selectedHostLumenAdminState = .failed("Sync Lumen client metadata first.")
             return
         }
 
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
-            selectedHostApolloAdminState = .failed("Lumen admin credentials are required.")
+            selectedHostLumenAdminState = .failed("Lumen admin credentials are required.")
             return
         }
 
-        selectedHostApolloAdminState = .saving
+        selectedHostLumenAdminState = .saving
 
-        let apolloAdminClient = apolloAdminClient
+        let lumenAdminClient = lumenAdminClient
         let host = selectedHost.host
         let httpsPort = selectedHost.httpsPort
         let selectedHostID = selectedHost.id
-        let updatedProfile = ShadowClientApolloAdminClientProfile(
+        let updatedProfile = ShadowClientLumenAdminClientProfile(
             name: currentProfile.name,
             uuid: currentProfile.uuid,
             displayModeOverride: displayModeOverride.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -4573,7 +4573,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         Task { [weak self] in
             do {
-                let savedProfile = try await apolloAdminClient.updateCurrentClientProfile(
+                let savedProfile = try await lumenAdminClient.updateCurrentClientProfile(
                     host: host,
                     httpsPort: httpsPort,
                     username: trimmedUsername,
@@ -4584,24 +4584,24 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     guard let self, self.selectedHostID == selectedHostID else {
                         return
                     }
-                    self.selectedHostApolloAdminProfile = savedProfile
-                    self.selectedHostApolloAdminState = .loaded
+                    self.selectedHostLumenAdminProfile = savedProfile
+                    self.selectedHostLumenAdminState = .loaded
                 }
             } catch {
                 await MainActor.run { [weak self] in
                     guard let self, self.selectedHostID == selectedHostID else {
                         return
                     }
-                    self.selectedHostApolloAdminState = .failed(error.localizedDescription)
+                    self.selectedHostLumenAdminState = .failed(error.localizedDescription)
                 }
             }
         }
     }
 
     @MainActor
-    private func clearSelectedHostApolloAdminState() {
-        selectedHostApolloAdminProfile = nil
-        selectedHostApolloAdminState = .idle
+    private func clearSelectedHostLumenAdminState() {
+        selectedHostLumenAdminProfile = nil
+        selectedHostLumenAdminState = .idle
     }
 
     @MainActor
@@ -4654,26 +4654,26 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    private func performDisconnectSelectedHostApolloAdmin(
+    private func performDisconnectSelectedHostLumenAdmin(
         username: String,
         password: String
     ) {
         guard let selectedHost,
-              let currentProfile = selectedHostApolloAdminProfile
+              let currentProfile = selectedHostLumenAdminProfile
         else {
-            selectedHostApolloAdminState = .failed("Sync Lumen client metadata first.")
+            selectedHostLumenAdminState = .failed("Sync Lumen client metadata first.")
             return
         }
 
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
-            selectedHostApolloAdminState = .failed("Lumen admin credentials are required.")
+            selectedHostLumenAdminState = .failed("Lumen admin credentials are required.")
             return
         }
 
-        selectedHostApolloAdminState = .saving
-        let apolloAdminClient = apolloAdminClient
+        selectedHostLumenAdminState = .saving
+        let lumenAdminClient = lumenAdminClient
         let host = selectedHost.host
         let httpsPort = selectedHost.httpsPort
         let selectedHostID = selectedHost.id
@@ -4681,7 +4681,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         Task { [weak self] in
             do {
-                try await apolloAdminClient.disconnectCurrentClient(
+                try await lumenAdminClient.disconnectCurrentClient(
                     host: host,
                     httpsPort: httpsPort,
                     username: trimmedUsername,
@@ -4692,8 +4692,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     guard let self, self.selectedHostID == selectedHostID else {
                         return
                     }
-                    if let profile = self.selectedHostApolloAdminProfile {
-                        self.selectedHostApolloAdminProfile = .init(
+                    if let profile = self.selectedHostLumenAdminProfile {
+                        self.selectedHostLumenAdminProfile = .init(
                             name: profile.name,
                             uuid: profile.uuid,
                             displayModeOverride: profile.displayModeOverride,
@@ -4705,40 +4705,40 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                             undoCommands: profile.undoCommands
                         )
                     }
-                    self.selectedHostApolloAdminState = .loaded
+                    self.selectedHostLumenAdminState = .loaded
                 }
             } catch {
                 await MainActor.run { [weak self] in
                     guard let self, self.selectedHostID == selectedHostID else {
                         return
                     }
-                    self.selectedHostApolloAdminState = .failed(error.localizedDescription)
+                    self.selectedHostLumenAdminState = .failed(error.localizedDescription)
                 }
             }
         }
     }
 
     @MainActor
-    private func performUnpairSelectedHostApolloAdmin(
+    private func performUnpairSelectedHostLumenAdmin(
         username: String,
         password: String
     ) {
         guard let selectedHost,
-              let currentProfile = selectedHostApolloAdminProfile
+              let currentProfile = selectedHostLumenAdminProfile
         else {
-            selectedHostApolloAdminState = .failed("Sync Lumen client metadata first.")
+            selectedHostLumenAdminState = .failed("Sync Lumen client metadata first.")
             return
         }
 
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
-            selectedHostApolloAdminState = .failed("Lumen admin credentials are required.")
+            selectedHostLumenAdminState = .failed("Lumen admin credentials are required.")
             return
         }
 
-        selectedHostApolloAdminState = .saving
-        let apolloAdminClient = apolloAdminClient
+        selectedHostLumenAdminState = .saving
+        let lumenAdminClient = lumenAdminClient
         let host = selectedHost.host
         let httpsPort = selectedHost.httpsPort
         let selectedHostID = selectedHost.id
@@ -4746,7 +4746,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         Task { [weak self] in
             do {
-                try await apolloAdminClient.unpairCurrentClient(
+                try await lumenAdminClient.unpairCurrentClient(
                     host: host,
                     httpsPort: httpsPort,
                     username: trimmedUsername,
@@ -4757,7 +4757,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     guard let self, self.selectedHostID == selectedHostID else {
                         return
                     }
-                    self.clearSelectedHostApolloAdminState()
+                    self.clearSelectedHostLumenAdminState()
                     self.clearSelectedHostWakeState()
                     self.performRefreshHosts(
                         candidates: self.latestHostCandidates,
@@ -4769,7 +4769,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     guard let self, self.selectedHostID == selectedHostID else {
                         return
                     }
-                    self.selectedHostApolloAdminState = .failed(error.localizedDescription)
+                    self.selectedHostLumenAdminState = .failed(error.localizedDescription)
                 }
             }
         }
@@ -6822,7 +6822,7 @@ enum ShadowClientGameStreamXMLParsers {
     static func parseAppList(xml: String) throws -> [ShadowClientRemoteAppDescriptor] {
         let document = try ShadowClientXMLAppListParser.parse(xml: xml)
         try validateRoot(document.rootStatus)
-        if isApolloPermissionDeniedSentinel(document.apps) {
+        if isLumenPermissionDeniedSentinel(document.apps) {
             throw ShadowClientGameStreamError.responseRejected(
                 code: 403,
                 message: "Permission denied"
@@ -6834,7 +6834,7 @@ enum ShadowClientGameStreamXMLParsers {
         }
     }
 
-    private static func isApolloPermissionDeniedSentinel(
+    private static func isLumenPermissionDeniedSentinel(
         _ apps: [ShadowClientRemoteAppDescriptor]
     ) -> Bool {
         guard apps.count == 1, let app = apps.first else {

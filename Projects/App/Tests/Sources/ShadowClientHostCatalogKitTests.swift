@@ -2,11 +2,11 @@ import Foundation
 import Testing
 @testable import ShadowClientFeatureHome
 
-@Test("Host catalog maps cached Apollo HTTPS routes back to Moonlight connect candidates")
-func hostCatalogMapsCachedApolloHTTPSRouteToConnectCandidate() {
+@Test("Host catalog maps cached Lumen HTTPS routes back to Moonlight connect candidates")
+func hostCatalogMapsCachedLumenHTTPSRouteToConnectCandidate() {
     let descriptor = ShadowClientRemoteHostDescriptor(
-        activeRoute: .init(host: "apollo-host.local", httpsPort: 48_984),
-        displayName: "Apollo Mac",
+        activeRoute: .init(host: "lumen-host.local", httpsPort: 48_984),
+        displayName: "Lumen Mac",
         pairStatus: .paired,
         currentGameID: 0,
         serverState: "SUNSHINE_SERVER_FREE",
@@ -14,12 +14,12 @@ func hostCatalogMapsCachedApolloHTTPSRouteToConnectCandidate() {
         gfeVersion: nil,
         uniqueID: "HOST-APOLLO",
         lastError: nil,
-        routes: .init(active: .init(host: "apollo-host.local", httpsPort: 48_984))
+        routes: .init(active: .init(host: "lumen-host.local", httpsPort: 48_984))
     )
 
     #expect(
         ShadowClientHostCatalogKit.cachedCandidateHosts(from: [descriptor]) == [
-            "apollo-host.local:48989",
+            "lumen-host.local:48989",
         ]
     )
 }
@@ -27,8 +27,8 @@ func hostCatalogMapsCachedApolloHTTPSRouteToConnectCandidate() {
 @Test("Host catalog does not recache certificate mismatch routes as automatic candidates")
 func hostCatalogSkipsRecachingCertificateMismatchRoutes() {
     let descriptor = ShadowClientRemoteHostDescriptor(
-        activeRoute: .init(host: "apollo-host.local", httpsPort: 47_984),
-        displayName: "Apollo Mac",
+        activeRoute: .init(host: "lumen-host.local", httpsPort: 47_984),
+        displayName: "Lumen Mac",
         pairStatus: .paired,
         currentGameID: 0,
         serverState: "SUNSHINE_SERVER_FREE",
@@ -36,56 +36,56 @@ func hostCatalogSkipsRecachingCertificateMismatchRoutes() {
         gfeVersion: nil,
         uniqueID: "HOST-APOLLO",
         lastError: "Host rejected request (401): Server certificate mismatch",
-        routes: .init(active: .init(host: "apollo-host.local", httpsPort: 47_984))
+        routes: .init(active: .init(host: "lumen-host.local", httpsPort: 47_984))
     )
 
     #expect(ShadowClientHostCatalogKit.cachedCandidateHosts(from: [descriptor]).isEmpty)
 }
 
-@Test("Host catalog collapses bare host aliases into explicit Apollo connect candidates")
-func hostCatalogCollapsesBareHostIntoExplicitApolloConnectCandidate() {
+@Test("Host catalog collapses bare host aliases into explicit Lumen connect candidates")
+func hostCatalogCollapsesBareHostIntoExplicitLumenConnectCandidate() {
     let candidates = ShadowClientHostCatalogKit.refreshCandidates(
         autoFindHosts: true,
-        discoveredHosts: ["apollo-host.local:48989"],
-        cachedHosts: ["apollo-host.local"],
+        discoveredHosts: ["lumen-host.local:48989"],
+        cachedHosts: ["lumen-host.local"],
         manualHost: nil
     )
 
-    #expect(candidates == ["apollo-host.local:48984"])
+    #expect(candidates == ["lumen-host.local:48984"])
 }
 
-@Test("Host catalog prefers Apollo connect base port over HTTPS endpoint aliases")
-func hostCatalogPrefersApolloConnectPortOverHTTPSAlias() {
+@Test("Host catalog prefers Lumen connect base port over HTTPS endpoint aliases")
+func hostCatalogPrefersLumenConnectPortOverHTTPSAlias() {
     let candidates = ShadowClientHostCatalogKit.refreshCandidates(
         autoFindHosts: true,
-        discoveredHosts: ["apollo-host.local:48989"],
-        cachedHosts: ["apollo-host.local:48984"],
+        discoveredHosts: ["lumen-host.local:48989"],
+        cachedHosts: ["lumen-host.local:48984"],
         manualHost: nil
     )
 
-    #expect(candidates == ["apollo-host.local:48984"])
+    #expect(candidates == ["lumen-host.local:48984"])
 }
 
-@Test("Host catalog preserves distinct explicit Apollo service ports on the same host")
-func hostCatalogPreservesDistinctExplicitApolloServicePortsOnSameHost() {
+@Test("Host catalog preserves distinct explicit Lumen service ports on the same host")
+func hostCatalogPreservesDistinctExplicitLumenServicePortsOnSameHost() {
     let candidates = ShadowClientHostCatalogKit.refreshCandidates(
         autoFindHosts: true,
-        discoveredHosts: ["apollo-host.local:47989", "apollo-host.local:48989"],
+        discoveredHosts: ["lumen-host.local:47989", "lumen-host.local:48989"],
         cachedHosts: [],
         manualHost: nil
     )
 
-    #expect(candidates == ["apollo-host.local:47984", "apollo-host.local:48984"])
+    #expect(candidates == ["lumen-host.local:47984", "lumen-host.local:48984"])
 }
 
 @Test("Host catalog drops bare host aliases when explicit default and alternate service ports coexist")
 func hostCatalogDropsBareHostAliasWhenSameHostHasExplicitServiceCandidates() {
     let candidates = ShadowClientHostCatalogKit.refreshCandidates(
         autoFindHosts: true,
-        discoveredHosts: ["apollo-host.local", "apollo-host.local:47984", "apollo-host.local:48984"],
+        discoveredHosts: ["lumen-host.local", "lumen-host.local:47984", "lumen-host.local:48984"],
         cachedHosts: [],
         manualHost: nil
     )
 
-    #expect(candidates == ["apollo-host.local:47984", "apollo-host.local:48984"])
+    #expect(candidates == ["lumen-host.local:47984", "lumen-host.local:48984"])
 }

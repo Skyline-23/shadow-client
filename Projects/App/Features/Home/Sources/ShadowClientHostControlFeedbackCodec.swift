@@ -184,7 +184,7 @@ enum ShadowClientHostControlFeedbackCodec {
     private static func parseRumble(
         payload: Data
     ) -> ShadowClientHostControllerFeedbackEvent? {
-        // Apollo-host control_rumble_t packs a 4-byte reserved field before id/low/high.
+        // Lumen-host control_rumble_t packs a 4-byte reserved field before id/low/high.
         guard payload.count >= 10 else {
             return nil
         }
@@ -314,7 +314,7 @@ enum ShadowClientHostControlFeedbackCodec {
     private static func parseAdaptiveTriggers(
         payload: Data
     ) -> ShadowClientHostControllerFeedbackEvent? {
-        // Apollo-host control_adaptive_triggers_t:
+        // Lumen-host control_adaptive_triggers_t:
         // id(2) + event_flags(1) + type_left(1) + type_right(1) + left[10] + right[10]
         guard payload.count >= 25 else {
             return nil

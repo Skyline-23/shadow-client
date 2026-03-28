@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import ShadowClientFeatureHome
 
-@Test("Apollo pairing client parser decodes pairing session payload")
-func apolloPairingClientParserDecodesPairingSessionPayload() throws {
+@Test("Lumen pairing client parser decodes pairing session payload")
+func lumenPairingClientParserDecodesPairingSessionPayload() throws {
     let data = Data(
         """
         {
@@ -20,7 +20,7 @@ func apolloPairingClientParserDecodesPairingSessionPayload() throws {
             "clientCertificateRequired": true,
             "status": "approved",
             "serverUniqueId": "HOST-123",
-            "serviceType": "apollo",
+            "serviceType": "_shadow._tcp",
             "controlHttpsPort": 47984,
             "expiresInSeconds": 598,
             "pollIntervalSeconds": 2
@@ -29,7 +29,7 @@ func apolloPairingClientParserDecodesPairingSessionPayload() throws {
         """.utf8
     )
 
-    let session = try NativeShadowClientApolloPairingClient.parsePairingSession(data: data)
+    let session = try NativeShadowClientLumenPairingClient.parsePairingSession(data: data)
 
     #expect(
         session == .init(
@@ -44,7 +44,7 @@ func apolloPairingClientParserDecodesPairingSessionPayload() throws {
             clientCertificateRequired: true,
             status: .approved,
             serverUniqueID: "HOST-123",
-            serviceType: "apollo",
+            serviceType: "_shadow._tcp",
             controlHTTPSPort: 47984,
             expiresInSeconds: 598,
             pollIntervalSeconds: 2

@@ -33,7 +33,7 @@ enum ShadowClientAV1CodecConfigurationPolicy {
         if let discoveredConfiguration {
             if currentOrigin == .explicit || currentOrigin == .fallback {
                 // Keep fallback-origin AV1 config stable for the rest of the session once active.
-                // Stream-derived candidates can be noisy on some Apollo-host AV1 paths and may cause
+                // Stream-derived candidates can be noisy on some Lumen-host AV1 paths and may cause
                 // repeated VT session reconfiguration churn.
                 if currentOrigin == .fallback {
                     return (currentParameterSets, .fallback)
@@ -47,7 +47,7 @@ enum ShadowClientAV1CodecConfigurationPolicy {
             if currentOrigin == .stream {
                 // Keep stream-derived AV1 configuration stable once activated.
                 // Replacing av1C on every newly observed sequence-header candidate
-                // causes unnecessary VT session churn on Apollo-host AV1 streams.
+                // causes unnecessary VT session churn on Lumen-host AV1 streams.
                 return (currentParameterSets, .stream)
             }
         }

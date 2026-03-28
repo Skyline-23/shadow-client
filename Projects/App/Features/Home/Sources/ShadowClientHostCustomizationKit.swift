@@ -34,18 +34,18 @@ struct ShadowClientHostCustomizationKit {
         store.wakeOnLANPort(forHostID: host.id)
     }
 
-    static func apolloAdminUsername(
+    static func lumenAdminUsername(
         store: ShadowClientHostCustomizationStore,
         host: ShadowClientRemoteHostDescriptor
     ) -> String {
-        store.apolloAdminUsername(forHostID: host.id)
+        store.lumenAdminUsername(forHostID: host.id)
     }
 
-    static func apolloAdminPassword(
+    static func lumenAdminPassword(
         store: ShadowClientHostCustomizationStore,
         host: ShadowClientRemoteHostDescriptor
     ) -> String {
-        store.apolloAdminPassword(forHostID: host.id)
+        store.lumenAdminPassword(forHostID: host.id)
     }
 
     static func friendlyNameBinding(
@@ -88,23 +88,23 @@ struct ShadowClientHostCustomizationKit {
         )
     }
 
-    static func apolloAdminUsernameBinding(
+    static func lumenAdminUsernameBinding(
         store: ShadowClientHostCustomizationStore,
         host: ShadowClientRemoteHostDescriptor
     ) -> Binding<String> {
         Binding(
-            get: { apolloAdminUsername(store: store, host: host) },
-            set: { store.setApolloAdminUsername($0, forHostID: host.id) }
+            get: { lumenAdminUsername(store: store, host: host) },
+            set: { store.setLumenAdminUsername($0, forHostID: host.id) }
         )
     }
 
-    static func apolloAdminPasswordBinding(
+    static func lumenAdminPasswordBinding(
         store: ShadowClientHostCustomizationStore,
         host: ShadowClientRemoteHostDescriptor
     ) -> Binding<String> {
         Binding(
-            get: { apolloAdminPassword(store: store, host: host) },
-            set: { store.setApolloAdminPassword($0, forHostID: host.id) }
+            get: { lumenAdminPassword(store: store, host: host) },
+            set: { store.setLumenAdminPassword($0, forHostID: host.id) }
         )
     }
 }

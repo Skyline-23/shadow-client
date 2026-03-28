@@ -353,113 +353,113 @@ extension ShadowClientAppShellView {
         return remoteDesktopRuntime.selectedHostWakeState.label
     }
 
-    func hostApolloAdminUsername(_ host: ShadowClientRemoteHostDescriptor) -> String {
-        ShadowClientHostCustomizationKit.apolloAdminUsername(
+    func hostLumenAdminUsername(_ host: ShadowClientRemoteHostDescriptor) -> String {
+        ShadowClientHostCustomizationKit.lumenAdminUsername(
             store: hostCustomizationStore,
             host: host
         )
     }
 
-    func hostApolloAdminPassword(_ host: ShadowClientRemoteHostDescriptor) -> String {
-        ShadowClientHostCustomizationKit.apolloAdminPassword(
+    func hostLumenAdminPassword(_ host: ShadowClientRemoteHostDescriptor) -> String {
+        ShadowClientHostCustomizationKit.lumenAdminPassword(
             store: hostCustomizationStore,
             host: host
         )
     }
 
-    func hostApolloAdminUsernameBinding(_ host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
-        ShadowClientHostCustomizationKit.apolloAdminUsernameBinding(
+    func hostLumenAdminUsernameBinding(_ host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
+        ShadowClientHostCustomizationKit.lumenAdminUsernameBinding(
             store: hostCustomizationStore,
             host: host
         )
     }
 
-    func hostApolloAdminPasswordBinding(_ host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
-        ShadowClientHostCustomizationKit.apolloAdminPasswordBinding(
+    func hostLumenAdminPasswordBinding(_ host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
+        ShadowClientHostCustomizationKit.lumenAdminPasswordBinding(
             store: hostCustomizationStore,
             host: host
         )
     }
 
-    func hostApolloAdminProfile(_ host: ShadowClientRemoteHostDescriptor) -> ShadowClientApolloAdminClientProfile? {
+    func hostLumenAdminProfile(_ host: ShadowClientRemoteHostDescriptor) -> ShadowClientLumenAdminClientProfile? {
         guard remoteDesktopRuntime.selectedHostID == host.id else {
             return nil
         }
-        return remoteDesktopRuntime.selectedHostApolloAdminProfile
+        return remoteDesktopRuntime.selectedHostLumenAdminProfile
     }
 
-    func hostApolloAdminStateLabel(for host: ShadowClientRemoteHostDescriptor) -> String {
+    func hostLumenAdminStateLabel(for host: ShadowClientRemoteHostDescriptor) -> String {
         guard remoteDesktopRuntime.selectedHostID == host.id else {
             return "Select this host first"
         }
 
-        switch remoteDesktopRuntime.selectedHostApolloAdminState {
+        switch remoteDesktopRuntime.selectedHostLumenAdminState {
         case let state:
-            return ShadowClientApolloAdminPresentationKit.stateLabel(
+            return ShadowClientLumenAdminPresentationKit.stateLabel(
                 state: state,
-                selectedProfile: remoteDesktopRuntime.selectedHostApolloAdminProfile
+                selectedProfile: remoteDesktopRuntime.selectedHostLumenAdminProfile
             )
         }
     }
 
-    func hostApolloAdminSummary(_ profile: ShadowClientApolloAdminClientProfile) -> String {
-        ShadowClientApolloAdminPresentationKit.summary(profile)
+    func hostLumenAdminSummary(_ profile: ShadowClientLumenAdminClientProfile) -> String {
+        ShadowClientLumenAdminPresentationKit.summary(profile)
     }
 
-    func hostApolloDisplayModeDraft(for host: ShadowClientRemoteHostDescriptor) -> String {
-        ShadowClientApolloAdminPresentationKit.displayModeDraft(
+    func hostLumenDisplayModeDraft(for host: ShadowClientRemoteHostDescriptor) -> String {
+        ShadowClientLumenAdminPresentationKit.displayModeDraft(
             hostID: host.id,
-            drafts: apolloDisplayModeDrafts,
-            profile: hostApolloAdminProfile(host)
+            drafts: lumenDisplayModeDrafts,
+            profile: hostLumenAdminProfile(host)
         )
     }
 
-    func hostApolloAlwaysUseVirtualDisplayDraft(for host: ShadowClientRemoteHostDescriptor) -> Bool {
-        ShadowClientApolloAdminPresentationKit.alwaysUseVirtualDisplayDraft(
+    func hostLumenAlwaysUseVirtualDisplayDraft(for host: ShadowClientRemoteHostDescriptor) -> Bool {
+        ShadowClientLumenAdminPresentationKit.alwaysUseVirtualDisplayDraft(
             hostID: host.id,
-            drafts: apolloAlwaysUseVirtualDisplayDrafts,
-            profile: hostApolloAdminProfile(host)
+            drafts: lumenAlwaysUseVirtualDisplayDrafts,
+            profile: hostLumenAdminProfile(host)
         )
     }
 
-    func hostApolloPermissionDraft(for host: ShadowClientRemoteHostDescriptor) -> UInt32 {
-        ShadowClientApolloAdminPresentationKit.permissionDraft(
+    func hostLumenPermissionDraft(for host: ShadowClientRemoteHostDescriptor) -> UInt32 {
+        ShadowClientLumenAdminPresentationKit.permissionDraft(
             hostID: host.id,
-            drafts: apolloPermissionDrafts,
-            profile: hostApolloAdminProfile(host)
+            drafts: lumenPermissionDrafts,
+            profile: hostLumenAdminProfile(host)
         )
     }
 
-    func hostApolloDisplayModeBinding(for host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
+    func hostLumenDisplayModeBinding(for host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
         Binding(
-            get: { hostApolloDisplayModeDraft(for: host) },
-            set: { apolloDisplayModeDrafts[host.id] = $0 }
+            get: { hostLumenDisplayModeDraft(for: host) },
+            set: { lumenDisplayModeDrafts[host.id] = $0 }
         )
     }
 
-    func hostApolloAlwaysUseVirtualDisplayBinding(for host: ShadowClientRemoteHostDescriptor) -> Binding<Bool> {
+    func hostLumenAlwaysUseVirtualDisplayBinding(for host: ShadowClientRemoteHostDescriptor) -> Binding<Bool> {
         Binding(
-            get: { hostApolloAlwaysUseVirtualDisplayDraft(for: host) },
-            set: { apolloAlwaysUseVirtualDisplayDrafts[host.id] = $0 }
+            get: { hostLumenAlwaysUseVirtualDisplayDraft(for: host) },
+            set: { lumenAlwaysUseVirtualDisplayDrafts[host.id] = $0 }
         )
     }
 
-    func hostApolloPermissionBinding(
+    func hostLumenPermissionBinding(
         for host: ShadowClientRemoteHostDescriptor,
-        permission: ShadowClientApolloPermission
+        permission: ShadowClientLumenPermission
     ) -> Binding<Bool> {
         Binding(
             get: {
-                ShadowClientApolloPermission.contains(
+                ShadowClientLumenPermission.contains(
                     permission,
-                    in: hostApolloPermissionDraft(for: host)
+                    in: hostLumenPermissionDraft(for: host)
                 )
             },
             set: { enabled in
-                apolloPermissionDrafts[host.id] = ShadowClientApolloPermission.updating(
+                lumenPermissionDrafts[host.id] = ShadowClientLumenPermission.updating(
                     permission,
                     enabled: enabled,
-                    in: hostApolloPermissionDraft(for: host)
+                    in: hostLumenPermissionDraft(for: host)
                 )
             }
         )

@@ -2,7 +2,7 @@ import Foundation
 import Security
 import ShadowClientFeatureConnection
 
-public struct ShadowClientApolloAdminClientProfile: Equatable, Sendable {
+public struct ShadowClientLumenAdminClientProfile: Equatable, Sendable {
     public struct Command: Equatable, Sendable, Codable {
         public let cmd: String
         public let elevated: Bool
@@ -46,21 +46,21 @@ public struct ShadowClientApolloAdminClientProfile: Equatable, Sendable {
     }
 }
 
-public protocol ShadowClientApolloAdminClient: Sendable {
+public protocol ShadowClientLumenAdminClient: Sendable {
     func fetchCurrentClientProfile(
         host: String,
         httpsPort: Int,
         username: String,
         password: String
-    ) async throws -> ShadowClientApolloAdminClientProfile?
+    ) async throws -> ShadowClientLumenAdminClientProfile?
 
     func updateCurrentClientProfile(
         host: String,
         httpsPort: Int,
         username: String,
         password: String,
-        profile: ShadowClientApolloAdminClientProfile
-    ) async throws -> ShadowClientApolloAdminClientProfile
+        profile: ShadowClientLumenAdminClientProfile
+    ) async throws -> ShadowClientLumenAdminClientProfile
 
     func disconnectCurrentClient(
         host: String,
@@ -87,7 +87,7 @@ public protocol ShadowClientApolloAdminClient: Sendable {
     ) async throws
 }
 
-public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient {
+public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
     private let identityStore: ShadowClientPairingIdentityStore
     private let pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
 
@@ -104,11 +104,11 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
         httpsPort: Int,
         username: String,
         password: String
-    ) async throws -> ShadowClientApolloAdminClientProfile? {
+    ) async throws -> ShadowClientLumenAdminClientProfile? {
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
-            throw ShadowClientGameStreamError.requestFailed("Apollo admin credentials are required.")
+            throw ShadowClientGameStreamError.requestFailed("Lumen admin credentials are required.")
         }
 
         let endpoint = try parseHostEndpoint(
@@ -119,10 +119,10 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
             forHost: endpoint.host,
             httpsPort: httpsPort
         ) else {
-            throw ShadowClientGameStreamError.requestFailed("Pair the host before using Apollo admin APIs.")
+            throw ShadowClientGameStreamError.requestFailed("Pair the host before using Lumen admin APIs.")
         }
 
-        let delegate = ShadowClientApolloAdminURLSessionDelegate(
+        let delegate = ShadowClientLumenAdminURLSessionDelegate(
             pinnedServerCertificateDER: pinnedCertificateDER
         )
         let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
@@ -175,12 +175,12 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
         httpsPort: Int,
         username: String,
         password: String,
-        profile: ShadowClientApolloAdminClientProfile
-    ) async throws -> ShadowClientApolloAdminClientProfile {
+        profile: ShadowClientLumenAdminClientProfile
+    ) async throws -> ShadowClientLumenAdminClientProfile {
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
-            throw ShadowClientGameStreamError.requestFailed("Apollo admin credentials are required.")
+            throw ShadowClientGameStreamError.requestFailed("Lumen admin credentials are required.")
         }
 
         let endpoint = try parseHostEndpoint(
@@ -191,10 +191,10 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
             forHost: endpoint.host,
             httpsPort: httpsPort
         ) else {
-            throw ShadowClientGameStreamError.requestFailed("Pair the host before using Apollo admin APIs.")
+            throw ShadowClientGameStreamError.requestFailed("Pair the host before using Lumen admin APIs.")
         }
 
-        let delegate = ShadowClientApolloAdminURLSessionDelegate(
+        let delegate = ShadowClientLumenAdminURLSessionDelegate(
             pinnedServerCertificateDER: pinnedCertificateDER
         )
         let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
@@ -218,7 +218,7 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
         let credentialData = Data("\(trimmedUsername):\(trimmedPassword)".utf8).base64EncodedString()
         request.setValue("Basic \(credentialData)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONEncoder().encode(
-            ApolloUpdateClientPayload(
+            LumenUpdateClientPayload(
                 uuid: profile.uuid,
                 name: profile.name,
                 displayMode: profile.displayModeOverride,
@@ -263,7 +263,7 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
             username: username,
             password: password,
             path: "/api/clients/disconnect",
-            body: ApolloUUIDPayload(uuid: uuid)
+            body: LumenUUIDPayload(uuid: uuid)
         )
     }
 
@@ -280,7 +280,7 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
             username: username,
             password: password,
             path: "/api/clients/unpair",
-            body: ApolloUUIDPayload(uuid: uuid)
+            body: LumenUUIDPayload(uuid: uuid)
         )
     }
 
@@ -302,15 +302,15 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
             username: username,
             password: password,
             path: "/api/pairing/approve",
-            body: ApolloPairingDecisionPayload(pairingID: trimmedPairingID)
+            body: LumenPairingDecisionPayload(pairingID: trimmedPairingID)
         )
     }
 
     static func parseCurrentClientProfile(
         data: Data,
         currentClientUUID: String
-    ) throws -> ShadowClientApolloAdminClientProfile? {
-        let payload = try JSONDecoder().decode(ApolloClientsListPayload.self, from: data)
+    ) throws -> ShadowClientLumenAdminClientProfile? {
+        let payload = try JSONDecoder().decode(LumenClientsListPayload.self, from: data)
         return payload.namedCerts.first {
             $0.uuid.caseInsensitiveCompare(currentClientUUID) == .orderedSame
         }?.profile
@@ -351,7 +351,7 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
-            throw ShadowClientGameStreamError.requestFailed("Apollo admin credentials are required.")
+            throw ShadowClientGameStreamError.requestFailed("Lumen admin credentials are required.")
         }
 
         let endpoint = try parseHostEndpoint(
@@ -362,10 +362,10 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
             forHost: endpoint.host,
             httpsPort: httpsPort
         ) else {
-            throw ShadowClientGameStreamError.requestFailed("Pair the host before using Apollo admin APIs.")
+            throw ShadowClientGameStreamError.requestFailed("Pair the host before using Lumen admin APIs.")
         }
 
-        let delegate = ShadowClientApolloAdminURLSessionDelegate(
+        let delegate = ShadowClientLumenAdminURLSessionDelegate(
             pinnedServerCertificateDER: pinnedCertificateDER
         )
         let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
@@ -410,15 +410,15 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
     }
 }
 
-private struct ApolloClientsListPayload: Decodable {
-    let namedCerts: [ApolloNamedCert]
+private struct LumenClientsListPayload: Decodable {
+    let namedCerts: [LumenNamedCert]
 
     enum CodingKeys: String, CodingKey {
         case namedCerts = "named_certs"
     }
 }
 
-private struct ApolloNamedCert: Decodable {
+private struct LumenNamedCert: Decodable {
     let name: String
     let uuid: String
     let displayMode: String
@@ -426,8 +426,8 @@ private struct ApolloNamedCert: Decodable {
     let allowClientCommands: Bool
     let alwaysUseVirtualDisplay: Bool
     let connected: Bool
-    let doCommands: [ApolloCommand]
-    let undoCommands: [ApolloCommand]
+    let doCommands: [LumenCommand]
+    let undoCommands: [LumenCommand]
 
     enum CodingKeys: String, CodingKey {
         case name
@@ -441,7 +441,7 @@ private struct ApolloNamedCert: Decodable {
         case undoCommands = "undo"
     }
 
-    var profile: ShadowClientApolloAdminClientProfile {
+    var profile: ShadowClientLumenAdminClientProfile {
         .init(
             name: name,
             uuid: uuid,
@@ -456,24 +456,24 @@ private struct ApolloNamedCert: Decodable {
     }
 }
 
-private struct ApolloCommand: Codable {
+private struct LumenCommand: Codable {
     let cmd: String
     let elevated: Bool
 
-    var profileCommand: ShadowClientApolloAdminClientProfile.Command {
+    var profileCommand: ShadowClientLumenAdminClientProfile.Command {
         .init(cmd: cmd, elevated: elevated)
     }
 }
 
-private struct ApolloUpdateClientPayload: Encodable {
+private struct LumenUpdateClientPayload: Encodable {
     let uuid: String
     let name: String
     let displayMode: String
     let permissions: UInt32
     let allowClientCommands: Bool
     let alwaysUseVirtualDisplay: Bool
-    let doCommands: [ShadowClientApolloAdminClientProfile.Command]
-    let undoCommands: [ShadowClientApolloAdminClientProfile.Command]
+    let doCommands: [ShadowClientLumenAdminClientProfile.Command]
+    let undoCommands: [ShadowClientLumenAdminClientProfile.Command]
 
     enum CodingKeys: String, CodingKey {
         case uuid
@@ -487,11 +487,11 @@ private struct ApolloUpdateClientPayload: Encodable {
     }
 }
 
-private struct ApolloUUIDPayload: Encodable {
+private struct LumenUUIDPayload: Encodable {
     let uuid: String
 }
 
-private struct ApolloPairingDecisionPayload: Encodable {
+private struct LumenPairingDecisionPayload: Encodable {
     let pairingID: String
 
     enum CodingKeys: String, CodingKey {
@@ -499,7 +499,7 @@ private struct ApolloPairingDecisionPayload: Encodable {
     }
 }
 
-private final class ShadowClientApolloAdminURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
+private final class ShadowClientLumenAdminURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
     private let pinnedServerCertificateDER: Data
     private let lock = NSLock()
     private var recordedTLSFailure: ShadowClientGameStreamTLSFailure?

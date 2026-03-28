@@ -5,9 +5,9 @@ import Testing
 import Darwin
 #endif
 
-@Test("Live Apollo serverinfo and RTSP probe succeeds on wifi host")
-func liveApolloRTSPOptionsAndDescribeSucceeds() async throws {
-    guard let config = LiveApolloRTSPIntegrationConfiguration.enabledFromEnvironment() else {
+@Test("Live Lumen serverinfo and RTSP probe succeeds on wifi host")
+func liveLumenRTSPOptionsAndDescribeSucceeds() async throws {
+    guard let config = LiveLumenRTSPIntegrationConfiguration.enabledFromEnvironment() else {
         return
     }
 
@@ -60,7 +60,7 @@ func liveApolloRTSPOptionsAndDescribeSucceeds() async throws {
     #expect(bodyText.localizedCaseInsensitiveContains("av1") || bodyText.localizedCaseInsensitiveContains("h264") || bodyText.localizedCaseInsensitiveContains("h265"))
 }
 
-private struct LiveApolloRTSPIntegrationConfiguration: Sendable {
+private struct LiveLumenRTSPIntegrationConfiguration: Sendable {
     let host: String
     let rtspPort: Int
     let externalHTTPPort: Int
@@ -131,7 +131,7 @@ private struct LiveServerInfoProbeResult: Sendable {
     let pairStatus: String
 }
 
-private func fetchServerInfo(config: LiveApolloRTSPIntegrationConfiguration) async -> LiveServerInfoProbeResult {
+private func fetchServerInfo(config: LiveLumenRTSPIntegrationConfiguration) async -> LiveServerInfoProbeResult {
     guard var components = URLComponents(string: "http://\(config.host):\(config.externalHTTPPort)/serverinfo") else {
         return .init(statusCode: -1, localIP: "", pairStatus: "")
     }

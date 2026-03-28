@@ -25,7 +25,7 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
             )
         }
 
-        // Apollo sends RTP PT127 as audio FEC shards, not decodable Opus payload.
+        // Lumen sends RTP PT127 as audio FEC shards, not decodable Opus payload.
         // Keep PT127 packets as-is so the runtime can skip decode on this type.
         if isLikelyMoonlightAudioFECPayload(
             payload,
@@ -41,7 +41,7 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
             )
         }
 
-        // Moonlight/Apollo-host treat PT127 as dedicated audio FEC wrapper.
+        // Moonlight/Lumen-host treat PT127 as dedicated audio FEC wrapper.
         // Keep non-FEC PT127 opaque rather than attempting RED unwrap.
 
         return .init(
@@ -57,7 +57,7 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
         _ payload: Data,
         expectedPrimaryPayloadType: Int
     ) -> Bool {
-        // AUDIO_FEC_HEADER layout used by Moonlight/Apollo-host:
+        // AUDIO_FEC_HEADER layout used by Moonlight/Lumen-host:
         // shardIndex(1), payloadType(1), baseSequence(2), baseTimestamp(4), ssrc(4)
         guard payload.count >= ShadowClientMoonlightProtocolPolicy.Audio.fecHeaderLength else {
             return false
@@ -67,7 +67,7 @@ struct ShadowClientRealtimeAudioRTPPayloadNormalizer {
             payload[payload.startIndex + 1] &
                 ShadowClientMoonlightProtocolPolicy.Audio.payloadTypeMask
         )
-        // Moonlight/Apollo-host audio FEC currently uses two shards (0, 1).
+        // Moonlight/Lumen-host audio FEC currently uses two shards (0, 1).
         // Reject wider ranges to avoid misclassifying regular PT127 RED payloads.
         guard ShadowClientMoonlightProtocolPolicy.Audio.isFECPayloadShardIndex(shardIndex) else {
             return false

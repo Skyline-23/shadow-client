@@ -131,7 +131,7 @@ enum ShadowClientRTSPAnnounceProfile {
     static let reliableUDPModeStandard = "1"
     static let reliableUDPModeEncrypted = "13"
 
-    // Match Moonlight Gen5 baseline flags so Apollo-host parsing stays on the
+    // Match Moonlight Gen5 baseline flags so Lumen-host parsing stays on the
     // expected feature path instead of host defaults.
     static let nvFeatureFlagsBase: UInt32 = 0x87
     static let nvFeatureFlagEncryptionControlV2: UInt32 = 0x80
@@ -166,7 +166,7 @@ enum ShadowClientRTSPAnnounceProfile {
     static let surroundAudioQualityEnabled = "1"
     static let aqosPacketDuration = "5"
     static let intraRefreshDisabled = "0"
-    // Apollo interprets encoderCscMode as:
+    // Lumen interprets encoderCscMode as:
     // - low bit: range (0 limited, 1 full)
     // - upper bits: SDR colorspace (0 Rec.601, 1 Rec.709, 2 Rec.2020)
     // Use Rec.709 limited for normal SDR desktop/game streaming.

@@ -6,14 +6,14 @@ import ShadowClientFeatureConnection
 import UIKit
 #endif
 
-public enum ShadowClientApolloPairingStatus: String, Codable, Equatable, Sendable {
+public enum ShadowClientLumenPairingStatus: String, Codable, Equatable, Sendable {
     case pending
     case approved
     case rejected
     case expired
 }
 
-public struct ShadowClientApolloPairingSession: Equatable, Sendable {
+public struct ShadowClientLumenPairingSession: Equatable, Sendable {
     public let pairingID: String
     public let userCode: String
     public let deviceName: String
@@ -23,7 +23,7 @@ public struct ShadowClientApolloPairingSession: Equatable, Sendable {
     public let publicKeyPresent: Bool
     public let clientTrusted: Bool
     public let clientCertificateRequired: Bool
-    public let status: ShadowClientApolloPairingStatus
+    public let status: ShadowClientLumenPairingStatus
     public let serverUniqueID: String?
     public let serviceType: String?
     public let controlHTTPSPort: Int?
@@ -40,7 +40,7 @@ public struct ShadowClientApolloPairingSession: Equatable, Sendable {
         publicKeyPresent: Bool,
         clientTrusted: Bool,
         clientCertificateRequired: Bool,
-        status: ShadowClientApolloPairingStatus,
+        status: ShadowClientLumenPairingStatus,
         serverUniqueID: String?,
         serviceType: String?,
         controlHTTPSPort: Int?,
@@ -65,22 +65,22 @@ public struct ShadowClientApolloPairingSession: Equatable, Sendable {
     }
 }
 
-public protocol ShadowClientApolloPairingClient: Sendable {
+public protocol ShadowClientLumenPairingClient: Sendable {
     func startPairing(
         host: String,
         httpsPort: Int,
         deviceName: String?,
         platform: String?
-    ) async throws -> ShadowClientApolloPairingSession
+    ) async throws -> ShadowClientLumenPairingSession
 
     func fetchPairingStatus(
         host: String,
         httpsPort: Int,
         pairingID: String
-    ) async throws -> ShadowClientApolloPairingSession
+    ) async throws -> ShadowClientLumenPairingSession
 }
 
-public struct NativeShadowClientApolloPairingClient: ShadowClientApolloPairingClient {
+public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClient {
     private let identityStore: ShadowClientPairingIdentityStore
     private let pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
 
@@ -97,11 +97,11 @@ public struct NativeShadowClientApolloPairingClient: ShadowClientApolloPairingCl
         httpsPort: Int,
         deviceName: String? = nil,
         platform: String? = nil
-    ) async throws -> ShadowClientApolloPairingSession {
+    ) async throws -> ShadowClientLumenPairingSession {
         let clientID = await identityStore.uniqueID()
         let certificateData = try await identityStore.clientCertificatePEMData()
         let certificatePEM = String(decoding: certificateData, as: UTF8.self)
-        let payload = ApolloStartPairingPayload(
+        let payload = LumenStartPairingPayload(
             deviceName: Self.resolvedDeviceName(from: deviceName),
             platform: Self.resolvedPlatform(from: platform),
             clientID: clientID,
@@ -123,7 +123,7 @@ public struct NativeShadowClientApolloPairingClient: ShadowClientApolloPairingCl
         host: String,
         httpsPort: Int,
         pairingID: String
-    ) async throws -> ShadowClientApolloPairingSession {
+    ) async throws -> ShadowClientLumenPairingSession {
         let trimmedPairingID = pairingID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPairingID.isEmpty else {
             throw ShadowClientGameStreamError.requestFailed("Pairing ID is required.")
@@ -137,12 +137,12 @@ public struct NativeShadowClientApolloPairingClient: ShadowClientApolloPairingCl
             queryItems: [
                 .init(name: "pairingId", value: trimmedPairingID),
             ],
-            body: Optional<ApolloStartPairingPayload>.none
+            body: Optional<LumenStartPairingPayload>.none
         )
     }
 
-    static func parsePairingSession(data: Data) throws -> ShadowClientApolloPairingSession {
-        let payload = try JSONDecoder().decode(ApolloPairingEnvelope.self, from: data)
+    static func parsePairingSession(data: Data) throws -> ShadowClientLumenPairingSession {
+        let payload = try JSONDecoder().decode(LumenPairingEnvelope.self, from: data)
         return payload.pairing.session
     }
 
@@ -153,7 +153,7 @@ public struct NativeShadowClientApolloPairingClient: ShadowClientApolloPairingCl
         method: String,
         queryItems: [URLQueryItem],
         body: Body?
-    ) async throws -> ShadowClientApolloPairingSession {
+    ) async throws -> ShadowClientLumenPairingSession {
         let endpoint = try Self.parseHostEndpoint(
             host: host,
             fallbackPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPPort
@@ -162,7 +162,7 @@ public struct NativeShadowClientApolloPairingClient: ShadowClientApolloPairingCl
             forHost: endpoint.host,
             httpsPort: httpsPort
         )
-        let delegate = ShadowClientApolloPairingURLSessionDelegate(
+        let delegate = ShadowClientLumenPairingURLSessionDelegate(
             pinnedServerCertificateDER: pinnedCertificateDER
         )
         let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
@@ -305,11 +305,11 @@ public struct NativeShadowClientApolloPairingClient: ShadowClientApolloPairingCl
     }
 }
 
-private struct ApolloPairingEnvelope: Decodable {
-    let pairing: ApolloPairingPayload
+private struct LumenPairingEnvelope: Decodable {
+    let pairing: LumenPairingPayload
 }
 
-private struct ApolloPairingPayload: Codable {
+private struct LumenPairingPayload: Codable {
     let pairingID: String
     let userCode: String
     let deviceName: String
@@ -319,7 +319,7 @@ private struct ApolloPairingPayload: Codable {
     let publicKeyPresent: Bool
     let clientTrusted: Bool
     let clientCertificateRequired: Bool
-    let status: ShadowClientApolloPairingStatus
+    let status: ShadowClientLumenPairingStatus
     let serverUniqueID: String?
     let serviceType: String?
     let controlHTTPSPort: Int?
@@ -344,7 +344,7 @@ private struct ApolloPairingPayload: Codable {
         case pollIntervalSeconds
     }
 
-    var session: ShadowClientApolloPairingSession {
+    var session: ShadowClientLumenPairingSession {
         .init(
             pairingID: pairingID,
             userCode: userCode,
@@ -365,7 +365,7 @@ private struct ApolloPairingPayload: Codable {
     }
 }
 
-private struct ApolloStartPairingPayload: Encodable {
+private struct LumenStartPairingPayload: Encodable {
     let deviceName: String
     let platform: String
     let clientID: String
@@ -379,7 +379,7 @@ private struct ApolloStartPairingPayload: Encodable {
     }
 }
 
-private final class ShadowClientApolloPairingURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
+private final class ShadowClientLumenPairingURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
     private let pinnedServerCertificateDER: Data?
     private let lock = NSLock()
     private var recordedTLSFailure: ShadowClientGameStreamTLSFailure?

@@ -5,7 +5,7 @@ import Testing
 func remoteDesktopRuntimeRemovesSelfHostAliasesByUniqueID() {
     let localHost = ShadowClientRemoteHostDescriptor(
         host: "192.168.10.50",
-        displayName: "Local Apollo",
+        displayName: "Local Lumen",
         pairStatus: .paired,
         currentGameID: 0,
         serverState: "SUNSHINE_SERVER_FREE",
@@ -19,7 +19,7 @@ func remoteDesktopRuntimeRemovesSelfHostAliasesByUniqueID() {
     )
     let aliasHost = ShadowClientRemoteHostDescriptor(
         host: "local-stream-host.local",
-        displayName: "Local Apollo Alias",
+        displayName: "Local Lumen Alias",
         pairStatus: .paired,
         currentGameID: 0,
         serverState: "SUNSHINE_SERVER_FREE",

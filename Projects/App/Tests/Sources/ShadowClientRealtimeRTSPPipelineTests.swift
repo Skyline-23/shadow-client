@@ -104,7 +104,7 @@ func rtspSdpParserExtractsProResTrack() throws {
     #expect(track.parameterSets.isEmpty)
 }
 
-@Test("RTSP SDP parser infers video track when Apollo-style DESCRIBE omits media section")
+@Test("RTSP SDP parser infers video track when Lumen-style DESCRIBE omits media section")
 func rtspSdpParserHandlesDescribeWithoutMediaSection() throws {
     let sdp = """
     a=x-ss-general.featureFlags:3
@@ -3171,8 +3171,8 @@ private func makeMultiFecBlocks(currentBlock: UInt8, lastBlock: UInt8) -> UInt8 
     ((currentBlock & 0x03) << 4) | ((lastBlock & 0x03) << 6)
 }
 
-@Test("RTSP runtime preserves Apollo display scale contract when resolving runtime video configuration")
-func rtspRuntimePreservesApolloDisplayScaleContract() {
+@Test("RTSP runtime preserves Lumen display scale contract when resolving runtime video configuration")
+func rtspRuntimePreservesLumenDisplayScaleContract() {
     let configuration = ShadowClientRemoteSessionVideoConfiguration(
         width: 3456,
         height: 2234,

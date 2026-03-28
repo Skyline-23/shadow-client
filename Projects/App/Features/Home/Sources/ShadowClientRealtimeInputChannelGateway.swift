@@ -35,7 +35,7 @@ actor ShadowClientRealtimeInputChannelGateway {
         guard let packet = ShadowClientHostInputPacketCodec.encode(event) else {
             let kind = inputEventKind(event)
             if loggedInputDropKinds.insert(kind).inserted {
-                logger.notice("Apollo input dropped during encode for event \(kind, privacy: .public)")
+                logger.notice("Lumen input dropped during encode for event \(kind, privacy: .public)")
             }
             return
         }
@@ -43,14 +43,14 @@ actor ShadowClientRealtimeInputChannelGateway {
         let kind = inputEventKind(event)
         if loggedInputSendKinds.insert(kind).inserted {
             logger.notice(
-                "Apollo input send enabled for event \(kind, privacy: .public) channel=\(packet.channelID, privacy: .public) bytes=\(packet.payload.count, privacy: .public)"
+                "Lumen input send enabled for event \(kind, privacy: .public) channel=\(packet.channelID, privacy: .public) bytes=\(packet.payload.count, privacy: .public)"
             )
         }
 
         guard let runtime = await resolvedRuntime(ensureRuntime: ensureRuntime) else {
             let now = ProcessInfo.processInfo.systemUptime
             if now - lastInputChannelUnavailableLogUptime >= inputChannelUnavailableLogMinimumIntervalSeconds {
-                logger.notice("Apollo input send skipped: control channel unavailable")
+                logger.notice("Lumen input send skipped: control channel unavailable")
                 lastInputChannelUnavailableLogUptime = now
             }
             return
@@ -79,7 +79,7 @@ actor ShadowClientRealtimeInputChannelGateway {
                     firstFailureUptime: firstTransientInputSendFailureUptime
                 ) {
                     logger.notice(
-                        "Apollo input channel reset after transient send failure burst (count=\(self.transientInputSendFailureCount, privacy: .public), window=\(ShadowClientRealtimeSessionDefaults.transientInputSendFailureBurstWindowSeconds, privacy: .public)s)"
+                        "Lumen input channel reset after transient send failure burst (count=\(self.transientInputSendFailureCount, privacy: .public), window=\(ShadowClientRealtimeSessionDefaults.transientInputSendFailureBurstWindowSeconds, privacy: .public)s)"
                     )
                     await invalidateRuntime(runtime)
                     controlChannelRuntime = nil
@@ -89,7 +89,7 @@ actor ShadowClientRealtimeInputChannelGateway {
             }
             if ShadowClientRealtimeRTSPSessionRuntime.shouldResetInputControlChannelAfterSendError(error) {
                 logger.notice(
-                    "Apollo input channel reset after send failure: \(error.localizedDescription, privacy: .public)"
+                    "Lumen input channel reset after send failure: \(error.localizedDescription, privacy: .public)"
                 )
                 await invalidateRuntime(runtime)
                 controlChannelRuntime = nil
