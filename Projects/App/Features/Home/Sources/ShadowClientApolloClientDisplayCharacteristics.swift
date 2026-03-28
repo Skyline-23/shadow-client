@@ -83,7 +83,7 @@ extension ShadowClientApolloClientDisplayCharacteristics {
             return .sdr
         }
 
-        if supportsHDRTileOverlay {
+        if supportsHDRTileOverlay && supportsPerFrameHDRMetadata {
             return .sdrBaseHDROverlay
         }
 
@@ -233,14 +233,15 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
     private static func sinkCapabilities(
         potentialEDRHeadroom: Float
     ) -> SinkCapabilities {
-        let supportsEDRDisplay = potentialEDRHeadroom > 1.0
-        let supportsMetalRenderer = MTLCreateSystemDefaultDevice() != nil
-        let supportsFrameGatedHDR = supportsEDRDisplay && supportsMetalRenderer
+        let compositorCapabilities = ShadowClientRealtimeSessionHDRCompositor.sinkCapabilities(
+            potentialEDRHeadroom: potentialEDRHeadroom,
+            hasMetalRenderer: MTLCreateSystemDefaultDevice() != nil
+        )
 
         return .init(
-            supportsFrameGatedHDR: supportsFrameGatedHDR,
-            supportsHDRTileOverlay: false,
-            supportsPerFrameHDRMetadata: supportsFrameGatedHDR
+            supportsFrameGatedHDR: compositorCapabilities.supportsFrameGatedHDR,
+            supportsHDRTileOverlay: compositorCapabilities.supportsHDRTileOverlay,
+            supportsPerFrameHDRMetadata: compositorCapabilities.supportsPerFrameHDRMetadata
         )
     }
 }

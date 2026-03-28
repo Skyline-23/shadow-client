@@ -134,10 +134,15 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             hasLoggedRenderPathForCurrentSession = false
             lastAppliedRenderTargetSignature = nil
         }
+        let allowsExtendedDynamicRange =
+            ShadowClientRealtimeSessionHDRCompositor.allowsExtendedDynamicRange(
+                dynamicRangeMode: surfaceContext.activeDynamicRangeMode,
+                hdrFrameState: snapshot.hdrFrameState
+            )
         let colorConfiguration = pixelBuffer.map {
             ShadowClientRealtimeSessionColorPipeline.configuration(
                 for: $0,
-                allowExtendedDynamicRange: surfaceContext.activeDynamicRangeMode == .hdr,
+                allowExtendedDynamicRange: allowsExtendedDynamicRange,
                 negotiatedHDRMetadata: surfaceContext.activeHDRMetadata
             )
         }
@@ -182,14 +187,15 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 logger.notice("Surface render path=metal-yuv pixel-format=0x\(String(CVPixelBufferGetPixelFormatType(pixelBuffer), radix: 16), privacy: .public)")
                 hasLoggedRenderPathForCurrentSession = true
             }
-            let didRender = yuvPipeline.render(
+            let didRender = ShadowClientRealtimeSessionHDRCompositor.render(
+                snapshot: snapshot,
                 pixelBuffer: pixelBuffer,
                 into: renderPass,
                 commandBuffer: commandBuffer,
                 drawableSize: drawableSize,
                 colorPixelFormat: view.colorPixelFormat,
-                outputColorSpace: renderTargetConfiguration.outputColorSpace,
-                prefersExtendedDynamicRange: renderTargetConfiguration.prefersExtendedDynamicRange,
+                renderTargetConfiguration: renderTargetConfiguration,
+                yuvPipeline: yuvPipeline,
                 currentEDRHeadroom: Float(currentExtendedDynamicRangeHeadroom(for: view))
             )
             if didRender {

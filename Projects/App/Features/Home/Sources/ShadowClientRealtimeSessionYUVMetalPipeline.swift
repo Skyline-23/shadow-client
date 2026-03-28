@@ -6,6 +6,11 @@ import os
 import simd
 
 final class ShadowClientRealtimeSessionYUVMetalPipeline {
+    enum RenderIntent: Sendable {
+        case defaultFrame
+        case sdrBaseForHDROverlay
+    }
+
     struct CSCParameters {
         var row0: SIMD3<Float>
         var row1: SIMD3<Float>
@@ -175,7 +180,9 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         colorPixelFormat: MTLPixelFormat,
         outputColorSpace: CGColorSpace,
         prefersExtendedDynamicRange: Bool,
-        currentEDRHeadroom: Float? = nil
+        currentEDRHeadroom: Float? = nil,
+        renderIntent: RenderIntent = .defaultFrame,
+        scissorRect: MTLScissorRect? = nil
     ) -> Bool {
         guard canRender(pixelBuffer),
               let pipelineState = pipelineStates[colorPixelFormat],
@@ -209,7 +216,8 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             for: pixelBuffer,
             outputColorSpace: outputColorSpace,
             prefersExtendedDynamicRange: prefersExtendedDynamicRange,
-            currentEDRHeadroom: currentEDRHeadroom
+            currentEDRHeadroom: currentEDRHeadroom,
+            renderIntent: renderIntent
         )
         logDiagnosticsIfNeeded(
             pixelBuffer: pixelBuffer,
@@ -220,6 +228,9 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         )
 
         renderEncoder.setRenderPipelineState(pipelineState)
+        if let scissorRect {
+            renderEncoder.setScissorRect(scissorRect)
+        }
         renderEncoder.setVertexBytes(
             vertices,
             length: MemoryLayout<Vertex>.stride * vertices.count,
@@ -244,6 +255,55 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             _ = chromaTextureRef
         }
         return true
+    }
+
+    static func drawableScissorRect(
+        for overlayRegion: ShadowClientHDROverlayRegion,
+        videoSize: CGSize,
+        drawableSize: CGSize
+    ) -> MTLScissorRect? {
+        let contentRect = drawableContentRect(
+            videoSize: videoSize,
+            drawableSize: drawableSize
+        )
+        guard contentRect.width > 0,
+              contentRect.height > 0,
+              videoSize.width > 0,
+              videoSize.height > 0
+        else {
+            return nil
+        }
+
+        let widthScale = contentRect.width / videoSize.width
+        let heightScale = contentRect.height / videoSize.height
+        let rawRect = CGRect(
+            x: contentRect.minX + CGFloat(overlayRegion.x) * widthScale,
+            y: contentRect.minY + CGFloat(overlayRegion.y) * heightScale,
+            width: CGFloat(overlayRegion.width) * widthScale,
+            height: CGFloat(overlayRegion.height) * heightScale
+        )
+        let clippedRect = rawRect.intersection(contentRect)
+        guard !clippedRect.isNull,
+              clippedRect.width > 0,
+              clippedRect.height > 0
+        else {
+            return nil
+        }
+
+        let minX = max(Int(clippedRect.minX.rounded(.down)), 0)
+        let minY = max(Int(clippedRect.minY.rounded(.down)), 0)
+        let maxX = min(Int(clippedRect.maxX.rounded(.up)), Int(drawableSize.width.rounded(.up)))
+        let maxY = min(Int(clippedRect.maxY.rounded(.up)), Int(drawableSize.height.rounded(.up)))
+        guard maxX > minX, maxY > minY else {
+            return nil
+        }
+
+        return MTLScissorRect(
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY
+        )
     }
 
     private func makeTexture(
@@ -307,7 +367,8 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         for pixelBuffer: CVPixelBuffer,
         outputColorSpace: CGColorSpace,
         prefersExtendedDynamicRange: Bool,
-        currentEDRHeadroom: Float?
+        currentEDRHeadroom: Float?,
+        renderIntent: RenderIntent
     ) -> CSCParameters {
         let matrix = cscMatrix(
             for: pixelBuffer,
@@ -327,7 +388,8 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             for: pixelBuffer,
             outputColorSpace: outputColorSpace,
             prefersExtendedDynamicRange: prefersExtendedDynamicRange,
-            currentEDRHeadroom: currentEDRHeadroom
+            currentEDRHeadroom: currentEDRHeadroom,
+            renderIntent: renderIntent
         )
 
         return CSCParameters(
@@ -359,7 +421,8 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         for pixelBuffer: CVPixelBuffer,
         outputColorSpace: CGColorSpace,
         prefersExtendedDynamicRange: Bool,
-        currentEDRHeadroom: Float? = nil
+        currentEDRHeadroom: Float? = nil,
+        renderIntent: RenderIntent = .defaultFrame
     ) -> ColorProcessingDescriptor {
         let transfer = staticAttachmentStringValue(
             forKey: kCVImageBufferTransferFunctionKey,
@@ -391,12 +454,18 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
                 outputColorSpace.name == CGColorSpace.extendedLinearDisplayP3 ||
                     outputColorSpace.name == CGColorSpace.extendedLinearSRGB
             )
-        let decodesTransfer =
+        var decodesTransfer =
             carriesHDRTransfer &&
             (!prefersExtendedDynamicRange || usesLinearHDROutput)
-        let appliesToneMapToSDR =
+        var appliesToneMapToSDR =
             carriesHDRTransfer &&
             !prefersExtendedDynamicRange
+        if renderIntent == .sdrBaseForHDROverlay,
+           carriesHDRTransfer
+        {
+            decodesTransfer = true
+            appliesToneMapToSDR = true
+        }
         let appliesGamutTransform =
             sourceStandard == .rec2020 &&
             outputColorSpace.name == CGColorSpace.extendedLinearDisplayP3
@@ -1053,13 +1122,14 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         videoSize: CGSize,
         drawableSize: CGSize
     ) -> [Vertex] {
-        let widthScale = drawableSize.width / max(videoSize.width, 1)
-        let heightScale = drawableSize.height / max(videoSize.height, 1)
-        let scale = min(widthScale, heightScale)
-        let scaledWidth = videoSize.width * scale
-        let scaledHeight = videoSize.height * scale
-        let originX = (drawableSize.width - scaledWidth) * 0.5
-        let originY = (drawableSize.height - scaledHeight) * 0.5
+        let contentRect = Self.drawableContentRect(
+            videoSize: videoSize,
+            drawableSize: drawableSize
+        )
+        let originX = contentRect.minX
+        let originY = contentRect.minY
+        let scaledWidth = contentRect.width
+        let scaledHeight = contentRect.height
 
         let left = Float((originX / drawableSize.width) * 2.0 - 1.0)
         let right = Float(((originX + scaledWidth) / drawableSize.width) * 2.0 - 1.0)
@@ -1089,6 +1159,33 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             return nil
         }
         return attachment as? String
+    }
+
+    private static func drawableContentRect(
+        videoSize: CGSize,
+        drawableSize: CGSize
+    ) -> CGRect {
+        guard videoSize.width > 0,
+              videoSize.height > 0,
+              drawableSize.width > 0,
+              drawableSize.height > 0
+        else {
+            return .zero
+        }
+
+        let widthScale = drawableSize.width / videoSize.width
+        let heightScale = drawableSize.height / videoSize.height
+        let scale = min(widthScale, heightScale)
+        let scaledWidth = videoSize.width * scale
+        let scaledHeight = videoSize.height * scale
+        let originX = (drawableSize.width - scaledWidth) * 0.5
+        let originY = (drawableSize.height - scaledHeight) * 0.5
+        return CGRect(
+            x: originX,
+            y: originY,
+            width: scaledWidth,
+            height: scaledHeight
+        )
     }
 }
 

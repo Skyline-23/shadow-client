@@ -101,6 +101,21 @@ func apolloSinkRequestPromotesHDRSinkTransfersToFrameGatedTransport() {
     #expect(characteristics.requestedDynamicRangeTransport(hdrRequested: true) == .frameGatedHDR)
 }
 
+@Test("Apollo sink request promotes HDR sink transfers to SDR base HDR overlay transport")
+func apolloSinkRequestPromotesHDRSinkTransfersToSDRBaseHDROverlayTransport() {
+    let characteristics = ShadowClientApolloClientDisplayCharacteristics(
+        gamut: .displayP3,
+        transfer: .pq,
+        scalePercent: 100,
+        hiDPIEnabled: false,
+        supportsFrameGatedHDR: true,
+        supportsHDRTileOverlay: true,
+        supportsPerFrameHDRMetadata: true
+    )
+
+    #expect(characteristics.requestedDynamicRangeTransport(hdrRequested: true) == .sdrBaseHDROverlay)
+}
+
 @Test("Apollo sink request falls back to SDR when HDR compositor support is unavailable")
 func apolloSinkRequestFallsBackToSDRWithoutHDRSinkCapability() {
     let characteristics = ShadowClientApolloClientDisplayCharacteristics(
