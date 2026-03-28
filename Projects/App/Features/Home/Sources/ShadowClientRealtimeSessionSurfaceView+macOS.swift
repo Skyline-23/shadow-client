@@ -78,6 +78,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private var frameStreamTask: Task<Void, Never>?
     private var latestSnapshot = ShadowClientRealtimeSessionFrameStore.Snapshot(
         pixelBuffer: nil,
+        hdrFrameState: nil,
         revision: 0
     )
     private var lastRenderedFrameRevision: UInt64 = .max

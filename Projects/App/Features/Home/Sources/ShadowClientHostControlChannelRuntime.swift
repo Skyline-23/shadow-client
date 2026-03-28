@@ -19,6 +19,7 @@ actor ShadowClientHostControlChannelRuntime {
     private let onRoundTripSample: (@Sendable (Double) async -> Void)?
     private let onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)?
     private let onHDRMode: (@Sendable (ShadowClientHostHDRModeEvent) async -> Void)?
+    private let onHDRFrameState: (@Sendable (ShadowClientHDRFrameState) async -> Void)?
     private let onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)?
     private let queue = DispatchQueue(
         label: "com.skyline23.shadowclient.control.enet",
@@ -49,6 +50,7 @@ actor ShadowClientHostControlChannelRuntime {
         onRoundTripSample: (@Sendable (Double) async -> Void)? = nil,
         onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)? = nil,
         onHDRMode: (@Sendable (ShadowClientHostHDRModeEvent) async -> Void)? = nil,
+        onHDRFrameState: (@Sendable (ShadowClientHDRFrameState) async -> Void)? = nil,
         onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)? = nil
     ) {
         self.connectTimeout = connectTimeout
@@ -57,6 +59,7 @@ actor ShadowClientHostControlChannelRuntime {
         self.onRoundTripSample = onRoundTripSample
         self.onControllerFeedback = onControllerFeedback
         self.onHDRMode = onHDRMode
+        self.onHDRFrameState = onHDRFrameState
         self.onTermination = onTermination
     }
 
@@ -546,6 +549,22 @@ actor ShadowClientHostControlChannelRuntime {
         )
     }
 
+    private func parseHDRFrameStateEvent(
+        from packet: ShadowClientHostENetPacketCodec.ParsedPacket,
+        command: ShadowClientHostENetPacketCodec.ParsedPacket.Command
+    ) -> ShadowClientHDRFrameState? {
+        guard let controlPayload = parseControlPayload(from: packet, command: command) else {
+            return nil
+        }
+
+        let type = readUInt16LE(controlPayload, at: 0)
+        let payload = Data(controlPayload.dropFirst(2))
+        return ShadowClientHostControlFeedbackCodec.parseHDRFrameState(
+            type: type,
+            payload: payload
+        )
+    }
+
     private func processIncomingControlEvents(
         from packet: ShadowClientHostENetPacketCodec.ParsedPacket,
         command: ShadowClientHostENetPacketCodec.ParsedPacket.Command
@@ -564,6 +583,13 @@ actor ShadowClientHostControlChannelRuntime {
         ) {
             reportHDRModeEventIfNeeded(hdrModeEvent)
             await onHDRMode?(hdrModeEvent)
+        }
+
+        if let hdrFrameState = parseHDRFrameStateEvent(
+            from: packet,
+            command: command
+        ) {
+            await onHDRFrameState?(hdrFrameState)
         }
 
         if let terminationEvent = parseTerminationEvent(

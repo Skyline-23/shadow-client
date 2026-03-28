@@ -208,6 +208,7 @@ actor ShadowClientRTSPInterleavedClient {
     private let onAudioOutputStateChanged: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)?
     private let onAudioPendingDurationChanged: (@Sendable (Double) async -> Void)?
     private let onHDRMode: (@Sendable (ShadowClientHostHDRModeEvent) async -> Void)?
+    private let onHDRFrameState: (@Sendable (ShadowClientHDRFrameState) async -> Void)?
     private let onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)?
     private let onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)?
     private let inputChannelGateway = ShadowClientRealtimeInputChannelGateway()
@@ -263,6 +264,7 @@ actor ShadowClientRTSPInterleavedClient {
         onAudioOutputStateChanged: (@Sendable (ShadowClientRealtimeAudioOutputState) async -> Void)? = nil,
         onAudioPendingDurationChanged: (@Sendable (Double) async -> Void)? = nil,
         onHDRMode: (@Sendable (ShadowClientHostHDRModeEvent) async -> Void)? = nil,
+        onHDRFrameState: (@Sendable (ShadowClientHDRFrameState) async -> Void)? = nil,
         onControllerFeedback: (@Sendable (ShadowClientHostControllerFeedbackEvent) async -> Void)? = nil,
         onTermination: (@Sendable (ShadowClientHostTerminationEvent) async -> Void)? = nil,
         audioSessionActivation: (@Sendable () async -> Void)? = nil,
@@ -273,6 +275,7 @@ actor ShadowClientRTSPInterleavedClient {
         self.onAudioOutputStateChanged = onAudioOutputStateChanged
         self.onAudioPendingDurationChanged = onAudioPendingDurationChanged
         self.onHDRMode = onHDRMode
+        self.onHDRFrameState = onHDRFrameState
         self.onControllerFeedback = onControllerFeedback
         self.onTermination = onTermination
         self.audioSessionActivation = audioSessionActivation
@@ -1560,6 +1563,7 @@ actor ShadowClientRTSPInterleavedClient {
             onRoundTripSample: onControlRoundTripSample,
             onControllerFeedback: onControllerFeedback,
             onHDRMode: onHDRMode,
+            onHDRFrameState: onHDRFrameState,
             onTermination: onTermination
         )
 

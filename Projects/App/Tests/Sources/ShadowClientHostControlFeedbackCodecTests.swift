@@ -103,7 +103,7 @@ func hostControlFeedbackCodecParsesTerminationPayload() {
     )
 
     #expect(event == .init(reasonCode: 0x80030023))
-    #expect(event?.message == "Host terminated the session gracefully (0x80030023).")
+    #expect(event?.message == "Apollo paused or closed the desktop session (0x80030023). This often happens when Windows shows a secure desktop, password prompt, or UAC dialog.")
 }
 
 @Test("Host control feedback codec parses Sunshine HDR metadata payload")
@@ -156,4 +156,96 @@ func hostControlFeedbackCodecParsesHDRModePayload() {
     #expect(event?.metadata?.hdr10ContentInfoData == Data([
         0x01, 0xEF, 0x45, 0x23,
     ]))
+}
+
+@Test("Host control feedback codec parses Apollo HDR frame state payload")
+func hostControlFeedbackCodecParsesHDRFrameStatePayload() {
+    let payload = Data([
+        0x01, // version
+        0x02, // partial HDR overlay
+        0x03, // static metadata + overlay regions
+        0x00, // reserved
+        0x78, 0x56, 0x34, 0x12, // effective frame
+        0x01, 0x00, // overlay region count
+        0x00, 0x00, // reserved
+        // static metadata
+        0x34, 0x12, 0x78, 0x56,
+        0x9A, 0xBC, 0xDE, 0xF0,
+        0x11, 0x22, 0x33, 0x44,
+        0x55, 0x66, 0x77, 0x88,
+        0x99, 0x00,
+        0xAB, 0xCD,
+        0xEF, 0x01,
+        0x23, 0x45,
+        0x67, 0x89,
+        // overlay region
+        0x10, 0x00, // x
+        0x20, 0x00, // y
+        0x30, 0x00, // width
+        0x40, 0x00, // height
+        0x01, // region metadata flag
+        0x00, 0x00, 0x00, // reserved
+        // region metadata
+        0x01, 0x10, 0x02, 0x10,
+        0x03, 0x10, 0x04, 0x10,
+        0x05, 0x10, 0x06, 0x10,
+        0x07, 0x10, 0x08, 0x10,
+        0x09, 0x10,
+        0x0A, 0x10,
+        0x0B, 0x10,
+        0x0C, 0x10,
+        0x0D, 0x10,
+    ])
+
+    let frameState = ShadowClientHostControlFeedbackCodec.parseHDRFrameState(
+        type: ShadowClientHostControlMessageProfile.hdrFrameStateType,
+        payload: payload
+    )
+
+    #expect(frameState?.content == .partialHDROverlay)
+    #expect(frameState?.effectiveFromFrameNumber == 0x12345678)
+    #expect(frameState?.staticMetadata == makeTestHDRMetadata())
+    #expect(frameState?.overlayRegions.count == 1)
+    #expect(
+        frameState?.overlayRegions.first ==
+            .init(
+                x: 16,
+                y: 32,
+                width: 48,
+                height: 64,
+                metadata: makeTestOverlayHDRMetadata()
+            )
+    )
+}
+
+private func makeTestHDRMetadata() -> ShadowClientHDRMetadata {
+    ShadowClientHDRMetadata(
+        displayPrimaries: [
+            .init(x: 0x1234, y: 0x5678),
+            .init(x: 0xBC9A, y: 0xF0DE),
+            .init(x: 0x2211, y: 0x4433),
+        ],
+        whitePoint: .init(x: 0x6655, y: 0x8877),
+        maxDisplayLuminance: 0x0099,
+        minDisplayLuminance: 0xCDAB,
+        maxContentLightLevel: 0x01EF,
+        maxFrameAverageLightLevel: 0x4523,
+        maxFullFrameLuminance: 0x8967
+    )
+}
+
+private func makeTestOverlayHDRMetadata() -> ShadowClientHDRMetadata {
+    ShadowClientHDRMetadata(
+        displayPrimaries: [
+            .init(x: 0x1001, y: 0x1002),
+            .init(x: 0x1003, y: 0x1004),
+            .init(x: 0x1005, y: 0x1006),
+        ],
+        whitePoint: .init(x: 0x1007, y: 0x1008),
+        maxDisplayLuminance: 0x1009,
+        minDisplayLuminance: 0x100A,
+        maxContentLightLevel: 0x100B,
+        maxFrameAverageLightLevel: 0x100C,
+        maxFullFrameLuminance: 0x100D
+    )
 }

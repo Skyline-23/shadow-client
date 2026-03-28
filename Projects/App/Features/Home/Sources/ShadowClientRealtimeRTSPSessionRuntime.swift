@@ -114,6 +114,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var lastVideoDecodeQueueRecoveryUptime: TimeInterval = 0
     private var activeVideoConfiguration: ShadowClientRemoteSessionVideoConfiguration?
     private var negotiatedHDRMetadata: ShadowClientHDRMetadata?
+    private var latestHDRFrameState: ShadowClientHDRFrameState?
     private var depacketizerCorruptionCount = 0
     private var firstDepacketizerCorruptionUptime: TimeInterval = 0
     private var lastDepacketizerRecoveryUptime: TimeInterval = 0
@@ -248,6 +249,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         decoderRecoveryAttemptCount = 0
         firstDecoderRecoveryAttemptUptime = 0
         negotiatedHDRMetadata = nil
+        latestHDRFrameState = nil
         decoderOutputStallRecoveryCount = 0
         firstDecoderOutputStallRecoveryUptime = 0
         lastDecoderOutputStallRecoveryUptime = 0
@@ -318,6 +320,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             },
             onHDRMode: { [runtime = self] hdrModeEvent in
                 await runtime.handleHDRModeEvent(hdrModeEvent)
+            },
+            onHDRFrameState: { [runtime = self] hdrFrameState in
+                await runtime.handleHDRFrameState(hdrFrameState)
             },
             onControllerFeedback: { [sessionSurfaceContext] feedbackEvent in
                 sessionSurfaceContext.publishControllerFeedbackEvent(feedbackEvent)
@@ -436,6 +441,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         decoderRecoveryAttemptCount = 0
         firstDecoderRecoveryAttemptUptime = 0
         negotiatedHDRMetadata = nil
+        latestHDRFrameState = nil
         decoderOutputStallRecoveryCount = 0
         firstDecoderOutputStallRecoveryUptime = 0
         lastDecoderOutputStallRecoveryUptime = 0
@@ -719,6 +725,23 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 hdrModeEvent.isEnabled ? .hdr : .sdr
             )
             surfaceContext.updateActiveHDRMetadata(effectiveHDRMetadata)
+        }
+    }
+
+    private func handleHDRFrameState(
+        _ hdrFrameState: ShadowClientHDRFrameState
+    ) async {
+        latestHDRFrameState = hdrFrameState
+        let effectiveHDRMetadata = hdrFrameState.resolvedMetadata(
+            fallback: negotiatedHDRMetadata
+        )
+
+        await MainActor.run {
+            surfaceContext.updateActiveDynamicRangeMode(
+                hdrFrameState.isDynamicRangeEnabled ? .hdr : .sdr
+            )
+            surfaceContext.updateActiveHDRMetadata(effectiveHDRMetadata)
+            surfaceContext.updateActiveHDRFrameState(hdrFrameState)
         }
     }
 
@@ -1780,7 +1803,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             codec: codec,
             pixelBuffer: pixelBuffer
         )
-        await surfaceContext.frameStore.update(pixelBuffer: pixelBuffer)
+        await surfaceContext.frameStore.update(
+            pixelBuffer: pixelBuffer,
+            hdrFrameState: latestHDRFrameState
+        )
         lastRenderedFramePublishUptime = now
         if !hasPublishedRenderingState {
             hasPublishedRenderingState = true

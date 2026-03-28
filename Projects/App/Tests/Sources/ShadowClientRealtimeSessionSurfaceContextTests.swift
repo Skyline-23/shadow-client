@@ -117,6 +117,31 @@ func realtimeSessionSurfaceContextTracksHDRMetadata() {
     #expect(context.activeHDRMetadata == nil)
 }
 
+@Test("Realtime session surface context tracks active HDR frame state")
+func realtimeSessionSurfaceContextTracksHDRFrameState() {
+    let context = ShadowClientRealtimeSessionSurfaceContext()
+    let frameState = ShadowClientHDRFrameState(
+        content: .partialHDROverlay,
+        effectiveFromFrameNumber: 77,
+        staticMetadata: makeSurfaceTestHDRMetadata(),
+        overlayRegions: [
+            .init(
+                x: 16,
+                y: 24,
+                width: 32,
+                height: 40,
+                metadata: nil
+            )
+        ]
+    )
+
+    context.updateActiveHDRFrameState(frameState)
+    #expect(context.activeHDRFrameState == frameState)
+
+    context.reset()
+    #expect(context.activeHDRFrameState == nil)
+}
+
 @Test("Realtime session surface context bumps color configuration revision for dynamic range transitions")
 func realtimeSessionSurfaceContextBumpsColorConfigurationRevisionForDynamicRangeTransitions() {
     let context = ShadowClientRealtimeSessionSurfaceContext()
@@ -171,18 +196,46 @@ func realtimeSessionSurfaceContextAwaitedResetClearsFrameStoreBeforeReturning() 
 
     let initialSnapshot = await iterator.next()
     #expect(initialSnapshot?.pixelBuffer == nil)
+    #expect(initialSnapshot?.hdrFrameState == nil)
 
     let pixelBuffer = try makeTestPixelBuffer()
-    await context.frameStore.update(pixelBuffer: pixelBuffer)
+    let frameState = ShadowClientHDRFrameState(
+        content: .fullFrameHDR,
+        effectiveFromFrameNumber: 42,
+        staticMetadata: makeSurfaceTestHDRMetadata(),
+        overlayRegions: []
+    )
+    await context.frameStore.update(
+        pixelBuffer: pixelBuffer,
+        hdrFrameState: frameState
+    )
 
     let populatedSnapshot = await iterator.next()
     #expect(populatedSnapshot?.pixelBuffer != nil)
+    #expect(populatedSnapshot?.hdrFrameState == frameState)
 
     await context.resetAwaitingFrameClear()
 
     let clearedSnapshot = await iterator.next()
     #expect(clearedSnapshot?.pixelBuffer == nil)
+    #expect(clearedSnapshot?.hdrFrameState == nil)
     #expect(context.renderState == .idle)
+}
+
+private func makeSurfaceTestHDRMetadata() -> ShadowClientHDRMetadata {
+    ShadowClientHDRMetadata(
+        displayPrimaries: [
+            .init(x: 100, y: 200),
+            .init(x: 300, y: 400),
+            .init(x: 500, y: 600),
+        ],
+        whitePoint: .init(x: 700, y: 800),
+        maxDisplayLuminance: 1000,
+        minDisplayLuminance: 1,
+        maxContentLightLevel: 1200,
+        maxFrameAverageLightLevel: 600,
+        maxFullFrameLuminance: 400
+    )
 }
 
 private func makeTestPixelBuffer() throws -> CVPixelBuffer {

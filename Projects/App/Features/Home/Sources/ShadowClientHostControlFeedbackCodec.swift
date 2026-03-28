@@ -200,6 +200,99 @@ enum ShadowClientHostControlFeedbackCodec {
         )
     }
 
+    static func parseHDRFrameState(
+        type: UInt16,
+        payload: Data
+    ) -> ShadowClientHDRFrameState? {
+        let staticMetadataFlag: UInt8 = 1 << 0
+        let overlayRegionsFlag: UInt8 = 1 << 1
+        let overlayMetadataFlag: UInt8 = 1 << 0
+        let version: UInt8 = 1
+        let metadataSize = 26
+        let fixedHeaderSize = 12
+        let overlayRegionSize = 37
+
+        guard type == ShadowClientHostControlMessageProfile.hdrFrameStateType,
+              payload.count >= fixedHeaderSize + metadataSize,
+              payload[0] == version,
+              let content = ShadowClientHDRFrameContent(rawValue: payload[1])
+        else {
+            return nil
+        }
+
+        let flags = payload[2]
+        let effectiveFromFrameNumber = readUInt32LE(payload, at: 4)
+        let overlayRegionCount = Int(readUInt16LE(payload, at: 8))
+        let expectedPayloadSize = fixedHeaderSize + metadataSize + (overlayRegionCount * overlayRegionSize)
+        guard payload.count >= expectedPayloadSize else {
+            return nil
+        }
+
+        let staticMetadata = (flags & staticMetadataFlag) != 0
+            ? parseHDRMetadata(payload: payload, offset: fixedHeaderSize)
+            : nil
+
+        var overlayRegions: [ShadowClientHDROverlayRegion] = []
+        overlayRegions.reserveCapacity(overlayRegionCount)
+
+        if (flags & overlayRegionsFlag) != 0 {
+            var offset = fixedHeaderSize + metadataSize
+            for _ in 0 ..< overlayRegionCount {
+                let metadata = (payload[offset + 8] & overlayMetadataFlag) != 0
+                    ? parseHDRMetadata(payload: payload, offset: offset + 12)
+                    : nil
+                overlayRegions.append(
+                    .init(
+                        x: readUInt16LE(payload, at: offset),
+                        y: readUInt16LE(payload, at: offset + 2),
+                        width: readUInt16LE(payload, at: offset + 4),
+                        height: readUInt16LE(payload, at: offset + 6),
+                        metadata: metadata
+                    )
+                )
+                offset += overlayRegionSize
+            }
+        }
+
+        return .init(
+            content: content,
+            effectiveFromFrameNumber: effectiveFromFrameNumber,
+            staticMetadata: staticMetadata,
+            overlayRegions: overlayRegions
+        )
+    }
+
+    private static func parseHDRMetadata(
+        payload: Data,
+        offset: Int
+    ) -> ShadowClientHDRMetadata {
+        var offset = offset
+        var primaries: [ShadowClientHDRMetadataChromaticity] = []
+        primaries.reserveCapacity(3)
+        for _ in 0 ..< 3 {
+            primaries.append(
+                .init(
+                    x: readUInt16LE(payload, at: offset),
+                    y: readUInt16LE(payload, at: offset + 2)
+                )
+            )
+            offset += 4
+        }
+
+        return ShadowClientHDRMetadata(
+            displayPrimaries: primaries,
+            whitePoint: .init(
+                x: readUInt16LE(payload, at: offset),
+                y: readUInt16LE(payload, at: offset + 2)
+            ),
+            maxDisplayLuminance: readUInt16LE(payload, at: offset + 4),
+            minDisplayLuminance: readUInt16LE(payload, at: offset + 6),
+            maxContentLightLevel: readUInt16LE(payload, at: offset + 8),
+            maxFrameAverageLightLevel: readUInt16LE(payload, at: offset + 10),
+            maxFullFrameLuminance: readUInt16LE(payload, at: offset + 12)
+        )
+    }
+
     private static func parseTriggerRumble(
         payload: Data
     ) -> ShadowClientHostControllerFeedbackEvent? {
@@ -275,6 +368,14 @@ enum ShadowClientHostControlFeedbackCodec {
         let b0 = UInt16(data[offset])
         let b1 = UInt16(data[offset + 1]) << 8
         return b0 | b1
+    }
+
+    private static func readUInt32LE(_ data: Data, at offset: Int) -> UInt32 {
+        let b0 = UInt32(data[offset])
+        let b1 = UInt32(data[offset + 1]) << 8
+        let b2 = UInt32(data[offset + 2]) << 16
+        let b3 = UInt32(data[offset + 3]) << 24
+        return b0 | b1 | b2 | b3
     }
 
     private static func readUInt32BE(_ data: Data, at offset: Int) -> UInt32 {

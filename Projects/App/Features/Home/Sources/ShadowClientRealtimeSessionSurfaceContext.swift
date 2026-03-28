@@ -10,17 +10,22 @@ struct ShadowClientSendableFramePixelBuffer: @unchecked Sendable {
 public actor ShadowClientRealtimeSessionFrameStore {
     struct Snapshot: Sendable {
         let pixelBuffer: ShadowClientSendableFramePixelBuffer?
+        let hdrFrameState: ShadowClientHDRFrameState?
         let revision: UInt64
     }
 
-    private var latestSnapshot = Snapshot(pixelBuffer: nil, revision: 0)
+    private var latestSnapshot = Snapshot(pixelBuffer: nil, hdrFrameState: nil, revision: 0)
     private var continuations: [UUID: AsyncStream<Snapshot>.Continuation] = [:]
 
     public init() {}
 
-    public func update(pixelBuffer: CVPixelBuffer?) {
+    public func update(
+        pixelBuffer: CVPixelBuffer?,
+        hdrFrameState: ShadowClientHDRFrameState? = nil
+    ) {
         latestSnapshot = Snapshot(
             pixelBuffer: pixelBuffer.map(ShadowClientSendableFramePixelBuffer.init),
+            hdrFrameState: hdrFrameState,
             revision: latestSnapshot.revision &+ 1
         )
         continuations.values.forEach { $0.yield(latestSnapshot) }
@@ -124,6 +129,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     @Published public private(set) var audioPendingDurationMs: Double = 0
     @Published public private(set) var activeDynamicRangeMode: DynamicRangeMode = .unknown
     @Published public private(set) var activeHDRMetadata: ShadowClientHDRMetadata?
+    @Published public private(set) var activeHDRFrameState: ShadowClientHDRFrameState?
     @Published public private(set) var colorConfigurationRevision: UInt64 = 0
     @Published public private(set) var preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
     @Published public private(set) var videoPresentationSize: CGSize?
@@ -156,14 +162,20 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
 
     @MainActor
     public func resetAwaitingFrameClear() async {
-        await frameStore.update(pixelBuffer: nil)
+        await frameStore.update(
+            pixelBuffer: nil,
+            hdrFrameState: nil
+        )
         resetPublishedState()
     }
 
     private func scheduleFrameClear() {
         let frameStore = self.frameStore
         Task {
-            await frameStore.update(pixelBuffer: nil)
+            await frameStore.update(
+                pixelBuffer: nil,
+                hdrFrameState: nil
+            )
         }
     }
 
@@ -178,6 +190,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         audioPendingDurationMs = 0
         activeDynamicRangeMode = .unknown
         activeHDRMetadata = nil
+        activeHDRFrameState = nil
         colorConfigurationRevision = 0
         preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
         videoPresentationSize = nil
@@ -339,6 +352,14 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
             return
         }
         activeHDRMetadata = metadata
+        colorConfigurationRevision &+= 1
+    }
+
+    public func updateActiveHDRFrameState(_ frameState: ShadowClientHDRFrameState?) {
+        if activeHDRFrameState == frameState {
+            return
+        }
+        activeHDRFrameState = frameState
         colorConfigurationRevision &+= 1
     }
 
