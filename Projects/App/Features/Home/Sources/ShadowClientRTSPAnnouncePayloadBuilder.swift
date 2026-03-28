@@ -35,6 +35,21 @@ enum ShadowClientRTSPAnnouncePayloadBuilder {
             for: videoConfiguration.fps
         )
         let surroundEnabled = videoConfiguration.enableSurroundAudio
+        let requestedDynamicRangeTransport = clientDisplayCharacteristics
+            .requestedDynamicRangeTransport(hdrRequested: videoConfiguration.enableHDR)
+            .rawValue
+        let supportsFrameGatedHDR = ShadowClientApolloSinkContractProfile.boolString(
+            clientDisplayCharacteristics.supportsFrameGatedHDR
+        )
+        let supportsHDRTileOverlay = ShadowClientApolloSinkContractProfile.boolString(
+            clientDisplayCharacteristics.supportsHDRTileOverlay
+        )
+        let supportsPerFrameHDRMetadata = ShadowClientApolloSinkContractProfile.boolString(
+            clientDisplayCharacteristics.supportsPerFrameHDRMetadata
+        )
+        let sinkModeIsLogical = ShadowClientApolloSinkContractProfile.boolString(
+            clientDisplayCharacteristics.modeIsLogical
+        )
 
         var attributes: [(String, String)] = [
             ("x-ml-general.featureFlags", "\(moonlightFeatureFlags)"),
@@ -82,6 +97,42 @@ enum ShadowClientRTSPAnnouncePayloadBuilder {
             ("x-apollo-video[0].clientDisplayPotentialEDRHeadroom", "\(clientDisplayCharacteristics.potentialEDRHeadroom)"),
             ("x-apollo-video[0].clientDisplayCurrentPeakLuminanceNits", "\(clientDisplayCharacteristics.currentPeakLuminanceNits)"),
             ("x-apollo-video[0].clientDisplayPotentialPeakLuminanceNits", "\(clientDisplayCharacteristics.potentialPeakLuminanceNits)"),
+            ("x-shadow-general.featureFlags", "\(ShadowClientRTSPAnnounceProfile.nvFeatureFlagsBase)"),
+            ("x-shadow-general.useReliableUdp", reliableUDPMode),
+            ("x-shadow-general.transportFeatureFlags", "\(moonlightFeatureFlags)"),
+            ("x-shadow-general.encryptionEnabled", "\(encryptionEnabledFlags)"),
+            ("x-shadow-video[0].clientViewportWidth", "\(videoConfiguration.width)"),
+            ("x-shadow-video[0].clientViewportHeight", "\(videoConfiguration.height)"),
+            ("x-shadow-video[0].maxFPS", "\(videoConfiguration.fps)"),
+            ("x-shadow-video[0].packetSize", ShadowClientRTSPAnnounceProfile.packetSize),
+            ("x-shadow-video[0].maximumBitrateKbps", "\(adjustedBitrateKbps)"),
+            ("x-shadow-video[0].configuredBitrateKbps", "\(configuredBitrateKbps)"),
+            ("x-shadow-video[0].encoderSlicesPerFrame", ShadowClientRTSPAnnounceProfile.encoderSlicesPerFrame),
+            ("x-shadow-video[0].maxReferenceFrames", ShadowClientRTSPAnnounceProfile.maxReferenceFrames),
+            ("x-shadow-video[0].encoderCscMode", ShadowClientRTSPAnnounceProfile.encoderCSCMode),
+            ("x-shadow-video[0].bitStreamFormat", bitStreamFormat),
+            ("x-shadow-video[0].chromaSamplingType", ShadowClientRTSPAnnounceProfile.chromaSamplingType(yuv444Enabled: videoConfiguration.enableYUV444)),
+            ("x-shadow-video[0].intraRefresh", ShadowClientRTSPAnnounceProfile.intraRefreshDisabled),
+            ("x-shadow-video[0].qosTrafficType", ShadowClientRTSPAnnounceProfile.videoQoSTrafficType),
+            ("x-shadow-video[0].fec.minRequiredPackets", ShadowClientRTSPAnnounceProfile.shadowFECMinimumRequiredPackets),
+            ("x-shadow-audio.packetDuration", ShadowClientRTSPAnnounceProfile.aqosPacketDuration),
+            ("x-shadow-audio.qosTrafficType", ShadowClientRTSPAnnounceProfile.audioQoSTrafficType),
+            ("x-shadow-audio.surround.numChannels", ShadowClientRTSPAnnounceProfile.audioNumChannels(surroundEnabled: surroundEnabled)),
+            ("x-shadow-audio.surround.channelMask", ShadowClientRTSPAnnounceProfile.audioChannelMask(surroundEnabled: surroundEnabled)),
+            ("x-shadow-audio.surround.quality", ShadowClientRTSPAnnounceProfile.surroundAudioQuality(surroundEnabled: surroundEnabled)),
+            ("x-shadow-sink.scalePercent", "\(clientDisplayCharacteristics.scalePercent)"),
+            ("x-shadow-sink.hidpi", ShadowClientApolloSinkContractProfile.boolString(clientDisplayCharacteristics.hiDPIEnabled)),
+            ("x-shadow-sink.modeIsLogical", sinkModeIsLogical),
+            ("x-shadow-sink.gamut", clientDisplayCharacteristics.gamut.rawValue),
+            ("x-shadow-sink.transfer", clientDisplayCharacteristics.transfer.rawValue),
+            ("x-shadow-sink.currentEDRHeadroom", "\(clientDisplayCharacteristics.currentEDRHeadroom)"),
+            ("x-shadow-sink.potentialEDRHeadroom", "\(clientDisplayCharacteristics.potentialEDRHeadroom)"),
+            ("x-shadow-sink.currentPeakLuminanceNits", "\(clientDisplayCharacteristics.currentPeakLuminanceNits)"),
+            ("x-shadow-sink.potentialPeakLuminanceNits", "\(clientDisplayCharacteristics.potentialPeakLuminanceNits)"),
+            ("x-shadow-sink.requestedDynamicRangeTransport", requestedDynamicRangeTransport),
+            ("x-shadow-sink.supportsFrameGatedHDR", supportsFrameGatedHDR),
+            ("x-shadow-sink.supportsHDRTileOverlay", supportsHDRTileOverlay),
+            ("x-shadow-sink.supportsPerFrameHDRMetadata", supportsPerFrameHDRMetadata),
         ]
         if reliableUDPMode == ShadowClientRTSPAnnounceProfile.reliableUDPModeStandard {
             attributes.append(

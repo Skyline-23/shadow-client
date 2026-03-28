@@ -148,6 +148,7 @@ enum ShadowClientRTSPAnnounceProfile {
     static let videoQoSTrafficType = "5"
     static let audioQoSTrafficType = "4"
     static let fecMinimumRequiredPackets = "2"
+    static let shadowFECMinimumRequiredPackets = "0"
     static let bllFecEnabled = "0"
     static let drcEnabled = "0"
     static let recoveryModeEnabled = "0"
@@ -164,6 +165,7 @@ enum ShadowClientRTSPAnnounceProfile {
     static let surroundAudioQualityDisabled = "0"
     static let surroundAudioQualityEnabled = "1"
     static let aqosPacketDuration = "5"
+    static let intraRefreshDisabled = "0"
     // Apollo interprets encoderCscMode as:
     // - low bit: range (0 limited, 1 full)
     // - upper bits: SDR colorspace (0 Rec.601, 1 Rec.709, 2 Rec.2020)

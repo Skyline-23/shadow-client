@@ -30,6 +30,8 @@ func rtspAnnouncePayloadUsesPropagatedBitrateValues() {
     #expect(attributes["x-nv-video[0].initialPeakBitrateKbps"] == "48000")
     #expect(attributes["x-nv-vqos[0].bw.minimumBitrateKbps"] == "48000")
     #expect(attributes["x-nv-vqos[0].bw.maximumBitrateKbps"] == "48000")
+    #expect(attributes["x-shadow-video[0].maximumBitrateKbps"] == "48000")
+    #expect(attributes["x-shadow-video[0].configuredBitrateKbps"] == "48000")
 }
 
 @Test("RTSP ANNOUNCE payload maps HDR and YUV444 launch settings")
@@ -79,6 +81,16 @@ func rtspAnnouncePayloadMapsHdrAndYUV444() {
     #expect(hdrYuvAttributes["x-ss-video[0].chromaSamplingType"] == "1")
     #expect(sdr420Attributes["x-nv-video[0].dynamicRangeMode"] == "0")
     #expect(sdr420Attributes["x-ss-video[0].chromaSamplingType"] == "0")
+    #expect(hdrYuvAttributes["x-shadow-video[0].chromaSamplingType"] == "1")
+    #expect(sdr420Attributes["x-shadow-video[0].chromaSamplingType"] == "0")
+    #expect(hdrYuvAttributes["x-shadow-sink.requestedDynamicRangeTransport"] == "frame-gated-hdr")
+    #expect(sdr420Attributes["x-shadow-sink.requestedDynamicRangeTransport"] == "sdr")
+    #expect(hdrYuvAttributes["x-shadow-sink.supportsFrameGatedHDR"] == "1")
+    #expect(hdrYuvAttributes["x-shadow-sink.supportsHDRTileOverlay"] == "0")
+    #expect(hdrYuvAttributes["x-shadow-sink.supportsPerFrameHDRMetadata"] == "1")
+    #expect(sdr420Attributes["x-shadow-sink.supportsFrameGatedHDR"] == "1")
+    #expect(sdr420Attributes["x-shadow-sink.supportsHDRTileOverlay"] == "0")
+    #expect(sdr420Attributes["x-shadow-sink.supportsPerFrameHDRMetadata"] == "1")
 }
 
 @Test("RTSP ANNOUNCE payload maps surround launch settings to audio fields")
@@ -132,6 +144,12 @@ func rtspAnnouncePayloadMapsSurroundAudio() {
     #expect(stereoAttributes["x-nv-audio.surround.channelMask"] == "3")
     #expect(stereoAttributes["x-nv-audio.surround.enable"] == "0")
     #expect(stereoAttributes["x-nv-audio.surround.AudioQuality"] == "0")
+    #expect(surroundAttributes["x-shadow-audio.surround.numChannels"] == "6")
+    #expect(surroundAttributes["x-shadow-audio.surround.channelMask"] == "63")
+    #expect(surroundAttributes["x-shadow-audio.surround.quality"] == "1")
+    #expect(stereoAttributes["x-shadow-audio.surround.numChannels"] == "2")
+    #expect(stereoAttributes["x-shadow-audio.surround.channelMask"] == "3")
+    #expect(stereoAttributes["x-shadow-audio.surround.quality"] == "0")
 }
 
 @Test("RTSP ANNOUNCE payload includes legacy control channel hint for plaintext reliable UDP")
@@ -160,6 +178,9 @@ func rtspAnnouncePayloadIncludesLegacyControlChannelHint() {
     #expect(attributes["x-nv-general.useReliableUdp"] == "1")
     #expect(attributes["x-nv-ri.useControlChannel"] == "1")
     #expect(attributes["x-nv-general.featureFlags"] == "135")
+    #expect(attributes["x-shadow-general.useReliableUdp"] == "1")
+    #expect(attributes["x-shadow-general.featureFlags"] == "135")
+    #expect(attributes["x-shadow-general.transportFeatureFlags"] == "3")
 }
 
 @Test("RTSP ANNOUNCE payload omits legacy control channel hint for encrypted control-v2 mode")
@@ -187,6 +208,8 @@ func rtspAnnouncePayloadOmitsLegacyControlChannelHintWhenEncryptedControlIsEnabl
 
     #expect(attributes["x-nv-general.useReliableUdp"] == "13")
     #expect(attributes["x-nv-ri.useControlChannel"] == nil)
+    #expect(attributes["x-shadow-general.useReliableUdp"] == "13")
+    #expect(attributes["x-shadow-general.encryptionEnabled"] == "1")
 }
 
 @Test("RTSP ANNOUNCE payload includes Apollo display metadata")
@@ -229,6 +252,22 @@ func rtspAnnouncePayloadIncludesApolloDisplayMetadata() {
     #expect(attributes["x-apollo-video[0].clientDisplayPotentialEDRHeadroom"] == "6.5")
     #expect(attributes["x-apollo-video[0].clientDisplayCurrentPeakLuminanceNits"] == "240")
     #expect(attributes["x-apollo-video[0].clientDisplayPotentialPeakLuminanceNits"] == "650")
+    #expect(attributes["x-shadow-sink.gamut"] == "rec2020")
+    #expect(attributes["x-shadow-sink.transfer"] == "pq")
+    #expect(attributes["x-shadow-sink.scalePercent"] == "200")
+    #expect(attributes["x-shadow-sink.hidpi"] == "1")
+    #expect(attributes["x-shadow-sink.modeIsLogical"] == "1")
+    #expect(attributes["x-shadow-sink.currentEDRHeadroom"] == "2.4")
+    #expect(attributes["x-shadow-sink.potentialEDRHeadroom"] == "6.5")
+    #expect(attributes["x-shadow-sink.currentPeakLuminanceNits"] == "240")
+    #expect(attributes["x-shadow-sink.potentialPeakLuminanceNits"] == "650")
+    #expect(attributes["x-shadow-sink.requestedDynamicRangeTransport"] == "frame-gated-hdr")
+    #expect(attributes["x-shadow-sink.supportsFrameGatedHDR"] == "1")
+    #expect(attributes["x-shadow-sink.supportsHDRTileOverlay"] == "0")
+    #expect(attributes["x-shadow-sink.supportsPerFrameHDRMetadata"] == "1")
+    #expect(attributes["x-shadow-video[0].bitStreamFormat"] == "1")
+    #expect(attributes["x-shadow-video[0].clientViewportWidth"] == "1920")
+    #expect(attributes["x-shadow-video[0].clientViewportHeight"] == "1080")
 }
 
 private func rtspAnnounceAttributes(from payload: Data) -> [String: String] {
