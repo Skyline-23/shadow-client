@@ -79,7 +79,6 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
     public let enableVSync: Bool
     public let enableFramePacing: Bool
     public let enableYUV444: Bool
-    public let unlockBitrateLimit: Bool
     public let prioritizeNetworkTraffic: Bool
     public let forceHardwareDecoding: Bool
     public let resolutionScalePercent: Int
@@ -102,7 +101,6 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
         enableVSync: Bool = false,
         enableFramePacing: Bool = false,
         enableYUV444: Bool = false,
-        unlockBitrateLimit: Bool = false,
         prioritizeNetworkTraffic: Bool = false,
         forceHardwareDecoding: Bool = true,
         resolutionScalePercent: Int = 100,
@@ -127,7 +125,6 @@ public struct ShadowClientGameStreamLaunchSettings: Equatable, Sendable {
         self.enableVSync = enableVSync
         self.enableFramePacing = enableFramePacing
         self.enableYUV444 = enableYUV444
-        self.unlockBitrateLimit = unlockBitrateLimit
         self.prioritizeNetworkTraffic = prioritizeNetworkTraffic
         self.forceHardwareDecoding = forceHardwareDecoding
         self.resolutionScalePercent = max(20, min(200, resolutionScalePercent))

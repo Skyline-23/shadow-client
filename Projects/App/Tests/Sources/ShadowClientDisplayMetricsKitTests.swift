@@ -45,8 +45,7 @@ func retinaAutoLaunchSettingsExposeScaleIntent() {
     let settings = ShadowClientLaunchSettingsKit.resolvedLaunchSettings(
         currentSettings: ShadowClientAppSettings(
             resolution: .retinaAuto,
-            frameRate: .fps60,
-            bitrateKbps: 18_000
+            frameRate: .fps60
         ),
         selectedResolution: .retinaAuto,
         hostApp: nil,
@@ -72,8 +71,7 @@ func retinaAutoLaunchSettingsUsePhysicalMacOSMode() {
     let settings = ShadowClientLaunchSettingsKit.resolvedLaunchSettings(
         currentSettings: ShadowClientAppSettings(
             resolution: .retinaAuto,
-            frameRate: .fps60,
-            bitrateKbps: 18_000
+            frameRate: .fps60
         ),
         selectedResolution: .retinaAuto,
         hostApp: nil,

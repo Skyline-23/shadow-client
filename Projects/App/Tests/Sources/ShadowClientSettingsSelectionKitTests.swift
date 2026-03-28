@@ -24,17 +24,12 @@ func settingsSelectionKitBuildsAppSettings() {
             showDiagnosticsHUD: true,
             resolution: .retinaAuto,
             frameRate: .fps120,
-            bitrateKbps: 20000,
-            autoBitrate: true,
             displayMode: .windowed,
             preferVirtualDisplay: true,
             audioConfiguration: .stereo,
             videoCodec: .h265,
             videoDecoder: .software,
-            enableVSync: false,
-            enableFramePacing: false,
             enableYUV444: true,
-            unlockBitrateLimit: true,
             prioritizeStreamingTraffic: true,
             optimizeMouseForDesktop: true,
             captureSystemKeyboardShortcuts: true,
@@ -60,7 +55,10 @@ func settingsSelectionKitBuildsAppSettings() {
     #expect(settings.preferHDR)
     #expect(settings.resolution == ShadowClientStreamingResolutionPreset.retinaAuto)
     #expect(settings.frameRate == ShadowClientStreamingFrameRatePreset.fps120)
+    #expect(settings.resolvedBitrateKbps > 0)
     #expect(settings.videoCodec == ShadowClientVideoCodecPreference.h265)
     #expect(settings.videoDecoder == ShadowClientVideoDecoderPreference.software)
+    #expect(!settings.launchSettings(hostApp: nil).enableVSync)
+    #expect(!settings.launchSettings(hostApp: nil).enableFramePacing)
     #expect(settings.prioritizeStreamingTraffic)
 }

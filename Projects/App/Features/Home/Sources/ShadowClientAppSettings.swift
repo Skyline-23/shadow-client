@@ -160,17 +160,12 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         public static let hiddenRemoteHostCandidates = "settings.hiddenRemoteHostCandidates"
         public static let resolution = "settings.resolution"
         public static let frameRate = "settings.frameRate"
-        public static let bitrateKbps = "settings.bitrateKbps"
-        public static let autoBitrate = "settings.autoBitrate"
         public static let displayMode = "settings.displayMode"
         public static let preferVirtualDisplay = "settings.preferVirtualDisplay"
         public static let audioConfiguration = "settings.audioConfiguration"
         public static let videoCodec = "settings.videoCodec"
         public static let videoDecoder = "settings.videoDecoder"
-        public static let enableVSync = "settings.enableVSync"
-        public static let enableFramePacing = "settings.enableFramePacing"
         public static let enableYUV444 = "settings.enableYUV444"
-        public static let unlockBitrateLimit = "settings.unlockBitrateLimit"
         public static let prioritizeStreamingTraffic = "settings.prioritizeStreamingTraffic"
         public static let optimizeMouseForDesktop = "settings.optimizeMouseForDesktop"
         public static let captureSystemKeyboardShortcuts = "settings.captureSystemKeyboardShortcuts"
@@ -204,17 +199,12 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
     public let showDiagnosticsHUD: Bool
     public let resolution: ShadowClientStreamingResolutionPreset
     public let frameRate: ShadowClientStreamingFrameRatePreset
-    public let bitrateKbps: Int
-    public let autoBitrate: Bool
     public let displayMode: ShadowClientDisplayMode
     public let preferVirtualDisplay: Bool
     public let audioConfiguration: ShadowClientAudioConfiguration
     public let videoCodec: ShadowClientVideoCodecPreference
     public let videoDecoder: ShadowClientVideoDecoderPreference
-    public let enableVSync: Bool
-    public let enableFramePacing: Bool
     public let enableYUV444: Bool
-    public let unlockBitrateLimit: Bool
     public let prioritizeStreamingTraffic: Bool
     public let optimizeMouseForDesktop: Bool
     public let captureSystemKeyboardShortcuts: Bool
@@ -240,17 +230,12 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         showDiagnosticsHUD: Bool = false,
         resolution: ShadowClientStreamingResolutionPreset = ShadowClientAppSettingsDefaults.defaultResolution,
         frameRate: ShadowClientStreamingFrameRatePreset = ShadowClientAppSettingsDefaults.defaultFrameRate,
-        bitrateKbps: Int = ShadowClientAppSettingsDefaults.defaultBitrateKbps,
-        autoBitrate: Bool = ShadowClientAppSettingsDefaults.defaultAutoBitrate,
         displayMode: ShadowClientDisplayMode = .borderlessFullscreen,
         preferVirtualDisplay: Bool = false,
         audioConfiguration: ShadowClientAudioConfiguration = .surround71,
         videoCodec: ShadowClientVideoCodecPreference = .auto,
         videoDecoder: ShadowClientVideoDecoderPreference = .automatic,
-        enableVSync: Bool = false,
-        enableFramePacing: Bool = false,
         enableYUV444: Bool = false,
-        unlockBitrateLimit: Bool = false,
         prioritizeStreamingTraffic: Bool = false,
         optimizeMouseForDesktop: Bool = false,
         captureSystemKeyboardShortcuts: Bool = false,
@@ -275,20 +260,12 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         self.showDiagnosticsHUD = showDiagnosticsHUD
         self.resolution = resolution
         self.frameRate = frameRate
-        self.bitrateKbps = min(
-            max(ShadowClientStreamingLaunchBounds.minimumBitrateKbps, bitrateKbps),
-            ShadowClientStreamingLaunchBounds.maximumBitrateKbps
-        )
-        self.autoBitrate = autoBitrate
         self.displayMode = displayMode
         self.preferVirtualDisplay = preferVirtualDisplay
         self.audioConfiguration = audioConfiguration
         self.videoCodec = videoCodec
         self.videoDecoder = videoDecoder
-        self.enableVSync = enableVSync
-        self.enableFramePacing = enableFramePacing
         self.enableYUV444 = enableYUV444
-        self.unlockBitrateLimit = unlockBitrateLimit
         self.prioritizeStreamingTraffic = prioritizeStreamingTraffic
         self.optimizeMouseForDesktop = optimizeMouseForDesktop
         self.captureSystemKeyboardShortcuts = captureSystemKeyboardShortcuts
@@ -340,10 +317,9 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             enableSurroundAudio: audioConfiguration.prefersSurroundAudio,
             preferredSurroundChannelCount: audioConfiguration.preferredChannelCount,
             lowLatencyMode: lowLatencyMode,
-            enableVSync: enableVSync,
-            enableFramePacing: enableFramePacing,
+            enableVSync: false,
+            enableFramePacing: false,
             enableYUV444: enableYUV444,
-            unlockBitrateLimit: unlockBitrateLimit,
             prioritizeNetworkTraffic: prioritizeStreamingTraffic,
             forceHardwareDecoding: videoDecoder != .software,
             resolutionScalePercent: 100,
@@ -360,10 +336,6 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
     }
 
     public func resolvedBitrateKbps(networkSignal: StreamingNetworkSignal?) -> Int {
-        if !autoBitrate {
-            return bitrateKbps
-        }
-
         let resolvedCodecForAuto = Self.resolvedCodecForBitrateEstimation(
             preferredCodec: videoCodec,
             enableHDR: preferHDR,
@@ -377,7 +349,6 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             enableHDR: preferHDR,
             enableYUV444: enableYUV444,
             lowLatencyMode: lowLatencyMode,
-            unlockBitrateLimit: unlockBitrateLimit,
             networkSignal: networkSignal,
             resolvedCodecForAuto: resolvedCodecForAuto
         )
@@ -390,7 +361,6 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         enableHDR: Bool,
         enableYUV444: Bool,
         lowLatencyMode: Bool,
-        unlockBitrateLimit: Bool,
         networkSignal: StreamingNetworkSignal? = nil,
         resolvedCodecForAuto: ShadowClientVideoCodecPreference? = nil
     ) -> Int {
@@ -444,9 +414,7 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
         let roundedStep = ShadowClientAppSettingsDefaults.bitrateStepKbps
         let rounded = Int((bitrate / Double(roundedStep)).rounded()) * roundedStep
         let minimum = max(ShadowClientStreamingLaunchBounds.minimumBitrateKbps, 2_000)
-        let maximum = unlockBitrateLimit
-            ? ShadowClientAppSettingsDefaults.maximumBitrateWhenUnlocked
-            : ShadowClientAppSettingsDefaults.maximumBitrateWhenLocked
+        let maximum = ShadowClientAppSettingsDefaults.maximumBitrateWhenUnlocked
         return min(max(rounded, minimum), maximum)
     }
 
@@ -542,16 +510,11 @@ public struct ShadowClientAppSettings: Equatable, Sendable {
             "\(showDiagnosticsHUD)",
             resolution.rawValue,
             "\(frameRate.fps)",
-            "\(bitrateKbps)",
-            "\(autoBitrate)",
             "\(preferVirtualDisplay)",
             audioConfiguration.rawValue,
             videoCodec.rawValue,
             videoDecoder.rawValue,
-            "\(enableVSync)",
-            "\(enableFramePacing)",
             "\(enableYUV444)",
-            "\(unlockBitrateLimit)",
             "\(prioritizeStreamingTraffic)",
             "\(autoFindHosts)",
         ].joined(separator: "-")

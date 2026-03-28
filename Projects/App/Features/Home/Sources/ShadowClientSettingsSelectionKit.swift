@@ -7,17 +7,12 @@ struct ShadowClientSettingsSelectionInput {
     let showDiagnosticsHUD: Bool
     let resolution: ShadowClientStreamingResolutionPreset
     let frameRate: ShadowClientStreamingFrameRatePreset
-    let bitrateKbps: Int
-    let autoBitrate: Bool
     let displayMode: ShadowClientDisplayMode
     let preferVirtualDisplay: Bool
     let audioConfiguration: ShadowClientAudioConfiguration
     let videoCodec: ShadowClientVideoCodecPreference
     let videoDecoder: ShadowClientVideoDecoderPreference
-    let enableVSync: Bool
-    let enableFramePacing: Bool
     let enableYUV444: Bool
-    let unlockBitrateLimit: Bool
     let prioritizeStreamingTraffic: Bool
     let optimizeMouseForDesktop: Bool
     let captureSystemKeyboardShortcuts: Bool
@@ -43,17 +38,12 @@ struct ShadowClientSettingsSelectionInput {
         showDiagnosticsHUD: Bool,
         resolution: ShadowClientStreamingResolutionPreset,
         frameRate: ShadowClientStreamingFrameRatePreset,
-        bitrateKbps: Int,
-        autoBitrate: Bool,
         displayMode: ShadowClientDisplayMode,
         preferVirtualDisplay: Bool,
         audioConfiguration: ShadowClientAudioConfiguration,
         videoCodec: ShadowClientVideoCodecPreference,
         videoDecoder: ShadowClientVideoDecoderPreference,
-        enableVSync: Bool,
-        enableFramePacing: Bool,
         enableYUV444: Bool,
-        unlockBitrateLimit: Bool,
         prioritizeStreamingTraffic: Bool,
         optimizeMouseForDesktop: Bool,
         captureSystemKeyboardShortcuts: Bool,
@@ -78,17 +68,12 @@ struct ShadowClientSettingsSelectionInput {
         self.showDiagnosticsHUD = showDiagnosticsHUD
         self.resolution = resolution
         self.frameRate = frameRate
-        self.bitrateKbps = bitrateKbps
-        self.autoBitrate = autoBitrate
         self.displayMode = displayMode
         self.preferVirtualDisplay = preferVirtualDisplay
         self.audioConfiguration = audioConfiguration
         self.videoCodec = videoCodec
         self.videoDecoder = videoDecoder
-        self.enableVSync = enableVSync
-        self.enableFramePacing = enableFramePacing
         self.enableYUV444 = enableYUV444
-        self.unlockBitrateLimit = unlockBitrateLimit
         self.prioritizeStreamingTraffic = prioritizeStreamingTraffic
         self.optimizeMouseForDesktop = optimizeMouseForDesktop
         self.captureSystemKeyboardShortcuts = captureSystemKeyboardShortcuts
@@ -118,17 +103,12 @@ enum ShadowClientSettingsSelectionKit {
             showDiagnosticsHUD: input.showDiagnosticsHUD,
             resolution: input.resolution,
             frameRate: input.frameRate,
-            bitrateKbps: input.bitrateKbps,
-            autoBitrate: input.autoBitrate,
             displayMode: input.displayMode,
             preferVirtualDisplay: input.preferVirtualDisplay,
             audioConfiguration: input.audioConfiguration,
             videoCodec: input.videoCodec,
             videoDecoder: input.videoDecoder,
-            enableVSync: input.enableVSync,
-            enableFramePacing: input.enableFramePacing,
             enableYUV444: input.enableYUV444,
-            unlockBitrateLimit: input.unlockBitrateLimit,
             prioritizeStreamingTraffic: input.prioritizeStreamingTraffic,
             optimizeMouseForDesktop: input.optimizeMouseForDesktop,
             captureSystemKeyboardShortcuts: input.captureSystemKeyboardShortcuts,

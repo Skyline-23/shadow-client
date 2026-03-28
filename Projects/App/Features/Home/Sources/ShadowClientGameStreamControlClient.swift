@@ -825,9 +825,6 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         if settings.enableYUV444 {
             parameters["yuv444"] = "1"
         }
-        if settings.unlockBitrateLimit {
-            parameters["unlockBitrate"] = "1"
-        }
         if settings.enableVSync {
             parameters["vsync"] = "1"
         }

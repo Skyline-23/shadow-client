@@ -233,12 +233,6 @@ func realtimeSessionVideoCodecLabel(_ codec: ShadowClientVideoCodec) -> String {
         ShadowClientSessionControlPresentationKit.realtimeSessionVideoCodecLabel(codec)
     }
 
-var maxBitrateKbps: Double {
-        ShadowClientSessionControlPresentationKit.maxBitrateKbps(
-            unlockBitrateLimit: unlockBitrateLimit
-        )
-    }
-
 var effectiveBitrateKbps: Int {
         ShadowClientBitrateControlKit.effectiveBitrateKbps(
             settings: currentSettings,
@@ -248,21 +242,7 @@ var effectiveBitrateKbps: Int {
 
 var launchBitrateNetworkSignal: StreamingNetworkSignal? {
         ShadowClientSessionControlPresentationKit.launchBitrateNetworkSignal(
-            autoBitrate: autoBitrate,
             diagnosticsModel: settingsDiagnosticsModel
         )
     }
-
-var bitrateSliderBinding: Binding<Double> {
-        Binding(
-            get: { Double(bitrateKbps) },
-            set: { newValue in
-                bitrateKbps = ShadowClientBitrateControlKit.clampedBitrateKbps(
-                    sliderValue: newValue,
-                    maxBitrateKbps: maxBitrateKbps
-                )
-            }
-        )
-    }
-
 }

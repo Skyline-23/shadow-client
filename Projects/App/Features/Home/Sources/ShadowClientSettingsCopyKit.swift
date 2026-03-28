@@ -1,10 +1,6 @@
 import Foundation
 
 struct ShadowClientSettingsCopyKit {
-    static func autoBitrateFootnote() -> String {
-        "Estimated from resolution, frame rate, codec, HDR, and YUV444."
-    }
-
     static func hdrUnavailableFootnote() -> String {
         "HDR requires a real HDR/EDR display on this device."
     }

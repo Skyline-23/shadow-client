@@ -105,15 +105,10 @@ func appSettingsMapToLaunchSettings() {
         preferHDR: true,
         resolution: .p2160,
         frameRate: .fps120,
-        bitrateKbps: 42_000,
-        autoBitrate: false,
         preferVirtualDisplay: true,
         audioConfiguration: .surround51,
         videoCodec: .av1,
-        enableVSync: true,
-        enableFramePacing: true,
         enableYUV444: true,
-        unlockBitrateLimit: true,
         prioritizeStreamingTraffic: true,
         optimizeGameSettingsForStreaming: true,
         quitAppOnHostAfterStream: true
@@ -130,15 +125,14 @@ func appSettingsMapToLaunchSettings() {
     #expect(launch.width == 3840)
     #expect(launch.height == 2160)
     #expect(launch.fps == 120)
-    #expect(launch.bitrateKbps == 42_000)
+    #expect(launch.bitrateKbps == settings.resolvedBitrateKbps)
     #expect(launch.preferredCodec == settings.videoCodec)
     #expect(launch.enableHDR == true)
     #expect(launch.enableSurroundAudio == true)
     #expect(launch.preferredSurroundChannelCount == 6)
-    #expect(launch.enableVSync == true)
-    #expect(launch.enableFramePacing == true)
+    #expect(launch.enableVSync == false)
+    #expect(launch.enableFramePacing == false)
     #expect(launch.enableYUV444 == true)
-    #expect(launch.unlockBitrateLimit == true)
     #expect(launch.prioritizeNetworkTraffic == true)
     #expect(launch.preferVirtualDisplay == true)
     #expect(launch.optimizeGameSettingsForStreaming == true)
@@ -203,33 +197,30 @@ func launchSettingsPreserveRequestedSurroundCeiling() {
     #expect(launch.preferredSurroundChannelCount == 8)
 }
 
-@Test("Auto bitrate computes launch bitrate from stream profile")
-func autoBitrateComputesLaunchBitrate() {
+@Test("Launch bitrate resolves from the stream profile")
+func launchBitrateResolvesFromStreamProfile() {
     let settings = ShadowClientAppSettings(
         preferHDR: true,
         resolution: .p2160,
         frameRate: .fps120,
-        bitrateKbps: 8_000,
-        autoBitrate: true,
         videoCodec: .h264,
         enableYUV444: true
     )
     let launch = settings.launchSettings(hostApp: nil)
 
-    #expect(launch.bitrateKbps > 8_000)
-    #expect(launch.bitrateKbps <= ShadowClientAppSettingsDefaults.maximumBitrateWhenLocked)
+    #expect(launch.bitrateKbps > ShadowClientAppSettingsDefaults.defaultBitrateKbps)
+    #expect(launch.bitrateKbps <= ShadowClientAppSettingsDefaults.maximumBitrateWhenUnlocked)
 }
 
-@Test("Auto bitrate lowers recommendation when low-latency mode is enabled")
-func autoBitratePrefersLowerBitrateForLowLatencyMode() {
+@Test("Bitrate recommendation lowers under low-latency mode")
+func bitrateRecommendationPrefersLowerRateForLowLatencyMode() {
     let conservative = ShadowClientAppSettings.recommendedBitrateKbps(
         resolution: .p1080,
         frameRate: .fps60,
         codec: .av1,
         enableHDR: true,
         enableYUV444: false,
-        lowLatencyMode: true,
-        unlockBitrateLimit: false
+        lowLatencyMode: true
     )
     let qualityBiased = ShadowClientAppSettings.recommendedBitrateKbps(
         resolution: .p1080,
@@ -237,15 +228,14 @@ func autoBitratePrefersLowerBitrateForLowLatencyMode() {
         codec: .av1,
         enableHDR: true,
         enableYUV444: false,
-        lowLatencyMode: false,
-        unlockBitrateLimit: false
+        lowLatencyMode: false
     )
 
     #expect(conservative < qualityBiased)
 }
 
-@Test("Auto bitrate uses resolved codec efficiency for estimation")
-func autoBitrateUsesResolvedCodecForEstimation() {
+@Test("Bitrate recommendation uses resolved codec efficiency for estimation")
+func bitrateRecommendationUsesResolvedCodecForEstimation() {
     let autoAsAV1 = ShadowClientAppSettings.recommendedBitrateKbps(
         resolution: .p2160,
         frameRate: .fps60,
@@ -253,7 +243,6 @@ func autoBitrateUsesResolvedCodecForEstimation() {
         enableHDR: true,
         enableYUV444: false,
         lowLatencyMode: true,
-        unlockBitrateLimit: false,
         resolvedCodecForAuto: .av1
     )
     let autoAsH264 = ShadowClientAppSettings.recommendedBitrateKbps(
@@ -263,15 +252,14 @@ func autoBitrateUsesResolvedCodecForEstimation() {
         enableHDR: true,
         enableYUV444: false,
         lowLatencyMode: true,
-        unlockBitrateLimit: false,
         resolvedCodecForAuto: .h264
     )
 
     #expect(autoAsAV1 < autoAsH264)
 }
 
-@Test("Auto bitrate reduces under unstable network signal")
-func autoBitrateDropsOnNetworkInstability() {
+@Test("Bitrate recommendation reduces under unstable network signal")
+func bitrateRecommendationDropsOnNetworkInstability() {
     let stable = ShadowClientAppSettings.recommendedBitrateKbps(
         resolution: .p2160,
         frameRate: .fps60,
@@ -279,7 +267,6 @@ func autoBitrateDropsOnNetworkInstability() {
         enableHDR: true,
         enableYUV444: false,
         lowLatencyMode: true,
-        unlockBitrateLimit: false,
         networkSignal: .init(jitterMs: 3.0, packetLossPercent: 0.1)
     )
     let unstable = ShadowClientAppSettings.recommendedBitrateKbps(
@@ -289,7 +276,6 @@ func autoBitrateDropsOnNetworkInstability() {
         enableHDR: true,
         enableYUV444: false,
         lowLatencyMode: true,
-        unlockBitrateLimit: false,
         networkSignal: .init(jitterMs: 28.0, packetLossPercent: 2.2)
     )
 

@@ -9,15 +9,4 @@ struct ShadowClientBitrateControlKit {
     ) -> Int {
         settings.resolvedBitrateKbps(networkSignal: networkSignal)
     }
-
-    static func clampedBitrateKbps(
-        sliderValue: Double,
-        maxBitrateKbps: Double
-    ) -> Int {
-        let rounded = Int(sliderValue.rounded() / Double(ShadowClientAppSettingsDefaults.bitrateStepKbps)) * ShadowClientAppSettingsDefaults.bitrateStepKbps
-        return min(
-            max(ShadowClientStreamingLaunchBounds.minimumBitrateKbps, rounded),
-            Int(maxBitrateKbps)
-        )
-    }
 }

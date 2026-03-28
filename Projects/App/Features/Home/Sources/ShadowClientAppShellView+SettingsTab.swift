@@ -37,41 +37,6 @@ extension ShadowClientAppShellView {
                             }
                         }
 
-                        settingsRow {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Toggle(isOn: $autoBitrate) {
-                                    Text("Auto bitrate (recommended)")
-                                        .font(.callout.weight(.semibold))
-                                        .foregroundStyle(.white)
-                                }
-                                .tint(.mint)
-
-                                HStack {
-                                    Label("Video bitrate", systemImage: "dial.medium")
-                                        .font(.callout.weight(.semibold))
-                                        .foregroundStyle(.white)
-                                    Spacer(minLength: 8)
-                                    Text("\(effectiveBitrateKbps) Kbps")
-                                        .font(.footnote.monospacedDigit().weight(.bold))
-                                        .foregroundStyle(.mint)
-                                }
-                                Slider(
-                                    value: bitrateSliderBinding,
-                                    in: Double(ShadowClientStreamingLaunchBounds.minimumBitrateKbps)...maxBitrateKbps,
-                                    step: Double(ShadowClientAppSettingsDefaults.bitrateStepKbps)
-                                )
-                                .tint(.mint)
-                                .disabled(autoBitrate)
-                                .opacity(autoBitrate ? 0.45 : 1.0)
-
-                                if autoBitrate {
-                                    Text(ShadowClientSettingsCopyKit.autoBitrateFootnote())
-                                        .font(.caption2.weight(.medium))
-                                        .foregroundStyle(Color.white.opacity(0.7))
-                                }
-                            }
-                        }
-
                         settingsPickerRow(
                             title: "Display mode",
                             symbol: "macwindow",
@@ -120,23 +85,6 @@ extension ShadowClientAppShellView {
                             .tint(.mint)
                         }
 
-                        settingsRow {
-                            Toggle(isOn: $enableVSync) {
-                                Label("V-Sync", systemImage: "arrow.triangle.2.circlepath")
-                                    .font(.callout.weight(.semibold))
-                                    .foregroundStyle(.white)
-                            }
-                            .tint(.mint)
-                        }
-
-                        settingsRow {
-                            Toggle(isOn: $enableFramePacing) {
-                                Label("Frame pacing", systemImage: "waveform.path")
-                                    .font(.callout.weight(.semibold))
-                                    .foregroundStyle(.white)
-                            }
-                            .tint(.mint)
-                        }
                     }
 
                     settingsSection(title: "Audio Settings") {
@@ -336,12 +284,9 @@ extension ShadowClientAppShellView {
                         }
 
                         settingsRow {
-                            Toggle(isOn: $unlockBitrateLimit) {
-                                Text("Unlock bitrate limit (Experimental)")
-                                    .font(.callout.weight(.semibold))
-                                    .foregroundStyle(.white)
-                            }
-                            .tint(.mint)
+                            Text("Video transport tuning is negotiated by the streaming runtime.")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(Color.white.opacity(0.72))
                         }
 
                         settingsRow {

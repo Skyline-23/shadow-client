@@ -43,17 +43,10 @@ enum ShadowClientSessionControlPresentationKit {
         }
     }
 
-    static func maxBitrateKbps(unlockBitrateLimit: Bool) -> Double {
-        unlockBitrateLimit
-            ? Double(ShadowClientAppSettingsDefaults.maximumBitrateWhenUnlocked)
-            : Double(ShadowClientAppSettingsDefaults.maximumBitrateWhenLocked)
-    }
-
     static func launchBitrateNetworkSignal(
-        autoBitrate: Bool,
         diagnosticsModel: SettingsDiagnosticsHUDModel?
     ) -> StreamingNetworkSignal? {
-        guard autoBitrate, let diagnosticsModel else {
+        guard let diagnosticsModel else {
             return nil
         }
 

@@ -36,17 +36,12 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
         ShadowClientAppSettingsDefaults.defaultResolution.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.frameRate) var frameRateRawValue =
         ShadowClientAppSettingsDefaults.defaultFrameRate.rawValue
-    @AppStorage(ShadowClientAppSettings.StorageKeys.bitrateKbps) var bitrateKbps = ShadowClientAppSettingsDefaults.defaultBitrateKbps
-    @AppStorage(ShadowClientAppSettings.StorageKeys.autoBitrate) var autoBitrate = ShadowClientAppSettingsDefaults.defaultAutoBitrate
     @AppStorage(ShadowClientAppSettings.StorageKeys.displayMode) var displayModeRawValue = ShadowClientDisplayMode.borderlessFullscreen.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.preferVirtualDisplay) var preferVirtualDisplay = false
     @AppStorage(ShadowClientAppSettings.StorageKeys.audioConfiguration) var audioConfigurationRawValue = ShadowClientAudioConfiguration.surround71.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.videoCodec) var videoCodecRawValue = ShadowClientVideoCodecPreference.auto.rawValue
     @AppStorage(ShadowClientAppSettings.StorageKeys.videoDecoder) var videoDecoderRawValue = ShadowClientVideoDecoderPreference.automatic.rawValue
-    @AppStorage(ShadowClientAppSettings.StorageKeys.enableVSync) var enableVSync = false
-    @AppStorage(ShadowClientAppSettings.StorageKeys.enableFramePacing) var enableFramePacing = false
     @AppStorage(ShadowClientAppSettings.StorageKeys.enableYUV444) var enableYUV444 = false
-    @AppStorage(ShadowClientAppSettings.StorageKeys.unlockBitrateLimit) var unlockBitrateLimit = false
     @AppStorage(ShadowClientAppSettings.StorageKeys.prioritizeStreamingTraffic) var prioritizeStreamingTraffic = false
     @AppStorage(ShadowClientAppSettings.StorageKeys.optimizeMouseForDesktop) var optimizeMouseForDesktop = false
     @AppStorage(ShadowClientAppSettings.StorageKeys.captureSystemKeyboardShortcuts) var captureSystemKeyboardShortcuts = false
@@ -185,11 +180,6 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
                 stopHostDiscovery()
             }
             refreshRemoteDesktopCatalog()
-        }
-        .onChange(of: unlockBitrateLimit, initial: false) { _, unlocked in
-            if !unlocked && bitrateKbps > ShadowClientAppSettingsDefaults.maximumBitrateWhenLocked {
-                bitrateKbps = ShadowClientAppSettingsDefaults.maximumBitrateWhenLocked
-            }
         }
         .onChange(of: remoteDesktopRuntime.launchState, initial: false) { _, newState in
             guard case let .failed(message) = newState else {

@@ -44,7 +44,6 @@ enum ShadowClientLaunchSettingsKit {
             enableVSync: base.enableVSync,
             enableFramePacing: base.enableFramePacing,
             enableYUV444: base.enableYUV444,
-            unlockBitrateLimit: base.unlockBitrateLimit,
             prioritizeNetworkTraffic: base.prioritizeNetworkTraffic,
             forceHardwareDecoding: base.forceHardwareDecoding,
             resolutionScalePercent: launchScalePercent,
