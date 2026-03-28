@@ -167,10 +167,5 @@ Use subagents in parallel for non-trivial work with disjoint ownership, then mer
   - prevent capture/app-focus transitions from tearing down decoder/transport loops.
   - status: `not_done` (current implementation uses boolean/debounce guards, not a full explicit transition state machine).
 
-### Current Priority Status Snapshot (Updated: 2026-02-21)
-- 1순위 AV1 수신/디코드 분리: partial (structure exists, isolation strength insufficient).
-- 2순위 AV1 실패 시 HEVC 전환: partial (trigger exists, immediacy/consistency insufficient).
-- 3순위 연속성/복구 정책 조정: partial (policy exists, tuning required).
-
 ### Functional-Unit Commit Discipline
 - Commit each completed feature/fix in isolation with Conventional Commits before starting the next unit.
