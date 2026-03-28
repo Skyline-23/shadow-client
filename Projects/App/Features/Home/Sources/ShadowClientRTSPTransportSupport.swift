@@ -40,7 +40,7 @@ private struct ShadowClientRTSPResponse {
     let body: Data
 }
 
-struct ShadowClientApolloControlTransportNegotiation: Sendable {
+struct ShadowClientLumenControlTransportNegotiation: Sendable {
     let controlChannelMode: ShadowClientHostControlChannelMode
     let controlModeLabel: String
     let audioEncryptionConfiguration: ShadowClientRealtimeAudioEncryptionConfiguration?
@@ -53,14 +53,14 @@ struct ShadowClientApolloControlTransportNegotiation: Sendable {
     ) throws -> Self {
         guard handshakeNegotiation.supportsSessionIdentifierV1 else {
             throw ShadowClientRTSPInterleavedClientError.requestFailed(
-                "Apollo transport requires negotiated session ID ping support."
+                "Lumen transport requires negotiated session ID ping support."
             )
         }
         guard handshakeNegotiation.controlChannelEncryptionEnabled,
               let remoteInputKey
         else {
             throw ShadowClientRTSPInterleavedClientError.requestFailed(
-                "Apollo transport requires encrypted control stream v2 support."
+                "Lumen transport requires encrypted control stream v2 support."
             )
         }
 
@@ -834,19 +834,19 @@ actor ShadowClientRTSPInterleavedClient {
             supportsEncryptedControlChannelV2: ShadowClientHostSessionDefaults.supportsEncryptedControlChannelV2 && remoteInputKey != nil,
             supportsEncryptedAudioTransport: remoteInputKey != nil && remoteInputKeyID != nil
         )
-        let apolloTransportNegotiation = try ShadowClientApolloControlTransportNegotiation.resolve(
+        let lumenTransportNegotiation = try ShadowClientLumenControlTransportNegotiation.resolve(
             handshakeNegotiation: handshakeNegotiation,
             remoteInputKey: remoteInputKey,
             remoteInputKeyID: remoteInputKeyID
         )
         useSessionIdentifierV1 = true
-        controlChannelMode = apolloTransportNegotiation.controlChannelMode
-        audioEncryptionConfiguration = apolloTransportNegotiation.audioEncryptionConfiguration
+        controlChannelMode = lumenTransportNegotiation.controlChannelMode
+        audioEncryptionConfiguration = lumenTransportNegotiation.audioEncryptionConfiguration
         logger.notice(
-            "RTSP negotiation session-id-v1=\(handshakeNegotiation.supportsSessionIdentifierV1, privacy: .public) ml-flags=\(handshakeNegotiation.moonlightFeatureFlags, privacy: .public) ss-feature-flags=\(hostFeatureFlags, privacy: .public) encryption-supported=\(encryptionSupportedFlags, privacy: .public) encryption-requested=\(encryptionRequestedFlags, privacy: .public) encryption-enabled=\(handshakeNegotiation.encryptionEnabledFlags, privacy: .public) control-mode=\(apolloTransportNegotiation.controlModeLabel, privacy: .public) audio-mode=\(apolloTransportNegotiation.audioEncryptionLabel, privacy: .public)"
+            "RTSP negotiation session-id-v1=\(handshakeNegotiation.supportsSessionIdentifierV1, privacy: .public) ml-flags=\(handshakeNegotiation.moonlightFeatureFlags, privacy: .public) ss-feature-flags=\(hostFeatureFlags, privacy: .public) encryption-supported=\(encryptionSupportedFlags, privacy: .public) encryption-requested=\(encryptionRequestedFlags, privacy: .public) encryption-enabled=\(handshakeNegotiation.encryptionEnabledFlags, privacy: .public) control-mode=\(lumenTransportNegotiation.controlModeLabel, privacy: .public) audio-mode=\(lumenTransportNegotiation.audioEncryptionLabel, privacy: .public)"
         )
 
-        let clientDisplayCharacteristics = await ShadowClientApolloClientDisplayCharacteristicsResolver.current(
+        let clientDisplayCharacteristics = await ShadowClientLumenClientDisplayCharacteristicsResolver.current(
             hdrEnabled: videoConfiguration.enableHDR,
             scalePercent: videoConfiguration.displayScalePercent,
             hiDPIEnabled: videoConfiguration.requestHiDPI
@@ -972,9 +972,9 @@ actor ShadowClientRTSPInterleavedClient {
             await ensureHostControlChannelStarted(fallbackHost: remoteHost ?? .init(host))
             didStartHostControl = hasStartedControlChannelBootstrap
             if didStartHostControl {
-                logger.debug("RTSP control path negotiated; Apollo control bootstrap ready")
+                logger.debug("RTSP control path negotiated; Lumen control bootstrap ready")
             } else {
-                logger.error("RTSP control path negotiated; Apollo control bootstrap unavailable")
+                logger.error("RTSP control path negotiated; Lumen control bootstrap unavailable")
             }
         }
         return track
@@ -1578,7 +1578,7 @@ actor ShadowClientRTSPInterleavedClient {
             return true
         }
         guard let controlChannelMode else {
-            logger.error("RTSP control bootstrap failed because Apollo control mode negotiation did not complete")
+            logger.error("RTSP control bootstrap failed because Lumen control mode negotiation did not complete")
             return false
         }
 

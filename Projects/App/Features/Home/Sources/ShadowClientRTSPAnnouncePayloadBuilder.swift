@@ -8,7 +8,7 @@ enum ShadowClientRTSPAnnouncePayloadBuilder {
         videoPort: UInt16,
         moonlightFeatureFlags: UInt32,
         encryptionEnabledFlags: UInt32,
-        clientDisplayCharacteristics: ShadowClientApolloClientDisplayCharacteristics
+        clientDisplayCharacteristics: ShadowClientLumenClientDisplayCharacteristics
     ) -> Data {
         let safeHost = hostAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? ShadowClientRTSPAnnounceProfile.fallbackHostAddress
@@ -38,16 +38,16 @@ enum ShadowClientRTSPAnnouncePayloadBuilder {
         let requestedDynamicRangeTransport = clientDisplayCharacteristics
             .requestedDynamicRangeTransport(hdrRequested: videoConfiguration.enableHDR)
             .rawValue
-        let supportsFrameGatedHDR = ShadowClientApolloSinkContractProfile.boolString(
+        let supportsFrameGatedHDR = ShadowClientLumenSinkContractProfile.boolString(
             clientDisplayCharacteristics.supportsFrameGatedHDR
         )
-        let supportsHDRTileOverlay = ShadowClientApolloSinkContractProfile.boolString(
+        let supportsHDRTileOverlay = ShadowClientLumenSinkContractProfile.boolString(
             clientDisplayCharacteristics.supportsHDRTileOverlay
         )
-        let supportsPerFrameHDRMetadata = ShadowClientApolloSinkContractProfile.boolString(
+        let supportsPerFrameHDRMetadata = ShadowClientLumenSinkContractProfile.boolString(
             clientDisplayCharacteristics.supportsPerFrameHDRMetadata
         )
-        let sinkModeIsLogical = ShadowClientApolloSinkContractProfile.boolString(
+        let sinkModeIsLogical = ShadowClientLumenSinkContractProfile.boolString(
             clientDisplayCharacteristics.modeIsLogical
         )
 
@@ -121,7 +121,7 @@ enum ShadowClientRTSPAnnouncePayloadBuilder {
             ("x-shadow-audio.surround.channelMask", ShadowClientRTSPAnnounceProfile.audioChannelMask(surroundEnabled: surroundEnabled)),
             ("x-shadow-audio.surround.quality", ShadowClientRTSPAnnounceProfile.surroundAudioQuality(surroundEnabled: surroundEnabled)),
             ("x-shadow-sink.scalePercent", "\(clientDisplayCharacteristics.scalePercent)"),
-            ("x-shadow-sink.hidpi", ShadowClientApolloSinkContractProfile.boolString(clientDisplayCharacteristics.hiDPIEnabled)),
+            ("x-shadow-sink.hidpi", ShadowClientLumenSinkContractProfile.boolString(clientDisplayCharacteristics.hiDPIEnabled)),
             ("x-shadow-sink.modeIsLogical", sinkModeIsLogical),
             ("x-shadow-sink.gamut", clientDisplayCharacteristics.gamut.rawValue),
             ("x-shadow-sink.transfer", clientDisplayCharacteristics.transfer.rawValue),

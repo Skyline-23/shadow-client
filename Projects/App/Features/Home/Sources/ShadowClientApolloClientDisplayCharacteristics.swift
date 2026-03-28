@@ -8,28 +8,28 @@ import AppKit
 import UIKit
 #endif
 
-enum ShadowClientApolloClientDisplayGamut: String, Sendable {
+enum ShadowClientLumenClientDisplayGamut: String, Sendable {
     case sRGB = "srgb"
     case displayP3 = "display-p3"
     case rec2020 = "rec2020"
 }
 
-enum ShadowClientApolloClientDisplayTransfer: String, Sendable {
+enum ShadowClientLumenClientDisplayTransfer: String, Sendable {
     case sdr
     case pq
     case hlg
 }
 
-enum ShadowClientApolloDynamicRangeTransport: String, Sendable {
+enum ShadowClientLumenDynamicRangeTransport: String, Sendable {
     case sdr
     case fullFrameHDR = "full-frame-hdr"
     case frameGatedHDR = "frame-gated-hdr"
     case sdrBaseHDROverlay = "sdr-base-hdr-overlay"
 }
 
-struct ShadowClientApolloClientDisplayCharacteristics: Sendable {
-    let gamut: ShadowClientApolloClientDisplayGamut
-    let transfer: ShadowClientApolloClientDisplayTransfer
+struct ShadowClientLumenClientDisplayCharacteristics: Sendable {
+    let gamut: ShadowClientLumenClientDisplayGamut
+    let transfer: ShadowClientLumenClientDisplayTransfer
     let scalePercent: Int
     let hiDPIEnabled: Bool
     let supportsFrameGatedHDR: Bool
@@ -41,8 +41,8 @@ struct ShadowClientApolloClientDisplayCharacteristics: Sendable {
     let potentialPeakLuminanceNits: Int
 
     init(
-        gamut: ShadowClientApolloClientDisplayGamut,
-        transfer: ShadowClientApolloClientDisplayTransfer,
+        gamut: ShadowClientLumenClientDisplayGamut,
+        transfer: ShadowClientLumenClientDisplayTransfer,
         scalePercent: Int,
         hiDPIEnabled: Bool,
         supportsFrameGatedHDR: Bool = false,
@@ -67,14 +67,14 @@ struct ShadowClientApolloClientDisplayCharacteristics: Sendable {
     }
 }
 
-extension ShadowClientApolloClientDisplayCharacteristics {
+extension ShadowClientLumenClientDisplayCharacteristics {
     var modeIsLogical: Bool {
         hiDPIEnabled
     }
 
     func requestedDynamicRangeTransport(
         hdrRequested: Bool
-    ) -> ShadowClientApolloDynamicRangeTransport {
+    ) -> ShadowClientLumenDynamicRangeTransport {
         guard hdrRequested else {
             return .sdr
         }
@@ -95,7 +95,7 @@ extension ShadowClientApolloClientDisplayCharacteristics {
     }
 }
 
-enum ShadowClientApolloSinkContractProfile {
+enum ShadowClientLumenSinkContractProfile {
     static let enabled = "1"
     static let disabled = "0"
 
@@ -104,7 +104,7 @@ enum ShadowClientApolloSinkContractProfile {
     }
 }
 
-enum ShadowClientApolloClientDisplayCharacteristicsResolver {
+enum ShadowClientLumenClientDisplayCharacteristicsResolver {
     private struct SinkCapabilities: Sendable {
         let supportsFrameGatedHDR: Bool
         let supportsHDRTileOverlay: Bool
@@ -116,7 +116,7 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
         hdrEnabled: Bool,
         scalePercent: Int,
         hiDPIEnabled: Bool
-    ) -> ShadowClientApolloClientDisplayCharacteristics {
+    ) -> ShadowClientLumenClientDisplayCharacteristics {
         #if os(macOS)
         let screen = currentMacScreen()
         let colorSpace = screen?.colorSpace?.cgColorSpace
@@ -127,7 +127,7 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
             potentialEDRHeadroom: potentialEDRHeadroom
         )
         let transfer = hdrEnabled && sinkCapabilities.supportsFrameGatedHDR
-            ? ShadowClientApolloClientDisplayTransferContract.resolve(
+            ? ShadowClientLumenClientDisplayTransferContract.resolve(
                 hdrEnabled: hdrEnabled,
                 environment: .colorManagedDesktop(colorSpace)
             )
@@ -154,7 +154,7 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
             potentialEDRHeadroom: potentialEDRHeadroom
         )
         let transfer = hdrEnabled && sinkCapabilities.supportsFrameGatedHDR
-            ? ShadowClientApolloClientDisplayTransferContract.resolve(
+            ? ShadowClientLumenClientDisplayTransferContract.resolve(
                 hdrEnabled: hdrEnabled,
                 environment: .compositedUIKit
             )
@@ -188,7 +188,7 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
         NSApp.keyWindow?.screen ?? NSApp.mainWindow?.screen ?? NSScreen.main
     }
 
-    private static func gamut(for colorSpace: CGColorSpace?) -> ShadowClientApolloClientDisplayGamut {
+    private static func gamut(for colorSpace: CGColorSpace?) -> ShadowClientLumenClientDisplayGamut {
         switch colorSpace?.name {
         case CGColorSpace.displayP3:
             return .displayP3
@@ -216,7 +216,7 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
             .screen
     }
 
-    private static func gamut(for displayGamut: UIDisplayGamut) -> ShadowClientApolloClientDisplayGamut {
+    private static func gamut(for displayGamut: UIDisplayGamut) -> ShadowClientLumenClientDisplayGamut {
         switch displayGamut {
         case .P3:
             return .displayP3

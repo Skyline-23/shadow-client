@@ -4,7 +4,7 @@ import Testing
 
 @Test("Mac transfer contract defaults HDR desktops to PQ transfer")
 func macTransferContractDefaultsHDRDesktopsToPQTransfer() {
-    let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
+    let transfer = ShadowClientLumenClientDisplayTransferContract.resolve(
         hdrEnabled: true,
         environment: .colorManagedDesktop(
             CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
@@ -16,7 +16,7 @@ func macTransferContractDefaultsHDRDesktopsToPQTransfer() {
 
 @Test("Mac transfer contract preserves explicit PQ displays")
 func macTransferContractPreservesExplicitPQDisplays() {
-    let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
+    let transfer = ShadowClientLumenClientDisplayTransferContract.resolve(
         hdrEnabled: true,
         environment: .colorManagedDesktop(
             CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
@@ -28,7 +28,7 @@ func macTransferContractPreservesExplicitPQDisplays() {
 
 @Test("Mac transfer contract preserves explicit HLG displays")
 func macTransferContractPreservesExplicitHLGDisplays() {
-    let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
+    let transfer = ShadowClientLumenClientDisplayTransferContract.resolve(
         hdrEnabled: true,
         environment: .colorManagedDesktop(
             CGColorSpace(name: CGColorSpace.itur_2100_HLG) ?? CGColorSpaceCreateDeviceRGB()
@@ -40,7 +40,7 @@ func macTransferContractPreservesExplicitHLGDisplays() {
 
 @Test("Mac transfer contract falls back to SDR when HDR is disabled")
 func macTransferContractFallsBackToSDRWhenHDRIsDisabled() {
-    let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
+    let transfer = ShadowClientLumenClientDisplayTransferContract.resolve(
         hdrEnabled: false,
         environment: .colorManagedDesktop(
             CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
@@ -52,7 +52,7 @@ func macTransferContractFallsBackToSDRWhenHDRIsDisabled() {
 
 @Test("UIKit transfer contract defaults HDR-capable clients to PQ transfer")
 func uikitTransferContractDefaultsHDRCapableClientsToPQTransfer() {
-    let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
+    let transfer = ShadowClientLumenClientDisplayTransferContract.resolve(
         hdrEnabled: true,
         environment: .compositedUIKit
     )
@@ -62,7 +62,7 @@ func uikitTransferContractDefaultsHDRCapableClientsToPQTransfer() {
 
 @Test("UIKit transfer contract stays SDR when HDR is disabled")
 func uikitTransferContractFallsBackToSDRWhenHDRIsDisabled() {
-    let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
+    let transfer = ShadowClientLumenClientDisplayTransferContract.resolve(
         hdrEnabled: false,
         environment: .compositedUIKit
     )
@@ -70,9 +70,9 @@ func uikitTransferContractFallsBackToSDRWhenHDRIsDisabled() {
     #expect(transfer == .sdr)
 }
 
-@Test("Apollo sink capability remains frame-gated capable on SDR transfers")
-func apolloSinkCapabilityRemainsFrameGatedCapableOnSDRTransfers() {
-    let characteristics = ShadowClientApolloClientDisplayCharacteristics(
+@Test("Lumen sink capability remains frame-gated capable on SDR transfers")
+func lumenSinkCapabilityRemainsFrameGatedCapableOnSDRTransfers() {
+    let characteristics = ShadowClientLumenClientDisplayCharacteristics(
         gamut: .displayP3,
         transfer: .sdr,
         scalePercent: 100,
@@ -87,9 +87,9 @@ func apolloSinkCapabilityRemainsFrameGatedCapableOnSDRTransfers() {
     #expect(characteristics.requestedDynamicRangeTransport(hdrRequested: true) == .sdr)
 }
 
-@Test("Apollo sink request promotes HDR sink transfers to frame-gated transport")
-func apolloSinkRequestPromotesHDRSinkTransfersToFrameGatedTransport() {
-    let characteristics = ShadowClientApolloClientDisplayCharacteristics(
+@Test("Lumen sink request promotes HDR sink transfers to frame-gated transport")
+func lumenSinkRequestPromotesHDRSinkTransfersToFrameGatedTransport() {
+    let characteristics = ShadowClientLumenClientDisplayCharacteristics(
         gamut: .displayP3,
         transfer: .pq,
         scalePercent: 100,
@@ -101,9 +101,9 @@ func apolloSinkRequestPromotesHDRSinkTransfersToFrameGatedTransport() {
     #expect(characteristics.requestedDynamicRangeTransport(hdrRequested: true) == .frameGatedHDR)
 }
 
-@Test("Apollo sink request falls back to frame-gated transport when overlay metadata support is incomplete")
-func apolloSinkRequestFallsBackToFrameGatedTransportWhenOverlayMetadataSupportIsIncomplete() {
-    let characteristics = ShadowClientApolloClientDisplayCharacteristics(
+@Test("Lumen sink request falls back to frame-gated transport when overlay metadata support is incomplete")
+func lumenSinkRequestFallsBackToFrameGatedTransportWhenOverlayMetadataSupportIsIncomplete() {
+    let characteristics = ShadowClientLumenClientDisplayCharacteristics(
         gamut: .displayP3,
         transfer: .pq,
         scalePercent: 100,
@@ -116,9 +116,9 @@ func apolloSinkRequestFallsBackToFrameGatedTransportWhenOverlayMetadataSupportIs
     #expect(characteristics.requestedDynamicRangeTransport(hdrRequested: true) == .frameGatedHDR)
 }
 
-@Test("Apollo sink request promotes HDR sink transfers to SDR base HDR overlay transport")
-func apolloSinkRequestPromotesHDRSinkTransfersToSDRBaseHDROverlayTransport() {
-    let characteristics = ShadowClientApolloClientDisplayCharacteristics(
+@Test("Lumen sink request promotes HDR sink transfers to SDR base HDR overlay transport")
+func lumenSinkRequestPromotesHDRSinkTransfersToSDRBaseHDROverlayTransport() {
+    let characteristics = ShadowClientLumenClientDisplayCharacteristics(
         gamut: .displayP3,
         transfer: .pq,
         scalePercent: 100,
@@ -131,9 +131,9 @@ func apolloSinkRequestPromotesHDRSinkTransfersToSDRBaseHDROverlayTransport() {
     #expect(characteristics.requestedDynamicRangeTransport(hdrRequested: true) == .sdrBaseHDROverlay)
 }
 
-@Test("Apollo sink request falls back to SDR when HDR compositor support is unavailable")
-func apolloSinkRequestFallsBackToSDRWithoutHDRSinkCapability() {
-    let characteristics = ShadowClientApolloClientDisplayCharacteristics(
+@Test("Lumen sink request falls back to SDR when HDR compositor support is unavailable")
+func lumenSinkRequestFallsBackToSDRWithoutHDRSinkCapability() {
+    let characteristics = ShadowClientLumenClientDisplayCharacteristics(
         gamut: .displayP3,
         transfer: .pq,
         scalePercent: 100,

@@ -72,8 +72,8 @@ func hostHandshakeNegotiationEnablesEncryptedAudioWhenRequested() {
     #expect(negotiation.encryptionEnabledFlags == 0x05)
 }
 
-@Test("Apollo control transport negotiation rejects missing session-id-v1 support")
-func apolloControlTransportNegotiationRejectsMissingSessionIdentifierV1Support() {
+@Test("Lumen control transport negotiation rejects missing session-id-v1 support")
+func lumenControlTransportNegotiationRejectsMissingSessionIdentifierV1Support() {
     let handshakeNegotiation = ShadowClientHostHandshakeNegotiation(
         audioPingPayload: nil,
         videoPingPayload: Data("VIDEOPAYLOAD1234".utf8),
@@ -86,10 +86,10 @@ func apolloControlTransportNegotiationRejectsMissingSessionIdentifierV1Support()
 
     #expect(
         throws: ShadowClientRTSPInterleavedClientError.requestFailed(
-            "Apollo transport requires negotiated session ID ping support."
+            "Lumen transport requires negotiated session ID ping support."
         )
     ) {
-        _ = try ShadowClientApolloControlTransportNegotiation.resolve(
+        _ = try ShadowClientLumenControlTransportNegotiation.resolve(
             handshakeNegotiation: handshakeNegotiation,
             remoteInputKey: Data(repeating: 0x11, count: 16),
             remoteInputKeyID: 7
@@ -97,8 +97,8 @@ func apolloControlTransportNegotiationRejectsMissingSessionIdentifierV1Support()
     }
 }
 
-@Test("Apollo control transport negotiation rejects missing encrypted control-v2 support")
-func apolloControlTransportNegotiationRejectsMissingEncryptedControlV2Support() {
+@Test("Lumen control transport negotiation rejects missing encrypted control-v2 support")
+func lumenControlTransportNegotiationRejectsMissingEncryptedControlV2Support() {
     let handshakeNegotiation = ShadowClientHostHandshakeNegotiation(
         audioPingPayload: Data("AUDIOPAYLOAD12345".utf8),
         videoPingPayload: Data("VIDEOPAYLOAD1234".utf8),
@@ -111,10 +111,10 @@ func apolloControlTransportNegotiationRejectsMissingEncryptedControlV2Support() 
 
     #expect(
         throws: ShadowClientRTSPInterleavedClientError.requestFailed(
-            "Apollo transport requires encrypted control stream v2 support."
+            "Lumen transport requires encrypted control stream v2 support."
         )
     ) {
-        _ = try ShadowClientApolloControlTransportNegotiation.resolve(
+        _ = try ShadowClientLumenControlTransportNegotiation.resolve(
             handshakeNegotiation: handshakeNegotiation,
             remoteInputKey: Data(repeating: 0x22, count: 16),
             remoteInputKeyID: 9
@@ -122,8 +122,8 @@ func apolloControlTransportNegotiationRejectsMissingEncryptedControlV2Support() 
     }
 }
 
-@Test("Apollo control transport negotiation enables encrypted control-v2 and negotiated audio")
-func apolloControlTransportNegotiationBuildsEncryptedControlAndAudioConfiguration() throws {
+@Test("Lumen control transport negotiation enables encrypted control-v2 and negotiated audio")
+func lumenControlTransportNegotiationBuildsEncryptedControlAndAudioConfiguration() throws {
     let handshakeNegotiation = ShadowClientHostHandshakeNegotiation(
         audioPingPayload: Data("AUDIOPAYLOAD12345".utf8),
         videoPingPayload: Data("VIDEOPAYLOAD1234".utf8),
@@ -134,7 +134,7 @@ func apolloControlTransportNegotiationBuildsEncryptedControlAndAudioConfiguratio
         supportsEncryptedAudioTransport: true
     )
     let remoteInputKey = Data(repeating: 0x33, count: 16)
-    let negotiation = try ShadowClientApolloControlTransportNegotiation.resolve(
+    let negotiation = try ShadowClientLumenControlTransportNegotiation.resolve(
         handshakeNegotiation: handshakeNegotiation,
         remoteInputKey: remoteInputKey,
         remoteInputKeyID: 11

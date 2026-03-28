@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-enum ShadowClientApolloClientDisplayTransferContract {
+enum ShadowClientLumenClientDisplayTransferContract {
     enum Environment {
         case compositedUIKit
         case colorManagedDesktop(CGColorSpace?)
@@ -10,14 +10,14 @@ enum ShadowClientApolloClientDisplayTransferContract {
     static func resolve(
         hdrEnabled: Bool,
         environment: Environment
-    ) -> ShadowClientApolloClientDisplayTransfer {
+    ) -> ShadowClientLumenClientDisplayTransfer {
         guard hdrEnabled else {
             return .sdr
         }
 
         switch environment {
         case .compositedUIKit:
-            // Apollo's current Shadow HDR transport negotiates an explicit HDR
+            // Lumen's current Shadow HDR transport negotiates an explicit HDR
             // transfer function for sink capability instead of inferring it from
             // the UI composition surface.
             return .pq
@@ -28,7 +28,7 @@ enum ShadowClientApolloClientDisplayTransferContract {
             case CGColorSpace.itur_2100_PQ, CGColorSpace.displayP3_PQ:
                 return .pq
             default:
-                // Apollo's macOS bridge currently defaults HDR transport to PQ
+                // Lumen's macOS bridge currently defaults HDR transport to PQ
                 // unless the sink explicitly advertises HLG.
                 return .pq
             }

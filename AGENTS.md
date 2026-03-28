@@ -63,7 +63,7 @@ Use subagents in parallel for non-trivial work with disjoint ownership, then mer
 ### Current Behavior Contract (Required)
 - Keep iOS/macOS core logic shared. Do not duplicate renderer, compositor, control, or negotiation logic across platform entry files when a common Home feature source can own it.
 - Platform files should stay thin and limited to platform-only surface glue, screen/headroom queries, or UI framework integration.
-- For Apollo migration work, prefer Apollo-native contracts and APIs. Do not reintroduce or preserve legacy `/pair`-semantic flows when an Apollo control/pairing API exists.
+- For Lumen migration work, prefer Lumen-native contracts and APIs. Do not reintroduce or preserve legacy `/pair`-semantic flows when a Lumen control/pairing API exists.
 - Finish each functional unit before moving on, then commit it immediately as its own Conventional Commit with a detailed bullet body.
 
 ### Upstream Protocol Reference (Required)

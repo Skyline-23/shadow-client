@@ -72,8 +72,8 @@ func httpRequestBuilderIncludesMethodHeadersAndBodyLength() {
     #expect(requestText.hasSuffix("\r\n\r\nhello"))
 }
 
-@Test("Launch parameter builder includes Apollo virtual display request when enabled")
-func launchParameterBuilderIncludesApolloVirtualDisplayRequest() {
+@Test("Launch parameter builder includes Lumen virtual display request when enabled")
+func launchParameterBuilderIncludesLumenVirtualDisplayRequest() {
     let parameters = NativeGameStreamControlClient.makeLaunchParameters(
         appID: 881_448_767,
         settings: .init(
@@ -96,8 +96,8 @@ func launchParameterBuilderIncludesApolloVirtualDisplayRequest() {
     #expect(parameters["virtualDisplay"] == "1")
 }
 
-@Test("Launch parameter builder omits Apollo virtual display request by default")
-func launchParameterBuilderOmitsApolloVirtualDisplayRequestByDefault() {
+@Test("Launch parameter builder omits Lumen virtual display request by default")
+func launchParameterBuilderOmitsLumenVirtualDisplayRequestByDefault() {
     let parameters = NativeGameStreamControlClient.makeLaunchParameters(
         appID: 1,
         settings: .init(
@@ -119,8 +119,8 @@ func launchParameterBuilderOmitsApolloVirtualDisplayRequestByDefault() {
     #expect(parameters["virtualDisplay"] == nil)
 }
 
-@Test("Launch parameter builder includes Apollo display scale contract when requested")
-func launchParameterBuilderIncludesApolloDisplayScaleContract() {
+@Test("Launch parameter builder includes Lumen display scale contract when requested")
+func launchParameterBuilderIncludesLumenDisplayScaleContract() {
     let parameters = NativeGameStreamControlClient.makeLaunchParameters(
         appID: 1,
         settings: .init(
@@ -153,8 +153,8 @@ func launchParameterBuilderIncludesApolloDisplayScaleContract() {
     #expect(parameters["clientSinkSupportsPerFrameHDRMetadata"] == "0")
 }
 
-@Test("Launch parameter builder includes Apollo client display profile when provided")
-func launchParameterBuilderIncludesApolloClientDisplayProfile() {
+@Test("Launch parameter builder includes Lumen client display profile when provided")
+func launchParameterBuilderIncludesLumenClientDisplayProfile() {
     let parameters = NativeGameStreamControlClient.makeLaunchParameters(
         appID: 1,
         settings: .init(

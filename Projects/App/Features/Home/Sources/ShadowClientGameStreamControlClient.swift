@@ -767,7 +767,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let isSurround = settings.enableSurroundAudio && !settings.lowLatencyMode
         let surroundAudioInfo = isSurround ? 393_279 : 131_075
         let localAudioPlayMode = settings.playAudioOnHost ? "1" : "0"
-        let clientDisplayCharacteristics = await ShadowClientApolloClientDisplayCharacteristicsResolver.current(
+        let clientDisplayCharacteristics = await ShadowClientLumenClientDisplayCharacteristicsResolver.current(
             hdrEnabled: settings.enableHDR,
             scalePercent: settings.resolutionScalePercent,
             hiDPIEnabled: settings.requestHiDPI
@@ -801,7 +801,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             "Launch decision verb=\(verb.rawValue, privacy: .public), appID=\(appID, privacy: .public), currentGameID=\(currentGameID, privacy: .public), forceLaunch=\(forceLaunch, privacy: .public), preferredCodec=\(settings.preferredCodec.rawValue, privacy: .public), resolvedCodec=\(resolvedCodecPreference.rawValue, privacy: .public)"
         )
         if let codec = resolvedCodecPreference.launchParameterValue {
-            // Apollo/GameStream stacks don't fully agree on this key, so send both.
+            // Lumen/GameStream stacks don't fully agree on this key, so send both.
             parameters["videoCodec"] = codec
             parameters["codec"] = codec
         }
@@ -991,7 +991,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         remoteInputKeyID: UInt32,
         surroundAudioInfo: Int,
         localAudioPlayMode: String,
-        clientDisplayCharacteristics: ShadowClientApolloClientDisplayCharacteristics?
+        clientDisplayCharacteristics: ShadowClientLumenClientDisplayCharacteristics?
     ) -> [String: String] {
         var parameters: [String: String] = [
             "appid": "\(appID)",
@@ -1013,7 +1013,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         let sinkModeIsLogical = clientDisplayCharacteristics?.modeIsLogical ?? settings.requestHiDPI
         let requestedDynamicRangeTransport = clientDisplayCharacteristics?
             .requestedDynamicRangeTransport(hdrRequested: settings.enableHDR)
-            .rawValue ?? (settings.enableHDR ? ShadowClientApolloDynamicRangeTransport.frameGatedHDR.rawValue : ShadowClientApolloDynamicRangeTransport.sdr.rawValue)
+            .rawValue ?? (settings.enableHDR ? ShadowClientLumenDynamicRangeTransport.frameGatedHDR.rawValue : ShadowClientLumenDynamicRangeTransport.sdr.rawValue)
         let supportsFrameGatedHDR = clientDisplayCharacteristics?.supportsFrameGatedHDR ?? false
         let supportsHDRTileOverlay = clientDisplayCharacteristics?.supportsHDRTileOverlay ?? false
         let supportsPerFrameHDRMetadata = clientDisplayCharacteristics?.supportsPerFrameHDRMetadata ?? false
@@ -1024,12 +1024,12 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
         parameters["clientDisplayScalePercent"] = "\(settings.resolutionScalePercent)"
         parameters["clientDisplayHiDPI"] = settings.requestHiDPI ? "1" : "0"
         parameters["clientSinkScalePercent"] = "\(sinkScalePercent)"
-        parameters["clientSinkHiDPI"] = ShadowClientApolloSinkContractProfile.boolString(sinkHiDPI)
-        parameters["clientSinkModeIsLogical"] = ShadowClientApolloSinkContractProfile.boolString(sinkModeIsLogical)
+        parameters["clientSinkHiDPI"] = ShadowClientLumenSinkContractProfile.boolString(sinkHiDPI)
+        parameters["clientSinkModeIsLogical"] = ShadowClientLumenSinkContractProfile.boolString(sinkModeIsLogical)
         parameters["requestedDynamicRangeTransport"] = requestedDynamicRangeTransport
-        parameters["clientSinkSupportsFrameGatedHDR"] = ShadowClientApolloSinkContractProfile.boolString(supportsFrameGatedHDR)
-        parameters["clientSinkSupportsHDRTileOverlay"] = ShadowClientApolloSinkContractProfile.boolString(supportsHDRTileOverlay)
-        parameters["clientSinkSupportsPerFrameHDRMetadata"] = ShadowClientApolloSinkContractProfile.boolString(supportsPerFrameHDRMetadata)
+        parameters["clientSinkSupportsFrameGatedHDR"] = ShadowClientLumenSinkContractProfile.boolString(supportsFrameGatedHDR)
+        parameters["clientSinkSupportsHDRTileOverlay"] = ShadowClientLumenSinkContractProfile.boolString(supportsHDRTileOverlay)
+        parameters["clientSinkSupportsPerFrameHDRMetadata"] = ShadowClientLumenSinkContractProfile.boolString(supportsPerFrameHDRMetadata)
         if settings.resolutionScalePercent != 100 {
             parameters["scaleFactor"] = "\(settings.resolutionScalePercent)"
         }
