@@ -526,16 +526,10 @@ public actor ShadowClientPinnedHostCertificateStore {
     }
 
     public func certificateDER(forHost host: String) -> Data? {
-        let key = normalizedHost(host)
-        if let machineID = cachedHostMachineBindings[key],
-           let machineCertificate = certificateDER(forMachineID: machineID) {
-            return machineCertificate
-        }
-
-        if let value = cachedHostCertificates[key] {
-            return Data(base64Encoded: value)
-        }
-        return nil
+        certificateDER(
+            forHost: host,
+            httpsPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
+        )
     }
 
     public func certificateDER(forHost host: String, httpsPort: Int?) -> Data? {
@@ -564,12 +558,11 @@ public actor ShadowClientPinnedHostCertificateStore {
     }
 
     public func setCertificateDER(_ der: Data, forHost host: String) {
-        let key = normalizedHost(host)
-        cachedHostCertificates[key] = der.base64EncodedString()
-        if let machineID = cachedHostMachineBindings[key] {
-            cachedMachineCertificates[machineID] = der.base64EncodedString()
-        }
-        persist()
+        setCertificateDER(
+            der,
+            forHost: host,
+            httpsPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
+        )
     }
 
     public func setCertificateDER(_ der: Data, forHost host: String, httpsPort: Int?) {
@@ -596,18 +589,11 @@ public actor ShadowClientPinnedHostCertificateStore {
     }
 
     public func bindHost(_ host: String, toMachineID machineID: String) {
-        let normalizedHostKey = normalizedHost(host)
-        let normalizedMachineKey = normalizedMachineID(machineID)
-        guard !normalizedHostKey.isEmpty, !normalizedMachineKey.isEmpty else {
-            return
-        }
-        cachedHostMachineBindings[normalizedHostKey] = normalizedMachineKey
-        if let hostCertificate = cachedHostCertificates[normalizedHostKey] {
-            cachedMachineCertificates[normalizedMachineKey] = hostCertificate
-        } else if let machineCertificate = cachedMachineCertificates[normalizedMachineKey] {
-            cachedHostCertificates[normalizedHostKey] = machineCertificate
-        }
-        persist()
+        bindHost(
+            host,
+            httpsPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort,
+            toMachineID: machineID
+        )
     }
 
     public func bindHost(_ host: String, httpsPort: Int?, toMachineID machineID: String) {
@@ -631,8 +617,10 @@ public actor ShadowClientPinnedHostCertificateStore {
     }
 
     public func machineID(forHost host: String) -> String? {
-        let key = normalizedHost(host)
-        return cachedHostMachineBindings[key]
+        machineID(
+            forHost: host,
+            httpsPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
+        )
     }
 
     public func machineID(forHost host: String, httpsPort: Int?) -> String? {
@@ -656,10 +644,10 @@ public actor ShadowClientPinnedHostCertificateStore {
     }
 
     public func removeCertificate(forHost host: String) {
-        let key = normalizedHost(host)
-        cachedHostCertificates.removeValue(forKey: key)
-        cachedHostMachineBindings.removeValue(forKey: key)
-        persist()
+        removeCertificate(
+            forHost: host,
+            httpsPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
+        )
     }
 
     public func removeCertificate(forHost host: String, httpsPort: Int?) {
@@ -691,10 +679,6 @@ public actor ShadowClientPinnedHostCertificateStore {
         persist()
     }
 
-    private func normalizedHost(_ host: String) -> String {
-        host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
-
     private func normalizedRoute(_ host: String, httpsPort: Int) -> String {
         let normalizedPort = ShadowClientGameStreamNetworkDefaults.canonicalHTTPSPort(
             fromCandidatePort: httpsPort
@@ -705,7 +689,7 @@ public actor ShadowClientPinnedHostCertificateStore {
         if let url = URL(string: candidate), let parsedHost = url.host {
             normalizedRouteHost = parsedHost.lowercased()
         } else {
-            normalizedRouteHost = normalizedHost(trimmedHost)
+            normalizedRouteHost = trimmedHost.lowercased()
         }
 
         let routeHost: String

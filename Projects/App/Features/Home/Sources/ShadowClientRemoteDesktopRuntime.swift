@@ -1894,11 +1894,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 return resolved
             }
 
-            await Self.scrubAmbiguousLegacyPinnedHosts(
-                across: descriptors,
-                hostAliasesByHost: hostAliasesByHost,
-                pinnedCertificateStore: pinnedCertificateStore
-            )
             let machineBoundDescriptors = await Self.descriptorsWithBoundMachineIdentity(
                 descriptors,
                 pinnedCertificateStore: pinnedCertificateStore
@@ -5017,12 +5012,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     return certificate
                 }
             }
-
-            for endpoint in descriptor.routes.allEndpoints {
-                if let certificate = await pinnedCertificateStore.certificateDER(forHost: endpoint.host) {
-                    return certificate
-                }
-            }
         }
 
         return nil
@@ -5183,10 +5172,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                             forHost: endpoint.host,
                             httpsPort: endpoint.httpsPort
                         )
-                        let legacyCertificate = routeCertificate == nil
-                            ? await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
-                            : nil
-                        if let existingCertificate = routeCertificate ?? legacyCertificate {
+                        if let existingCertificate = routeCertificate {
                             certificate = existingCertificate
                             break
                         }
@@ -5252,10 +5238,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     forHost: endpoint.host,
                     httpsPort: endpoint.httpsPort
                 )
-                let legacyMachineID = exactMachineID == nil
-                    ? await pinnedCertificateStore.machineID(forHost: endpoint.host)
-                    : nil
-                if let machineID = exactMachineID ?? legacyMachineID {
+                if let machineID = exactMachineID {
                     boundMachineID = machineID
                     break
                 }
@@ -5286,59 +5269,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         return resolvedHosts
-    }
-
-    static func ambiguousLegacyPinnedHosts(
-        across hosts: [ShadowClientRemoteHostDescriptor],
-        hostAliasesByHost: [String: Set<String>] = [:]
-    ) -> Set<String> {
-        struct HostEvidence {
-            var ports: Set<Int> = []
-            var machineIDs: Set<String> = []
-        }
-
-        var evidenceByHost: [String: HostEvidence] = [:]
-
-        for descriptor in hosts {
-            let normalizedMachineID = normalizedUniqueID(descriptor.uniqueID)
-            for endpoint in descriptor.routes.allEndpoints {
-                let aliases = hostAliases(for: endpoint.host, hostAliasesByHost: hostAliasesByHost)
-                for alias in aliases {
-                    var evidence = evidenceByHost[alias, default: HostEvidence()]
-                    evidence.ports.insert(endpoint.httpsPort)
-                    if let normalizedMachineID {
-                        evidence.machineIDs.insert(normalizedMachineID)
-                    }
-                    evidenceByHost[alias] = evidence
-                }
-            }
-        }
-
-        return evidenceByHost.reduce(into: Set<String>()) { result, entry in
-            let host = entry.key
-            let evidence = entry.value
-            if evidence.ports.count > 1 || evidence.machineIDs.count > 1 {
-                result.insert(host)
-            }
-        }
-    }
-
-    private static func scrubAmbiguousLegacyPinnedHosts(
-        across hosts: [ShadowClientRemoteHostDescriptor],
-        hostAliasesByHost: [String: Set<String>] = [:],
-        pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
-    ) async {
-        let ambiguousHosts = ambiguousLegacyPinnedHosts(
-            across: hosts,
-            hostAliasesByHost: hostAliasesByHost
-        )
-        guard !ambiguousHosts.isEmpty else {
-            return
-        }
-
-        for host in ambiguousHosts {
-            await pinnedCertificateStore.removeCertificate(forHost: host)
-        }
     }
 
     private static func fetchDirectHostDescriptor(
@@ -6301,10 +6231,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     forHost: endpoint.host,
                     httpsPort: endpoint.httpsPort
                 )
-                let legacyCertificate = exactCertificate == nil
-                    ? await pinnedCertificateStore.certificateDER(forHost: endpoint.host)
-                    : nil
-                if exactCertificate != nil || legacyCertificate != nil {
+                if exactCertificate != nil {
                     pairedKeys.insert(mergeKey(for: host))
                     break
                 }
