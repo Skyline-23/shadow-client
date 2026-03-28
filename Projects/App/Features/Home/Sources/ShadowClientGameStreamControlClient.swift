@@ -21,7 +21,7 @@ public extension ShadowClientRemotePairingState {
             if code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return "Starting pairing with \(host)."
             }
-            return "Pairing with \(host). Approve this device in Apollo using the displayed code."
+            return "Pairing with \(host). Approve this device in Lumen using the displayed code."
         case let .paired(message):
             return message
         case let .failed(message):
@@ -1330,7 +1330,7 @@ enum ShadowClientGameStreamTLSFailure: Equatable, Sendable {
 }
 
 enum ShadowClientGameStreamHTTPTransport {
-    // Preserve the protocol token expected by Apollo/GameStream endpoints.
+            // Preserve the legacy protocol token still expected by current Lumen/GameStream endpoints.
     private static let shadowClientCompatibleUniqueID = "0123456789ABCDEF"
     private static let logger = Logger(
         subsystem: "com.skyline23.shadow-client",

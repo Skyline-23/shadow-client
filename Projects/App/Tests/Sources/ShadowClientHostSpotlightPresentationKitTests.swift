@@ -18,14 +18,14 @@ func hostSpotlightPresentationIssueCallout() {
 
     let callouts = ShadowClientHostSpotlightPresentationKit.statusCallouts(
         host: host,
-        issue: .init(title: "Apollo Permissions", message: "Grant Launch Apps."),
-        apolloSummary: "ignored"
+        issue: .init(title: "Lumen Permissions", message: "Grant Launch Apps."),
+        lumenSummary: "ignored"
     )
 
-    #expect(callouts == [.init(title: "Apollo Permissions", message: "Grant Launch Apps.", tone: .warning)])
+    #expect(callouts == [.init(title: "Lumen Permissions", message: "Grant Launch Apps.", tone: .warning)])
 }
 
-@Test("Host spotlight presentation emits ready and Apollo override callouts for paired hosts")
+@Test("Host spotlight presentation emits ready and Lumen override callouts for paired hosts")
 func hostSpotlightPresentationReadyCallouts() {
     let host = ShadowClientRemoteHostDescriptor(
         host: "desktop.local",
@@ -43,10 +43,10 @@ func hostSpotlightPresentationReadyCallouts() {
     let callouts = ShadowClientHostSpotlightPresentationKit.statusCallouts(
         host: host,
         issue: nil,
-        apolloSummary: "Display mode override: automatic"
+        lumenSummary: "Display mode override: automatic"
     )
 
     #expect(callouts.count == 2)
     #expect(callouts[0] == .init(title: "Ready", message: "This device is paired and ready to launch a remote desktop session.", tone: .success))
-    #expect(callouts[1] == .init(title: "Apollo Device Overrides", message: "Display mode override: automatic", tone: .info))
+    #expect(callouts[1] == .init(title: "Lumen Device Overrides", message: "Display mode override: automatic", tone: .info))
 }

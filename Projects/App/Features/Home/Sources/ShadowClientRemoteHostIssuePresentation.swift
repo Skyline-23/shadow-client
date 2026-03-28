@@ -23,19 +23,19 @@ enum ShadowClientRemoteHostIssueMapper {
         }
 
         if case let .failed(message) = launchState,
-           isApolloPermissionMessage(message)
+           isLumenPermissionMessage(message)
         {
             return .init(
-                title: "Apollo Permissions",
+                title: "Lumen Permissions",
                 message: message
             )
         }
 
         if case let .failed(message) = appState,
-           isApolloPermissionMessage(message)
+           isLumenPermissionMessage(message)
         {
             return .init(
-                title: "Apollo Permissions",
+                title: "Lumen Permissions",
                 message: message
             )
         }
@@ -43,8 +43,8 @@ enum ShadowClientRemoteHostIssueMapper {
         return nil
     }
 
-    private static func isApolloPermissionMessage(_ message: String) -> Bool {
-        message.localizedCaseInsensitiveContains("apollo denied")
+    private static func isLumenPermissionMessage(_ message: String) -> Bool {
+        message.localizedCaseInsensitiveContains("lumen denied")
             || message.localizedCaseInsensitiveContains("permission required")
             || message.localizedCaseInsensitiveContains("clipboard sync unavailable")
     }

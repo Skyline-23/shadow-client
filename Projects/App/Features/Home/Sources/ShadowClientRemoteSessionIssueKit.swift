@@ -43,28 +43,28 @@ enum ShadowClientRemoteSessionIssueKit {
         if clipboardReadPermissionDenied && clipboardWritePermissionDenied {
             return .init(
                 title: "Clipboard Permission Required",
-                message: "Grant Clipboard Read and Clipboard Set permissions for this paired Apollo client."
+                message: "Grant Clipboard Read and Clipboard Set permissions for this paired Lumen client."
             )
         }
 
         if clipboardWritePermissionDenied {
             return .init(
                 title: "Clipboard Permission Required",
-                message: "Grant Clipboard Set permission for this paired Apollo client."
+                message: "Grant Clipboard Set permission for this paired Lumen client."
             )
         }
 
         if clipboardReadPermissionDenied {
             return .init(
                 title: "Clipboard Permission Required",
-                message: "Grant Clipboard Read permission for this paired Apollo client."
+                message: "Grant Clipboard Read permission for this paired Lumen client."
             )
         }
 
         if clipboardActionRequiresActiveStream {
             return .init(
                 title: "Clipboard Sync Unavailable",
-                message: "Apollo clipboard actions require an active stream for this client."
+                message: "Lumen clipboard actions require an active stream for this client."
             )
         }
 

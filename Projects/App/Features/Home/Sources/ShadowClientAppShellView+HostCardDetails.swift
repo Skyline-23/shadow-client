@@ -219,7 +219,7 @@ extension ShadowClientAppShellView {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Apollo Admin")
+                Text("Lumen Admin")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.white.opacity(0.68))
 
@@ -229,7 +229,7 @@ extension ShadowClientAppShellView {
                             ShadowClientPlatformTextField(
                                 text: hostApolloAdminUsernameBinding(host),
                                 placeholder: "Admin username",
-                                accessibilityLabel: "Apollo admin username",
+                                accessibilityLabel: "Lumen admin username",
                                 fontWeight: .semibold
                             )
                         }
@@ -238,7 +238,7 @@ extension ShadowClientAppShellView {
                             ShadowClientPlatformTextField(
                                 text: hostApolloAdminPasswordBinding(host),
                                 placeholder: "Admin password",
-                                accessibilityLabel: "Apollo admin password",
+                                accessibilityLabel: "Lumen admin password",
                                 fontWeight: .semibold,
                                 isSecureTextEntry: true
                             )
@@ -246,7 +246,7 @@ extension ShadowClientAppShellView {
 
                         ViewThatFits(in: .horizontal) {
                             HStack(spacing: 10) {
-                                Button("Sync Apollo Client") {
+                                Button("Sync Lumen Client") {
                                     remoteDesktopRuntime.refreshSelectedHostApolloAdmin(
                                         username: hostApolloAdminUsername(host),
                                         password: hostApolloAdminPassword(host)
@@ -262,7 +262,7 @@ extension ShadowClientAppShellView {
                             }
 
                             VStack(alignment: .leading, spacing: 8) {
-                                Button("Sync Apollo Client") {
+                                Button("Sync Lumen Client") {
                                     remoteDesktopRuntime.refreshSelectedHostApolloAdmin(
                                         username: hostApolloAdminUsername(host),
                                         password: hostApolloAdminPassword(host)
@@ -286,7 +286,7 @@ extension ShadowClientAppShellView {
                                 ShadowClientPlatformTextField(
                                     text: hostApolloDisplayModeBinding(for: host),
                                     placeholder: "Display mode override",
-                                    accessibilityLabel: "Apollo display mode override",
+                                    accessibilityLabel: "Lumen display mode override",
                                     fontWeight: .semibold
                                 )
                             }
@@ -299,7 +299,7 @@ extension ShadowClientAppShellView {
                             .tint(.mint)
 
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Apollo Permissions")
+                                Text("Lumen Permissions")
                                     .font(.caption.weight(.bold))
                                     .foregroundStyle(Color.white.opacity(0.68))
 
@@ -313,7 +313,7 @@ extension ShadowClientAppShellView {
                                 }
                             }
 
-                            Button("Save Apollo Overrides") {
+                            Button("Save Lumen Overrides") {
                                 remoteDesktopRuntime.updateSelectedHostApolloAdmin(
                                     username: hostApolloAdminUsername(host),
                                     password: hostApolloAdminPassword(host),
@@ -375,11 +375,11 @@ extension ShadowClientAppShellView {
 
     @ViewBuilder
     func remoteDesktopHostStatusCallout(_ host: ShadowClientRemoteHostDescriptor) -> some View {
-        let apolloSummary = hostApolloAdminProfile(host).map(hostApolloAdminSummary)
+        let lumenSummary = hostApolloAdminProfile(host).map(hostApolloAdminSummary)
         let callouts = ShadowClientHostSpotlightPresentationKit.statusCallouts(
             host: host,
             issue: hostPresentationIssue(host),
-            apolloSummary: apolloSummary
+            lumenSummary: lumenSummary
         )
         if !callouts.isEmpty {
             ForEach(Array(callouts.enumerated()), id: \.offset) { _, callout in

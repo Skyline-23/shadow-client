@@ -207,7 +207,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         case .paired:
             return "Pair status verified"
         case .notPaired:
-            return "Host reachable. Pair this client in Apollo to continue."
+            return "Host reachable. Pair this client in Lumen to continue."
         case .unknown:
             return "Host reachable"
         }
@@ -2934,7 +2934,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         } catch {
             setClipboardIssue(for: .write, error: error)
             logger.error(
-                "Apollo clipboard sync failed for host=\(endpoint.host, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                "Lumen clipboard sync failed for host=\(endpoint.host, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
         }
     }
@@ -3004,7 +3004,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         } catch {
             setClipboardIssue(for: .read, error: error)
             logger.error(
-                "Apollo clipboard pull failed for host=\(endpoint.host, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                "Lumen clipboard pull failed for host=\(endpoint.host, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
         }
     }
@@ -3214,14 +3214,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         return trimmed
     }
 
-    private enum ApolloPermissionCapability {
+    private enum LumenPermissionCapability {
         case listApps
         case launchApps
     }
 
-    private static func apolloPermissionDeniedMessage(
+    private static func lumenPermissionDeniedMessage(
         _ error: any Error,
-        capability: ApolloPermissionCapability
+        capability: LumenPermissionCapability
     ) -> String? {
         guard case let ShadowClientGameStreamError.responseRejected(code, message) = error,
               code == 403,
@@ -3233,9 +3233,9 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         switch capability {
         case .listApps:
-            return "Apollo denied List Apps permission for this paired client."
+            return "Lumen denied List Apps permission for this paired client."
         case .launchApps:
-            return "Apollo denied Launch Apps permission for this paired client."
+            return "Lumen denied Launch Apps permission for this paired client."
         }
     }
 
@@ -3828,7 +3828,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         _ error: any Error,
         settings: ShadowClientGameStreamLaunchSettings
     ) -> String {
-        if let permissionMessage = apolloPermissionDeniedMessage(
+        if let permissionMessage = lumenPermissionDeniedMessage(
             error,
             capability: .launchApps
         ) {
@@ -4464,7 +4464,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     if fallbackApps.isEmpty {
                         self.apps = []
                         self.appState = .failed(
-                            Self.apolloPermissionDeniedMessage(
+                            Self.lumenPermissionDeniedMessage(
                                 error,
                                 capability: .listApps
                             ) ?? message
@@ -4493,7 +4493,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
             selectedHostApolloAdminProfile = nil
-            selectedHostApolloAdminState = .failed("Apollo admin credentials are required.")
+            selectedHostApolloAdminState = .failed("Lumen admin credentials are required.")
             return
         }
 
@@ -4542,14 +4542,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         guard let selectedHost,
               let currentProfile = selectedHostApolloAdminProfile
         else {
-            selectedHostApolloAdminState = .failed("Sync Apollo client metadata first.")
+            selectedHostApolloAdminState = .failed("Sync Lumen client metadata first.")
             return
         }
 
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
-            selectedHostApolloAdminState = .failed("Apollo admin credentials are required.")
+            selectedHostApolloAdminState = .failed("Lumen admin credentials are required.")
             return
         }
 
@@ -4661,14 +4661,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         guard let selectedHost,
               let currentProfile = selectedHostApolloAdminProfile
         else {
-            selectedHostApolloAdminState = .failed("Sync Apollo client metadata first.")
+            selectedHostApolloAdminState = .failed("Sync Lumen client metadata first.")
             return
         }
 
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
-            selectedHostApolloAdminState = .failed("Apollo admin credentials are required.")
+            selectedHostApolloAdminState = .failed("Lumen admin credentials are required.")
             return
         }
 
@@ -4726,14 +4726,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         guard let selectedHost,
               let currentProfile = selectedHostApolloAdminProfile
         else {
-            selectedHostApolloAdminState = .failed("Sync Apollo client metadata first.")
+            selectedHostApolloAdminState = .failed("Sync Lumen client metadata first.")
             return
         }
 
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
-            selectedHostApolloAdminState = .failed("Apollo admin credentials are required.")
+            selectedHostApolloAdminState = .failed("Lumen admin credentials are required.")
             return
         }
 

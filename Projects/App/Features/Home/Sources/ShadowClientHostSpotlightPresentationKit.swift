@@ -17,7 +17,7 @@ enum ShadowClientHostSpotlightPresentationKit {
     static func statusCallouts(
         host: ShadowClientRemoteHostDescriptor,
         issue: ShadowClientRemoteHostIssuePresentation?,
-        apolloSummary: String?
+        lumenSummary: String?
     ) -> [ShadowClientHostSpotlightCallout] {
         if let issue {
             return [.init(title: issue.title, message: issue.message, tone: .warning)]
@@ -35,11 +35,11 @@ enum ShadowClientHostSpotlightPresentationKit {
                     tone: .success
                 )
             ]
-            if let apolloSummary, !apolloSummary.isEmpty {
+            if let lumenSummary, !lumenSummary.isEmpty {
                 callouts.append(
                     .init(
-                        title: "Apollo Device Overrides",
-                        message: apolloSummary,
+                        title: "Lumen Device Overrides",
+                        message: lumenSummary,
                         tone: .info
                     )
                 )

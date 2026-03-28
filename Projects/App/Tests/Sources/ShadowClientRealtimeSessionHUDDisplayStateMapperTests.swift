@@ -119,14 +119,14 @@ func realtimeSessionHUDMapperSurfacesSessionPermissionIssue() {
         renderState: .rendering,
         sessionIssue: .init(
             title: "Clipboard Permission Required",
-            message: "Grant Clipboard Read permission for this paired Apollo client."
+            message: "Grant Clipboard Read permission for this paired Lumen client."
         )
     )
 
     #expect(
         model == .connectionIssue(
             title: "Clipboard Permission Required",
-            message: "Grant Clipboard Read permission for this paired Apollo client."
+            message: "Grant Clipboard Read permission for this paired Lumen client."
         )
     )
 }
@@ -140,14 +140,14 @@ func realtimeSessionHUDMapperSurfacesHostTerminationIssue() {
         renderState: .rendering,
         sessionIssue: .init(
             title: "Host Desktop Paused",
-            message: "Apollo paused or closed the desktop session (0x80030023).\nReturn to the normal Windows desktop, dismiss the secure prompt or popup, then launch the session again."
+            message: "Lumen paused or closed the desktop session (0x80030023).\nReturn to the normal Windows desktop, dismiss the secure prompt or popup, then launch the session again."
         )
     )
 
     #expect(
         model == .connectionIssue(
             title: "Host Desktop Paused",
-            message: "Apollo paused or closed the desktop session (0x80030023).\nReturn to the normal Windows desktop, dismiss the secure prompt or popup, then launch the session again."
+            message: "Lumen paused or closed the desktop session (0x80030023).\nReturn to the normal Windows desktop, dismiss the secure prompt or popup, then launch the session again."
         )
     )
 }

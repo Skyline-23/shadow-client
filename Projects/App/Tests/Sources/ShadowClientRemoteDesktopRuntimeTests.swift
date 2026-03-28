@@ -893,7 +893,7 @@ func remoteDesktopRuntimeSurfacesApolloAppListPermissionDenial() async {
     await waitForAppCatalogReady(runtime)
 
     if case let .failed(message) = runtime.appState {
-        #expect(message == "Apollo denied List Apps permission for this paired client.")
+        #expect(message == "Lumen denied List Apps permission for this paired client.")
     } else {
         Issue.record("Expected failed app state for Apollo permission denial, got \(runtime.appState)")
     }

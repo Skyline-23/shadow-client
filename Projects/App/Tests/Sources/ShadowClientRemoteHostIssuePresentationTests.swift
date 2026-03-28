@@ -19,15 +19,15 @@ func hostIssueMapperSurfacesSelectedHostAppPermissionDenial() {
     let issue = ShadowClientRemoteHostIssueMapper.issue(
         for: host,
         selectedHostID: host.id,
-        appState: .failed("Apollo denied List Apps permission for this paired client."),
+        appState: .failed("Lumen denied List Apps permission for this paired client."),
         launchState: .idle,
         sessionIssue: nil
     )
 
     #expect(
         issue == .init(
-            title: "Apollo Permissions",
-            message: "Apollo denied List Apps permission for this paired client."
+            title: "Lumen Permissions",
+            message: "Lumen denied List Apps permission for this paired client."
         )
     )
 }
@@ -50,18 +50,18 @@ func hostIssueMapperPrefersActiveSessionIssue() {
     let issue = ShadowClientRemoteHostIssueMapper.issue(
         for: host,
         selectedHostID: host.id,
-        appState: .failed("Apollo denied List Apps permission for this paired client."),
-        launchState: .failed("Apollo denied Launch Apps permission for this paired client."),
+        appState: .failed("Lumen denied List Apps permission for this paired client."),
+        launchState: .failed("Lumen denied Launch Apps permission for this paired client."),
         sessionIssue: .init(
             title: "Clipboard Permission Required",
-            message: "Grant Clipboard Read permission for this paired Apollo client."
+            message: "Grant Clipboard Read permission for this paired Lumen client."
         )
     )
 
     #expect(
         issue == .init(
             title: "Clipboard Permission Required",
-            message: "Grant Clipboard Read permission for this paired Apollo client."
+            message: "Grant Clipboard Read permission for this paired Lumen client."
         )
     )
 }
@@ -84,7 +84,7 @@ func hostIssueMapperIgnoresPermissionFailuresForNonSelectedHost() {
     let issue = ShadowClientRemoteHostIssueMapper.issue(
         for: host,
         selectedHostID: "other-host",
-        appState: .failed("Apollo denied List Apps permission for this paired client."),
+        appState: .failed("Lumen denied List Apps permission for this paired client."),
         launchState: .idle,
         sessionIssue: nil
     )

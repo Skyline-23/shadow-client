@@ -78,7 +78,7 @@ extension ShadowClientAppShellView {
 
                         settingsRow {
                             Toggle(isOn: $preferVirtualDisplay) {
-                                Label("Prefer Apollo virtual display", systemImage: "display.2")
+                                Label("Prefer Lumen virtual display", systemImage: "display.2")
                                     .font(.callout.weight(.semibold))
                                     .foregroundStyle(.white)
                             }

@@ -120,7 +120,7 @@ actor ShadowClientHostControlChannelRuntime {
             try await sendBootstrapStartMessages(over: connection)
 
             logger.notice(
-                "Apollo ENet control bootstrap ready on UDP \(port.rawValue, privacy: .public) peer=\(self.outgoingPeerID, privacy: .public)"
+                "Lumen ENet control bootstrap ready on UDP \(port.rawValue, privacy: .public) peer=\(self.outgoingPeerID, privacy: .public)"
             )
 
             receiveTask = Task { [weak self] in
@@ -200,10 +200,10 @@ actor ShadowClientHostControlChannelRuntime {
                 over: connection
             )
             logger.notice(
-                "Apollo video recovery request sent type=\(request.type, privacy: .public) channel=\(request.channelID, privacy: .public)"
+                "Lumen video recovery request sent type=\(request.type, privacy: .public) channel=\(request.channelID, privacy: .public)"
             )
         } catch {
-            logger.error("Apollo video recovery request failed: \(error.localizedDescription, privacy: .public)")
+            logger.error("Lumen video recovery request failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -230,11 +230,11 @@ actor ShadowClientHostControlChannelRuntime {
                 over: connection
             )
             logger.notice(
-                "Apollo reference frame invalidation request sent type=\(request.type, privacy: .public) channel=\(request.channelID, privacy: .public) range=\(startFrameIndex, privacy: .public)-\(endFrameIndex, privacy: .public)"
+                "Lumen reference frame invalidation request sent type=\(request.type, privacy: .public) channel=\(request.channelID, privacy: .public) range=\(startFrameIndex, privacy: .public)-\(endFrameIndex, privacy: .public)"
             )
         } catch {
             logger.error(
-                "Apollo reference frame invalidation request failed: \(error.localizedDescription, privacy: .public)"
+                "Lumen reference frame invalidation request failed: \(error.localizedDescription, privacy: .public)"
             )
         }
     }
@@ -319,7 +319,7 @@ actor ShadowClientHostControlChannelRuntime {
                 }
             } catch {
                 if !Task.isCancelled {
-                    logger.debug("Apollo ENet control receive loop ended: \(error.localizedDescription, privacy: .public)")
+                    logger.debug("Lumen ENet control receive loop ended: \(error.localizedDescription, privacy: .public)")
                 }
                 break
             }
@@ -354,7 +354,7 @@ actor ShadowClientHostControlChannelRuntime {
         let reliableSequenceNumber = nextReliableSequenceNumber(for: channelID)
         let controlModeLabel = controlEncryptionCodec == nil ? "plain" : "enc-v2"
         logger.notice(
-            "Apollo control send type=\(type, privacy: .public) relSeq=\(reliableSequenceNumber, privacy: .public) payloadBytes=\(controlPayload.count, privacy: .public) mode=\(controlModeLabel, privacy: .public)"
+            "Lumen control send type=\(type, privacy: .public) relSeq=\(reliableSequenceNumber, privacy: .public) payloadBytes=\(controlPayload.count, privacy: .public) mode=\(controlModeLabel, privacy: .public)"
         )
         let packet = try ShadowClientHostENetPacketCodec.makeSendReliablePacket(
             outgoingPeerID: outgoingPeerID,
@@ -404,7 +404,7 @@ actor ShadowClientHostControlChannelRuntime {
                 controlEncryptionSequenceNumber &+= 1
                 return encryptedPayload
             } catch {
-                logger.error("Apollo encrypted control payload encoding failed: \(error.localizedDescription, privacy: .public)")
+                logger.error("Lumen encrypted control payload encoding failed: \(error.localizedDescription, privacy: .public)")
                 throw ShadowClientHostControlChannelError.encryptedControlEncodingFailed
             }
         }
@@ -444,10 +444,10 @@ actor ShadowClientHostControlChannelRuntime {
         while !Task.isCancelled {
             let datagram = try await Self.receiveDatagram(over: connection)
             logger.notice(
-                "Apollo control ACK wait datagram bytes=\(datagram.count, privacy: .public) expectedRelSeq=\(expectedReliableSequenceNumber, privacy: .public)"
+                "Lumen control ACK wait datagram bytes=\(datagram.count, privacy: .public) expectedRelSeq=\(expectedReliableSequenceNumber, privacy: .public)"
             )
             guard let packet = ShadowClientHostENetPacketCodec.parsePacket(datagram) else {
-                logger.error("Apollo control ACK wait failed to parse ENet packet")
+                logger.error("Lumen control ACK wait failed to parse ENet packet")
                 continue
             }
 
@@ -462,7 +462,7 @@ actor ShadowClientHostControlChannelRuntime {
                 )
 
                 logger.notice(
-                    "Apollo control ACK wait command number=\(command.number, privacy: .public) flags=\(command.flags, privacy: .public) relSeq=\(command.reliableSequenceNumber, privacy: .public) channel=\(command.channelID, privacy: .public)"
+                    "Lumen control ACK wait command number=\(command.number, privacy: .public) flags=\(command.flags, privacy: .public) relSeq=\(command.reliableSequenceNumber, privacy: .public) channel=\(command.channelID, privacy: .public)"
                 )
                 if command.isAcknowledgeRequired, let sentTime = packet.sentTime {
                     try await acknowledge(
@@ -478,7 +478,7 @@ actor ShadowClientHostControlChannelRuntime {
                     command: command
                 ), acknowledge.receivedReliableSequenceNumber == expectedReliableSequenceNumber {
                     logger.notice(
-                        "Apollo control ACK matched relSeq=\(acknowledge.receivedReliableSequenceNumber, privacy: .public)"
+                        "Lumen control ACK matched relSeq=\(acknowledge.receivedReliableSequenceNumber, privacy: .public)"
                     )
                     return
                 }
@@ -607,7 +607,7 @@ actor ShadowClientHostControlChannelRuntime {
             command: command
         ) {
             logger.error(
-                "Apollo control termination received reason=0x\(String(terminationEvent.reasonCode, radix: 16), privacy: .public)"
+                "Lumen control termination received reason=0x\(String(terminationEvent.reasonCode, radix: 16), privacy: .public)"
             )
             await onTermination?(terminationEvent)
         }
@@ -780,7 +780,7 @@ actor ShadowClientHostControlChannelRuntime {
                     lastPeerPingUptime = nowUptime
                     if didLogENetPing < 4 {
                         logger.notice(
-                            "Apollo low-level ENet ping sent relSeq=\(reliableSequenceNumber, privacy: .public)"
+                            "Lumen low-level ENet ping sent relSeq=\(reliableSequenceNumber, privacy: .public)"
                         )
                         didLogENetPing += 1
                     }
@@ -793,7 +793,7 @@ actor ShadowClientHostControlChannelRuntime {
                 )
             } catch {
                 if !didLogFailure {
-                    logger.error("Apollo control periodic ping failed: \(error.localizedDescription, privacy: .public)")
+                    logger.error("Lumen control periodic ping failed: \(error.localizedDescription, privacy: .public)")
                     didLogFailure = true
                 }
             }

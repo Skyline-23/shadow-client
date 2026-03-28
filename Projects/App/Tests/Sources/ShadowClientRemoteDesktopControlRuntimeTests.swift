@@ -192,7 +192,7 @@ func remoteDesktopRuntimeDoesNotRetryCertificateRequiredFailure() async {
     }
 }
 
-@Test("Remote desktop runtime auto-approves pairing when Apollo admin credentials are supplied")
+@Test("Remote desktop runtime auto-approves pairing when Lumen admin credentials are supplied")
 @MainActor
 func remoteDesktopRuntimeAutoApprovesPairingWithApolloAdminCredentials() async {
     let metadata = FakeControlTestMetadataClient(
@@ -723,7 +723,7 @@ func remoteDesktopRuntimeSurfacesApolloLaunchPermissionDenial() async {
     await waitForLaunchState(runtime)
 
     if case let .failed(message) = runtime.launchState {
-        #expect(message == "Apollo denied Launch Apps permission for this paired client.")
+        #expect(message == "Lumen denied Launch Apps permission for this paired client.")
     } else {
         Issue.record("Expected failed launch state, got \(runtime.launchState)")
     }
@@ -2414,7 +2414,7 @@ func remoteDesktopRuntimeForwardsCapturedInputEventsToActiveSessionInputClient()
     #expect(calls.allSatisfy { $0.sessionURL == "rtsp://192.168.0.28:48010/session" })
 }
 
-@Test("Remote desktop runtime uses Apollo clipboard action while a session is active")
+@Test("Remote desktop runtime uses Lumen clipboard action while a session is active")
 @MainActor
 func remoteDesktopRuntimeUsesClipboardActionForActiveSession() async {
     let metadata = FakeControlTestMetadataClient(
@@ -2565,7 +2565,7 @@ func remoteDesktopRuntimeCancelsHostSessionWhenMetadataAlreadyLooksIdle() async 
     ])
 }
 
-@Test("Remote desktop runtime does not fall back to text input when Apollo clipboard action fails")
+@Test("Remote desktop runtime does not fall back to text input when Lumen clipboard action fails")
 @MainActor
 func remoteDesktopRuntimeDoesNotFallbackToTextInputWhenClipboardActionFails() async {
     let metadata = FakeControlTestMetadataClient(
@@ -2669,7 +2669,7 @@ func remoteDesktopRuntimeSurfacesClipboardWritePermissionDenial() async {
     #expect(
         runtime.sessionIssue == .init(
             title: "Clipboard Permission Required",
-            message: "Grant Clipboard Set permission for this paired Apollo client."
+            message: "Grant Clipboard Set permission for this paired Lumen client."
         )
     )
 }
@@ -2783,7 +2783,7 @@ func remoteDesktopRuntimeSurfacesClipboardReadPermissionDenial() async {
     #expect(
         runtime.sessionIssue == .init(
             title: "Clipboard Permission Required",
-            message: "Grant Clipboard Read permission for this paired Apollo client."
+            message: "Grant Clipboard Read permission for this paired Lumen client."
         )
     )
 }
@@ -2797,13 +2797,13 @@ func remoteDesktopRuntimeSurfacesApolloHostTerminationIssue() async {
     )
 
     runtime.handleSessionRenderStateTransition(
-        .disconnected("Apollo paused or closed the desktop session (0x80030023). This often happens when Windows shows a secure desktop, password prompt, or UAC dialog.")
+        .disconnected("Lumen paused or closed the desktop session (0x80030023). This often happens when Windows shows a secure desktop, password prompt, or UAC dialog.")
     )
 
     #expect(
         runtime.sessionIssue == .init(
             title: "Host Desktop Paused",
-            message: "Apollo paused or closed the desktop session (0x80030023). This often happens when Windows shows a secure desktop, password prompt, or UAC dialog.\nReturn to the normal Windows desktop, dismiss the secure prompt or popup, then launch the session again."
+            message: "Lumen paused or closed the desktop session (0x80030023). This often happens when Windows shows a secure desktop, password prompt, or UAC dialog.\nReturn to the normal Windows desktop, dismiss the secure prompt or popup, then launch the session again."
         )
     )
 }

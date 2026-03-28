@@ -103,7 +103,7 @@ func hostControlFeedbackCodecParsesTerminationPayload() {
     )
 
     #expect(event == .init(reasonCode: 0x80030023))
-    #expect(event?.message == "Apollo paused or closed the desktop session (0x80030023). This often happens when Windows shows a secure desktop, password prompt, or UAC dialog.")
+    #expect(event?.message == "Lumen paused or closed the desktop session (0x80030023). This often happens when Windows shows a secure desktop, password prompt, or UAC dialog.")
 }
 
 @Test("Host control feedback codec parses Sunshine HDR metadata payload")
@@ -158,7 +158,7 @@ func hostControlFeedbackCodecParsesHDRModePayload() {
     ]))
 }
 
-@Test("Host control feedback codec parses Apollo HDR frame state payload")
+@Test("Host control feedback codec parses Lumen HDR frame state payload")
 func hostControlFeedbackCodecParsesHDRFrameStatePayload() {
     let payload = Data([
         0x01, // version
