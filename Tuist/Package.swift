@@ -2,12 +2,17 @@
 import PackageDescription
 
 #if TUIST
-    import struct ProjectDescription.PackageSettings
+    import ProjectDescription
 
     let packageSettings = PackageSettings(
         productTypes: [
             "SwiftOpus": .framework,
-        ]
+        ],
+        baseSettings: .settings(
+            base: [
+                "OTHER_LIBTOOLFLAGS": "$(inherited) -no_warning_for_no_symbols",
+            ]
+        )
     )
 #endif
 
