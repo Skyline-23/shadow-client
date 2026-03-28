@@ -5400,15 +5400,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return false
         }
 
-        if let controlError = error as? ShadowClientGameStreamControlError {
-            switch controlError {
-            case .pairingAlreadyInProgress:
-                return true
-            case .pinMismatch, .challengeRejected:
-                return false
-            case .invalidPIN, .invalidKeyMaterial, .mitmDetected, .launchRejected, .malformedResponse:
-                return false
-            }
+        if error is ShadowClientGameStreamControlError {
+            return false
         }
 
         if let streamError = error as? ShadowClientGameStreamError {

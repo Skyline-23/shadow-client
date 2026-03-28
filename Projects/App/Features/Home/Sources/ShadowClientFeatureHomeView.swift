@@ -146,8 +146,7 @@ public extension ShadowClientRemoteDesktopDependencies {
             controlClient: NativeGameStreamControlClient(
                 identityStore: identityStore,
                 pinnedCertificateStore: pinnedCertificateStore,
-                defaultHTTPPort: defaultHTTPPort,
-                defaultHTTPSPort: defaultHTTPSPort
+                defaultHTTPPort: defaultHTTPPort
             ),
             wakeOnLANClient: NativeShadowClientWakeOnLANClient(),
             sessionConnectionClient: NativeShadowClientRemoteSessionConnectionClient(

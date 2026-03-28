@@ -51,40 +51,6 @@ func httpTransportKeepsWaitingOnNonTerminalReadyErrors() {
     )
 }
 
-@Test("Pairchallenge certificate-required transport failure is treated as non-fatal")
-func pairchallengeCertificateRequiredFailureIsNonFatal() {
-    let error = ShadowClientGameStreamError.requestFailed(
-        "Pairing pairchallenge failed: TLSV1_ALERT_CERTIFICATE_REQUIRED: certificate required"
-    )
-
-    #expect(NativeGameStreamControlClient.isNonFatalPairChallengeTransportFailure(error))
-}
-
-@Test("Pairchallenge transport only ignores certificate-required failures")
-func pairchallengeOnlyIgnoresCertificateRequiredFailure() {
-    let timeoutError = ShadowClientGameStreamError.requestFailed(
-        "Pairing pairchallenge failed: The operation timed out."
-    )
-    let rejectedError = ShadowClientGameStreamError.responseRejected(
-        code: 401,
-        message: "Pairing pairchallenge rejected by host."
-    )
-
-    #expect(!NativeGameStreamControlClient.isNonFatalPairChallengeTransportFailure(timeoutError))
-    #expect(!NativeGameStreamControlClient.isNonFatalPairChallengeTransportFailure(rejectedError))
-}
-
-@Test("Pairchallenge does not pin the server certificate during pairing")
-func pairchallengeDoesNotPinServerCertificateDuringPairing() {
-    let serverCertificateDER = Data([0x01, 0x02, 0x03, 0x04])
-
-    #expect(
-        NativeGameStreamControlClient.pairChallengePinnedServerCertificateDER(
-            serverCertificateDER: serverCertificateDER
-        ) == nil
-    )
-}
-
 @Test("HTTP request builder includes method headers and body length")
 func httpRequestBuilderIncludesMethodHeadersAndBodyLength() {
     let url = URL(string: "https://second-stream-host.local:47984/actions/clipboard?type=text")!
