@@ -198,7 +198,8 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
                 colorPixelFormat: view.colorPixelFormat,
                 renderTargetConfiguration: renderTargetConfiguration,
                 yuvPipeline: yuvPipeline,
-                currentEDRHeadroom: currentExtendedDynamicRangeHeadroom(for: view)
+                currentEDRHeadroom: currentExtendedDynamicRangeHeadroom(for: view),
+                defaultHDRMetadata: surfaceContext.activeHDRMetadata
             )
             if didRender {
                 commandBuffer.present(drawable)

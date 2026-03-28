@@ -60,3 +60,87 @@ func hdrCompositorSinkCapabilityAdvertisesOnlyFrameGatedHDR() {
     #expect(!available.supportsHDRTileOverlay)
     #expect(!available.supportsPerFrameHDRMetadata)
 }
+
+@Test("HDR compositor prefers overlay region metadata over frame and negotiated metadata")
+func hdrCompositorPrefersOverlayRegionMetadata() {
+    let negotiatedMetadata = makeCompositorTestHDRMetadata(maxDisplayLuminance: 1_000)
+    let frameMetadata = makeCompositorTestHDRMetadata(maxDisplayLuminance: 1_200)
+    let regionMetadata = makeCompositorTestHDRMetadata(maxDisplayLuminance: 1_600)
+    let resolved = ShadowClientRealtimeSessionHDRCompositor.resolvedOverlayHDRMetadata(
+        overlayRegion: .init(
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
+            metadata: regionMetadata
+        ),
+        hdrFrameState: .init(
+            content: .partialHDROverlay,
+            effectiveFromFrameNumber: 0,
+            staticMetadata: frameMetadata,
+            overlayRegions: []
+        ),
+        defaultHDRMetadata: negotiatedMetadata
+    )
+
+    #expect(resolved == regionMetadata)
+}
+
+@Test("HDR compositor falls back from frame metadata to negotiated metadata for overlay regions")
+func hdrCompositorFallsBackFromFrameMetadataToNegotiatedMetadata() {
+    let negotiatedMetadata = makeCompositorTestHDRMetadata(maxDisplayLuminance: 1_000)
+    let frameMetadata = makeCompositorTestHDRMetadata(maxDisplayLuminance: 1_200)
+    let fallbackToFrame = ShadowClientRealtimeSessionHDRCompositor.resolvedOverlayHDRMetadata(
+        overlayRegion: .init(
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
+            metadata: nil
+        ),
+        hdrFrameState: .init(
+            content: .partialHDROverlay,
+            effectiveFromFrameNumber: 0,
+            staticMetadata: frameMetadata,
+            overlayRegions: []
+        ),
+        defaultHDRMetadata: negotiatedMetadata
+    )
+    let fallbackToNegotiated = ShadowClientRealtimeSessionHDRCompositor.resolvedOverlayHDRMetadata(
+        overlayRegion: .init(
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
+            metadata: nil
+        ),
+        hdrFrameState: .init(
+            content: .partialHDROverlay,
+            effectiveFromFrameNumber: 0,
+            staticMetadata: nil,
+            overlayRegions: []
+        ),
+        defaultHDRMetadata: negotiatedMetadata
+    )
+
+    #expect(fallbackToFrame == frameMetadata)
+    #expect(fallbackToNegotiated == negotiatedMetadata)
+}
+
+private func makeCompositorTestHDRMetadata(
+    maxDisplayLuminance: UInt16
+) -> ShadowClientHDRMetadata {
+    ShadowClientHDRMetadata(
+        displayPrimaries: [
+            .init(x: 100, y: 200),
+            .init(x: 300, y: 400),
+            .init(x: 500, y: 600),
+        ],
+        whitePoint: .init(x: 700, y: 800),
+        maxDisplayLuminance: maxDisplayLuminance,
+        minDisplayLuminance: 1,
+        maxContentLightLevel: maxDisplayLuminance,
+        maxFrameAverageLightLevel: maxDisplayLuminance / 2,
+        maxFullFrameLuminance: 0
+    )
+}

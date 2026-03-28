@@ -181,6 +181,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         outputColorSpace: CGColorSpace,
         prefersExtendedDynamicRange: Bool,
         currentEDRHeadroom: Float? = nil,
+        hdrMetadataOverride: ShadowClientHDRMetadata? = nil,
         renderIntent: RenderIntent = .defaultFrame,
         scissorRect: MTLScissorRect? = nil
     ) -> Bool {
@@ -217,6 +218,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             outputColorSpace: outputColorSpace,
             prefersExtendedDynamicRange: prefersExtendedDynamicRange,
             currentEDRHeadroom: currentEDRHeadroom,
+            hdrMetadataOverride: hdrMetadataOverride,
             renderIntent: renderIntent
         )
         logDiagnosticsIfNeeded(
@@ -224,6 +226,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             colorPixelFormat: colorPixelFormat,
             outputColorSpace: outputColorSpace,
             currentEDRHeadroom: currentEDRHeadroom,
+            hdrMetadataOverride: hdrMetadataOverride,
             parameters: parameters
         )
 
@@ -368,6 +371,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         outputColorSpace: CGColorSpace,
         prefersExtendedDynamicRange: Bool,
         currentEDRHeadroom: Float?,
+        hdrMetadataOverride: ShadowClientHDRMetadata?,
         renderIntent: RenderIntent
     ) -> CSCParameters {
         let matrix = cscMatrix(
@@ -389,6 +393,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             outputColorSpace: outputColorSpace,
             prefersExtendedDynamicRange: prefersExtendedDynamicRange,
             currentEDRHeadroom: currentEDRHeadroom,
+            hdrMetadataOverride: hdrMetadataOverride,
             renderIntent: renderIntent
         )
 
@@ -422,6 +427,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         outputColorSpace: CGColorSpace,
         prefersExtendedDynamicRange: Bool,
         currentEDRHeadroom: Float? = nil,
+        hdrMetadataOverride: ShadowClientHDRMetadata? = nil,
         renderIntent: RenderIntent = .defaultFrame
     ) -> ColorProcessingDescriptor {
         let transfer = staticAttachmentStringValue(
@@ -475,7 +481,8 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             : Constants.identity3x3
         let sourceHeadroom = sourceHeadroom(
             for: pixelBuffer,
-            transferFunction: transferFunction
+            transferFunction: transferFunction,
+            hdrMetadataOverride: hdrMetadataOverride
         )
 
         return .init(
@@ -504,7 +511,8 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
 
     private static func sourceHeadroom(
         for pixelBuffer: CVPixelBuffer,
-        transferFunction: TransferFunctionKind
+        transferFunction: TransferFunctionKind,
+        hdrMetadataOverride: ShadowClientHDRMetadata?
     ) -> Float {
         switch transferFunction {
         case .pq:
@@ -514,6 +522,10 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             // headroom so a mastered 1600-nit frame produces values around 16.0 when
             // opticalOutputScale is 100. Fall back to the absolute PQ reference only
             // when the frame lacks mastering/content-light metadata entirely.
+            if let hdrMetadataOverride,
+               let metadataHeadroom = hdrMetadataHeadroom(for: hdrMetadataOverride) {
+                return metadataHeadroom
+            }
             if let metadataHeadroom = hdrMetadataHeadroom(for: pixelBuffer) {
                 return metadataHeadroom
             }
@@ -532,6 +544,20 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         let contentLightNits = contentLightMaxLuminance(for: pixelBuffer)
         let frameAverageNits = frameAverageLightLuminance(for: pixelBuffer)
         let peakNits = max(masteringDisplayNits, contentLightNits, frameAverageNits)
+        guard peakNits > 0 else {
+            return nil
+        }
+        return max(peakNits / 100.0, 1.0)
+    }
+
+    private static func hdrMetadataHeadroom(
+        for hdrMetadata: ShadowClientHDRMetadata
+    ) -> Float? {
+        let peakNits = max(
+            Float(hdrMetadata.maxDisplayLuminance),
+            Float(hdrMetadata.maxContentLightLevel),
+            Float(hdrMetadata.maxFrameAverageLightLevel)
+        )
         guard peakNits > 0 else {
             return nil
         }
@@ -585,6 +611,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         colorPixelFormat: MTLPixelFormat,
         outputColorSpace: CGColorSpace,
         currentEDRHeadroom: Float?,
+        hdrMetadataOverride: ShadowClientHDRMetadata?,
         parameters: CSCParameters
     ) {
         let primaries = attachmentStringValue(
@@ -623,6 +650,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
         let processingSummary = colorProcessingSummary(parameters: parameters)
         let masteringSummary = masteringDisplaySummary(for: pixelBuffer) ?? "nil"
         let contentLightSummary = contentLightLevelSummary(for: pixelBuffer) ?? "nil"
+        let hdrMetadataOverrideSummary = hdrMetadataOverride?.debugSummary ?? "nil"
         let signature = [
             String(CVPixelBufferGetPixelFormatType(pixelBuffer)),
             primaries,
@@ -638,6 +666,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
             processingSummary,
             masteringSummary,
             contentLightSummary,
+            hdrMetadataOverrideSummary,
         ].joined(separator: "|")
 
         guard signature != lastLoggedDiagnosticsSignature else {
@@ -647,7 +676,7 @@ final class ShadowClientRealtimeSessionYUVMetalPipeline {
 
         Self.logger.notice(
             """
-            YUV Metal diagnostics pixel-format=0x\(String(CVPixelBufferGetPixelFormatType(pixelBuffer), radix: 16), privacy: .public) drawable-format=\(colorPixelFormat.rawValue, privacy: .public) output-color-space=\(outputColorSpace.name as String? ?? "nil", privacy: .public) current-edr-headroom=\(currentEDRHeadroom ?? 1.0, privacy: .public) source-standard=\(sourceStandard, privacy: .public) primaries=\(primaries, privacy: .public) transfer=\(transfer, privacy: .public) matrix=\(matrix, privacy: .public) effective-matrix=\(effectiveMatrixStandard, privacy: .public) processing=\(processingSummary, privacy: .public) mastering=\(masteringSummary, privacy: .public) content-light=\(contentLightSummary, privacy: .public) chroma-location=\(chromaLocation, privacy: .public) range=\(fullRange ? "full" : "limited", privacy: .public) bit-depth=\(bitDepth, privacy: .public) csc-row0=[\(parameters.row0.x, privacy: .public),\(parameters.row0.y, privacy: .public),\(parameters.row0.z, privacy: .public)] csc-row1=[\(parameters.row1.x, privacy: .public),\(parameters.row1.y, privacy: .public),\(parameters.row1.z, privacy: .public)] csc-row2=[\(parameters.row2.x, privacy: .public),\(parameters.row2.y, privacy: .public),\(parameters.row2.z, privacy: .public)] offsets=[\(parameters.offsets.x, privacy: .public),\(parameters.offsets.y, privacy: .public),\(parameters.offsets.z, privacy: .public)] chroma-offset=[\(parameters.chromaOffset.x, privacy: .public),\(parameters.chromaOffset.y, privacy: .public)] bitness-scale=\(parameters.bitnessScaleFactor, privacy: .public) samples=\(sampleSummary, privacy: .public)
+            YUV Metal diagnostics pixel-format=0x\(String(CVPixelBufferGetPixelFormatType(pixelBuffer), radix: 16), privacy: .public) drawable-format=\(colorPixelFormat.rawValue, privacy: .public) output-color-space=\(outputColorSpace.name as String? ?? "nil", privacy: .public) current-edr-headroom=\(currentEDRHeadroom ?? 1.0, privacy: .public) source-standard=\(sourceStandard, privacy: .public) primaries=\(primaries, privacy: .public) transfer=\(transfer, privacy: .public) matrix=\(matrix, privacy: .public) effective-matrix=\(effectiveMatrixStandard, privacy: .public) processing=\(processingSummary, privacy: .public) mastering=\(masteringSummary, privacy: .public) content-light=\(contentLightSummary, privacy: .public) hdr-override=\(hdrMetadataOverrideSummary, privacy: .public) chroma-location=\(chromaLocation, privacy: .public) range=\(fullRange ? "full" : "limited", privacy: .public) bit-depth=\(bitDepth, privacy: .public) csc-row0=[\(parameters.row0.x, privacy: .public),\(parameters.row0.y, privacy: .public),\(parameters.row0.z, privacy: .public)] csc-row1=[\(parameters.row1.x, privacy: .public),\(parameters.row1.y, privacy: .public),\(parameters.row1.z, privacy: .public)] csc-row2=[\(parameters.row2.x, privacy: .public),\(parameters.row2.y, privacy: .public),\(parameters.row2.z, privacy: .public)] offsets=[\(parameters.offsets.x, privacy: .public),\(parameters.offsets.y, privacy: .public),\(parameters.offsets.z, privacy: .public)] chroma-offset=[\(parameters.chromaOffset.x, privacy: .public),\(parameters.chromaOffset.y, privacy: .public)] bitness-scale=\(parameters.bitnessScaleFactor, privacy: .public) samples=\(sampleSummary, privacy: .public)
             """
         )
     }

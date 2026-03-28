@@ -293,6 +293,58 @@ func yuvMetalPipelineDerivesPQSourceHeadroomFromHDRMetadataAttachmentsForLinearH
     #expect(descriptor.toneMapSourceHeadroom == 16.0)
 }
 
+@Test("YUV Metal pipeline uses explicit HDR metadata override for partial overlay passes")
+func yuvMetalPipelineUsesExplicitHDRMetadataOverrideForPartialOverlayPasses() throws {
+    let pixelBuffer = try makeMetalColorProcessingPixelBuffer(
+        pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferColorPrimariesKey,
+        kCVImageBufferColorPrimaries_ITU_R_2020,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferTransferFunctionKey,
+        kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
+        .shouldPropagate
+    )
+    CVBufferSetAttachment(
+        pixelBuffer,
+        kCVImageBufferYCbCrMatrixKey,
+        kCVImageBufferYCbCrMatrix_ITU_R_2020,
+        .shouldPropagate
+    )
+
+    let metadataOverride = ShadowClientHDRMetadata(
+        displayPrimaries: [
+            .init(x: 13250, y: 34500),
+            .init(x: 7500, y: 3000),
+            .init(x: 34000, y: 16000),
+        ],
+        whitePoint: .init(x: 15635, y: 16450),
+        maxDisplayLuminance: 1_600,
+        minDisplayLuminance: 1,
+        maxContentLightLevel: 1_600,
+        maxFrameAverageLightLevel: 640,
+        maxFullFrameLuminance: 0
+    )
+
+    let descriptor = ShadowClientRealtimeSessionYUVMetalPipeline.colorProcessingDescriptor(
+        for: pixelBuffer,
+        outputColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) ?? CGColorSpaceCreateDeviceRGB(),
+        prefersExtendedDynamicRange: true,
+        hdrMetadataOverride: metadataOverride
+    )
+
+    #expect(descriptor.transferFunction == .pq)
+    #expect(descriptor.decodesTransfer)
+    #expect(!descriptor.appliesToneMapToSDR)
+    #expect(descriptor.appliesGamutTransform)
+    #expect(descriptor.toneMapSourceHeadroom == 16.0)
+}
+
 @Test("YUV Metal pipeline preserves the encoded YCbCr matrix for Display P3 PQ frames rendered to linear HDR output")
 func yuvMetalPipelinePreservesEncodedCSCMatrixForDisplayP3PQFramesUsingBT709Matrix() throws {
     let pixelBuffer = try makeMetalColorProcessingPixelBuffer(

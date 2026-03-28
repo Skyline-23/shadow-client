@@ -56,7 +56,8 @@ enum ShadowClientRealtimeSessionHDRCompositor {
         colorPixelFormat: MTLPixelFormat,
         renderTargetConfiguration: ShadowClientSurfaceRenderTargetConfiguration,
         yuvPipeline: ShadowClientRealtimeSessionYUVMetalPipeline,
-        currentEDRHeadroom: Float?
+        currentEDRHeadroom: Float?,
+        defaultHDRMetadata: ShadowClientHDRMetadata?
     ) -> Bool {
         guard let hdrFrameState = snapshot.hdrFrameState,
               hdrFrameState.content == .partialHDROverlay,
@@ -70,7 +71,8 @@ enum ShadowClientRealtimeSessionHDRCompositor {
                 colorPixelFormat: colorPixelFormat,
                 outputColorSpace: renderTargetConfiguration.outputColorSpace,
                 prefersExtendedDynamicRange: renderTargetConfiguration.prefersExtendedDynamicRange,
-                currentEDRHeadroom: currentEDRHeadroom
+                currentEDRHeadroom: currentEDRHeadroom,
+                hdrMetadataOverride: defaultHDRMetadata
             )
         }
 
@@ -83,6 +85,7 @@ enum ShadowClientRealtimeSessionHDRCompositor {
             outputColorSpace: renderTargetConfiguration.outputColorSpace,
             prefersExtendedDynamicRange: renderTargetConfiguration.prefersExtendedDynamicRange,
             currentEDRHeadroom: currentEDRHeadroom,
+            hdrMetadataOverride: defaultHDRMetadata,
             renderIntent: .sdrBaseForHDROverlay
         )
         guard didRenderBase else {
@@ -118,6 +121,11 @@ enum ShadowClientRealtimeSessionHDRCompositor {
                 outputColorSpace: renderTargetConfiguration.outputColorSpace,
                 prefersExtendedDynamicRange: renderTargetConfiguration.prefersExtendedDynamicRange,
                 currentEDRHeadroom: currentEDRHeadroom,
+                hdrMetadataOverride: resolvedOverlayHDRMetadata(
+                    overlayRegion: overlayRegion,
+                    hdrFrameState: hdrFrameState,
+                    defaultHDRMetadata: defaultHDRMetadata
+                ),
                 scissorRect: scissorRect
             )
             guard didRenderOverlay else {
@@ -139,5 +147,15 @@ enum ShadowClientRealtimeSessionHDRCompositor {
 
         overlayRenderPassDescriptor.colorAttachments[0].loadAction = .load
         return overlayRenderPassDescriptor
+    }
+
+    static func resolvedOverlayHDRMetadata(
+        overlayRegion: ShadowClientHDROverlayRegion,
+        hdrFrameState: ShadowClientHDRFrameState,
+        defaultHDRMetadata: ShadowClientHDRMetadata?
+    ) -> ShadowClientHDRMetadata? {
+        overlayRegion.metadata ??
+            hdrFrameState.staticMetadata ??
+            defaultHDRMetadata
     }
 }

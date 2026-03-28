@@ -113,8 +113,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var firstVideoDecodeQueueDropUptime: TimeInterval = 0
     private var lastVideoDecodeQueueRecoveryUptime: TimeInterval = 0
     private var activeVideoConfiguration: ShadowClientRemoteSessionVideoConfiguration?
+    private var negotiatedDynamicRangeMode: ShadowClientRealtimeSessionSurfaceContext.DynamicRangeMode = .unknown
     private var negotiatedHDRMetadata: ShadowClientHDRMetadata?
-    private var latestHDRFrameState: ShadowClientHDRFrameState?
+    private var pendingHDRFrameState: ShadowClientHDRFrameState?
+    private var appliedHDRFrameState: ShadowClientHDRFrameState?
     private var depacketizerCorruptionCount = 0
     private var firstDepacketizerCorruptionUptime: TimeInterval = 0
     private var lastDepacketizerRecoveryUptime: TimeInterval = 0
@@ -248,8 +250,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastDecoderRecoveryUptime = 0
         decoderRecoveryAttemptCount = 0
         firstDecoderRecoveryAttemptUptime = 0
+        negotiatedDynamicRangeMode = resolvedVideoConfiguration.enableHDR ? .hdr : .sdr
         negotiatedHDRMetadata = nil
-        latestHDRFrameState = nil
+        pendingHDRFrameState = nil
+        appliedHDRFrameState = nil
         decoderOutputStallRecoveryCount = 0
         firstDecoderOutputStallRecoveryUptime = 0
         lastDecoderOutputStallRecoveryUptime = 0
@@ -280,12 +284,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastAV1DecodeSubmissionContext = nil
         configureQueuePressureProfile(for: resolvedVideoConfiguration)
 
+        let initialDynamicRangeMode = negotiatedDynamicRangeMode
         await MainActor.run {
             sessionSurfaceContext.reset()
             sessionSurfaceContext.updatePreferredRenderFPS(resolvedVideoConfiguration.fps)
-            sessionSurfaceContext.updateActiveDynamicRangeMode(
-                resolvedVideoConfiguration.enableHDR ? .hdr : .sdr
-            )
+            sessionSurfaceContext.updateActiveDynamicRangeMode(initialDynamicRangeMode)
             sessionSurfaceContext.updateVideoPresentationSize(
                 CGSize(
                     width: resolvedVideoConfiguration.width,
@@ -440,8 +443,10 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         lastDecoderRecoveryUptime = 0
         decoderRecoveryAttemptCount = 0
         firstDecoderRecoveryAttemptUptime = 0
+        negotiatedDynamicRangeMode = .unknown
         negotiatedHDRMetadata = nil
-        latestHDRFrameState = nil
+        pendingHDRFrameState = nil
+        appliedHDRFrameState = nil
         decoderOutputStallRecoveryCount = 0
         firstDecoderOutputStallRecoveryUptime = 0
         lastDecoderOutputStallRecoveryUptime = 0
@@ -638,7 +643,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     accessUnit: accessUnit.data,
                     codec: accessUnit.codec,
                     parameterSets: accessUnit.parameterSets,
-                    remainingDecodeQueueBacklog: dequeueResult.remainingBufferedCount
+                    remainingDecodeQueueBacklog: dequeueResult.remainingBufferedCount,
+                    decodedFrameIndex: accessUnit.depacketizerMetadata?.frameIndex
                 )
                 lastDecodeSubmitUptime = ProcessInfo.processInfo.systemUptime
                 if Self.shouldClearDecoderFailureHistoryOnSuccessfulDecode(
@@ -718,31 +724,15 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             currentMetadata: negotiatedHDRMetadata,
             event: hdrModeEvent
         )
+        negotiatedDynamicRangeMode = hdrModeEvent.isEnabled ? .hdr : .sdr
         negotiatedHDRMetadata = effectiveHDRMetadata
-
-        await MainActor.run {
-            surfaceContext.updateActiveDynamicRangeMode(
-                hdrModeEvent.isEnabled ? .hdr : .sdr
-            )
-            surfaceContext.updateActiveHDRMetadata(effectiveHDRMetadata)
-        }
+        await publishHDRPresentationState(appliedFrameState: appliedHDRFrameState)
     }
 
     private func handleHDRFrameState(
         _ hdrFrameState: ShadowClientHDRFrameState
     ) async {
-        latestHDRFrameState = hdrFrameState
-        let effectiveHDRMetadata = hdrFrameState.resolvedMetadata(
-            fallback: negotiatedHDRMetadata
-        )
-
-        await MainActor.run {
-            surfaceContext.updateActiveDynamicRangeMode(
-                hdrFrameState.isDynamicRangeEnabled ? .hdr : .sdr
-            )
-            surfaceContext.updateActiveHDRMetadata(effectiveHDRMetadata)
-            surfaceContext.updateActiveHDRFrameState(hdrFrameState)
-        }
+        pendingHDRFrameState = hdrFrameState
     }
 
     private func flushVideoPipelineForRecovery(codec: ShadowClientVideoCodec) async {
@@ -1760,7 +1750,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         accessUnit: Data,
         codec: ShadowClientVideoCodec,
         parameterSets: [Data],
-        remainingDecodeQueueBacklog: Int
+        remainingDecodeQueueBacklog: Int,
+        decodedFrameIndex: UInt32?
     ) async throws {
         let runtime = self
         try await decoder.decode(
@@ -1773,14 +1764,16 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             let sendableFrame = ShadowClientSendablePixelBuffer(value: pixelBuffer)
             await runtime.handleDecodedFrameOutput(
                 codec: codec,
-                pixelBuffer: sendableFrame.value
+                pixelBuffer: sendableFrame.value,
+                decodedFrameIndex: decodedFrameIndex
             )
         }
     }
 
     private func handleDecodedFrameOutput(
         codec: ShadowClientVideoCodec,
-        pixelBuffer: CVPixelBuffer
+        pixelBuffer: CVPixelBuffer,
+        decodedFrameIndex: UInt32?
     ) async {
         let now = ProcessInfo.processInfo.systemUptime
         if codec == .av1 {
@@ -1799,13 +1792,20 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             allowExtendedDynamicRange: activeVideoConfiguration?.enableHDR ?? true,
             negotiatedHDRMetadata: negotiatedHDRMetadata
         )
+        let nextAppliedHDRFrameState = Self.resolvedAppliedHDRFrameState(
+            pendingHDRFrameState: pendingHDRFrameState,
+            currentAppliedHDRFrameState: appliedHDRFrameState,
+            decodedFrameIndex: decodedFrameIndex
+        )
+        appliedHDRFrameState = nextAppliedHDRFrameState
         logDecodedFrameMetadataIfNeeded(
             codec: codec,
             pixelBuffer: pixelBuffer
         )
+        await publishHDRPresentationState(appliedFrameState: nextAppliedHDRFrameState)
         await surfaceContext.frameStore.update(
             pixelBuffer: pixelBuffer,
-            hdrFrameState: latestHDRFrameState
+            hdrFrameState: nextAppliedHDRFrameState
         )
         lastRenderedFramePublishUptime = now
         if !hasPublishedRenderingState {
@@ -2340,11 +2340,6 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             "Decoded first frame metadata codec=\(String(describing: codec), privacy: .public) pixel-format=0x\(String(pixelFormat, radix: 16), privacy: .public) primaries=\(primaries, privacy: .public) transfer=\(transfer, privacy: .public) matrix=\(matrix, privacy: .public)"
         )
 
-        let resolvedDynamicRangeMode = Self.dynamicRangeMode(fromTransferFunction: transfer)
-        let sessionSurfaceContext = self.surfaceContext
-        Task { @MainActor in
-            sessionSurfaceContext.updateActiveDynamicRangeMode(resolvedDynamicRangeMode)
-        }
     }
 
     private func recordDecodedFrameOutputUptime() {
@@ -2365,6 +2360,24 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         firstDecoderFailureUptime = 0
         av1RecoverableDecoderFailureCount = 0
         firstAV1RecoverableDecoderFailureUptime = 0
+    }
+
+    private func publishHDRPresentationState(
+        appliedFrameState: ShadowClientHDRFrameState?
+    ) async {
+        let activeDynamicRangeMode = Self.resolvedPresentationDynamicRangeMode(
+            appliedHDRFrameState: appliedFrameState,
+            negotiatedDynamicRangeMode: negotiatedDynamicRangeMode
+        )
+        let activeHDRMetadata = Self.resolvedPresentationHDRMetadata(
+            appliedHDRFrameState: appliedFrameState,
+            negotiatedHDRMetadata: negotiatedHDRMetadata
+        )
+        await MainActor.run {
+            surfaceContext.updateActiveDynamicRangeMode(activeDynamicRangeMode)
+            surfaceContext.updateActiveHDRMetadata(activeHDRMetadata)
+            surfaceContext.updateActiveHDRFrameState(appliedFrameState)
+        }
     }
 
     private func effectiveLastDecodedFrameOutputUptime() -> TimeInterval {
@@ -2745,6 +2758,45 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             return currentMetadata
         }
         return event.metadata
+    }
+
+    static func resolvedAppliedHDRFrameState(
+        pendingHDRFrameState: ShadowClientHDRFrameState?,
+        currentAppliedHDRFrameState: ShadowClientHDRFrameState?,
+        decodedFrameIndex: UInt32?
+    ) -> ShadowClientHDRFrameState? {
+        guard let pendingHDRFrameState else {
+            return currentAppliedHDRFrameState
+        }
+        guard let decodedFrameIndex else {
+            return pendingHDRFrameState
+        }
+        guard decodedFrameIndex >= pendingHDRFrameState.effectiveFromFrameNumber else {
+            return currentAppliedHDRFrameState
+        }
+        return pendingHDRFrameState
+    }
+
+    static func resolvedPresentationDynamicRangeMode(
+        appliedHDRFrameState: ShadowClientHDRFrameState?,
+        negotiatedDynamicRangeMode: ShadowClientRealtimeSessionSurfaceContext.DynamicRangeMode
+    ) -> ShadowClientRealtimeSessionSurfaceContext.DynamicRangeMode {
+        guard let appliedHDRFrameState else {
+            return negotiatedDynamicRangeMode
+        }
+        return appliedHDRFrameState.isDynamicRangeEnabled ? .hdr : .sdr
+    }
+
+    static func resolvedPresentationHDRMetadata(
+        appliedHDRFrameState: ShadowClientHDRFrameState?,
+        negotiatedHDRMetadata: ShadowClientHDRMetadata?
+    ) -> ShadowClientHDRMetadata? {
+        guard let appliedHDRFrameState else {
+            return negotiatedHDRMetadata
+        }
+        return appliedHDRFrameState.resolvedMetadata(
+            fallback: negotiatedHDRMetadata
+        )
     }
 
     static func shouldTriggerDecoderOutputStallRecovery(

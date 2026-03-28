@@ -3232,6 +3232,94 @@ func rtspRuntimeClearsNegotiatedHDRMetadataWhenHDRIsDisabled() {
     #expect(cleared == nil)
 }
 
+@Test("RTSP runtime defers HDR frame state application until the effective frame index is reached")
+func rtspRuntimeDefersHDRFrameStateApplicationUntilEffectiveFrameIndexIsReached() {
+    let currentState = ShadowClientHDRFrameState(
+        content: .fullFrameHDR,
+        effectiveFromFrameNumber: 24,
+        staticMetadata: makeNegotiatedHDRMetadata(
+            maxDisplayLuminance: 1_000,
+            maxContentLightLevel: 1_200
+        ),
+        overlayRegions: []
+    )
+    let pendingState = ShadowClientHDRFrameState(
+        content: .partialHDROverlay,
+        effectiveFromFrameNumber: 42,
+        staticMetadata: makeNegotiatedHDRMetadata(
+            maxDisplayLuminance: 1_600,
+            maxContentLightLevel: 1_800
+        ),
+        overlayRegions: [
+            .init(x: 10, y: 20, width: 30, height: 40, metadata: nil)
+        ]
+    )
+
+    let beforeEffectiveFrame = ShadowClientRealtimeRTSPSessionRuntime.resolvedAppliedHDRFrameState(
+        pendingHDRFrameState: pendingState,
+        currentAppliedHDRFrameState: currentState,
+        decodedFrameIndex: 41
+    )
+    let atEffectiveFrame = ShadowClientRealtimeRTSPSessionRuntime.resolvedAppliedHDRFrameState(
+        pendingHDRFrameState: pendingState,
+        currentAppliedHDRFrameState: currentState,
+        decodedFrameIndex: 42
+    )
+
+    #expect(beforeEffectiveFrame == currentState)
+    #expect(atEffectiveFrame == pendingState)
+}
+
+@Test("RTSP runtime applies pending HDR frame state immediately when decoded frame index is unavailable")
+func rtspRuntimeAppliesPendingHDRFrameStateImmediatelyWhenDecodedFrameIndexIsUnavailable() {
+    let pendingState = ShadowClientHDRFrameState(
+        content: .partialHDROverlay,
+        effectiveFromFrameNumber: 99,
+        staticMetadata: nil,
+        overlayRegions: [
+            .init(x: 5, y: 6, width: 7, height: 8, metadata: nil)
+        ]
+    )
+
+    let appliedState = ShadowClientRealtimeRTSPSessionRuntime.resolvedAppliedHDRFrameState(
+        pendingHDRFrameState: pendingState,
+        currentAppliedHDRFrameState: nil,
+        decodedFrameIndex: nil
+    )
+
+    #expect(appliedState == pendingState)
+}
+
+@Test("RTSP runtime derives presented HDR metadata from the applied frame state before negotiated fallback")
+func rtspRuntimeDerivesPresentedHDRMetadataFromAppliedFrameStateBeforeNegotiatedFallback() {
+    let negotiatedMetadata = makeNegotiatedHDRMetadata(
+        maxDisplayLuminance: 1_000,
+        maxContentLightLevel: 1_200
+    )
+    let appliedMetadata = makeNegotiatedHDRMetadata(
+        maxDisplayLuminance: 1_600,
+        maxContentLightLevel: 1_800
+    )
+    let appliedState = ShadowClientHDRFrameState(
+        content: .fullFrameHDR,
+        effectiveFromFrameNumber: 12,
+        staticMetadata: appliedMetadata,
+        overlayRegions: []
+    )
+
+    let activeMetadata = ShadowClientRealtimeRTSPSessionRuntime.resolvedPresentationHDRMetadata(
+        appliedHDRFrameState: appliedState,
+        negotiatedHDRMetadata: negotiatedMetadata
+    )
+    let fallbackMetadata = ShadowClientRealtimeRTSPSessionRuntime.resolvedPresentationHDRMetadata(
+        appliedHDRFrameState: nil,
+        negotiatedHDRMetadata: negotiatedMetadata
+    )
+
+    #expect(activeMetadata == appliedMetadata)
+    #expect(fallbackMetadata == negotiatedMetadata)
+}
+
 private func moonlightFrameHeader(
     lastPayloadLength: UInt16,
     frameHeaderSize: UInt16 = moonlightFrameHeaderSize,
