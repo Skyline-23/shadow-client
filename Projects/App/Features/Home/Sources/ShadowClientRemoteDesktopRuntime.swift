@@ -335,18 +335,6 @@ public enum ShadowClientRemoteHostWakeState: Equatable, Sendable {
     }
 }
 
-public protocol ShadowClientPairingPINProviding {
-    func nextPIN() -> String
-}
-
-public struct ShadowClientRandomPairingPINProvider: ShadowClientPairingPINProviding {
-    public init() {}
-
-    public func nextPIN() -> String {
-        String(format: "%04d", Int.random(in: 0...9_999))
-    }
-}
-
 public enum ShadowClientGameStreamError: Error, Equatable, Sendable {
     case invalidHost
     case invalidURL
@@ -1388,7 +1376,7 @@ private actor ShadowClientRemoteInputSendQueue {
 
 private enum ShadowClientRemoteDesktopCommand: Sendable {
     case refreshHosts(candidates: [String], preferredHost: String?)
-    case pairSelectedHost
+    case pairSelectedHost(username: String?, password: String?)
     case deleteHost(String)
     case syncClipboardIfNeeded
     case pullClipboard
@@ -1571,13 +1559,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     private let metadataClient: any ShadowClientGameStreamMetadataClient
     private let controlClient: any ShadowClientGameStreamControlClient
+    private let pairingClient: any ShadowClientApolloPairingClient
     private let wakeOnLANClient: any ShadowClientWakeOnLANClient
     private let apolloAdminClient: any ShadowClientApolloAdminClient
     private let clipboardClient: any ShadowClientClipboardClient
     private let sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient
     private let sessionInputClient: any ShadowClientRemoteSessionInputClient
     private let inputSendQueue: ShadowClientRemoteInputSendQueue
-    private let pinProvider: any ShadowClientPairingPINProviding
     private let pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
     private let pairingRouteStore: ShadowClientPairingRouteStore
     private let hostAliasResolver: @Sendable ([String]) async -> [String: Set<String>]
@@ -1620,12 +1608,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     public init(
         metadataClient: any ShadowClientGameStreamMetadataClient = NativeGameStreamMetadataClient(),
         controlClient: any ShadowClientGameStreamControlClient = NativeGameStreamControlClient(),
+        pairingClient: any ShadowClientApolloPairingClient = NativeShadowClientApolloPairingClient(),
         wakeOnLANClient: any ShadowClientWakeOnLANClient = NativeShadowClientWakeOnLANClient(),
         apolloAdminClient: any ShadowClientApolloAdminClient = NativeShadowClientApolloAdminClient(),
         clipboardClient: any ShadowClientClipboardClient = NativeShadowClientClipboardClient(),
         sessionConnectionClient: any ShadowClientRemoteSessionConnectionClient = NoopShadowClientRemoteSessionConnectionClient(),
         sessionInputClient: any ShadowClientRemoteSessionInputClient = NoopShadowClientRemoteSessionInputClient(),
-        pinProvider: any ShadowClientPairingPINProviding = ShadowClientRandomPairingPINProvider(),
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore = .shared,
         pairingRouteStore: ShadowClientPairingRouteStore = .shared,
         hostAliasResolver: (@Sendable ([String]) async -> [String: Set<String>])? = nil,
@@ -1640,6 +1628,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         self.metadataClient = metadataClient
         self.controlClient = controlClient
+        self.pairingClient = pairingClient
         self.wakeOnLANClient = wakeOnLANClient
         self.apolloAdminClient = apolloAdminClient
         self.clipboardClient = clipboardClient
@@ -1665,7 +1654,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 Self.shouldThrottleInputSendAfterError(error)
             }
         )
-        self.pinProvider = pinProvider
         self.pinnedCertificateStore = pinnedCertificateStore
         self.pairingRouteStore = pairingRouteStore
         if let hostAliasResolver {
@@ -1722,8 +1710,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         switch command {
         case let .refreshHosts(candidates, preferredHost):
             performRefreshHosts(candidates: candidates, preferredHost: preferredHost)
-        case .pairSelectedHost:
-            performPairSelectedHost()
+        case let .pairSelectedHost(username, password):
+            performPairSelectedHost(username: username, password: password)
         case let .deleteHost(hostID):
             await performDeleteHost(hostID)
         case .syncClipboardIfNeeded:
@@ -1786,8 +1774,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    public var activePairingPIN: String? {
-        pairingState.activePIN
+    public var activePairingCode: String? {
+        pairingState.activeCode
     }
 
     @MainActor
@@ -2014,8 +2002,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    public func pairSelectedHost() {
-        commandContinuation.yield(.pairSelectedHost)
+    public func pairSelectedHost(username: String? = nil, password: String? = nil) {
+        commandContinuation.yield(
+            .pairSelectedHost(
+                username: username,
+                password: password
+            )
+        )
     }
 
     @MainActor
@@ -2112,7 +2105,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     @MainActor
-    private func performPairSelectedHost() {
+    private func performPairSelectedHost(username: String?, password: String?) {
         guard let selectedHost else {
             pairingState = .failed("Select host first.")
             return
@@ -2120,10 +2113,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         pairTask?.cancel()
         pairGeneration &+= 1
         let currentPairGeneration = pairGeneration
-        let controlClient = controlClient
+        let pairingClient = pairingClient
+        let apolloAdminClient = apolloAdminClient
         let pairingRouteStore = pairingRouteStore
         let currentHosts = latestResolvedHostDescriptors.isEmpty ? hosts : latestResolvedHostDescriptors
         let currentLatestHostCandidates = latestHostCandidates
+        let trimmedUsername = username?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPassword = password?.trimmingCharacters(in: .whitespacesAndNewlines)
         pairTask = Task { [weak self] in
             do {
                 let pairRouteKey = Self.pairRouteStoreKey(for: selectedHost)
@@ -2135,13 +2131,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     preferredPairHost: storedPreferredPairHost
                 )
 
-                let generatedPIN = await MainActor.run { [weak self] in
-                    let pin = self?.pinProvider.nextPIN() ?? "0000"
+                await MainActor.run { [weak self] in
                     self?.pairingState = .pairing(
                         host: selectedHost.displayName.isEmpty ? selectedHost.host : selectedHost.displayName,
-                        pin: pin
+                        code: ""
                     )
-                    return pin
                 }
 
                 let pairingDeadline = Date().addingTimeInterval(
@@ -2156,11 +2150,41 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     while true {
                         pairAttemptCount += 1
                         do {
-                            _ = try await controlClient.pair(
+                            let startedPairing = try await pairingClient.startPairing(
                                 host: candidate.host,
-                                pin: generatedPIN,
-                                appVersion: selectedHost.appVersion,
+                                httpsPort: candidate.httpsPort,
+                                deviceName: nil,
+                                platform: nil
+                            )
+                            let controlHTTPSPort = startedPairing.controlHTTPSPort ?? candidate.httpsPort
+
+                            await MainActor.run { [weak self] in
+                                self?.pairingState = .pairing(
+                                    host: selectedHost.displayName.isEmpty ? selectedHost.host : selectedHost.displayName,
+                                    code: startedPairing.userCode
+                                )
+                            }
+
+                            if let trimmedUsername,
+                               let trimmedPassword,
+                               !trimmedUsername.isEmpty,
+                               !trimmedPassword.isEmpty,
+                               startedPairing.status == .pending {
+                                try await apolloAdminClient.approvePairingRequest(
+                                    host: candidate.host,
+                                    httpsPort: controlHTTPSPort,
+                                    username: trimmedUsername,
+                                    password: trimmedPassword,
+                                    pairingID: startedPairing.pairingID
+                                )
+                            }
+
+                            _ = try await Self.awaitApolloPairingApproval(
+                                pairingClient: pairingClient,
+                                host: candidate.host,
                                 httpsPort: candidate.httpsPort
+                                    == controlHTTPSPort ? candidate.httpsPort : controlHTTPSPort,
+                                initialSession: startedPairing
                             )
                             pairedRoute = Self.serializedExactHostCandidate(
                                 for: .init(host: candidate.host, httpsPort: candidate.httpsPort)
@@ -2257,6 +2281,35 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     }
                     self.pairingState = .failed(error.localizedDescription)
                 }
+            }
+        }
+    }
+
+    private static func awaitApolloPairingApproval(
+        pairingClient: any ShadowClientApolloPairingClient,
+        host: String,
+        httpsPort: Int,
+        initialSession: ShadowClientApolloPairingSession
+    ) async throws -> ShadowClientApolloPairingSession {
+        var currentSession = initialSession
+
+        while true {
+            switch currentSession.status {
+            case .approved:
+                return currentSession
+            case .rejected:
+                throw ShadowClientGameStreamError.requestFailed("Shadow pairing request was rejected.")
+            case .expired:
+                throw ShadowClientGameStreamError.requestFailed("Shadow pairing request expired before approval.")
+            case .pending:
+                let pollIntervalSeconds = max(1, currentSession.pollIntervalSeconds)
+                try await Task.sleep(for: .seconds(pollIntervalSeconds))
+                try Task.checkCancellation()
+                currentSession = try await pairingClient.fetchPairingStatus(
+                    host: host,
+                    httpsPort: httpsPort,
+                    pairingID: currentSession.pairingID
+                )
             }
         }
     }

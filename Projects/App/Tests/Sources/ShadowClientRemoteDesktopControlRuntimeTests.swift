@@ -3,7 +3,7 @@ import Testing
 import ShadowClientFeatureSession
 @testable import ShadowClientFeatureHome
 
-@Test("Remote desktop runtime pairs selected host through injected control client")
+@Test("Remote desktop runtime pairs selected host through injected Apollo pairing client")
 @MainActor
 func remoteDesktopRuntimePairsSelectedHost() async {
     let metadata = FakeControlTestMetadataClient(
@@ -22,11 +22,11 @@ func remoteDesktopRuntimePairsSelectedHost() async {
         ],
         appListByHost: [:]
     )
-    let control = FakeControlClient()
+    let pairingClient = FakeApolloPairingClient()
     let runtime = ShadowClientRemoteDesktopRuntime(
         metadataClient: metadata,
-        controlClient: control,
-        pinProvider: FixedPairingPINProvider(pin: "1234")
+        controlClient: FakeControlClient(),
+        pairingClient: pairingClient
     )
 
     runtime.refreshHosts(candidates: ["192.168.0.20"], preferredHost: "192.168.0.20")
@@ -35,8 +35,8 @@ func remoteDesktopRuntimePairsSelectedHost() async {
     runtime.pairSelectedHost()
     await waitForPairingState(runtime)
 
-    #expect(await control.pairCalls() == [
-        .init(host: "192.168.0.20", pin: "1234", appVersion: "7.0.0", httpsPort: 47984),
+    #expect(await pairingClient.startCalls() == [
+        .init(host: "192.168.0.20", httpsPort: 47984),
     ])
 
     if case .paired = runtime.pairingState {
@@ -65,13 +65,13 @@ func remoteDesktopRuntimeRetriesTransientPairingTimeout() async {
         ],
         appListByHost: [:]
     )
-    let control = FakeControlClient(
-        simulatedPairFailures: [ShadowClientGameStreamError.requestFailed("The request timed out.")]
+    let pairingClient = FakeApolloPairingClient(
+        simulatedStartFailures: [ShadowClientGameStreamError.requestFailed("The request timed out.")]
     )
     let runtime = ShadowClientRemoteDesktopRuntime(
         metadataClient: metadata,
-        controlClient: control,
-        pinProvider: FixedPairingPINProvider(pin: "1234")
+        controlClient: FakeControlClient(),
+        pairingClient: pairingClient
     )
 
     runtime.refreshHosts(candidates: ["192.168.0.21"], preferredHost: "192.168.0.21")
@@ -80,7 +80,7 @@ func remoteDesktopRuntimeRetriesTransientPairingTimeout() async {
     runtime.pairSelectedHost()
     await waitForPairingState(runtime, maxAttempts: 200)
 
-    let calls = await control.pairCalls()
+    let calls = await pairingClient.startCalls()
     #expect(calls.count >= 2)
 
     if case .paired = runtime.pairingState {
@@ -90,7 +90,7 @@ func remoteDesktopRuntimeRetriesTransientPairingTimeout() async {
     }
 }
 
-@Test("Remote desktop runtime stops retrying when pairing challenge is rejected")
+@Test("Remote desktop runtime stops retrying when pairing request is rejected")
 @MainActor
 func remoteDesktopRuntimeDoesNotRetryRejectedChallenge() async {
     let metadata = FakeControlTestMetadataClient(
@@ -109,13 +109,29 @@ func remoteDesktopRuntimeDoesNotRetryRejectedChallenge() async {
         ],
         appListByHost: [:]
     )
-    let control = FakeControlClient(
-        simulatedPairFailures: [ShadowClientGameStreamControlError.challengeRejected]
+    let pairingClient = FakeApolloPairingClient(
+        initialSession: .init(
+            pairingID: "pairing-rejected",
+            userCode: "ZXCVBN",
+            deviceName: "Guest-PC",
+            platform: "macos",
+            clientID: "CLIENT-1",
+            trustedClientUUID: nil,
+            publicKeyPresent: true,
+            clientTrusted: false,
+            clientCertificateRequired: true,
+            status: .rejected,
+            serverUniqueID: "HOST-3",
+            serviceType: "apollo",
+            controlHTTPSPort: 47984,
+            expiresInSeconds: 60,
+            pollIntervalSeconds: 1
+        )
     )
     let runtime = ShadowClientRemoteDesktopRuntime(
         metadataClient: metadata,
-        controlClient: control,
-        pinProvider: FixedPairingPINProvider(pin: "1234")
+        controlClient: FakeControlClient(),
+        pairingClient: pairingClient
     )
 
     runtime.refreshHosts(candidates: ["192.168.0.22"], preferredHost: "192.168.0.22")
@@ -124,15 +140,15 @@ func remoteDesktopRuntimeDoesNotRetryRejectedChallenge() async {
     runtime.pairSelectedHost()
     await waitForPairingState(runtime)
 
-    #expect(await control.pairCalls().count == 1)
+    #expect(await pairingClient.startCalls().count == 1)
     if case let .failed(message) = runtime.pairingState {
-        #expect(message.contains("Pairing challenge was rejected"))
+        #expect(message.contains("rejected"))
     } else {
         Issue.record("Expected failed state, got \(runtime.pairingState)")
     }
 }
 
-@Test("Remote desktop runtime does not retry certificate-required pairing failure")
+@Test("Remote desktop runtime does not retry certificate-required pairing start failure")
 @MainActor
 func remoteDesktopRuntimeDoesNotRetryCertificateRequiredFailure() async {
     let metadata = FakeControlTestMetadataClient(
@@ -151,15 +167,15 @@ func remoteDesktopRuntimeDoesNotRetryCertificateRequiredFailure() async {
         ],
         appListByHost: [:]
     )
-    let control = FakeControlClient(
-        simulatedPairFailures: [
+    let pairingClient = FakeApolloPairingClient(
+        simulatedStartFailures: [
             ShadowClientGameStreamError.requestFailed("TLSV1_ALERT_CERTIFICATE_REQUIRED: certificate required"),
         ]
     )
     let runtime = ShadowClientRemoteDesktopRuntime(
         metadataClient: metadata,
-        controlClient: control,
-        pinProvider: FixedPairingPINProvider(pin: "1234")
+        controlClient: FakeControlClient(),
+        pairingClient: pairingClient
     )
 
     runtime.refreshHosts(candidates: ["192.168.0.23"], preferredHost: "192.168.0.23")
@@ -168,12 +184,92 @@ func remoteDesktopRuntimeDoesNotRetryCertificateRequiredFailure() async {
     runtime.pairSelectedHost()
     await waitForPairingState(runtime)
 
-    #expect(await control.pairCalls().count == 1)
+    #expect(await pairingClient.startCalls().count == 1)
     if case let .failed(message) = runtime.pairingState {
         #expect(message.localizedCaseInsensitiveContains("certificate required"))
     } else {
         Issue.record("Expected failed state, got \(runtime.pairingState)")
     }
+}
+
+@Test("Remote desktop runtime auto-approves pairing when Apollo admin credentials are supplied")
+@MainActor
+func remoteDesktopRuntimeAutoApprovesPairingWithApolloAdminCredentials() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.24": .init(
+                host: "192.168.0.24",
+                displayName: "Den-PC",
+                pairStatus: .notPaired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-24"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let pairingClient = FakeApolloPairingClient(
+        initialSession: .init(
+            pairingID: "pairing-pending",
+            userCode: "PAIR24",
+            deviceName: "Den-PC",
+            platform: "macos",
+            clientID: "CLIENT-24",
+            trustedClientUUID: nil,
+            publicKeyPresent: true,
+            clientTrusted: false,
+            clientCertificateRequired: true,
+            status: .pending,
+            serverUniqueID: "HOST-24",
+            serviceType: "apollo",
+            controlHTTPSPort: 47984,
+            expiresInSeconds: 60,
+            pollIntervalSeconds: 0
+        ),
+        simulatedStatusSessions: [
+            .init(
+                pairingID: "pairing-pending",
+                userCode: "PAIR24",
+                deviceName: "Den-PC",
+                platform: "macos",
+                clientID: "CLIENT-24",
+                trustedClientUUID: "CLIENT-24",
+                publicKeyPresent: true,
+                clientTrusted: true,
+                clientCertificateRequired: true,
+                status: .approved,
+                serverUniqueID: "HOST-24",
+                serviceType: "apollo",
+                controlHTTPSPort: 47984,
+                expiresInSeconds: 58,
+                pollIntervalSeconds: 0
+            ),
+        ]
+    )
+    let adminClient = FakeApolloAdminClient(profile: nil)
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: FakeControlClient(),
+        pairingClient: pairingClient,
+        apolloAdminClient: adminClient
+    )
+
+    runtime.refreshHosts(candidates: ["192.168.0.24"], preferredHost: "192.168.0.24")
+    await waitForControlHostLoaded(runtime)
+
+    runtime.pairSelectedHost(username: "admin", password: "secret")
+    await waitForPairingState(runtime, maxAttempts: 200)
+
+    #expect(await adminClient.approveCalls() == [
+        .init(host: "192.168.0.24", httpsPort: 47984, username: "admin", password: "secret", pairingID: "pairing-pending"),
+    ])
+    #expect(await pairingClient.statusCalls() == [
+        .init(host: "192.168.0.24", httpsPort: 47984, pairingID: "pairing-pending"),
+    ])
+    #expect(runtime.pairingState == .paired("Paired"))
 }
 
 @Test("Remote desktop runtime applies pending host selection after host catalog load")
@@ -2975,13 +3071,6 @@ private actor FakeControlTestMetadataClient: ShadowClientGameStreamMetadataClien
 }
 
 private actor FakeControlClient: ShadowClientGameStreamControlClient {
-    struct PairCall: Equatable {
-        let host: String
-        let pin: String
-        let appVersion: String?
-        let httpsPort: Int?
-    }
-
     struct LaunchCall: Equatable {
         let host: String
         let httpsPort: Int
@@ -3002,11 +3091,9 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
         let httpsPort: Int
     }
 
-    private var recordedPairCalls: [PairCall] = []
     private var recordedLaunchCalls: [LaunchCall] = []
     private var recordedClipboardCalls: [ClipboardCall] = []
     private var recordedCancelCalls: [CancelCall] = []
-    private var simulatedPairFailures: [any Error & Sendable]
     private var simulatedLaunchResults: [ShadowClientGameStreamLaunchResult]
     private var simulatedLaunchFailures: [any Error & Sendable]
     private let simulatedClipboardText: String?
@@ -3015,7 +3102,6 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
     private let simulatedLaunchFailure: (any Error & Sendable)?
 
     init(
-        simulatedPairFailures: [any Error & Sendable] = [],
         simulatedLaunchResult: ShadowClientGameStreamLaunchResult = .init(sessionURL: "rtsp://example/session", verb: "launch"),
         simulatedLaunchResults: [ShadowClientGameStreamLaunchResult] = [],
         simulatedLaunchFailures: [any Error & Sendable] = [],
@@ -3023,31 +3109,12 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
         simulatedClipboardFailure: (any Error & Sendable)? = nil,
         simulatedLaunchFailure: (any Error & Sendable)? = nil
     ) {
-        self.simulatedPairFailures = simulatedPairFailures
         self.simulatedLaunchResults = simulatedLaunchResults
         self.simulatedLaunchFailures = simulatedLaunchFailures
         self.simulatedClipboardText = simulatedClipboardText
         self.simulatedClipboardFailure = simulatedClipboardFailure
         self.defaultLaunchResult = simulatedLaunchResult
         self.simulatedLaunchFailure = simulatedLaunchFailure
-    }
-
-    func pair(
-        host: String,
-        pin: String,
-        appVersion: String?,
-        httpsPort: Int?
-    ) async throws -> ShadowClientGameStreamPairingResult {
-        recordedPairCalls.append(
-            PairCall(host: host, pin: pin, appVersion: appVersion, httpsPort: httpsPort)
-        )
-
-        if !simulatedPairFailures.isEmpty {
-            let nextError = simulatedPairFailures.removeFirst()
-            throw nextError
-        }
-
-        return .init(host: host)
     }
 
     func launch(
@@ -3083,10 +3150,6 @@ private actor FakeControlClient: ShadowClientGameStreamControlClient {
         }
 
         return defaultLaunchResult
-    }
-
-    func pairCalls() -> [PairCall] {
-        recordedPairCalls
     }
 
     func launchCalls() -> [LaunchCall] {
@@ -3168,8 +3231,101 @@ private actor FakeClipboardClient: ShadowClientClipboardClient {
     }
 }
 
+private actor FakeApolloPairingClient: ShadowClientApolloPairingClient {
+    struct StartCall: Equatable {
+        let host: String
+        let httpsPort: Int
+    }
+
+    struct StatusCall: Equatable {
+        let host: String
+        let httpsPort: Int
+        let pairingID: String
+    }
+
+    private var recordedStartCalls: [StartCall] = []
+    private var recordedStatusCalls: [StatusCall] = []
+    private var simulatedStartFailures: [any Error & Sendable]
+    private var simulatedStatusSessions: [ShadowClientApolloPairingSession]
+    private let initialSession: ShadowClientApolloPairingSession
+
+    init(
+        initialSession: ShadowClientApolloPairingSession = .init(
+            pairingID: "pairing-approved",
+            userCode: "ABC123",
+            deviceName: "Shadow Client",
+            platform: "macos",
+            clientID: "CLIENT-1",
+            trustedClientUUID: "CLIENT-1",
+            publicKeyPresent: true,
+            clientTrusted: true,
+            clientCertificateRequired: true,
+            status: .approved,
+            serverUniqueID: "HOST-1",
+            serviceType: "apollo",
+            controlHTTPSPort: 47984,
+            expiresInSeconds: 60,
+            pollIntervalSeconds: 1
+        ),
+        simulatedStartFailures: [any Error & Sendable] = [],
+        simulatedStatusSessions: [ShadowClientApolloPairingSession] = []
+    ) {
+        self.initialSession = initialSession
+        self.simulatedStartFailures = simulatedStartFailures
+        self.simulatedStatusSessions = simulatedStatusSessions
+    }
+
+    func startPairing(
+        host: String,
+        httpsPort: Int,
+        deviceName: String?,
+        platform: String?
+    ) async throws -> ShadowClientApolloPairingSession {
+        _ = deviceName
+        _ = platform
+        recordedStartCalls.append(.init(host: host, httpsPort: httpsPort))
+
+        if !simulatedStartFailures.isEmpty {
+            throw simulatedStartFailures.removeFirst()
+        }
+
+        return initialSession
+    }
+
+    func fetchPairingStatus(
+        host: String,
+        httpsPort: Int,
+        pairingID: String
+    ) async throws -> ShadowClientApolloPairingSession {
+        recordedStatusCalls.append(.init(host: host, httpsPort: httpsPort, pairingID: pairingID))
+
+        if !simulatedStatusSessions.isEmpty {
+            return simulatedStatusSessions.removeFirst()
+        }
+
+        return initialSession
+    }
+
+    func startCalls() -> [StartCall] {
+        recordedStartCalls
+    }
+
+    func statusCalls() -> [StatusCall] {
+        recordedStatusCalls
+    }
+}
+
 private actor FakeApolloAdminClient: ShadowClientApolloAdminClient {
+    struct ApproveCall: Equatable {
+        let host: String
+        let httpsPort: Int
+        let username: String
+        let password: String
+        let pairingID: String
+    }
+
     private var profile: ShadowClientApolloAdminClientProfile?
+    private var recordedApproveCalls: [ApproveCall] = []
 
     init(profile: ShadowClientApolloAdminClientProfile?) {
         self.profile = profile
@@ -3245,6 +3401,28 @@ private actor FakeApolloAdminClient: ShadowClientApolloAdminClient {
         if profile?.uuid == uuid {
             profile = nil
         }
+    }
+
+    func approvePairingRequest(
+        host: String,
+        httpsPort: Int,
+        username: String,
+        password: String,
+        pairingID: String
+    ) async throws {
+        recordedApproveCalls.append(
+            .init(
+                host: host,
+                httpsPort: httpsPort,
+                username: username,
+                password: password,
+                pairingID: pairingID
+            )
+        )
+    }
+
+    func approveCalls() -> [ApproveCall] {
+        recordedApproveCalls
     }
 }
 
@@ -3443,14 +3621,6 @@ private func waitForPairingState(
         } else {
             return
         }
-    }
-}
-
-private struct FixedPairingPINProvider: ShadowClientPairingPINProviding {
-    let pin: String
-
-    func nextPIN() -> String {
-        pin
     }
 }
 

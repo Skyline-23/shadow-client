@@ -182,9 +182,9 @@ func launchParameterBuilderIncludesApolloDisplayScaleContract() {
     #expect(parameters["clientSinkHiDPI"] == "1")
     #expect(parameters["clientSinkModeIsLogical"] == "1")
     #expect(parameters["requestedDynamicRangeTransport"] == "sdr")
-    #expect(parameters["clientSinkSupportsFrameGatedHDR"] == "1")
+    #expect(parameters["clientSinkSupportsFrameGatedHDR"] == "0")
     #expect(parameters["clientSinkSupportsHDRTileOverlay"] == "0")
-    #expect(parameters["clientSinkSupportsPerFrameHDRMetadata"] == "1")
+    #expect(parameters["clientSinkSupportsPerFrameHDRMetadata"] == "0")
 }
 
 @Test("Launch parameter builder includes Apollo client display profile when provided")
@@ -212,6 +212,8 @@ func launchParameterBuilderIncludesApolloClientDisplayProfile() {
             transfer: .pq,
             scalePercent: 200,
             hiDPIEnabled: true,
+            supportsFrameGatedHDR: true,
+            supportsPerFrameHDRMetadata: true,
             currentEDRHeadroom: 3.2,
             potentialEDRHeadroom: 8.0,
             currentPeakLuminanceNits: 320,

@@ -80,6 +80,14 @@ public protocol ShadowClientApolloAdminClient: Sendable {
         password: String,
         uuid: String
     ) async throws
+
+    func approvePairingRequest(
+        host: String,
+        httpsPort: Int,
+        username: String,
+        password: String,
+        pairingID: String
+    ) async throws
 }
 
 public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient {
@@ -280,6 +288,28 @@ public struct NativeShadowClientApolloAdminClient: ShadowClientApolloAdminClient
         )
     }
 
+    public func approvePairingRequest(
+        host: String,
+        httpsPort: Int,
+        username: String,
+        password: String,
+        pairingID: String
+    ) async throws {
+        let trimmedPairingID = pairingID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPairingID.isEmpty else {
+            throw ShadowClientGameStreamError.requestFailed("Pairing ID is required.")
+        }
+
+        try await postSimpleClientAction(
+            host: host,
+            httpsPort: httpsPort,
+            username: username,
+            password: password,
+            path: "/api/pairing/approve",
+            body: ApolloPairingDecisionPayload(pairingID: trimmedPairingID)
+        )
+    }
+
     static func parseCurrentClientProfile(
         data: Data,
         currentClientUUID: String
@@ -468,6 +498,14 @@ private struct ApolloUpdateClientPayload: Encodable {
 
 private struct ApolloUUIDPayload: Encodable {
     let uuid: String
+}
+
+private struct ApolloPairingDecisionPayload: Encodable {
+    let pairingID: String
+
+    enum CodingKeys: String, CodingKey {
+        case pairingID = "pairingId"
+    }
 }
 
 private final class ShadowClientApolloAdminURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {

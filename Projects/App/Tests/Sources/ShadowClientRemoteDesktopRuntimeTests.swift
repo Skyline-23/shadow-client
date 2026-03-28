@@ -1006,13 +1006,14 @@ func remoteDesktopRuntimeAllowsExternalPairWithoutLocalCandidate() async {
         ],
         appListByHost: [:]
     )
-    let controlClient = RecordingGameStreamControlClient(successfulHosts: ["external-host.example.invalid"])
+    let pairingClient = RecordingApolloPairingClient(successfulHosts: ["external-host.example.invalid"])
     let pairingRouteStore = ShadowClientPairingRouteStore(
         defaultsSuiteName: "shadow-client.pairing.external-only.\(UUID().uuidString)"
     )
     let runtime = ShadowClientRemoteDesktopRuntime(
         metadataClient: metadataClient,
-        controlClient: controlClient,
+        controlClient: RecordingGameStreamControlClient(),
+        pairingClient: pairingClient,
         pairingRouteStore: pairingRouteStore
     )
 
@@ -1031,7 +1032,7 @@ func remoteDesktopRuntimeAllowsExternalPairWithoutLocalCandidate() async {
         Issue.record("Expected pairing success for external-only host, got \(runtime.pairingState)")
     }
 
-    #expect(await controlClient.pairRequests() == ["external-host.example.invalid"])
+    #expect(await pairingClient.startRequests() == ["external-host.example.invalid"])
 }
 
 @Test("Remote desktop runtime tries selected external host before local fallback when unique ID matches")
@@ -1064,13 +1065,14 @@ func remoteDesktopRuntimeTriesSelectedExternalHostBeforeLocalFallback() async {
         ],
         appListByHost: [:]
     )
-    let controlClient = RecordingGameStreamControlClient(successfulHosts: ["192.168.0.20"])
+    let pairingClient = RecordingApolloPairingClient(successfulHosts: ["192.168.0.20"])
     let pairingRouteStore = ShadowClientPairingRouteStore(
         defaultsSuiteName: "shadow-client.pairing.local-preferred.\(UUID().uuidString)"
     )
     let runtime = ShadowClientRemoteDesktopRuntime(
         metadataClient: metadataClient,
-        controlClient: controlClient,
+        controlClient: RecordingGameStreamControlClient(),
+        pairingClient: pairingClient,
         pairingRouteStore: pairingRouteStore
     )
 
@@ -1084,7 +1086,7 @@ func remoteDesktopRuntimeTriesSelectedExternalHostBeforeLocalFallback() async {
     await waitForPairingState(runtime)
 
     #expect(runtime.pairingState == .paired("Paired"))
-    #expect(await controlClient.pairRequests() == ["external-host.example.invalid", "192.168.0.20"])
+    #expect(await pairingClient.startRequests() == ["external-host.example.invalid", "192.168.0.20"])
 }
 
 @Test("Remote desktop runtime merges local and external descriptors for the same unique ID")
@@ -2888,28 +2890,7 @@ private actor RecordingGameStreamControlClient: ShadowClientGameStreamControlCli
         let appID: Int
     }
 
-    private let successfulHosts: Set<String>
-    private var recordedPairHosts: [String] = []
     private var recordedLaunchRequests: [LaunchRequest] = []
-
-    init(successfulHosts: Set<String> = []) {
-        self.successfulHosts = successfulHosts
-    }
-
-    func pair(
-        host: String,
-        pin: String,
-        appVersion: String?,
-        httpsPort: Int?
-    ) async throws -> ShadowClientGameStreamPairingResult {
-        recordedPairHosts.append(host)
-
-        if successfulHosts.isEmpty || successfulHosts.contains(host) {
-            return .init(host: host)
-        }
-
-        throw ShadowClientGameStreamError.requestFailed("A server with the specified hostname could not be found.")
-    }
 
     func launch(
         host: String,
@@ -2925,12 +2906,66 @@ private actor RecordingGameStreamControlClient: ShadowClientGameStreamControlCli
         return .init(sessionURL: nil, verb: "launch")
     }
 
-    func pairRequests() -> [String] {
-        recordedPairHosts
-    }
-
     func launchRequests() -> [LaunchRequest] {
         recordedLaunchRequests
+    }
+}
+
+private actor RecordingApolloPairingClient: ShadowClientApolloPairingClient {
+    private let successfulHosts: Set<String>
+    private var recordedStartHosts: [String] = []
+
+    init(successfulHosts: Set<String> = []) {
+        self.successfulHosts = successfulHosts
+    }
+
+    func startPairing(
+        host: String,
+        httpsPort: Int,
+        deviceName: String?,
+        platform: String?
+    ) async throws -> ShadowClientApolloPairingSession {
+        _ = httpsPort
+        _ = deviceName
+        _ = platform
+        recordedStartHosts.append(host)
+
+        if successfulHosts.isEmpty || successfulHosts.contains(host) {
+            return .init(
+                pairingID: "pair-\(host)",
+                userCode: "ABC123",
+                deviceName: "Shadow Client",
+                platform: "macos",
+                clientID: "CLIENT-1",
+                trustedClientUUID: "CLIENT-1",
+                publicKeyPresent: true,
+                clientTrusted: true,
+                clientCertificateRequired: true,
+                status: .approved,
+                serverUniqueID: "HOST-1",
+                serviceType: "apollo",
+                controlHTTPSPort: 47984,
+                expiresInSeconds: 60,
+                pollIntervalSeconds: 1
+            )
+        }
+
+        throw ShadowClientGameStreamError.requestFailed("A server with the specified hostname could not be found.")
+    }
+
+    func fetchPairingStatus(
+        host: String,
+        httpsPort: Int,
+        pairingID: String
+    ) async throws -> ShadowClientApolloPairingSession {
+        _ = host
+        _ = httpsPort
+        _ = pairingID
+        throw ShadowClientGameStreamError.requestFailed("Unexpected pairing status poll.")
+    }
+
+    func startRequests() -> [String] {
+        recordedStartHosts
     }
 }
 

@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import Metal
 
 #if os(macOS)
 import AppKit
@@ -31,6 +32,9 @@ struct ShadowClientApolloClientDisplayCharacteristics: Sendable {
     let transfer: ShadowClientApolloClientDisplayTransfer
     let scalePercent: Int
     let hiDPIEnabled: Bool
+    let supportsFrameGatedHDR: Bool
+    let supportsHDRTileOverlay: Bool
+    let supportsPerFrameHDRMetadata: Bool
     let currentEDRHeadroom: Float
     let potentialEDRHeadroom: Float
     let currentPeakLuminanceNits: Int
@@ -41,6 +45,9 @@ struct ShadowClientApolloClientDisplayCharacteristics: Sendable {
         transfer: ShadowClientApolloClientDisplayTransfer,
         scalePercent: Int,
         hiDPIEnabled: Bool,
+        supportsFrameGatedHDR: Bool = false,
+        supportsHDRTileOverlay: Bool = false,
+        supportsPerFrameHDRMetadata: Bool = false,
         currentEDRHeadroom: Float = 1.0,
         potentialEDRHeadroom: Float = 1.0,
         currentPeakLuminanceNits: Int = 100,
@@ -50,6 +57,9 @@ struct ShadowClientApolloClientDisplayCharacteristics: Sendable {
         self.transfer = transfer
         self.scalePercent = scalePercent
         self.hiDPIEnabled = hiDPIEnabled
+        self.supportsFrameGatedHDR = supportsFrameGatedHDR
+        self.supportsHDRTileOverlay = supportsHDRTileOverlay
+        self.supportsPerFrameHDRMetadata = supportsPerFrameHDRMetadata
         self.currentEDRHeadroom = currentEDRHeadroom
         self.potentialEDRHeadroom = potentialEDRHeadroom
         self.currentPeakLuminanceNits = currentPeakLuminanceNits
@@ -62,18 +72,6 @@ extension ShadowClientApolloClientDisplayCharacteristics {
         hiDPIEnabled
     }
 
-    var supportsFrameGatedHDR: Bool {
-        true
-    }
-
-    var supportsHDRTileOverlay: Bool {
-        false
-    }
-
-    var supportsPerFrameHDRMetadata: Bool {
-        true
-    }
-
     func requestedDynamicRangeTransport(
         hdrRequested: Bool
     ) -> ShadowClientApolloDynamicRangeTransport {
@@ -81,7 +79,15 @@ extension ShadowClientApolloClientDisplayCharacteristics {
             return .sdr
         }
 
-        if transfer == .pq || transfer == .hlg {
+        guard transfer == .pq || transfer == .hlg else {
+            return .sdr
+        }
+
+        if supportsHDRTileOverlay {
+            return .sdrBaseHDROverlay
+        }
+
+        if supportsFrameGatedHDR {
             return .frameGatedHDR
         }
 
@@ -99,6 +105,12 @@ enum ShadowClientApolloSinkContractProfile {
 }
 
 enum ShadowClientApolloClientDisplayCharacteristicsResolver {
+    private struct SinkCapabilities: Sendable {
+        let supportsFrameGatedHDR: Bool
+        let supportsHDRTileOverlay: Bool
+        let supportsPerFrameHDRMetadata: Bool
+    }
+
     @MainActor
     static func current(
         hdrEnabled: Bool,
@@ -109,17 +121,25 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
         let screen = currentMacScreen()
         let colorSpace = screen?.colorSpace?.cgColorSpace
         let gamut = gamut(for: colorSpace)
-        let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
-            hdrEnabled: hdrEnabled,
-            environment: .colorManagedDesktop(colorSpace)
-        )
         let currentEDRHeadroom = currentEDRHeadroom(for: screen)
         let potentialEDRHeadroom = potentialEDRHeadroom(for: screen)
+        let sinkCapabilities = sinkCapabilities(
+            potentialEDRHeadroom: potentialEDRHeadroom
+        )
+        let transfer = hdrEnabled && sinkCapabilities.supportsFrameGatedHDR
+            ? ShadowClientApolloClientDisplayTransferContract.resolve(
+                hdrEnabled: hdrEnabled,
+                environment: .colorManagedDesktop(colorSpace)
+            )
+            : .sdr
         return .init(
             gamut: gamut,
             transfer: transfer,
             scalePercent: scalePercent,
             hiDPIEnabled: hiDPIEnabled,
+            supportsFrameGatedHDR: sinkCapabilities.supportsFrameGatedHDR,
+            supportsHDRTileOverlay: sinkCapabilities.supportsHDRTileOverlay,
+            supportsPerFrameHDRMetadata: sinkCapabilities.supportsPerFrameHDRMetadata,
             currentEDRHeadroom: currentEDRHeadroom,
             potentialEDRHeadroom: potentialEDRHeadroom,
             currentPeakLuminanceNits: peakLuminanceNits(for: currentEDRHeadroom),
@@ -128,17 +148,25 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
         #elseif os(iOS) || os(tvOS)
         let screen = currentUIKitScreen() ?? UIScreen.main
         let gamut = gamut(for: screen.traitCollection.displayGamut)
-        let transfer = ShadowClientApolloClientDisplayTransferContract.resolve(
-            hdrEnabled: hdrEnabled,
-            environment: .compositedUIKit
-        )
         let currentEDRHeadroom = max(Float(screen.currentEDRHeadroom), 1.0)
         let potentialEDRHeadroom = max(Float(screen.potentialEDRHeadroom), 1.0)
+        let sinkCapabilities = sinkCapabilities(
+            potentialEDRHeadroom: potentialEDRHeadroom
+        )
+        let transfer = hdrEnabled && sinkCapabilities.supportsFrameGatedHDR
+            ? ShadowClientApolloClientDisplayTransferContract.resolve(
+                hdrEnabled: hdrEnabled,
+                environment: .compositedUIKit
+            )
+            : .sdr
         return .init(
             gamut: gamut,
             transfer: transfer,
             scalePercent: scalePercent,
             hiDPIEnabled: hiDPIEnabled,
+            supportsFrameGatedHDR: sinkCapabilities.supportsFrameGatedHDR,
+            supportsHDRTileOverlay: sinkCapabilities.supportsHDRTileOverlay,
+            supportsPerFrameHDRMetadata: sinkCapabilities.supportsPerFrameHDRMetadata,
             currentEDRHeadroom: currentEDRHeadroom,
             potentialEDRHeadroom: potentialEDRHeadroom,
             currentPeakLuminanceNits: peakLuminanceNits(for: currentEDRHeadroom),
@@ -200,5 +228,19 @@ enum ShadowClientApolloClientDisplayCharacteristicsResolver {
 
     private static func peakLuminanceNits(for headroom: Float) -> Int {
         Int((max(headroom, 1.0) * 100.0).rounded())
+    }
+
+    private static func sinkCapabilities(
+        potentialEDRHeadroom: Float
+    ) -> SinkCapabilities {
+        let supportsEDRDisplay = potentialEDRHeadroom > 1.0
+        let supportsMetalRenderer = MTLCreateSystemDefaultDevice() != nil
+        let supportsFrameGatedHDR = supportsEDRDisplay && supportsMetalRenderer
+
+        return .init(
+            supportsFrameGatedHDR: supportsFrameGatedHDR,
+            supportsHDRTileOverlay: false,
+            supportsPerFrameHDRMetadata: supportsFrameGatedHDR
+        )
     }
 }

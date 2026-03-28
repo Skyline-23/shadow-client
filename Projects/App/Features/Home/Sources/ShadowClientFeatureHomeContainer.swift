@@ -38,7 +38,6 @@ public final class ShadowClientFeatureHomeContainer {
             wakeOnLANClient: remoteDesktopDependencies.wakeOnLANClient,
             sessionConnectionClient: remoteDesktopDependencies.sessionConnectionClient,
             sessionInputClient: remoteDesktopDependencies.sessionInputClient,
-            pinProvider: remoteDesktopDependencies.pinProvider,
             pinnedCertificateStore: remoteDesktopDependencies.pinnedCertificateStore
         )
 

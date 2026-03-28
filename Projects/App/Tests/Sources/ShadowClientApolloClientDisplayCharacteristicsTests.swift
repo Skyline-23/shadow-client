@@ -76,7 +76,9 @@ func apolloSinkCapabilityRemainsFrameGatedCapableOnSDRTransfers() {
         gamut: .displayP3,
         transfer: .sdr,
         scalePercent: 100,
-        hiDPIEnabled: false
+        hiDPIEnabled: false,
+        supportsFrameGatedHDR: true,
+        supportsPerFrameHDRMetadata: true
     )
 
     #expect(characteristics.supportsFrameGatedHDR)
@@ -91,8 +93,24 @@ func apolloSinkRequestPromotesHDRSinkTransfersToFrameGatedTransport() {
         gamut: .displayP3,
         transfer: .pq,
         scalePercent: 100,
-        hiDPIEnabled: false
+        hiDPIEnabled: false,
+        supportsFrameGatedHDR: true,
+        supportsPerFrameHDRMetadata: true
     )
 
     #expect(characteristics.requestedDynamicRangeTransport(hdrRequested: true) == .frameGatedHDR)
+}
+
+@Test("Apollo sink request falls back to SDR when HDR compositor support is unavailable")
+func apolloSinkRequestFallsBackToSDRWithoutHDRSinkCapability() {
+    let characteristics = ShadowClientApolloClientDisplayCharacteristics(
+        gamut: .displayP3,
+        transfer: .pq,
+        scalePercent: 100,
+        hiDPIEnabled: false
+    )
+
+    #expect(!characteristics.supportsFrameGatedHDR)
+    #expect(!characteristics.supportsPerFrameHDRMetadata)
+    #expect(characteristics.requestedDynamicRangeTransport(hdrRequested: true) == .sdr)
 }

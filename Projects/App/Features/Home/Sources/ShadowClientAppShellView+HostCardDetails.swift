@@ -54,12 +54,12 @@ extension ShadowClientAppShellView {
                     .allowsHitTesting(interactive)
                 }
 
-                if let pairingPIN = remoteDesktopRuntime.activePairingPIN {
+                if let pairingCode = remoteDesktopRuntime.activePairingCode {
                     HStack(spacing: 8) {
-                        Label("Pair PIN", systemImage: "number.square")
+                        Label("Pair Code", systemImage: "number.square")
                             .font(.caption.weight(.bold))
                             .foregroundStyle(Color.white.opacity(0.70))
-                        Text(pairingPIN)
+                        Text(pairingCode)
                             .font(.title3.monospacedDigit().weight(.bold))
                             .foregroundStyle(.mint)
                         Spacer(minLength: 0)
@@ -485,7 +485,10 @@ extension ShadowClientAppShellView {
                 if let selectedHost = remoteDesktopRuntime.selectedHost {
                     connectionHost = connectionCandidate(for: selectedHost)
                 }
-                remoteDesktopRuntime.pairSelectedHost()
+                remoteDesktopRuntime.pairSelectedHost(
+                    username: remoteDesktopRuntime.selectedHost.map { hostApolloAdminUsername($0) },
+                    password: remoteDesktopRuntime.selectedHost.map { hostApolloAdminPassword($0) }
+                )
             }
             .accessibilityIdentifier("shadow.home.hosts.start-pairing")
             .accessibilityLabel("Pair selected host")

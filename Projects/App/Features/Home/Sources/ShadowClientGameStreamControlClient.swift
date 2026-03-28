@@ -9,7 +9,7 @@ import ShadowClientFeatureSession
 
 public enum ShadowClientRemotePairingState: Equatable, Sendable {
     case idle
-    case pairing(host: String, pin: String)
+    case pairing(host: String, code: String)
     case paired(String)
     case failed(String)
 }
@@ -19,8 +19,11 @@ public extension ShadowClientRemotePairingState {
         switch self {
         case .idle:
             return "Idle"
-        case let .pairing(host, _):
-            return "Pairing with \(host). Enter displayed PIN in Apollo."
+        case let .pairing(host, code):
+            if code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Starting pairing with \(host)."
+            }
+            return "Pairing with \(host). Approve this device in Apollo using the displayed code."
         case let .paired(message):
             return message
         case let .failed(message):
@@ -28,10 +31,11 @@ public extension ShadowClientRemotePairingState {
         }
     }
 
-    var activePIN: String? {
+    var activeCode: String? {
         switch self {
-        case let .pairing(_, pin):
-            return pin
+        case let .pairing(_, code):
+            let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmedCode.isEmpty ? nil : trimmedCode
         case .idle, .paired, .failed:
             return nil
         }
@@ -104,12 +108,6 @@ public struct ShadowClientUserDefaultsIdentityProvider: ShadowClientPairingIdent
 }
 
 public protocol ShadowClientGameStreamControlClient: Sendable {
-    func pair(
-        host: String,
-        pin: String,
-        appVersion: String?,
-        httpsPort: Int?
-    ) async throws -> ShadowClientGameStreamPairingResult
     func getClipboard(
         host: String,
         httpsPort: Int

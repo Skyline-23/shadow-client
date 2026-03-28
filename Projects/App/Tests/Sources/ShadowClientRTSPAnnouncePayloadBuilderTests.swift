@@ -52,7 +52,14 @@ func rtspAnnouncePayloadMapsHdrAndYUV444() {
         videoPort: 47_998,
         moonlightFeatureFlags: 3,
         encryptionEnabledFlags: 0,
-        clientDisplayCharacteristics: .init(gamut: .rec2020, transfer: .pq, scalePercent: 100, hiDPIEnabled: false)
+        clientDisplayCharacteristics: .init(
+            gamut: .rec2020,
+            transfer: .pq,
+            scalePercent: 100,
+            hiDPIEnabled: false,
+            supportsFrameGatedHDR: true,
+            supportsPerFrameHDRMetadata: true
+        )
     )
 
     let sdr420Payload = ShadowClientRTSPAnnouncePayloadBuilder.build(
@@ -88,9 +95,9 @@ func rtspAnnouncePayloadMapsHdrAndYUV444() {
     #expect(hdrYuvAttributes["x-shadow-sink.supportsFrameGatedHDR"] == "1")
     #expect(hdrYuvAttributes["x-shadow-sink.supportsHDRTileOverlay"] == "0")
     #expect(hdrYuvAttributes["x-shadow-sink.supportsPerFrameHDRMetadata"] == "1")
-    #expect(sdr420Attributes["x-shadow-sink.supportsFrameGatedHDR"] == "1")
+    #expect(sdr420Attributes["x-shadow-sink.supportsFrameGatedHDR"] == "0")
     #expect(sdr420Attributes["x-shadow-sink.supportsHDRTileOverlay"] == "0")
-    #expect(sdr420Attributes["x-shadow-sink.supportsPerFrameHDRMetadata"] == "1")
+    #expect(sdr420Attributes["x-shadow-sink.supportsPerFrameHDRMetadata"] == "0")
 }
 
 @Test("RTSP ANNOUNCE payload maps surround launch settings to audio fields")
@@ -235,6 +242,8 @@ func rtspAnnouncePayloadIncludesApolloDisplayMetadata() {
             transfer: .pq,
             scalePercent: 200,
             hiDPIEnabled: true,
+            supportsFrameGatedHDR: true,
+            supportsPerFrameHDRMetadata: true,
             currentEDRHeadroom: 2.4,
             potentialEDRHeadroom: 6.5,
             currentPeakLuminanceNits: 240,
