@@ -1744,6 +1744,36 @@ func realtimeRuntimeQueuePressureProfileCapsBitrateOutliers() {
     )
 }
 
+@Test("Realtime runtime trims decode consumer backlog more aggressively under pressure")
+func realtimeRuntimeDecodeConsumerBacklogTightensUnderPressure() {
+    let relaxed = ShadowClientRealtimeRTSPSessionRuntime.effectiveVideoDecodeQueueConsumerMaxBufferedUnits(
+        base: 16,
+        capacity: 24,
+        recentQueuePressure: false,
+        pendingRecovery: false
+    )
+    let pressured = ShadowClientRealtimeRTSPSessionRuntime.effectiveVideoDecodeQueueConsumerMaxBufferedUnits(
+        base: 16,
+        capacity: 24,
+        recentQueuePressure: true,
+        pendingRecovery: false
+    )
+
+    #expect(relaxed == 16)
+    #expect(pressured == 12)
+    #expect(pressured < relaxed)
+}
+
+@Test("Realtime runtime uses a tighter late-frame render pacing backlog threshold")
+func realtimeRuntimeRenderPacingBacklogThresholdIsTighterThanHalfBuffer() {
+    let threshold = ShadowClientRealtimeRTSPSessionRuntime.renderPacingBacklogThreshold(
+        forConsumerMaxBufferedUnits: 16
+    )
+
+    #expect(threshold == 7)
+    #expect(threshold < 8)
+}
+
 @Test("Realtime runtime queue profile probes decode pressure faster for packet-thin streams")
 func realtimeRuntimeQueuePressureProfileUsesFasterProbeForPacketThinStreams() {
     let packetThin = ShadowClientRealtimeRTSPSessionRuntime.queuePressureProfile(

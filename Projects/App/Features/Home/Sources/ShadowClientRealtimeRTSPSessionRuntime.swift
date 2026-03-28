@@ -1803,9 +1803,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         ) else {
             return false
         }
-        let renderPacingBacklogThreshold = max(
-            2,
-            videoDecodeQueueConsumerMaxBufferedUnits / 2
+        let renderPacingBacklogThreshold = Self.renderPacingBacklogThreshold(
+            forConsumerMaxBufferedUnits: videoDecodeQueueConsumerMaxBufferedUnits
         )
         guard lastObservedDecodeQueueBacklog >= renderPacingBacklogThreshold else {
             return false
@@ -1929,22 +1928,55 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             max(1, videoDecodeQueueConsumerMaxBufferedUnits),
             max(1, videoDecodeQueueCapacity - 1)
         )
-        guard Self.isRecentQueuePressureSignal(
-            now: now,
-            lastSignalUptime: lastVideoQueuePressureSignalUptime,
-            windowSeconds: ShadowClientRealtimeSessionDefaults.videoQueuePressureRecentSignalWindowSeconds
-        ) || pendingVideoRecoveryRequest else {
-            return base
+        return Self.effectiveVideoDecodeQueueConsumerMaxBufferedUnits(
+            base: base,
+            capacity: videoDecodeQueueCapacity,
+            recentQueuePressure: Self.isRecentQueuePressureSignal(
+                now: now,
+                lastSignalUptime: lastVideoQueuePressureSignalUptime,
+                windowSeconds: ShadowClientRealtimeSessionDefaults.videoQueuePressureRecentSignalWindowSeconds
+            ),
+            pendingRecovery: pendingVideoRecoveryRequest
+        )
+    }
+
+    static func effectiveVideoDecodeQueueConsumerMaxBufferedUnits(
+        base: Int,
+        capacity: Int,
+        recentQueuePressure: Bool,
+        pendingRecovery: Bool
+    ) -> Int {
+        let boundedBase = min(
+            max(1, base),
+            max(1, capacity - 1)
+        )
+        guard recentQueuePressure || pendingRecovery else {
+            return boundedBase
         }
 
-        let pressureExpanded = Int(
-            (Double(videoDecodeQueueCapacity) *
-                ShadowClientRealtimeSessionDefaults.videoDecodeQueueConsumerPressureExpansionRatio)
-                .rounded(.up)
+        let pressureTrimmed = Int(
+            (
+                Double(boundedBase) *
+                    ShadowClientRealtimeSessionDefaults.videoDecodeQueueConsumerPressureTrimRatio
+            ).rounded(.down)
         )
         return min(
-            max(1, videoDecodeQueueCapacity - 1),
-            max(base, pressureExpanded)
+            boundedBase,
+            max(1, pressureTrimmed)
+        )
+    }
+
+    static func renderPacingBacklogThreshold(
+        forConsumerMaxBufferedUnits consumerMaxBufferedUnits: Int
+    ) -> Int {
+        max(
+            2,
+            Int(
+                (
+                    Double(max(1, consumerMaxBufferedUnits)) *
+                        ShadowClientRealtimeSessionDefaults.videoRenderSubmitBacklogThresholdRatio
+                ).rounded(.up)
+            )
         )
     }
 
