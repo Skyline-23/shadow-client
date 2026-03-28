@@ -79,6 +79,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
     private var latestSnapshot = ShadowClientRealtimeSessionFrameStore.Snapshot(
         pixelBuffer: nil,
         hdrFrameState: nil,
+        frameLatencyTrace: nil,
         revision: 0
     )
     private var lastRenderedFrameRevision: UInt64 = .max
@@ -202,7 +203,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
             if didRender {
                 commandBuffer.present(drawable)
                 commandBuffer.commit()
-                surfaceContext.recordPresentedVideoFrame()
+                surfaceContext.recordPresentedVideoFrame(frameLatencyTrace: snapshot.frameLatencyTrace)
                 lastRenderedFrameRevision = snapshot.revision
                 lastRenderedColorConfigurationRevision = colorConfigurationRevision
                 lastRenderedDrawableSize = drawableSize
@@ -222,7 +223,7 @@ final class ShadowClientRealtimeSessionMetalRenderer: NSObject, MTKViewDelegate 
         commandBuffer.present(drawable)
         commandBuffer.commit()
         if pixelBuffer != nil {
-            surfaceContext.recordPresentedVideoFrame()
+            surfaceContext.recordPresentedVideoFrame(frameLatencyTrace: snapshot.frameLatencyTrace)
         }
         lastRenderedFrameRevision = snapshot.revision
         lastRenderedColorConfigurationRevision = colorConfigurationRevision

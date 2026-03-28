@@ -1,31 +1,103 @@
 import CoreGraphics
 import CoreVideo
 import Foundation
+import os
 import ShadowClientFeatureSession
 
 struct ShadowClientSendableFramePixelBuffer: @unchecked Sendable {
     let value: CVPixelBuffer
 }
 
+public struct ShadowClientRealtimeSessionFrameLatencyTrace: Equatable, Sendable {
+    public let frameIndex: UInt32
+    public let firstPacketReceiveUptime: TimeInterval?
+    public let frameAssemblyUptime: TimeInterval?
+    public let decodeSubmitUptime: TimeInterval?
+    public let decodeOutputUptime: TimeInterval?
+    public let presentUptime: TimeInterval?
+
+    public init(
+        frameIndex: UInt32,
+        firstPacketReceiveUptime: TimeInterval? = nil,
+        frameAssemblyUptime: TimeInterval? = nil,
+        decodeSubmitUptime: TimeInterval? = nil,
+        decodeOutputUptime: TimeInterval? = nil,
+        presentUptime: TimeInterval? = nil
+    ) {
+        self.frameIndex = frameIndex
+        self.firstPacketReceiveUptime = firstPacketReceiveUptime
+        self.frameAssemblyUptime = frameAssemblyUptime
+        self.decodeSubmitUptime = decodeSubmitUptime
+        self.decodeOutputUptime = decodeOutputUptime
+        self.presentUptime = presentUptime
+    }
+
+    public func withPresentationUptime(_ uptime: TimeInterval) -> ShadowClientRealtimeSessionFrameLatencyTrace {
+        .init(
+            frameIndex: frameIndex,
+            firstPacketReceiveUptime: firstPacketReceiveUptime,
+            frameAssemblyUptime: frameAssemblyUptime,
+            decodeSubmitUptime: decodeSubmitUptime,
+            decodeOutputUptime: decodeOutputUptime,
+            presentUptime: uptime
+        )
+    }
+
+    public var receiveToAssemblyMs: Double? {
+        Self.durationMilliseconds(from: firstPacketReceiveUptime, to: frameAssemblyUptime)
+    }
+
+    public var assemblyToDecodeSubmitMs: Double? {
+        Self.durationMilliseconds(from: frameAssemblyUptime, to: decodeSubmitUptime)
+    }
+
+    public var decodeSubmitToOutputMs: Double? {
+        Self.durationMilliseconds(from: decodeSubmitUptime, to: decodeOutputUptime)
+    }
+
+    public var decodeOutputToPresentMs: Double? {
+        Self.durationMilliseconds(from: decodeOutputUptime, to: presentUptime)
+    }
+
+    public var receiveToPresentMs: Double? {
+        Self.durationMilliseconds(from: firstPacketReceiveUptime, to: presentUptime)
+    }
+
+    private static func durationMilliseconds(from start: TimeInterval?, to end: TimeInterval?) -> Double? {
+        guard let start, let end else {
+            return nil
+        }
+        return max(0, (end - start) * 1_000)
+    }
+}
+
 public actor ShadowClientRealtimeSessionFrameStore {
     struct Snapshot: Sendable {
         let pixelBuffer: ShadowClientSendableFramePixelBuffer?
         let hdrFrameState: ShadowClientHDRFrameState?
+        let frameLatencyTrace: ShadowClientRealtimeSessionFrameLatencyTrace?
         let revision: UInt64
     }
 
-    private var latestSnapshot = Snapshot(pixelBuffer: nil, hdrFrameState: nil, revision: 0)
+    private var latestSnapshot = Snapshot(
+        pixelBuffer: nil,
+        hdrFrameState: nil,
+        frameLatencyTrace: nil,
+        revision: 0
+    )
     private var continuations: [UUID: AsyncStream<Snapshot>.Continuation] = [:]
 
     public init() {}
 
     public func update(
         pixelBuffer: CVPixelBuffer?,
-        hdrFrameState: ShadowClientHDRFrameState? = nil
+        hdrFrameState: ShadowClientHDRFrameState? = nil,
+        frameLatencyTrace: ShadowClientRealtimeSessionFrameLatencyTrace? = nil
     ) {
         latestSnapshot = Snapshot(
             pixelBuffer: pixelBuffer.map(ShadowClientSendableFramePixelBuffer.init),
             hdrFrameState: hdrFrameState,
+            frameLatencyTrace: frameLatencyTrace,
             revision: latestSnapshot.revision &+ 1
         )
         continuations.values.forEach { $0.yield(latestSnapshot) }
@@ -130,9 +202,14 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
     @Published public private(set) var activeDynamicRangeMode: DynamicRangeMode = .unknown
     @Published public private(set) var activeHDRMetadata: ShadowClientHDRMetadata?
     @Published public private(set) var activeHDRFrameState: ShadowClientHDRFrameState?
+    @Published public private(set) var latestFrameLatencyTrace: ShadowClientRealtimeSessionFrameLatencyTrace?
     @Published public private(set) var colorConfigurationRevision: UInt64 = 0
     @Published public private(set) var preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
     @Published public private(set) var videoPresentationSize: CGSize?
+    private let logger = Logger(
+        subsystem: "com.skyline23.shadow-client",
+        category: "RealtimeSessionSurface"
+    )
     private var lastControlRoundTripPublishUptime: TimeInterval = 0
     private var presentedFrameWindowStartUptime: TimeInterval = 0
     private var presentedFrameCount = 0
@@ -191,6 +268,7 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         activeDynamicRangeMode = .unknown
         activeHDRMetadata = nil
         activeHDRFrameState = nil
+        latestFrameLatencyTrace = nil
         colorConfigurationRevision = 0
         preferredRenderFPS = ShadowClientStreamingLaunchBounds.defaultFPS
         videoPresentationSize = nil
@@ -305,11 +383,24 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
         }
     }
 
-    public func recordPresentedVideoFrame(nowUptime: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+    public func recordPresentedVideoFrame(
+        frameLatencyTrace: ShadowClientRealtimeSessionFrameLatencyTrace? = nil,
+        nowUptime: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) {
         if presentedFrameWindowStartUptime == 0 {
             presentedFrameWindowStartUptime = nowUptime
         }
         presentedFrameCount += 1
+
+        if let frameLatencyTrace {
+            let presentedTrace = frameLatencyTrace.withPresentationUptime(nowUptime)
+            latestFrameLatencyTrace = presentedTrace
+            if presentedTrace.frameIndex == 0 || presentedTrace.frameIndex.isMultiple(of: 120) {
+                logger.notice(
+                    "Frame trace frame-index=\(presentedTrace.frameIndex, privacy: .public) receive->assembly-ms=\(Self.optionalTraceMilliseconds(presentedTrace.receiveToAssemblyMs), privacy: .public) assembly->decode-submit-ms=\(Self.optionalTraceMilliseconds(presentedTrace.assemblyToDecodeSubmitMs), privacy: .public) decode-submit->output-ms=\(Self.optionalTraceMilliseconds(presentedTrace.decodeSubmitToOutputMs), privacy: .public) output->present-ms=\(Self.optionalTraceMilliseconds(presentedTrace.decodeOutputToPresentMs), privacy: .public) receive->present-ms=\(Self.optionalTraceMilliseconds(presentedTrace.receiveToPresentMs), privacy: .public)"
+                )
+            }
+        }
 
         if nowUptime - lastPresentedFramePublishUptime < 0.2 {
             return
@@ -380,6 +471,13 @@ public final class ShadowClientRealtimeSessionSurfaceContext: ObservableObject {
 
     private static func normalizedRenderFPS(_ fps: Int) -> Int {
         max(fps, 1)
+    }
+
+    private static func optionalTraceMilliseconds(_ value: Double?) -> String {
+        guard let value else {
+            return "n/a"
+        }
+        return String(format: "%.2f", value)
     }
 
     private func publishControlRoundTripSample(_ milliseconds: Int?) {

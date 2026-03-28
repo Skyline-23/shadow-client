@@ -130,6 +130,13 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         lastObservedPacketFrameIndex
     }
 
+    public static func peekFrameIndex(payload: Data) -> UInt32? {
+        guard payload.count >= nvVideoPacketHeaderSize else {
+            return nil
+        }
+        return readUInt32LE(payload, at: 4)
+    }
+
     public mutating func ingest(payload: Data, marker: Bool) -> Data? {
         switch ingestWithStatus(payload: payload, marker: marker) {
         case let .frame(frame):
@@ -594,7 +601,7 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
         return UInt16(data[baseIndex]) | (UInt16(data[baseIndex + 1]) << 8)
     }
 
-    private func readUInt32LE(_ data: Data, at offset: Int) -> UInt32? {
+    private static func readUInt32LE(_ data: Data, at offset: Int) -> UInt32? {
         guard offset >= 0, offset + 3 < data.count else {
             return nil
         }
@@ -603,6 +610,10 @@ public struct ShadowClientMoonlightNVRTPDepacketizer: Sendable {
             (UInt32(data[baseIndex + 1]) << 8) |
             (UInt32(data[baseIndex + 2]) << 16) |
             (UInt32(data[baseIndex + 3]) << 24)
+    }
+
+    private func readUInt32LE(_ data: Data, at offset: Int) -> UInt32? {
+        Self.readUInt32LE(data, at: offset)
     }
 
     private func trimLeadingBytesUntilAnnexBStartCode(_ payload: Data) -> Data {

@@ -68,6 +68,23 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         let depacketizerMetadata: ShadowClientAV1RTPDepacketizer.AssembledFrameMetadata?
     }
 
+    private struct PendingFrameLatencyTrace: Sendable {
+        var firstPacketReceiveUptime: TimeInterval?
+        var frameAssemblyUptime: TimeInterval?
+        var decodeSubmitUptime: TimeInterval?
+        var decodeOutputUptime: TimeInterval?
+
+        func finalized(frameIndex: UInt32) -> ShadowClientRealtimeSessionFrameLatencyTrace {
+            .init(
+                frameIndex: frameIndex,
+                firstPacketReceiveUptime: firstPacketReceiveUptime,
+                frameAssemblyUptime: frameAssemblyUptime,
+                decodeSubmitUptime: decodeSubmitUptime,
+                decodeOutputUptime: decodeOutputUptime
+            )
+        }
+    }
+
     struct VideoQueuePressureProfile: Equatable, Sendable {
         let receiveQueueCapacity: Int
         let receiveQueuePressureSignalInterval: Int
@@ -157,6 +174,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
     private var av1PendingRecoveryRequestAfterSuccessfulFrame = false
     private var lastObservedVideoFrameIndex: UInt32?
     private var lastAV1DecodeSubmissionContext: AV1DecodeSubmissionContext?
+    private var pendingFrameLatencyTraces: [UInt32: PendingFrameLatencyTrace] = [:]
     private var videoReceiveQueueCapacity = ShadowClientRealtimeSessionDefaults.videoReceiveQueueCapacity
     private var videoDecodeQueueCapacity = ShadowClientRealtimeSessionDefaults.videoDecodeQueueCapacity
     private var videoDecodeQueueConsumerMaxBufferedUnits = ShadowClientRealtimeSessionDefaults.videoDecodeQueueConsumerMaxBufferedUnits
@@ -282,6 +300,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         av1PendingRecoveryRequestAfterSuccessfulFrame = false
         lastObservedVideoFrameIndex = nil
         lastAV1DecodeSubmissionContext = nil
+        pendingFrameLatencyTraces.removeAll(keepingCapacity: false)
         configureQueuePressureProfile(for: resolvedVideoConfiguration)
 
         let initialDynamicRangeMode = negotiatedDynamicRangeMode
@@ -356,6 +375,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         av1PendingRecoveryRequestAfterSuccessfulFrame = false
         lastObservedVideoFrameIndex = nil
         lastAV1DecodeSubmissionContext = nil
+        pendingFrameLatencyTraces.removeAll(keepingCapacity: false)
         await MainActor.run {
             surfaceContext.updateActiveVideoCodec(track.codec)
         }
@@ -475,6 +495,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         av1PendingRecoveryRequestAfterSuccessfulFrame = false
         lastObservedVideoFrameIndex = nil
         lastAV1DecodeSubmissionContext = nil
+        pendingFrameLatencyTraces.removeAll(keepingCapacity: false)
         resetQueuePressureProfile()
         await MainActor.run {
             surfaceContext.reset()
@@ -508,6 +529,11 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 payloadType: payloadType,
                 videoPayloadCandidates: videoPayloadCandidates
             ) { payload, marker in
+                if let frameIndex = ShadowClientMoonlightNVRTPDepacketizer.peekFrameIndex(payload: payload) {
+                    Task { [weak self] in
+                        await self?.recordFramePacketReceive(frameIndex: frameIndex)
+                    }
+                }
                 let enqueueResult = await packetQueue.enqueue(
                     .init(payload: payload, marker: marker)
                 )
@@ -646,6 +672,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     remainingDecodeQueueBacklog: dequeueResult.remainingBufferedCount,
                     decodedFrameIndex: accessUnit.depacketizerMetadata?.frameIndex
                 )
+                if let frameIndex = accessUnit.depacketizerMetadata?.frameIndex {
+                    recordDecodeSubmission(frameIndex: frameIndex)
+                }
                 lastDecodeSubmitUptime = ProcessInfo.processInfo.systemUptime
                 if Self.shouldClearDecoderFailureHistoryOnSuccessfulDecode(
                     now: lastDecodeSubmitUptime,
@@ -828,6 +857,7 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             firstDepacketizerCorruptionUptime = 0
             if let frameIndex = frameMetadata?.frameIndex {
                 lastObservedVideoFrameIndex = frameIndex
+                recordFrameAssembly(frameIndex: frameIndex)
             }
             if codec == .av1,
                ShadowClientMoonlightProtocolPolicy.AV1
@@ -1797,6 +1827,9 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
             currentAppliedHDRFrameState: appliedHDRFrameState,
             decodedFrameIndex: decodedFrameIndex
         )
+        let frameLatencyTrace = decodedFrameIndex.map {
+            recordDecodedFrameOutput(frameIndex: $0, at: now)
+        }
         appliedHDRFrameState = nextAppliedHDRFrameState
         logDecodedFrameMetadataIfNeeded(
             codec: codec,
@@ -1805,7 +1838,8 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         await publishHDRPresentationState(appliedFrameState: nextAppliedHDRFrameState)
         await surfaceContext.frameStore.update(
             pixelBuffer: pixelBuffer,
-            hdrFrameState: nextAppliedHDRFrameState
+            hdrFrameState: nextAppliedHDRFrameState,
+            frameLatencyTrace: frameLatencyTrace
         )
         lastRenderedFramePublishUptime = now
         if !hasPublishedRenderingState {
@@ -2360,6 +2394,54 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         firstDecoderFailureUptime = 0
         av1RecoverableDecoderFailureCount = 0
         firstAV1RecoverableDecoderFailureUptime = 0
+    }
+
+    private func recordFramePacketReceive(
+        frameIndex: UInt32,
+        now: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) {
+        var trace = pendingFrameLatencyTraces[frameIndex] ?? .init()
+        if trace.firstPacketReceiveUptime == nil {
+            trace.firstPacketReceiveUptime = now
+        }
+        pendingFrameLatencyTraces[frameIndex] = trace
+        trimPendingFrameLatencyTraces(keepingRecentFrameIndex: frameIndex)
+    }
+
+    private func recordFrameAssembly(
+        frameIndex: UInt32,
+        now: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) {
+        var trace = pendingFrameLatencyTraces[frameIndex] ?? .init()
+        trace.frameAssemblyUptime = now
+        pendingFrameLatencyTraces[frameIndex] = trace
+        trimPendingFrameLatencyTraces(keepingRecentFrameIndex: frameIndex)
+    }
+
+    private func recordDecodeSubmission(
+        frameIndex: UInt32,
+        now: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) {
+        var trace = pendingFrameLatencyTraces[frameIndex] ?? .init()
+        trace.decodeSubmitUptime = now
+        pendingFrameLatencyTraces[frameIndex] = trace
+        trimPendingFrameLatencyTraces(keepingRecentFrameIndex: frameIndex)
+    }
+
+    private func recordDecodedFrameOutput(
+        frameIndex: UInt32,
+        at now: TimeInterval
+    ) -> ShadowClientRealtimeSessionFrameLatencyTrace {
+        var trace = pendingFrameLatencyTraces.removeValue(forKey: frameIndex) ?? .init()
+        trace.decodeOutputUptime = now
+        trimPendingFrameLatencyTraces(keepingRecentFrameIndex: frameIndex)
+        return trace.finalized(frameIndex: frameIndex)
+    }
+
+    private func trimPendingFrameLatencyTraces(keepingRecentFrameIndex frameIndex: UInt32) {
+        pendingFrameLatencyTraces = pendingFrameLatencyTraces.filter { candidateFrameIndex, _ in
+            frameIndex >= candidateFrameIndex && (frameIndex - candidateFrameIndex) <= 128
+        }
     }
 
     private func publishHDRPresentationState(

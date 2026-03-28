@@ -51,6 +51,31 @@ func realtimeSessionSurfaceContextDerivesFPSFromPresentedFrames() {
     #expect((context.estimatedVideoFPS ?? 0) < 11.5)
 }
 
+@Test("Realtime session surface context publishes frame latency traces at presentation")
+func realtimeSessionSurfaceContextPublishesFrameLatencyTrace() {
+    let context = ShadowClientRealtimeSessionSurfaceContext()
+    let trace = ShadowClientRealtimeSessionFrameLatencyTrace(
+        frameIndex: 144,
+        firstPacketReceiveUptime: 10.0,
+        frameAssemblyUptime: 10.004,
+        decodeSubmitUptime: 10.006,
+        decodeOutputUptime: 10.010
+    )
+
+    context.recordPresentedVideoFrame(
+        frameLatencyTrace: trace,
+        nowUptime: 10.015
+    )
+
+    let publishedTrace = context.latestFrameLatencyTrace
+    #expect(publishedTrace?.frameIndex == 144)
+    #expect(publishedTrace?.receiveToAssemblyMs == 4.0)
+    #expect(publishedTrace?.assemblyToDecodeSubmitMs == 2.0)
+    #expect(publishedTrace?.decodeSubmitToOutputMs == 4.0)
+    #expect(publishedTrace?.decodeOutputToPresentMs == 5.0)
+    #expect(publishedTrace?.receiveToPresentMs == 15.0)
+}
+
 @Test("Realtime session surface context syncs preferred render FPS with session FPS")
 func realtimeSessionSurfaceContextSyncsPreferredRenderFPSWithSessionFPS() {
     let context = ShadowClientRealtimeSessionSurfaceContext()
@@ -197,6 +222,7 @@ func realtimeSessionSurfaceContextAwaitedResetClearsFrameStoreBeforeReturning() 
     let initialSnapshot = await iterator.next()
     #expect(initialSnapshot?.pixelBuffer == nil)
     #expect(initialSnapshot?.hdrFrameState == nil)
+    #expect(initialSnapshot?.frameLatencyTrace == nil)
 
     let pixelBuffer = try makeTestPixelBuffer()
     let frameState = ShadowClientHDRFrameState(
@@ -207,18 +233,21 @@ func realtimeSessionSurfaceContextAwaitedResetClearsFrameStoreBeforeReturning() 
     )
     await context.frameStore.update(
         pixelBuffer: pixelBuffer,
-        hdrFrameState: frameState
+        hdrFrameState: frameState,
+        frameLatencyTrace: .init(frameIndex: 42)
     )
 
     let populatedSnapshot = await iterator.next()
     #expect(populatedSnapshot?.pixelBuffer != nil)
     #expect(populatedSnapshot?.hdrFrameState == frameState)
+    #expect(populatedSnapshot?.frameLatencyTrace?.frameIndex == 42)
 
     await context.resetAwaitingFrameClear()
 
     let clearedSnapshot = await iterator.next()
     #expect(clearedSnapshot?.pixelBuffer == nil)
     #expect(clearedSnapshot?.hdrFrameState == nil)
+    #expect(clearedSnapshot?.frameLatencyTrace == nil)
     #expect(context.renderState == .idle)
 }
 
