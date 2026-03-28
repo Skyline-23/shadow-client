@@ -1760,8 +1760,28 @@ func realtimeRuntimeDecodeConsumerBacklogTightensUnderPressure() {
     )
 
     #expect(relaxed == 16)
-    #expect(pressured == 12)
+    #expect(pressured == 8)
     #expect(pressured < relaxed)
+}
+
+@Test("Realtime runtime trims decode consumer backlog hardest while recovery is pending")
+func realtimeRuntimeDecodeConsumerBacklogTightensDuringPendingRecovery() {
+    let pressured = ShadowClientRealtimeRTSPSessionRuntime.effectiveVideoDecodeQueueConsumerMaxBufferedUnits(
+        base: 16,
+        capacity: 24,
+        recentQueuePressure: true,
+        pendingRecovery: false
+    )
+    let recovering = ShadowClientRealtimeRTSPSessionRuntime.effectiveVideoDecodeQueueConsumerMaxBufferedUnits(
+        base: 16,
+        capacity: 24,
+        recentQueuePressure: true,
+        pendingRecovery: true
+    )
+
+    #expect(pressured == 8)
+    #expect(recovering == 6)
+    #expect(recovering < pressured)
 }
 
 @Test("Realtime runtime uses a tighter late-frame render pacing backlog threshold")
@@ -1770,8 +1790,54 @@ func realtimeRuntimeRenderPacingBacklogThresholdIsTighterThanHalfBuffer() {
         forConsumerMaxBufferedUnits: 16
     )
 
-    #expect(threshold == 7)
+    #expect(threshold == 5)
     #expect(threshold < 8)
+}
+
+@Test("Realtime runtime late-frame drop pressure stays enabled while adaptive pacing remains below session fps")
+func realtimeRuntimeLateFrameDropPressureExtendsThroughAdaptivePacing() {
+    #expect(
+        ShadowClientRealtimeRTSPSessionRuntime.shouldApplyLateFrameDropPressure(
+            decodeQueueBacklog: 5,
+            backlogThreshold: 5,
+            pipelineUnderIngressPressure: false,
+            sessionFPS: 120,
+            targetPacingFPS: 72
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldApplyLateFrameDropPressure(
+            decodeQueueBacklog: 4,
+            backlogThreshold: 5,
+            pipelineUnderIngressPressure: true,
+            sessionFPS: 120,
+            targetPacingFPS: 120
+        )
+    )
+    #expect(
+        !ShadowClientRealtimeRTSPSessionRuntime.shouldApplyLateFrameDropPressure(
+            decodeQueueBacklog: 5,
+            backlogThreshold: 5,
+            pipelineUnderIngressPressure: false,
+            sessionFPS: 120,
+            targetPacingFPS: 120
+        )
+    )
+}
+
+@Test("Realtime runtime queue profile trims decode producer backlog below consumer target")
+func realtimeRuntimeQueuePressureProfileTrimsProducerBacklogBelowConsumerTarget() {
+    let profile = ShadowClientRealtimeRTSPSessionRuntime.queuePressureProfile(
+        for: .init(
+            width: 3_840,
+            height: 2_160,
+            fps: 120,
+            bitrateKbps: 120_000
+        )
+    )
+
+    #expect(profile.decodeQueueProducerTrimToRecentUnits < profile.decodeQueueConsumerMaxBufferedUnits)
+    #expect(profile.decodeQueueProducerTrimToRecentUnits >= ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerTrimToRecentUnits)
 }
 
 @Test("Realtime runtime queue profile probes decode pressure faster for packet-thin streams")
@@ -2673,6 +2739,32 @@ func realtimeRuntimeRenderSubmitPacingAllowsWhenBudgetMet() {
             pacingToleranceRatio: 0.90
         )
     )
+}
+
+@Test("Realtime runtime uses stricter render pacing tolerance for high-refresh pressure")
+func realtimeRuntimeRenderSubmitPacingToleranceTightensForHighRefreshPressure() {
+    let baseline = ShadowClientRealtimeRTSPSessionRuntime.resolvedRenderSubmitPacingToleranceRatio(
+        sessionFPS: 60,
+        recentQueuePressure: false,
+        pendingRecovery: false
+    )
+    let pressuredHighRefresh = ShadowClientRealtimeRTSPSessionRuntime.resolvedRenderSubmitPacingToleranceRatio(
+        sessionFPS: 120,
+        recentQueuePressure: true,
+        pendingRecovery: false
+    )
+    let recovering = ShadowClientRealtimeRTSPSessionRuntime.resolvedRenderSubmitPacingToleranceRatio(
+        sessionFPS: 120,
+        recentQueuePressure: true,
+        pendingRecovery: true
+    )
+
+    #expect(baseline == ShadowClientRealtimeSessionDefaults.videoRenderSubmitPacingToleranceRatio)
+    #expect(
+        pressuredHighRefresh == ShadowClientRealtimeSessionDefaults.videoRenderSubmitPacingPressureToleranceRatio
+    )
+    #expect(recovering == pressuredHighRefresh)
+    #expect(pressuredHighRefresh < baseline)
 }
 
 @Test("Realtime runtime adaptive pacing follows measured ingress cadence")

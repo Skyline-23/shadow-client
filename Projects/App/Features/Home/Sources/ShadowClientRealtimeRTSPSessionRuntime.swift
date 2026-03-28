@@ -1821,24 +1821,34 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         guard let configuration = activeVideoConfiguration else {
             return false
         }
+        let targetPacingFPS = targetRenderPacingFPS(sessionFPS: configuration.fps)
         guard Self.shouldDropRenderSubmitForSessionFPS(
             now: now,
             lastRenderedFramePublishUptime: lastRenderedFramePublishUptime,
-            sessionFPS: targetRenderPacingFPS(sessionFPS: configuration.fps),
-            pacingToleranceRatio: ShadowClientRealtimeSessionDefaults.videoRenderSubmitPacingToleranceRatio
+            sessionFPS: targetPacingFPS,
+            pacingToleranceRatio: Self.resolvedRenderSubmitPacingToleranceRatio(
+                sessionFPS: targetPacingFPS,
+                recentQueuePressure: Self.isRecentQueuePressureSignal(
+                    now: now,
+                    lastSignalUptime: lastVideoQueuePressureSignalUptime,
+                    windowSeconds: ShadowClientRealtimeSessionDefaults.videoQueuePressureRecentSignalWindowSeconds
+                ),
+                pendingRecovery: pendingVideoRecoveryRequest
+            )
         ) else {
             return false
         }
         let renderPacingBacklogThreshold = Self.renderPacingBacklogThreshold(
             forConsumerMaxBufferedUnits: videoDecodeQueueConsumerMaxBufferedUnits
         )
-        guard lastObservedDecodeQueueBacklog >= renderPacingBacklogThreshold else {
-            return false
-        }
-        guard isVideoPipelineUnderIngressPressure(now: now) else {
-            return false
-        }
-        guard !pendingVideoRecoveryRequest else {
+        let pipelineUnderPressure = Self.shouldApplyLateFrameDropPressure(
+            decodeQueueBacklog: lastObservedDecodeQueueBacklog,
+            backlogThreshold: renderPacingBacklogThreshold,
+            pipelineUnderIngressPressure: isVideoPipelineUnderIngressPressure(now: now),
+            sessionFPS: configuration.fps,
+            targetPacingFPS: targetPacingFPS
+        )
+        guard pipelineUnderPressure else {
             return false
         }
 
@@ -1986,10 +1996,44 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                     ShadowClientRealtimeSessionDefaults.videoDecodeQueueConsumerPressureTrimRatio
             ).rounded(.down)
         )
+        if pendingRecovery {
+            let recoveryTrimmed = Int(
+                (
+                    Double(boundedBase) *
+                        ShadowClientRealtimeSessionDefaults.videoDecodeQueueConsumerPendingRecoveryTrimRatio
+                ).rounded(.down)
+            )
+            return min(
+                boundedBase,
+                max(1, min(pressureTrimmed, recoveryTrimmed))
+            )
+        }
         return min(
             boundedBase,
             max(1, pressureTrimmed)
         )
+    }
+
+    static func resolvedRenderSubmitPacingToleranceRatio(
+        sessionFPS: Int,
+        recentQueuePressure: Bool,
+        pendingRecovery: Bool
+    ) -> Double {
+        let normalizedFPS = max(1, sessionFPS)
+        var ratio = ShadowClientRealtimeSessionDefaults.videoRenderSubmitPacingToleranceRatio
+        if normalizedFPS >= ShadowClientRealtimeSessionDefaults.videoRenderSubmitPacingHighRefreshThresholdFPS {
+            ratio = min(
+                ratio,
+                ShadowClientRealtimeSessionDefaults.videoRenderSubmitPacingHighRefreshToleranceRatio
+            )
+        }
+        if recentQueuePressure || pendingRecovery {
+            ratio = min(
+                ratio,
+                ShadowClientRealtimeSessionDefaults.videoRenderSubmitPacingPressureToleranceRatio
+            )
+        }
+        return ratio
     }
 
     static func renderPacingBacklogThreshold(
@@ -2004,6 +2048,24 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
                 ).rounded(.up)
             )
         )
+    }
+
+    static func shouldApplyLateFrameDropPressure(
+        decodeQueueBacklog: Int,
+        backlogThreshold: Int,
+        pipelineUnderIngressPressure: Bool,
+        sessionFPS: Int,
+        targetPacingFPS: Int
+    ) -> Bool {
+        guard decodeQueueBacklog >= max(1, backlogThreshold) else {
+            return false
+        }
+        if pipelineUnderIngressPressure {
+            return true
+        }
+        let normalizedSessionFPS = max(1, sessionFPS)
+        let normalizedTargetPacingFPS = max(1, targetPacingFPS)
+        return normalizedTargetPacingFPS < normalizedSessionFPS
     }
 
     private func updateRuntimeVideoStats(frameBytes: Int) {
@@ -3523,11 +3585,12 @@ public actor ShadowClientRealtimeRTSPSessionRuntime {
         let decodeQueueProducerTrimToRecentUnits = min(
             decodeQueueProducerSheddingHighWatermark,
             max(
-                decodeQueueConsumerMaxBufferedUnits,
-                max(
-                    ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerTrimToRecentUnits,
-                    decodeQueueProducerSheddingHighWatermark -
-                        max(2, decodeQueueProducerSheddingHighWatermark / 4)
+                ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerTrimToRecentUnits,
+                Int(
+                    (
+                        Double(decodeQueueConsumerMaxBufferedUnits) *
+                            ShadowClientRealtimeSessionDefaults.videoDecodeQueueProducerTrimRatio
+                    ).rounded(.up)
                 )
             )
         )
