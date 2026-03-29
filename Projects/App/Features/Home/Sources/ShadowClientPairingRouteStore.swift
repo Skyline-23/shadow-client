@@ -11,8 +11,6 @@ public actor ShadowClientPairingRouteStore {
     private let defaults: UserDefaults
     private var persistentCached: [String: String]
     private var persistentAuthorityCached: [String: String]
-    private var sessionCached: [String: String] = [:]
-    private var sessionAuthorityCached: [String: String] = [:]
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -32,54 +30,22 @@ public actor ShadowClientPairingRouteStore {
         }
     }
 
-    public func persistentPreferredHost(for key: String) -> String? {
+    public func preferredHost(for key: String) -> String? {
         persistentCached[Self.normalizeKey(key)]
     }
 
-    public func setPersistentPreferredHost(_ host: String?, for key: String) {
+    public func setPreferredHost(_ host: String?, for key: String) {
         mutate(&persistentCached, host: host, key: key)
         defaults.set(persistentCached, forKey: DefaultsKeys.persistentPreferredPairHosts)
     }
 
-    public func persistentPreferredAuthorityHost(for key: String) -> String? {
+    public func preferredAuthorityHost(for key: String) -> String? {
         persistentAuthorityCached[Self.normalizeKey(key)]
     }
 
-    public func setPersistentPreferredAuthorityHost(_ host: String?, for key: String) {
+    public func setPreferredAuthorityHost(_ host: String?, for key: String) {
         mutate(&persistentAuthorityCached, host: host, key: key)
         defaults.set(persistentAuthorityCached, forKey: DefaultsKeys.persistentPreferredAuthorityHosts)
-    }
-
-    public func sessionPreferredHost(for key: String) -> String? {
-        sessionCached[Self.normalizeKey(key)]
-    }
-
-    public func setSessionPreferredHost(_ host: String?, for key: String) {
-        mutate(&sessionCached, host: host, key: key)
-    }
-
-    public func sessionPreferredAuthorityHost(for key: String) -> String? {
-        sessionAuthorityCached[Self.normalizeKey(key)]
-    }
-
-    public func setSessionPreferredAuthorityHost(_ host: String?, for key: String) {
-        mutate(&sessionAuthorityCached, host: host, key: key)
-    }
-
-    public func preferredHost(for key: String) -> String? {
-        persistentPreferredHost(for: key)
-    }
-
-    public func setPreferredHost(_ host: String?, for key: String) {
-        setPersistentPreferredHost(host, for: key)
-    }
-
-    public func preferredAuthorityHost(for key: String) -> String? {
-        persistentPreferredAuthorityHost(for: key)
-    }
-
-    public func setPreferredAuthorityHost(_ host: String?, for key: String) {
-        setPersistentPreferredAuthorityHost(host, for: key)
     }
 
     private static func loadPersistentRoutes(from defaults: UserDefaults) -> [String: String] {
