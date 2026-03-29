@@ -9,6 +9,16 @@ struct ShadowClientSendablePixelBuffer: @unchecked Sendable {
     let value: CVPixelBuffer
 }
 
+private extension Data {
+    func readUInt32BE(at offset: Int) -> UInt32 {
+        let b0 = UInt32(self[offset]) << 24
+        let b1 = UInt32(self[offset + 1]) << 16
+        let b2 = UInt32(self[offset + 2]) << 8
+        let b3 = UInt32(self[offset + 3])
+        return b0 | b1 | b2 | b3
+    }
+}
+
 enum ShadowClientRTSPInterleavedClientError: Error, Equatable {
     case invalidURL
     case connectionFailed
@@ -267,7 +277,9 @@ actor ShadowClientRTSPInterleavedClient {
     private let logger = Logger(subsystem: "com.skyline23.shadow-client", category: "RTSP")
     private var connection: NWConnection?
     private var readBuffer = Data()
+    private var encryptedReadBuffer = Data()
     private var cseq = 1
+    private var rtspRequestSequence: UInt32 = 0
     private var sessionHeader: String?
     private var remoteHost: NWEndpoint.Host?
     private var localHost: NWEndpoint.Host?
@@ -292,6 +304,7 @@ actor ShadowClientRTSPInterleavedClient {
     private var negotiatedClientPortBase: UInt16 = ShadowClientRTSPProtocolProfile.clientPortBase
     private var rtspHostHeaderValue: String?
     private var rtspClientVersionHeaderValue = ShadowClientRTSPRequestDefaults.clientVersionHeaderValue
+    private var rtspEncryptionCodec: ShadowClientRTSPEncryptionCodec?
     private var rtspSessionHost: String?
     private var rtspSessionPort: NWEndpoint.Port?
     private var playRecoveryTargets: [String] = ["/"]
@@ -350,7 +363,10 @@ actor ShadowClientRTSPInterleavedClient {
         connection?.cancel()
         connection = nil
         readBuffer.removeAll(keepingCapacity: false)
+        encryptedReadBuffer.removeAll(keepingCapacity: false)
+        encryptedReadBuffer.removeAll(keepingCapacity: false)
         cseq = 1
+        rtspRequestSequence = 0
         sessionHeader = nil
         remoteHost = nil
         localHost = nil
@@ -367,6 +383,7 @@ actor ShadowClientRTSPInterleavedClient {
         negotiatedClientPortBase = defaultClientPortBase
         rtspHostHeaderValue = nil
         rtspClientVersionHeaderValue = ShadowClientRTSPRequestDefaults.clientVersionHeaderValue
+        rtspEncryptionCodec = nil
         rtspSessionHost = nil
         rtspSessionPort = nil
         playRecoveryTargets = ["/"]
@@ -377,6 +394,14 @@ actor ShadowClientRTSPInterleavedClient {
         prioritizeNetworkTraffic = videoConfiguration.prioritizeNetworkTraffic
         await inputChannelGateway.clear()
         lastInteractiveInputEventUptime = 0
+        if Self.isEncryptedRTSPSessionURL(url) {
+            guard let remoteInputKey else {
+                throw ShadowClientRTSPInterleavedClientError.requestFailed(
+                    "Lumen encrypted RTSP session is missing remote input key material."
+                )
+            }
+            rtspEncryptionCodec = try ShadowClientRTSPEncryptionCodec(keyData: remoteInputKey)
+        }
         let normalizedURL = normalizeRTSPURL(url)
         guard let host = normalizedURL.host else {
             throw ShadowClientRTSPInterleavedClientError.invalidURL
@@ -1312,10 +1337,17 @@ actor ShadowClientRTSPInterleavedClient {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             return url
         }
+        if components.scheme?.lowercased() == "rtspenc" {
+            components.scheme = "rtsp"
+        }
         if components.path.isEmpty {
             components.path = "/"
         }
         return components.url ?? url
+    }
+
+    private static func isEncryptedRTSPSessionURL(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "rtspenc"
     }
 
     private func fallbackVideoTrackDescriptor(
@@ -1650,6 +1682,7 @@ actor ShadowClientRTSPInterleavedClient {
         negotiatedClientPortBase = defaultClientPortBase
         rtspHostHeaderValue = nil
         rtspClientVersionHeaderValue = ShadowClientRTSPRequestDefaults.clientVersionHeaderValue
+        rtspEncryptionCodec = nil
         currentServerAppVersion = nil
         lastInteractiveInputEventUptime = 0
     }
@@ -2467,6 +2500,20 @@ actor ShadowClientRTSPInterleavedClient {
         )
         try await send(bytes: requestPayload, over: connection)
 
+        if rtspEncryptionCodec != nil {
+            let response = try await readResponse()
+            logResponse(method: ShadowClientRTSPRequestDefaults.describeMethod, response: response)
+
+            guard (200...299).contains(response.statusCode) else {
+                let bodyText = String(data: response.body, encoding: .utf8) ?? ""
+                throw ShadowClientRTSPInterleavedClientError.requestFailed(
+                    "RTSP DESCRIBE failed (\(response.statusCode)): \(bodyText)"
+                )
+            }
+
+            return response
+        }
+
         let rawResponse = try await readResponseUntilConnectionClose()
         let response = try parseRTSPResponseFromRawData(rawResponse)
         logResponse(method: ShadowClientRTSPRequestDefaults.describeMethod, response: response)
@@ -2898,6 +2945,16 @@ actor ShadowClientRTSPInterleavedClient {
     }
 
     private func send(bytes: Data, over connection: NWConnection) async throws {
+        if let rtspEncryptionCodec {
+            let encrypted = try rtspEncryptionCodec.encryptClientRTSPMessage(
+                bytes,
+                sequence: rtspRequestSequence
+            )
+            rtspRequestSequence &+= 1
+            try await Self.send(bytes: encrypted, over: connection)
+            return
+        }
+
         try await Self.send(bytes: bytes, over: connection)
     }
 
@@ -2916,6 +2973,10 @@ actor ShadowClientRTSPInterleavedClient {
     private func receiveBytes() async throws -> Data {
         guard let connection else {
             throw ShadowClientRTSPInterleavedClientError.connectionClosed
+        }
+
+        if rtspEncryptionCodec != nil {
+            return try await receiveEncryptedRTSPMessage(over: connection)
         }
 
         return try await withThrowingTaskGroup(
@@ -2937,6 +2998,74 @@ actor ShadowClientRTSPInterleavedClient {
             group.cancelAll()
             return result
         }
+    }
+
+    private func receiveEncryptedRTSPMessage(
+        over connection: NWConnection
+    ) async throws -> Data {
+        while true {
+            if let plaintext = try parseEncryptedRTSPMessageIfAvailable() {
+                return plaintext
+            }
+
+            let chunk = try await withThrowingTaskGroup(
+                of: Data.self,
+                returning: Data.self
+            ) { group in
+                group.addTask {
+                    try await Self.receiveBytesWithoutTimeout(over: connection)
+                }
+                group.addTask {
+                    try await Task.sleep(for: ShadowClientRealtimeSessionDefaults.rtspReceiveTimeout)
+                    throw ShadowClientRTSPInterleavedClientError.connectionFailed
+                }
+
+                guard let result = try await group.next() else {
+                    group.cancelAll()
+                    throw ShadowClientRTSPInterleavedClientError.connectionFailed
+                }
+                group.cancelAll()
+                return result
+            }
+
+            guard !chunk.isEmpty else {
+                throw ShadowClientRTSPInterleavedClientError.connectionClosed
+            }
+            encryptedReadBuffer.append(chunk)
+        }
+    }
+
+    private func parseEncryptedRTSPMessageIfAvailable() throws -> Data? {
+        guard let rtspEncryptionCodec else {
+            return nil
+        }
+
+        let headerLength = ShadowClientRTSPEncryptionCodec.headerLength
+        guard encryptedReadBuffer.count >= headerLength else {
+            return nil
+        }
+
+        let typeAndLength = encryptedReadBuffer.readUInt32BE(at: 0)
+        guard (typeAndLength & ShadowClientRTSPEncryptionCodec.encryptedMessageTypeBit) != 0 else {
+            throw ShadowClientRTSPInterleavedClientError.invalidResponse
+        }
+
+        let ciphertextLength = Int(typeAndLength & ~ShadowClientRTSPEncryptionCodec.encryptedMessageTypeBit)
+        let messageLength = headerLength + ciphertextLength
+        guard encryptedReadBuffer.count >= messageLength else {
+            return nil
+        }
+
+        let sequence = encryptedReadBuffer.readUInt32BE(at: 4)
+        let tag = Data(encryptedReadBuffer[8..<headerLength])
+        let ciphertext = Data(encryptedReadBuffer[headerLength..<messageLength])
+        encryptedReadBuffer.removeSubrange(0..<messageLength)
+
+        return try rtspEncryptionCodec.decryptHostRTSPMessage(
+            sequence: sequence,
+            tag: tag,
+            ciphertext: ciphertext
+        )
     }
 
     private static func receiveBytesWithoutTimeout(

@@ -5,6 +5,7 @@ import ShadowClientFeatureConnection
 enum ShadowClientRTSPProtocolProfile {
     static let rtspSchemePrefix = "rtsp://"
     static let rtspsSchemePrefix = "rtsps://"
+    static let rtspEncryptedSchemePrefix = "rtspenc://"
 
     static let defaultPort = 554
     static let fallbackVideoPayloadType = 96
@@ -90,7 +91,9 @@ enum ShadowClientRTSPProtocolProfile {
 
     static func hasAbsoluteRTSPScheme(_ value: String) -> Bool {
         let lowered = value.lowercased()
-        return lowered.hasPrefix(rtspSchemePrefix) || lowered.hasPrefix(rtspsSchemePrefix)
+        return lowered.hasPrefix(rtspSchemePrefix) ||
+            lowered.hasPrefix(rtspsSchemePrefix) ||
+            lowered.hasPrefix(rtspEncryptedSchemePrefix)
     }
 
     static func withRTSPSchemeIfMissing(_ value: String) -> String {
