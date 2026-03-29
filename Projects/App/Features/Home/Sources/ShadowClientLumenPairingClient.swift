@@ -80,16 +80,61 @@ public protocol ShadowClientLumenPairingClient: Sendable {
     ) async throws -> ShadowClientLumenPairingSession
 }
 
+protocol ShadowClientLumenPairingHTTPTransport: Sendable {
+    func request(
+        url: URL,
+        requestData: Data,
+        pinnedServerCertificateDER: Data?,
+        clientCertificates: [SecCertificate]?,
+        clientCertificateIdentity: SecIdentity?,
+        timeout: TimeInterval
+    ) async throws -> ShadowClientGameStreamHTTPTransport.HTTPSResponse
+}
+
+private struct NativeShadowClientLumenPairingHTTPTransport: ShadowClientLumenPairingHTTPTransport {
+    func request(
+        url: URL,
+        requestData: Data,
+        pinnedServerCertificateDER: Data?,
+        clientCertificates: [SecCertificate]?,
+        clientCertificateIdentity: SecIdentity?,
+        timeout: TimeInterval
+    ) async throws -> ShadowClientGameStreamHTTPTransport.HTTPSResponse {
+        try await ShadowClientGameStreamHTTPTransport.requestPinnedHTTPSResponse(
+            url: url,
+            requestData: requestData,
+            pinnedServerCertificateDER: pinnedServerCertificateDER,
+            clientCertificates: clientCertificates,
+            clientCertificateIdentity: clientCertificateIdentity,
+            timeout: timeout
+        )
+    }
+}
+
 public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClient {
     private let identityStore: ShadowClientPairingIdentityStore
     private let pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
+    private let transport: any ShadowClientLumenPairingHTTPTransport
 
     public init(
         identityStore: ShadowClientPairingIdentityStore = .shared,
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore = .shared
     ) {
+        self.init(
+            identityStore: identityStore,
+            pinnedCertificateStore: pinnedCertificateStore,
+            transport: NativeShadowClientLumenPairingHTTPTransport()
+        )
+    }
+
+    init(
+        identityStore: ShadowClientPairingIdentityStore,
+        pinnedCertificateStore: ShadowClientPinnedHostCertificateStore,
+        transport: any ShadowClientLumenPairingHTTPTransport
+    ) {
         self.identityStore = identityStore
         self.pinnedCertificateStore = pinnedCertificateStore
+        self.transport = transport
     }
 
     public func startPairing(
@@ -162,13 +207,6 @@ public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClie
             forHost: endpoint.host,
             httpsPort: httpsPort
         )
-        let delegate = ShadowClientLumenPairingURLSessionDelegate(
-            pinnedServerCertificateDER: pinnedCertificateDER
-        )
-        let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
-        defer {
-            session.invalidateAndCancel()
-        }
 
         var components = URLComponents()
         components.scheme = ShadowClientGameStreamNetworkDefaults.httpsScheme
@@ -180,40 +218,41 @@ public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClie
             throw ShadowClientGameStreamError.invalidURL
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.timeoutInterval = ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
-        if let body {
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONEncoder().encode(body)
-        }
+        let encodedBody = try body.map { try JSONEncoder().encode($0) }
+        let requestData = ShadowClientGameStreamHTTPTransport.makeHTTPRequestData(
+            url: url,
+            host: endpoint.host,
+            method: method,
+            headers: encodedBody == nil ? [:] : ["Content-Type": "application/json"],
+            body: encodedBody
+        )
+        let clientCertificates = try? await identityStore.tlsClientCertificates()
+        let clientCertificateIdentity = try? await identityStore.tlsClientIdentity()
 
+        let response: ShadowClientGameStreamHTTPTransport.HTTPSResponse
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw ShadowClientGameStreamError.invalidResponse
-            }
-            guard (200 ... 299).contains(httpResponse.statusCode) else {
-                throw ShadowClientGameStreamError.responseRejected(
-                    code: httpResponse.statusCode,
-                    message: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-                )
-            }
-
-            let pairingSession = try Self.parsePairingSession(data: data)
-            await persistPresentedServerTrust(
-                host: endpoint.host,
-                httpsPort: httpsPort,
-                serverUniqueID: pairingSession.serverUniqueID,
-                certificateDER: delegate.presentedLeafCertificateDER
+            response = try await transport.request(
+                url: url,
+                requestData: requestData,
+                pinnedServerCertificateDER: pinnedCertificateDER,
+                clientCertificates: clientCertificates,
+                clientCertificateIdentity: clientCertificateIdentity,
+                timeout: ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
             )
-            return pairingSession
+        } catch let error as ShadowClientGameStreamError {
+            throw error
         } catch {
-            throw ShadowClientGameStreamHTTPTransport.requestFailureError(
-                error,
-                tlsFailure: delegate.tlsFailure
-            )
+            throw ShadowClientGameStreamHTTPTransport.requestFailureError(error)
         }
+
+        let pairingSession = try Self.parsePairingSession(data: response.body)
+        await persistPresentedServerTrust(
+            host: endpoint.host,
+            httpsPort: httpsPort,
+            serverUniqueID: pairingSession.serverUniqueID,
+            certificateDER: response.presentedLeafCertificateDER
+        )
+        return pairingSession
     }
 
     private func persistPresentedServerTrust(
@@ -376,79 +415,5 @@ private struct LumenStartPairingPayload: Encodable {
         case platform
         case clientID = "clientId"
         case clientCertificate
-    }
-}
-
-private final class ShadowClientLumenPairingURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
-    private let pinnedServerCertificateDER: Data?
-    private let lock = NSLock()
-    private var recordedTLSFailure: ShadowClientGameStreamTLSFailure?
-    private var recordedPresentedLeafCertificateDER: Data?
-
-    init(pinnedServerCertificateDER: Data?) {
-        self.pinnedServerCertificateDER = pinnedServerCertificateDER
-        super.init()
-    }
-
-    var tlsFailure: ShadowClientGameStreamTLSFailure? {
-        lock.lock()
-        defer { lock.unlock() }
-        return recordedTLSFailure
-    }
-
-    var presentedLeafCertificateDER: Data? {
-        lock.lock()
-        defer { lock.unlock() }
-        return recordedPresentedLeafCertificateDER
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        handle(challenge: challenge, completionHandler: completionHandler)
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        handle(challenge: challenge, completionHandler: completionHandler)
-    }
-
-    private func handle(
-        challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              let serverTrust = challenge.protectionSpace.serverTrust,
-              let certificateChain = SecTrustCopyCertificateChain(serverTrust) as? [SecCertificate],
-              let leafCertificate = certificateChain.first
-        else {
-            completionHandler(.performDefaultHandling, nil)
-            return
-        }
-
-        let leafDER = SecCertificateCopyData(leafCertificate) as Data
-        lock.lock()
-        recordedPresentedLeafCertificateDER = leafDER
-        lock.unlock()
-
-        if let pinnedServerCertificateDER, leafDER != pinnedServerCertificateDER {
-            recordTLSFailure(.serverCertificateMismatch)
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
-
-        completionHandler(.useCredential, URLCredential(trust: serverTrust))
-    }
-
-    private func recordTLSFailure(_ failure: ShadowClientGameStreamTLSFailure) {
-        lock.lock()
-        recordedTLSFailure = failure
-        lock.unlock()
     }
 }

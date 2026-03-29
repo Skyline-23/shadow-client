@@ -72,6 +72,41 @@ func httpRequestBuilderIncludesMethodHeadersAndBodyLength() {
     #expect(requestText.hasSuffix("\r\n\r\nhello"))
 }
 
+@Test("HTTP response metadata parser extracts status code and reason phrase")
+func httpResponseMetadataParserExtractsStatusCodeAndReasonPhrase() throws {
+    let response = Data(
+        """
+        HTTP/1.1 404 Not Found\r
+        Content-Length: 2\r
+        \r
+        {}
+        """.utf8
+    )
+
+    let metadata = try ShadowClientGameStreamHTTPTransport.parseHTTPResponseMetadata(
+        from: response
+    )
+
+    #expect(
+        metadata == .init(statusCode: 404, reasonPhrase: "Not Found")
+    )
+}
+
+@Test("HTTP response metadata parser rejects malformed status lines")
+func httpResponseMetadataParserRejectsMalformedStatusLines() {
+    let response = Data(
+        """
+        not-http\r
+        Content-Length: 0\r
+        \r
+        """.utf8
+    )
+
+    #expect(throws: ShadowClientGameStreamError.invalidResponse) {
+        try ShadowClientGameStreamHTTPTransport.parseHTTPResponseMetadata(from: response)
+    }
+}
+
 @Test("Launch parameter builder includes Lumen virtual display request when enabled")
 func launchParameterBuilderIncludesLumenVirtualDisplayRequest() {
     let parameters = NativeGameStreamControlClient.makeLaunchParameters(

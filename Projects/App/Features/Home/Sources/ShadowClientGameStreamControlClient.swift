@@ -174,6 +174,19 @@ public enum ShadowClientGameStreamControlError: Error, Equatable, Sendable {
     case malformedResponse
 }
 
+extension ShadowClientGameStreamHTTPTransport {
+    struct HTTPSResponse: Sendable {
+        let statusCode: Int
+        let body: Data
+        let presentedLeafCertificateDER: Data?
+    }
+
+    struct HTTPResponseMetadata: Equatable, Sendable {
+        let statusCode: Int
+        let reasonPhrase: String
+    }
+}
+
 extension ShadowClientGameStreamControlError: LocalizedError {
     public var errorDescription: String? {
         switch self {
@@ -1515,7 +1528,30 @@ enum ShadowClientGameStreamHTTPTransport {
         guard let host = url.host else {
             throw ShadowClientGameStreamError.invalidURL
         }
-        return try await ShadowClientSecureHTTPStreamTransport.requestData(
+        let response = try await ShadowClientSecureHTTPStreamTransport.requestResponse(
+            url: url,
+            host: host,
+            requestData: requestData,
+            pinnedServerCertificateDER: pinnedServerCertificateDER,
+            clientCertificates: clientCertificates,
+            clientCertificateIdentity: clientCertificateIdentity,
+            timeout: timeout
+        )
+        return response.body
+    }
+
+    static func requestPinnedHTTPSResponse(
+        url: URL,
+        requestData: Data,
+        pinnedServerCertificateDER: Data?,
+        clientCertificates: [SecCertificate]?,
+        clientCertificateIdentity: SecIdentity?,
+        timeout: TimeInterval
+    ) async throws -> HTTPSResponse {
+        guard let host = url.host else {
+            throw ShadowClientGameStreamError.invalidURL
+        }
+        return try await ShadowClientSecureHTTPStreamTransport.requestResponse(
             url: url,
             host: host,
             requestData: requestData,
@@ -1588,6 +1624,38 @@ enum ShadowClientGameStreamHTTPTransport {
             throw ShadowClientGameStreamError.invalidResponse
         }
         return responseData[separatorRange.upperBound...]
+    }
+
+    static func parseHTTPResponseMetadata(
+        from responseData: Data
+    ) throws -> HTTPResponseMetadata {
+        guard let separatorRange = responseData.range(of: Data("\r\n\r\n".utf8)) else {
+            throw ShadowClientGameStreamError.invalidResponse
+        }
+        let headerData = responseData[..<separatorRange.lowerBound]
+        guard
+            let headerText = String(data: headerData, encoding: .utf8),
+            let statusLine = headerText.components(separatedBy: "\r\n").first
+        else {
+            throw ShadowClientGameStreamError.invalidResponse
+        }
+
+        let parts = statusLine.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+        guard parts.count >= 2, let statusCode = Int(parts[1]) else {
+            throw ShadowClientGameStreamError.invalidResponse
+        }
+
+        let reasonPhrase: String
+        if parts.count >= 3 {
+            let parsedReason = String(parts[2]).trimmingCharacters(in: .whitespacesAndNewlines)
+            reasonPhrase = parsedReason.isEmpty
+                ? HTTPURLResponse.localizedString(forStatusCode: statusCode)
+                : parsedReason
+        } else {
+            reasonPhrase = HTTPURLResponse.localizedString(forStatusCode: statusCode)
+        }
+
+        return .init(statusCode: statusCode, reasonPhrase: reasonPhrase)
     }
 
     private static func waitForReady(
@@ -1784,7 +1852,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
 
     private var readStream: CFReadStream?
     private var writeStream: CFWriteStream?
-    private var continuation: CheckedContinuation<Data, Error>?
+    private var continuation: CheckedContinuation<ShadowClientGameStreamHTTPTransport.HTTPSResponse, Error>?
     private var timeoutWorkItem: DispatchWorkItem?
     private var responseData = Data()
     private var expectedResponseBodyLength: Int?
@@ -1793,6 +1861,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
     private var readOpen = false
     private var writeOpen = false
     private var peerValidated = false
+    private var presentedLeafCertificateDER: Data?
     private var completed = false
     private var timeoutStage = "stream open"
 
@@ -1823,6 +1892,27 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         clientCertificateIdentity: SecIdentity?,
         timeout: TimeInterval
     ) async throws -> Data {
+        let response = try await requestResponse(
+            url: url,
+            host: host,
+            requestData: requestData,
+            pinnedServerCertificateDER: pinnedServerCertificateDER,
+            clientCertificates: clientCertificates,
+            clientCertificateIdentity: clientCertificateIdentity,
+            timeout: timeout
+        )
+        return response.body
+    }
+
+    static func requestResponse(
+        url: URL,
+        host: String,
+        requestData: Data,
+        pinnedServerCertificateDER: Data?,
+        clientCertificates: [SecCertificate]?,
+        clientCertificateIdentity: SecIdentity?,
+        timeout: TimeInterval
+    ) async throws -> ShadowClientGameStreamHTTPTransport.HTTPSResponse {
         let transport = ShadowClientSecureHTTPStreamTransport(
             url: url,
             host: host,
@@ -1859,8 +1949,10 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         return xml
     }
 
-    private func start() async throws -> Data {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
+    private func start() async throws -> ShadowClientGameStreamHTTPTransport.HTTPSResponse {
+        try await withCheckedThrowingContinuation { (
+            continuation: CheckedContinuation<ShadowClientGameStreamHTTPTransport.HTTPSResponse, Error>
+        ) in
             queue.async {
                 self.continuation = continuation
                 do {
@@ -2036,6 +2128,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         }
 
         let presentedDER = SecCertificateCopyData(leaf) as Data
+        presentedLeafCertificateDER = presentedDER
         if let pinnedServerCertificateDER, presentedDER != pinnedServerCertificateDER {
             finish(.failure(ShadowClientGameStreamError.responseRejected(code: 401, message: "Server certificate mismatch")))
             return false
@@ -2166,8 +2259,26 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         guard !responseData.isEmpty else { return }
 
         do {
+            let metadata = try ShadowClientGameStreamHTTPTransport.parseHTTPResponseMetadata(
+                from: responseData
+            )
             let body = try ShadowClientGameStreamHTTPTransport.extractHTTPBody(from: responseData)
-            finish(.success(body))
+            guard (200 ... 299).contains(metadata.statusCode) else {
+                finish(.failure(
+                    ShadowClientGameStreamError.responseRejected(
+                        code: metadata.statusCode,
+                        message: metadata.reasonPhrase
+                    )
+                ))
+                return
+            }
+            finish(.success(
+                .init(
+                    statusCode: metadata.statusCode,
+                    body: body,
+                    presentedLeafCertificateDER: presentedLeafCertificateDER
+                )
+            ))
         } catch {
             finish(.failure(error))
         }
@@ -2189,7 +2300,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         return nil
     }
 
-    private func finish(_ result: Result<Data, Error>) {
+    private func finish(_ result: Result<ShadowClientGameStreamHTTPTransport.HTTPSResponse, Error>) {
         guard !completed else { return }
         completed = true
 
