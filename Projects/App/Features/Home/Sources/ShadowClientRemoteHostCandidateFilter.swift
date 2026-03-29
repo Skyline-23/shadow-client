@@ -15,7 +15,7 @@ enum ShadowClientRemoteHostCandidateFilter {
         }
 
         var seen: Set<String> = []
-        return candidates.compactMap { candidate in
+        let normalizedCandidates: [String] = candidates.compactMap { candidate in
             let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
                 return nil
@@ -27,16 +27,20 @@ enum ShadowClientRemoteHostCandidateFilter {
             }
 
             guard !isLoopbackHost(normalized),
-                  !isLinkLocalHost(normalized)
+                  seen.insert(normalized).inserted
             else {
                 return nil
             }
 
-            guard seen.insert(normalized).inserted else {
-                return nil
-            }
             return normalized
         }
+
+        let routableCandidates = normalizedCandidates.filter { !isLinkLocalHost($0) }
+        if !routableCandidates.isEmpty {
+            return routableCandidates
+        }
+
+        return normalizedCandidates
     }
 
     private static func normalize(candidate: String) -> String {

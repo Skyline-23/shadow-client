@@ -45,3 +45,16 @@ func remoteHostCandidateFilterPreservesExplicitDefaultLumenServicePorts() {
 
     #expect(candidates == ["dual-lumen.example.invalid:47984", "dual-lumen.example.invalid:48984"])
 }
+
+@Test("Remote host candidate filter keeps link-local routes when they are the only discovered option")
+func remoteHostCandidateFilterKeepsLinkLocalRoutesWhenNoRoutableCandidatesExist() {
+    let candidates = ShadowClientRemoteHostCandidateFilter.filteredCandidates(
+        discoveredHosts: [
+            "169.254.57.109:48984",
+        ],
+        manualHost: nil,
+        localInterfaceHosts: []
+    )
+
+    #expect(candidates == ["169.254.57.109:48984"])
+}
