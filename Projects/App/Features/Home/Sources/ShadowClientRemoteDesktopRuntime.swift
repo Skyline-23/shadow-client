@@ -4385,6 +4385,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     ) -> String {
         let base = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = base.lowercased()
+        let transportFailureBase = userFacingTransportFailureMessage(normalizedError: normalized)
         var hints: [String] = []
 
         if shouldRetryCodecFallback(connectError: error),
@@ -4410,11 +4411,56 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         guard !hints.isEmpty else {
+            if let transportFailureBase {
+                return transportFailureBase
+            }
             return base
         }
 
-        let resolvedBase = base.isEmpty ? "Remote session launch failed." : base
+        let resolvedBase = transportFailureBase ??
+            (base.isEmpty ? "Remote session launch failed." : base)
         return ([resolvedBase] + hints).joined(separator: "\n")
+    }
+
+    private static func userFacingTransportFailureMessage(
+        normalizedError: String
+    ) -> String? {
+        guard !normalizedError.isEmpty else {
+            return nil
+        }
+
+        if normalizedError.contains("lumen transport requires negotiated session id ping support") ||
+            normalizedError.contains("lumen transport requires encrypted control stream v2 support")
+        {
+            return "Remote session startup failed during encrypted transport negotiation."
+        }
+
+        if normalizedError.contains("rtsp describe failed") ||
+            normalizedError.contains("rtsp track parse failed")
+        {
+            return "Remote session startup failed while reading the host stream description."
+        }
+
+        if normalizedError.contains("rtsp audio setup failed") ||
+            normalizedError.contains("rtsp video setup failed") ||
+            normalizedError.contains("rtsp control setup failed")
+        {
+            return "Remote session startup failed while negotiating stream channels."
+        }
+
+        if normalizedError.contains("rtsp announce failed") {
+            return "Remote session startup failed while preparing stream parameters."
+        }
+
+        if normalizedError.contains("rtsp play failed") {
+            return "Remote session startup failed while starting playback."
+        }
+
+        if normalizedError.contains("could not connect to remote session") {
+            return "Remote session startup failed before media playback began."
+        }
+
+        return nil
     }
 
     private static func isLikelyYUV444CompatibilityFailure(normalizedError: String) -> Bool {
