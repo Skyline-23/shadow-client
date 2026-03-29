@@ -850,6 +850,9 @@ actor ShadowClientRTSPInterleavedClient {
         let effectiveEncryptionRequestedFlags = encryptionSupportedFlags == 0 ?
             encryptionRequestedFlags :
             (encryptionRequestedFlags & encryptionSupportedFlags)
+        logger.notice(
+            "RTSP transport flags supported=\(encryptionSupportedFlags, privacy: .public) requested=\(encryptionRequestedFlags, privacy: .public) effective=\(effectiveEncryptionRequestedFlags, privacy: .public) audio-ping=\(self.audioPingPayload != nil, privacy: .public) video-ping=\(self.videoPingPayload != nil, privacy: .public) control-connect=\(parsedControlConnectData != nil, privacy: .public) remote-key=\(remoteInputKey != nil, privacy: .public) remote-key-id=\(remoteInputKeyID != nil, privacy: .public)"
+        )
         let handshakeNegotiation = ShadowClientHostHandshakeNegotiation(
             audioPingPayload: audioPingPayload,
             videoPingPayload: videoPingPayload,
@@ -859,11 +862,16 @@ actor ShadowClientRTSPInterleavedClient {
             supportsEncryptedControlChannelV2: ShadowClientHostSessionDefaults.supportsEncryptedControlChannelV2 && remoteInputKey != nil,
             supportsEncryptedAudioTransport: remoteInputKey != nil && remoteInputKeyID != nil
         )
+        logger.notice(
+            "RTSP transport handshake session-id-v1=\(handshakeNegotiation.supportsSessionIdentifierV1, privacy: .public) control-encrypted=\(handshakeNegotiation.controlChannelEncryptionEnabled, privacy: .public) audio-encrypted=\(handshakeNegotiation.audioEncryptionEnabled, privacy: .public)"
+        )
+        logger.notice("RTSP transport resolve start")
         let lumenTransportNegotiation = try ShadowClientLumenControlTransportNegotiation.resolve(
             handshakeNegotiation: handshakeNegotiation,
             remoteInputKey: remoteInputKey,
             remoteInputKeyID: remoteInputKeyID
         )
+        logger.notice("RTSP transport resolve ok")
         useSessionIdentifierV1 = true
         controlChannelMode = lumenTransportNegotiation.controlChannelMode
         audioEncryptionConfiguration = lumenTransportNegotiation.audioEncryptionConfiguration
@@ -871,11 +879,16 @@ actor ShadowClientRTSPInterleavedClient {
             "RTSP negotiation session-id-v1=\(handshakeNegotiation.supportsSessionIdentifierV1, privacy: .public) ml-flags=\(handshakeNegotiation.moonlightFeatureFlags, privacy: .public) ss-feature-flags=\(hostFeatureFlags, privacy: .public) encryption-supported=\(encryptionSupportedFlags, privacy: .public) encryption-requested=\(encryptionRequestedFlags, privacy: .public) encryption-enabled=\(handshakeNegotiation.encryptionEnabledFlags, privacy: .public) control-mode=\(lumenTransportNegotiation.controlModeLabel, privacy: .public) audio-mode=\(lumenTransportNegotiation.audioEncryptionLabel, privacy: .public)"
         )
 
+        logger.notice("RTSP display characteristics resolve start")
         let clientDisplayCharacteristics = await ShadowClientLumenClientDisplayCharacteristicsResolver.current(
             hdrEnabled: videoConfiguration.enableHDR,
             scalePercent: videoConfiguration.displayScalePercent,
             hiDPIEnabled: videoConfiguration.requestHiDPI
         )
+        logger.notice(
+            "RTSP display characteristics resolve ok gamut=\(clientDisplayCharacteristics.gamut.rawValue, privacy: .public) transfer=\(clientDisplayCharacteristics.transfer.rawValue, privacy: .public) frame-gated=\(clientDisplayCharacteristics.supportsFrameGatedHDR, privacy: .public) overlay=\(clientDisplayCharacteristics.supportsHDRTileOverlay, privacy: .public) metadata=\(clientDisplayCharacteristics.supportsPerFrameHDRMetadata, privacy: .public)"
+        )
+        logger.notice("RTSP ANNOUNCE payload build start")
         let announcePayload = ShadowClientRTSPAnnouncePayloadBuilder.build(
             hostAddress: host,
             videoConfiguration: videoConfiguration,
@@ -885,6 +898,7 @@ actor ShadowClientRTSPInterleavedClient {
             encryptionEnabledFlags: handshakeNegotiation.encryptionEnabledFlags,
             clientDisplayCharacteristics: clientDisplayCharacteristics
         )
+        logger.notice("RTSP ANNOUNCE payload build ok bytes=\(announcePayload.count, privacy: .public)")
         let announceTargets = announceURLCandidates(
             sessionURL: normalizedURL.absoluteString,
             preferredTarget: useModernControlStreamIdentifier ? preferredControlStreamPath : "streamid=video"
@@ -1556,27 +1570,27 @@ actor ShadowClientRTSPInterleavedClient {
     private func parseHostFeatureFlags(from sdp: String) -> UInt32 {
         parseHostUIntAttribute(
             from: sdp,
-            prefix: ShadowClientHostHandshakeProfile.featureFlagsAttributePrefix
+            prefixes: ShadowClientHostHandshakeProfile.featureFlagsAttributePrefixes
         ) ?? 0
     }
 
     private func parseHostEncryptionSupportedFlags(from sdp: String) -> UInt32 {
         parseHostUIntAttribute(
             from: sdp,
-            prefix: ShadowClientHostHandshakeProfile.encryptionSupportedAttributePrefix
+            prefixes: ShadowClientHostHandshakeProfile.encryptionSupportedAttributePrefixes
         ) ?? 0
     }
 
     private func parseHostEncryptionRequestedFlags(from sdp: String) -> UInt32 {
         parseHostUIntAttribute(
             from: sdp,
-            prefix: ShadowClientHostHandshakeProfile.encryptionRequestedAttributePrefix
+            prefixes: ShadowClientHostHandshakeProfile.encryptionRequestedAttributePrefixes
         ) ?? ShadowClientHostHandshakeProfile.encryptionDisabled
     }
 
     private func parseHostUIntAttribute(
         from sdp: String,
-        prefix: String
+        prefixes: [String]
     ) -> UInt32? {
         let lines = sdp
             .components(separatedBy: .newlines)
@@ -1585,13 +1599,15 @@ actor ShadowClientRTSPInterleavedClient {
 
         for line in lines {
             let lower = line.lowercased()
-            guard let range = lower.range(of: prefix) else {
-                continue
-            }
+            for prefix in prefixes {
+                guard let range = lower.range(of: prefix) else {
+                    continue
+                }
 
-            let rawValue = line[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
-            if let parsed = UInt32(rawValue) {
-                return parsed
+                let rawValue = line[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+                if let parsed = UInt32(rawValue) {
+                    return parsed
+                }
             }
         }
 

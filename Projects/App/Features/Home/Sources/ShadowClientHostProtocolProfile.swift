@@ -61,9 +61,18 @@ enum ShadowClientHostHandshakeProfile {
 
     static let sunshineEncryptionControlV2: UInt32 = 0x01
     static let sunshineEncryptionAudio: UInt32 = 0x04
-    static let featureFlagsAttributePrefix = "x-ss-general.featureflags:"
-    static let encryptionSupportedAttributePrefix = "x-ss-general.encryptionsupported:"
-    static let encryptionRequestedAttributePrefix = "x-ss-general.encryptionrequested:"
+    static let featureFlagsAttributePrefixes = [
+        "x-shadow-general.featureflags:",
+        "x-ss-general.featureflags:",
+    ]
+    static let encryptionSupportedAttributePrefixes = [
+        "x-shadow-general.encryptionsupported:",
+        "x-ss-general.encryptionsupported:",
+    ]
+    static let encryptionRequestedAttributePrefixes = [
+        "x-shadow-general.encryptionrequested:",
+        "x-ss-general.encryptionrequested:",
+    ]
 }
 
 enum ShadowClientHostControlMessageProfile {
