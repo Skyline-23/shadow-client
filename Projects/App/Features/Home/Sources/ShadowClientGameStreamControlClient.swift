@@ -1658,6 +1658,17 @@ enum ShadowClientGameStreamHTTPTransport {
         return .init(statusCode: statusCode, reasonPhrase: reasonPhrase)
     }
 
+    static func isHTTPResponseComplete(
+        bodyLength: Int,
+        expectedResponseBodyLength: Int?,
+        reachedStreamEnd: Bool
+    ) -> Bool {
+        if let expectedResponseBodyLength {
+            return bodyLength >= expectedResponseBodyLength
+        }
+        return reachedStreamEnd
+    }
+
     private static func waitForReady(
         _ connection: NWConnection,
         timeout: TimeInterval
@@ -2227,7 +2238,6 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
     }
 
     private func maybeCompleteResponse() {
-        guard requestOffset >= requestData.count else { return }
         guard !responseData.isEmpty else { return }
 
         if headerTerminatorUpperBound == nil,
@@ -2244,18 +2254,20 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
             return
         }
 
-        if let expectedResponseBodyLength {
-            let bodyLength = responseData.count - headerTerminatorUpperBound
-            guard bodyLength >= expectedResponseBodyLength else {
-                return
-            }
+        let bodyLength = responseData.count - headerTerminatorUpperBound
+        let reachedStreamEnd = readStream.map { CFReadStreamGetStatus($0) == .atEnd } ?? false
+        guard ShadowClientGameStreamHTTPTransport.isHTTPResponseComplete(
+            bodyLength: bodyLength,
+            expectedResponseBodyLength: expectedResponseBodyLength,
+            reachedStreamEnd: reachedStreamEnd
+        ) else {
+            return
         }
 
         completeIfPossible()
     }
 
     private func completeIfPossible() {
-        guard requestOffset >= requestData.count else { return }
         guard !responseData.isEmpty else { return }
 
         do {

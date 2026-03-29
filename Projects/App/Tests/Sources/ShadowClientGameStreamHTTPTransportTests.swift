@@ -107,6 +107,42 @@ func httpResponseMetadataParserRejectsMalformedStatusLines() {
     }
 }
 
+@Test("HTTP response completion accepts declared body lengths without waiting for stream end")
+func httpResponseCompletionAcceptsDeclaredBodyLengthsWithoutWaitingForStreamEnd() {
+    #expect(
+        ShadowClientGameStreamHTTPTransport.isHTTPResponseComplete(
+            bodyLength: 8,
+            expectedResponseBodyLength: 8,
+            reachedStreamEnd: false
+        )
+    )
+    #expect(
+        !ShadowClientGameStreamHTTPTransport.isHTTPResponseComplete(
+            bodyLength: 7,
+            expectedResponseBodyLength: 8,
+            reachedStreamEnd: true
+        )
+    )
+}
+
+@Test("HTTP response completion accepts stream end when content length is absent")
+func httpResponseCompletionAcceptsStreamEndWithoutContentLength() {
+    #expect(
+        ShadowClientGameStreamHTTPTransport.isHTTPResponseComplete(
+            bodyLength: 0,
+            expectedResponseBodyLength: nil,
+            reachedStreamEnd: true
+        )
+    )
+    #expect(
+        !ShadowClientGameStreamHTTPTransport.isHTTPResponseComplete(
+            bodyLength: 1024,
+            expectedResponseBodyLength: nil,
+            reachedStreamEnd: false
+        )
+    )
+}
+
 @Test("Launch parameter builder includes Lumen virtual display request when enabled")
 func launchParameterBuilderIncludesLumenVirtualDisplayRequest() {
     let parameters = NativeGameStreamControlClient.makeLaunchParameters(
