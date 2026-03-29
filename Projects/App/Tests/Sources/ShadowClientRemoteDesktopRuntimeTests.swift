@@ -315,6 +315,54 @@ func metadataClientFallsBackToHTTPSWhenUnpinnedHTTPServerInfoFails() async throw
     )
 }
 
+@Test("Metadata client synthesizes an unpaired host when HTTP serverinfo is refused and HTTPS serverinfo returns 404")
+func metadataClientSynthesizesUnpairedHostWhenLegacyServerInfoIsMissing() async throws {
+    let defaultsSuite = "shadow-client.metadata.serverinfo.pairing-only.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let transport = ScriptedRequestTransport(
+        script: [
+            .init(
+                scheme: "http",
+                command: "serverinfo",
+                expectedPort: 48989,
+                result: .failure(.requestFailed("The operation couldn’t be completed. (Network.NWError error 61 - Connection refused)"))
+            ),
+            .init(
+                scheme: "https",
+                command: "serverinfo",
+                expectedPort: 48984,
+                result: .failure(.responseRejected(code: 404, message: "Host rejected request (404)."))
+            ),
+        ]
+    )
+
+    let client = NativeGameStreamMetadataClient(
+        identityStore: .init(provider: FailingIdentityProvider(), defaultsSuiteName: defaultsSuite),
+        pinnedCertificateStore: .init(defaultsSuiteName: defaultsSuite),
+        transport: transport
+    )
+
+    let info = try await client.fetchServerInfo(host: "stream-host.example.invalid:48984")
+    #expect(info.host == "stream-host.example.invalid")
+    #expect(info.displayName == "stream-host.example.invalid")
+    #expect(info.pairStatus == .notPaired)
+    #expect(info.httpsPort == 48984)
+
+    #expect(
+        await transport.callsWithPort() == [
+            .init(scheme: "http", command: "serverinfo", port: 48989),
+            .init(scheme: "https", command: "serverinfo", port: 48984),
+        ]
+    )
+}
+
 @Test("Metadata client uses HTTPS first for pinned hosts")
 func metadataClientUsesHTTPSFirstForPinnedHosts() async throws {
     let defaultsSuite = "shadow-client.metadata.serverinfo.pinned-https-success.\(UUID().uuidString)"

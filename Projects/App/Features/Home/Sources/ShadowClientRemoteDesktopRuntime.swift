@@ -841,6 +841,15 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                     )
                     return info
                 } catch let httpsError as ShadowClientGameStreamError {
+                    if Self.shouldSynthesizeUnpairedServerInfo(
+                        primaryHTTPError: httpError,
+                        httpsError: httpsError
+                    ) {
+                        return Self.makeUnauthorizedServerInfo(
+                            host: endpoint.host,
+                            fallbackHTTPSPort: endpoint.port
+                        )
+                    }
                     throw Self.combinedFallbackFailure(
                         primary: httpError,
                         fallbackLabel: "HTTPS fallback",
@@ -1027,6 +1036,28 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return normalized.contains("app transport security") ||
             normalized.contains("insecure http is blocked")
+    }
+
+    private static func shouldSynthesizeUnpairedServerInfo(
+        primaryHTTPError: ShadowClientGameStreamError,
+        httpsError: ShadowClientGameStreamError
+    ) -> Bool {
+        guard case let .requestFailed(httpMessage) = primaryHTTPError else {
+            return false
+        }
+        let normalizedHTTPMessage = httpMessage
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard normalizedHTTPMessage.contains("connection refused") ||
+                normalizedHTTPMessage.contains("could not connect")
+        else {
+            return false
+        }
+
+        guard case let .responseRejected(code, _) = httpsError else {
+            return false
+        }
+        return code == 404
     }
 
     private static func shouldSkipPlainHTTPFallback(
