@@ -561,7 +561,7 @@ func metadataClientPrefersLumenControlAppListOnControlPort() async throws {
     #expect(request?.connectHost == "192.168.0.50")
     #expect(request?.url.host == "wifi.skyline23.com")
     #expect(request?.url.port == 48990)
-    #expect(request?.url.path == "/api/apps")
+    #expect(request?.url.path == "/api/discovery/apps")
 }
 
 @Test("Metadata client preserves explicit custom HTTPS ports for pinned hosts")

@@ -1278,7 +1278,7 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
 
         for requestContext in requestContexts {
             let request = try requestContext.makeRequestData(
-                path: "/api/apps",
+                path: "/api/discovery/apps",
                 method: "GET"
             )
 
