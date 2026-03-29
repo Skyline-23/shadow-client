@@ -6,8 +6,8 @@ import SwiftUI
 import ShadowUIFoundation
 
 extension ShadowClientAppShellView {
-func connectionCandidate(for host: ShadowClientRemoteHostDescriptor) -> String {
-        let endpoint = host.routes.active
+func displayCandidate(for host: ShadowClientRemoteHostDescriptor) -> String {
+        let endpoint = host.routes.manual ?? host.routes.remote ?? host.routes.active
         let normalizedHost = endpoint.host
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -24,6 +24,10 @@ func connectionCandidate(for host: ShadowClientRemoteHostDescriptor) -> String {
             return endpoint.host
         }
         return "\(endpoint.host):\(endpoint.httpsPort)"
+    }
+
+func connectionCandidate(for host: ShadowClientRemoteHostDescriptor) -> String {
+        displayCandidate(for: host)
     }
 
 func storedConnectionCandidates(for host: ShadowClientRemoteHostDescriptor) -> Set<String> {
