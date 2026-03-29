@@ -8,6 +8,7 @@ enum ShadowClientRemoteHostCandidateFilter {
         manualHost: String?,
         localInterfaceHosts: Set<String>
     ) -> [String] {
+        _ = localInterfaceHosts
         var candidates = discoveredHosts
         if let manualHost, !manualHost.isEmpty {
             candidates.append(manualHost)
@@ -26,8 +27,7 @@ enum ShadowClientRemoteHostCandidateFilter {
             }
 
             guard !isLoopbackHost(normalized),
-                  !isLinkLocalHost(normalized),
-                  !localInterfaceHosts.contains(hostForClassification(from: normalized))
+                  !isLinkLocalHost(normalized)
             else {
                 return nil
             }

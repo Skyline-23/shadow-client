@@ -1,8 +1,8 @@
 import Testing
 @testable import ShadowClientFeatureHome
 
-@Test("Remote host candidate filter removes self hosts and loopback entries")
-func remoteHostCandidateFilterRemovesSelfHostsAndLoopbackEntries() {
+@Test("Remote host candidate filter preserves same-machine service hosts while removing loopback entries")
+func remoteHostCandidateFilterPreservesSameMachineServiceHostsWhileRemovingLoopbackEntries() {
     let candidates = ShadowClientRemoteHostCandidateFilter.filteredCandidates(
         discoveredHosts: [
             "localhost",
@@ -18,7 +18,7 @@ func remoteHostCandidateFilterRemovesSelfHostsAndLoopbackEntries() {
         ]
     )
 
-    #expect(candidates == ["second-stream-host.local"])
+    #expect(candidates == ["second-stream-host.local", "192.168.10.50"])
 }
 
 @Test("Remote host candidate filter classifies numeric loopback and link-local addresses without string prefix checks")
