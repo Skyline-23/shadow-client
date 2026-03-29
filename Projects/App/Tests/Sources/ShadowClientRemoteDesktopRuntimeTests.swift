@@ -1282,7 +1282,8 @@ func remoteDesktopRuntimeFollowsServerAdvertisedLocalControlPairingRoute() async
     #expect(runtime.pairingState == .paired("Paired"))
     #expect(await pairingClient.startRequests() == ["wifi.skyline23.com"])
     #expect(await pairingClient.statusRequests() == ["192.168.0.20"])
-    #expect(await pairingRouteStore.preferredHost(for: "uniqueid:host-123") == "192.168.0.20:48990")
+    #expect(await pairingRouteStore.preferredHost(for: "uniqueid:host-123") == "192.168.0.20:48984")
+    #expect(await pairingRouteStore.preferredAuthorityHost(for: "uniqueid:host-123") == "wifi.skyline23.com")
     #expect(!(await metadataClient.recordedServerInfoHosts()).contains("192.168.0.20:48990"))
     #expect((await metadataClient.recordedServerInfoHosts()).contains("192.168.0.20:48984"))
 }

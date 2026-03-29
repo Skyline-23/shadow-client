@@ -2136,7 +2136,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return
         }
 
-        await persistPreferredRoute(normalizedHost, for: anchorHost)
+        await persistPreferredRoute(connectRoute: normalizedHost, for: anchorHost)
 
         let updatedHosts = Self.upsertingManualRoute(
             normalizedHost,
@@ -2153,14 +2153,18 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     private func persistPreferredRoute(
-        _ preferredRoute: String?,
+        connectRoute: String?,
+        authorityHost: String? = nil,
         for anchorHost: ShadowClientRemoteHostDescriptor
     ) async {
-        let normalizedRoute = Self.normalizeCandidate(preferredRoute)
+        let normalizedRoute = Self.normalizeCandidate(connectRoute)
+        let normalizedAuthorityHost = Self.normalizedAuthorityHost(authorityHost)
         let pairRouteKey = Self.pairRouteStoreKey(for: anchorHost)
         let mergeRouteKey = Self.mergeKey(for: anchorHost)
         await pairingRouteStore.setPreferredHost(normalizedRoute, for: pairRouteKey)
         await pairingRouteStore.setPreferredHost(normalizedRoute, for: mergeRouteKey)
+        await pairingRouteStore.setPreferredAuthorityHost(normalizedAuthorityHost, for: pairRouteKey)
+        await pairingRouteStore.setPreferredAuthorityHost(normalizedAuthorityHost, for: mergeRouteKey)
     }
 
     @MainActor
@@ -2203,6 +2207,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 let maximumPairAttempts = ShadowClientPairingDefaults.maximumAttempts
                 var lastError: Error?
                 var pairedRoute: String?
+                var pairedAuthorityHost: String?
 
                 candidateLoop: for candidate in pairCandidates {
                     var pairAttemptCount = 0
@@ -2251,9 +2256,18 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                                 routeCandidates: controlRoutes,
                                 initialSession: startedPairing
                             )
-                            pairedRoute = Self.serializedExactHostCandidate(for: approvedRoute.connectEndpoint)
+                            let refreshEndpoint = Self.preferredRefreshEndpoint(for: approvedRoute)
+                            pairedRoute = Self.serializedExactHostCandidate(for: refreshEndpoint)
+                            pairedAuthorityHost = Self.preferredAuthorityHostCandidate(
+                                for: selectedHost,
+                                connectEndpoint: refreshEndpoint
+                            )
                             if let self {
-                                await self.persistPreferredRoute(pairedRoute, for: selectedHost)
+                                await self.persistPreferredRoute(
+                                    connectRoute: pairedRoute,
+                                    authorityHost: pairedAuthorityHost,
+                                    for: selectedHost
+                                )
                             }
                             break candidateLoop
                         } catch {
@@ -2319,7 +2333,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         : self.latestHostCandidates
                     self.refreshHosts(
                         candidates: candidates,
-                        preferredHost: pairedRoute ?? Self.activeExactRouteCandidate(for: selectedHost)
+                        preferredHost: pairedRoute ?? Self.activeExactRouteCandidate(for: selectedHost),
+                        preferredAuthorityHost: pairedAuthorityHost
                     )
                 }
             } catch {
@@ -2514,6 +2529,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         await self.pairingRouteStore.setPreferredHost(nil, for: Self.pairRouteStoreKey(for: host))
         await self.pairingRouteStore.setPreferredHost(nil, for: mergeKey)
+        await self.pairingRouteStore.setPreferredAuthorityHost(nil, for: Self.pairRouteStoreKey(for: host))
+        await self.pairingRouteStore.setPreferredAuthorityHost(nil, for: mergeKey)
         if let normalizedMachineID = Self.normalizedUniqueID(host.uniqueID) {
             await self.pinnedCertificateStore.removeCertificates(forMachineID: normalizedMachineID)
         }
@@ -2874,7 +2891,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     self.clearSessionIssueState()
                     Task {
                         await self.persistPreferredRoute(
-                            Self.activeExactRouteCandidate(for: resolvedHostDescriptor),
+                            connectRoute: Self.activeExactRouteCandidate(for: resolvedHostDescriptor),
                             for: selectedHost
                         )
                     }
@@ -4607,7 +4624,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     }
                     Task {
                         await self.persistPreferredRoute(
-                            Self.activeExactRouteCandidate(for: resolvedHostDescriptor),
+                            connectRoute: Self.activeExactRouteCandidate(for: resolvedHostDescriptor),
                             for: hostDescriptor
                         )
                     }
@@ -5768,6 +5785,29 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         return connectEndpoint
     }
 
+    private static func preferredAuthorityHostCandidate(
+        for selectedHost: ShadowClientRemoteHostDescriptor,
+        connectEndpoint: ShadowClientRemoteHostEndpoint
+    ) -> String? {
+        let authorityEndpoint = preferredAuthorityEndpoint(
+            for: selectedHost,
+            connectEndpoint: connectEndpoint
+        )
+        return normalizedAuthorityHost(authorityEndpoint.host)
+    }
+
+    private static func preferredRefreshEndpoint(
+        for route: ShadowClientLumenRouteCandidate
+    ) -> ShadowClientRemoteHostEndpoint {
+        let streamHTTPSPort = streamHTTPSPort(
+            fromPreferredHTTPSPort: route.authorityEndpoint.httpsPort
+        )
+        return .init(
+            host: route.connectEndpoint.host,
+            httpsPort: streamHTTPSPort
+        )
+    }
+
     private static func preferredLumenRequestRoute(
         for selectedHost: ShadowClientRemoteHostDescriptor
     ) -> ShadowClientLumenRequestRoute {
@@ -6006,6 +6046,25 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         for descriptor: ShadowClientRemoteHostDescriptor
     ) -> String {
         serializedExactHostCandidate(for: descriptor.routes.active)
+    }
+
+    private static func streamHTTPSPort(fromPreferredHTTPSPort httpsPort: Int) -> Int {
+        let candidateStreamHTTPSPort = httpsPort - 6
+        guard
+            (ShadowClientGameStreamNetworkDefaults.minimumPort...ShadowClientGameStreamNetworkDefaults.maximumPort)
+                .contains(candidateStreamHTTPSPort)
+        else {
+            return httpsPort
+        }
+
+        let mappedHTTPPort = ShadowClientGameStreamNetworkDefaults.httpPort(
+            forHTTPSPort: candidateStreamHTTPSPort
+        )
+        guard ShadowClientGameStreamNetworkDefaults.isLikelyHTTPPort(mappedHTTPPort) else {
+            return httpsPort
+        }
+
+        return candidateStreamHTTPSPort
     }
 
     private static func normalizeCandidate(_ candidate: String?) -> String? {
