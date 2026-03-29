@@ -797,26 +797,57 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         }
 
         if pinnedCertificateDER == nil {
-            let httpXML = try await requestXML(
-                host: endpoint.host,
-                port: ShadowClientGameStreamNetworkDefaults.httpPort(forHTTPSPort: endpoint.port),
-                scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
-                command: "serverinfo",
-                overridePinnedCertificateDER: pinnedCertificateDER
-            )
+            do {
+                let httpXML = try await requestXML(
+                    host: endpoint.host,
+                    port: ShadowClientGameStreamNetworkDefaults.httpPort(forHTTPSPort: endpoint.port),
+                    scheme: ShadowClientGameStreamNetworkDefaults.httpScheme,
+                    command: "serverinfo",
+                    overridePinnedCertificateDER: pinnedCertificateDER
+                )
 
-            let info = try ShadowClientGameStreamXMLParsers.parseServerInfo(
-                xml: httpXML,
-                host: endpoint.host,
-                fallbackHTTPSPort: endpoint.port
-            )
-            await registerServerIdentity(
-                info: info,
-                requestedHost: endpoint.host,
-                requestedHTTPSPort: endpoint.port,
-                pinnedCertificateDER: pinnedCertificateDER
-            )
-            return info
+                let info = try ShadowClientGameStreamXMLParsers.parseServerInfo(
+                    xml: httpXML,
+                    host: endpoint.host,
+                    fallbackHTTPSPort: endpoint.port
+                )
+                await registerServerIdentity(
+                    info: info,
+                    requestedHost: endpoint.host,
+                    requestedHTTPSPort: endpoint.port,
+                    pinnedCertificateDER: pinnedCertificateDER
+                )
+                return info
+            } catch let httpError as ShadowClientGameStreamError {
+                do {
+                    let httpsXML = try await requestXML(
+                        host: endpoint.host,
+                        port: endpoint.port,
+                        scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
+                        command: "serverinfo",
+                        overridePinnedCertificateDER: pinnedCertificateDER
+                    )
+
+                    let info = try ShadowClientGameStreamXMLParsers.parseServerInfo(
+                        xml: httpsXML,
+                        host: endpoint.host,
+                        fallbackHTTPSPort: endpoint.port
+                    )
+                    await registerServerIdentity(
+                        info: info,
+                        requestedHost: endpoint.host,
+                        requestedHTTPSPort: endpoint.port,
+                        pinnedCertificateDER: pinnedCertificateDER
+                    )
+                    return info
+                } catch let httpsError as ShadowClientGameStreamError {
+                    throw Self.combinedFallbackFailure(
+                        primary: httpError,
+                        fallbackLabel: "HTTPS fallback",
+                        fallback: httpsError
+                    )
+                }
+            }
         }
 
         do {
@@ -1063,10 +1094,11 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
 
     private static func combinedFallbackFailure(
         primary: ShadowClientGameStreamError,
+        fallbackLabel: String = "HTTP fallback",
         fallback: ShadowClientGameStreamError
     ) -> ShadowClientGameStreamError {
         .requestFailed(
-            "\(primary.localizedDescription) (HTTP fallback also failed: \(fallback.localizedDescription))"
+            "\(primary.localizedDescription) (\(fallbackLabel) also failed: \(fallback.localizedDescription))"
         )
     }
 
