@@ -902,6 +902,9 @@ actor ShadowClientRTSPInterleavedClient {
         var lastAnnounceError: Error?
         for announceTarget in announceTargets {
             do {
+                logger.notice(
+                    "RTSP ANNOUNCE start target=\(announceTarget, privacy: .public) bytes=\(announcePayload.count, privacy: .public) session=\(self.sessionHeader ?? "nil", privacy: .public)"
+                )
                 _ = try await sendRequestWithReconnectRetry(
                     method: ShadowClientRTSPRequestDefaults.announceMethod,
                     url: announceTarget,
@@ -940,6 +943,7 @@ actor ShadowClientRTSPInterleavedClient {
         if useModernControlStreamIdentifier {
             let rootPlayTarget = "/"
             do {
+                logger.notice("RTSP PLAY start target=\(rootPlayTarget, privacy: .public) session=\(self.sessionHeader ?? "nil", privacy: .public)")
                 _ = try await sendRequestWithReconnectRetry(
                     method: ShadowClientRTSPRequestDefaults.playMethod,
                     url: rootPlayTarget,
@@ -959,6 +963,7 @@ actor ShadowClientRTSPInterleavedClient {
             let videoPlayTarget = "streamid=video"
             let audioPlayTarget = "streamid=audio"
             do {
+                logger.notice("RTSP PLAY start target=\(videoPlayTarget, privacy: .public) session=\(self.sessionHeader ?? "nil", privacy: .public)")
                 _ = try await sendRequestWithReconnectRetry(
                     method: ShadowClientRTSPRequestDefaults.playMethod,
                     url: videoPlayTarget,
@@ -975,6 +980,7 @@ actor ShadowClientRTSPInterleavedClient {
                 )
             }
             do {
+                logger.notice("RTSP PLAY start target=\(audioPlayTarget, privacy: .public) session=\(self.sessionHeader ?? "nil", privacy: .public)")
                 _ = try await sendRequestWithReconnectRetry(
                     method: ShadowClientRTSPRequestDefaults.playMethod,
                     url: audioPlayTarget,

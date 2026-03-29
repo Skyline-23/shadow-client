@@ -4432,7 +4432,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         if normalizedError.contains("lumen transport requires negotiated session id ping support") ||
             normalizedError.contains("lumen transport requires encrypted control stream v2 support")
         {
-            return "Remote session startup failed during encrypted transport negotiation."
+            return "Remote session startup failed before media playback began."
         }
 
         if normalizedError.contains("rtsp describe failed") ||
