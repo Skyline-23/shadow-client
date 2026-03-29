@@ -38,9 +38,6 @@ extension ShadowClientAppShellView {
     @MainActor
     func syncConnectionStateFromRuntime() async {
         connectionState = await baseDependencies.connectionRuntime.currentState()
-        if connectionHost.isEmpty, let host = connectionState.host, !host.isEmpty {
-            connectionHost = host
-        }
     }
 
     @MainActor
@@ -162,7 +159,6 @@ extension ShadowClientAppShellView {
 
     @MainActor
     func presentHostSpotlight(for host: ShadowClientRemoteHostDescriptor) {
-        connectionHost = connectionCandidate(for: host)
         remoteDesktopRuntime.selectHost(host.id)
         spotlightedHostSourceFrame = remoteDesktopHostFrames[host.id] ?? .zero
         hostSpotlightTask?.cancel()
@@ -249,10 +245,16 @@ extension ShadowClientAppShellView {
 
     @MainActor
     func connectToHost(
+        connectHost: String? = nil,
         autoLaunchAfterConnect: Bool = false,
         preferredHostID: String? = nil
     ) {
-        let host = normalizedConnectionHost
+        let explicitConnectHost = connectHost?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let host = if let explicitConnectHost, !explicitConnectHost.isEmpty {
+            explicitConnectHost
+        } else {
+            normalizedConnectionHost
+        }
         guard !host.isEmpty else {
             return
         }
@@ -283,10 +285,7 @@ extension ShadowClientAppShellView {
             let state = await baseDependencies.connectionRuntime.connect(to: host)
             await MainActor.run {
                 connectionState = state
-                if let connectedHost = state.host, !connectedHost.isEmpty {
-                    connectionHost = connectedHost
-                    refreshRemoteDesktopCatalog(force: true)
-                }
+                refreshRemoteDesktopCatalog(force: true)
             }
 
             if autoLaunchAfterConnect, state.isConnected {
@@ -297,15 +296,17 @@ extension ShadowClientAppShellView {
 
     @MainActor
     func connectToDiscoveredHost(_ discoveredHost: ShadowClientDiscoveredHost) {
-        connectionHost = discoveredHost.probeCandidate
-        connectToHost(autoLaunchAfterConnect: true)
+        connectToHost(
+            connectHost: discoveredHost.probeCandidate,
+            autoLaunchAfterConnect: true
+        )
     }
 
     @MainActor
     func startRemoteHostSession(_ host: ShadowClientRemoteHostDescriptor) {
-        connectionHost = connectionCandidate(for: host)
         remoteDesktopRuntime.selectHost(host.id)
         connectToHost(
+            connectHost: runtimeConnectCandidate(for: host),
             autoLaunchAfterConnect: true,
             preferredHostID: host.id
         )

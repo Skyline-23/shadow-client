@@ -482,9 +482,6 @@ extension ShadowClientAppShellView {
     func pairSelectedHostButton(fullWidth: Bool) -> some View {
         if canPairSelectedHost {
             Button("Pair") {
-                if let selectedHost = remoteDesktopRuntime.selectedHost {
-                    connectionHost = connectionCandidate(for: selectedHost)
-                }
                 remoteDesktopRuntime.pairSelectedHost(
                     username: remoteDesktopRuntime.selectedHost.map { hostLumenAdminUsername($0) },
                     password: remoteDesktopRuntime.selectedHost.map { hostLumenAdminPassword($0) }

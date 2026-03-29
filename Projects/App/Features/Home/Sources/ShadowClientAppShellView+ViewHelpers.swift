@@ -6,31 +6,22 @@ import SwiftUI
 import ShadowUIFoundation
 
 extension ShadowClientAppShellView {
-func displayCandidate(for host: ShadowClientRemoteHostDescriptor) -> String {
-        let endpoint = host.routes.manual ?? host.routes.remote ?? host.routes.active
-        let normalizedHost = endpoint.host
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        let distinctPortsForHost = Set(
-            remoteDesktopRuntime.hosts
-                .flatMap(\.routes.allEndpoints)
-                .filter {
-                    $0.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedHost
-                }
-                .map(\.httpsPort)
+    func displayCandidate(for host: ShadowClientRemoteHostDescriptor) -> String {
+        ShadowClientRemoteHostRouteSelectionKit.displayCandidate(
+            for: host,
+            allHosts: remoteDesktopRuntime.hosts
         )
-        if endpoint.httpsPort == ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort,
-           distinctPortsForHost.count <= 1 {
-            return endpoint.host
-        }
-        return "\(endpoint.host):\(endpoint.httpsPort)"
     }
 
-func connectionCandidate(for host: ShadowClientRemoteHostDescriptor) -> String {
+    func connectionCandidate(for host: ShadowClientRemoteHostDescriptor) -> String {
         displayCandidate(for: host)
     }
 
-func storedConnectionCandidates(for host: ShadowClientRemoteHostDescriptor) -> Set<String> {
+    func runtimeConnectCandidate(for host: ShadowClientRemoteHostDescriptor) -> String {
+        ShadowClientRemoteHostRouteSelectionKit.runtimeConnectCandidate(for: host)
+    }
+
+    func storedConnectionCandidates(for host: ShadowClientRemoteHostDescriptor) -> Set<String> {
         Set(host.routes.allEndpoints.flatMap { endpoint in
             let normalizedHost = endpoint.host
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -249,7 +240,6 @@ func discoveredHostRow(_ discoveredHost: ShadowClientDiscoveredHost) -> some Vie
             Spacer(minLength: 8)
             Button(ShadowClientDiscoveredHostPresentationKit.useButtonTitle()) {
                 remoteDesktopRuntime.saveHostCandidate(discoveredHost.probeCandidate)
-                connectionHost = discoveredHost.probeCandidate
                 refreshRemoteDesktopCatalog()
             }
             .buttonStyle(.bordered)
