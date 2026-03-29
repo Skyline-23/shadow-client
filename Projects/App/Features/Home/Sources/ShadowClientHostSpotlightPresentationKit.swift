@@ -23,11 +23,12 @@ enum ShadowClientHostSpotlightPresentationKit {
             return [.init(title: issue.title, message: issue.message, tone: .warning)]
         }
 
-        if let lastError = host.lastError, !lastError.isEmpty {
-            return [.init(title: "Connection Issue", message: lastError, tone: .destructive)]
-        }
+        let authState = host.authenticationState
 
-        if host.pairStatus == .paired {
+        switch authState.pairing {
+        case .unavailable:
+            return [.init(title: "Connection Issue", message: authState.detailLabel, tone: .destructive)]
+        case .paired:
             var callouts: [ShadowClientHostSpotlightCallout] = [
                 .init(
                     title: "Ready",
@@ -45,15 +46,23 @@ enum ShadowClientHostSpotlightPresentationKit {
                 )
             }
             return callouts
+        case .pendingResolution:
+            return [
+                .init(
+                    title: "Saved",
+                    message: authState.detailLabel,
+                    tone: .info
+                )
+            ]
+        case .pairingRequired, .reachable:
+            return [
+                .init(
+                    title: "Pairing Required",
+                    message: "This device is reachable, but you need to pair it before browsing apps or launching a session.",
+                    tone: .warning
+                )
+            ]
         }
-
-        return [
-            .init(
-                title: "Pairing Required",
-                message: "This device is reachable, but you need to pair it before browsing apps or launching a session.",
-                tone: .warning
-            )
-        ]
     }
 
     static func accentColor(for tone: ShadowClientHostSpotlightCallout.Tone) -> Color {

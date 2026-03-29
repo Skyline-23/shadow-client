@@ -50,3 +50,27 @@ func hostSpotlightPresentationReadyCallouts() {
     #expect(callouts[0] == .init(title: "Ready", message: "This device is paired and ready to launch a remote desktop session.", tone: .success))
     #expect(callouts[1] == .init(title: "Lumen Device Overrides", message: "Display mode override: automatic", tone: .info))
 }
+
+@Test("Host spotlight presentation emits destructive connection callout for unavailable hosts")
+func hostSpotlightPresentationUnavailableCallout() {
+    let host = ShadowClientRemoteHostDescriptor(
+        host: "wifi-route.example.invalid",
+        displayName: "Desktop",
+        pairStatus: .notPaired,
+        currentGameID: 0,
+        serverState: "",
+        httpsPort: 47984,
+        appVersion: nil,
+        gfeVersion: nil,
+        uniqueID: nil,
+        lastError: "The operation couldn't be completed. Connection refused"
+    )
+
+    let callouts = ShadowClientHostSpotlightPresentationKit.statusCallouts(
+        host: host,
+        issue: nil,
+        lumenSummary: nil
+    )
+
+    #expect(callouts == [.init(title: "Connection Issue", message: "The operation couldn't be completed. Connection refused", tone: .destructive)])
+}

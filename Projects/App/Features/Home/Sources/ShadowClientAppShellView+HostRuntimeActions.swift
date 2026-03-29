@@ -372,7 +372,7 @@ extension ShadowClientAppShellView {
         guard let selectedHost = remoteDesktopRuntime.selectedHost else {
             return
         }
-        guard selectedHost.pairStatus == .paired else {
+        guard selectedHost.authenticationState.canConnect else {
             return
         }
         guard !remoteDesktopRuntime.launchState.isTransitioning,
