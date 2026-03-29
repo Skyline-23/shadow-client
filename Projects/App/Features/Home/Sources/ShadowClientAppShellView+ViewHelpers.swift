@@ -111,6 +111,18 @@ func clearHiddenRemoteHostCandidates(matching hostCandidate: String) {
         persistHiddenRemoteHostCandidates(updatedCandidates)
     }
 
+func clearHiddenRemoteHostCandidates(matchingAny hostCandidates: [String]) {
+        guard !hostCandidates.isEmpty else {
+            return
+        }
+
+        var updatedCandidates = hiddenRemoteHostCandidates
+        for hostCandidate in hostCandidates {
+            updatedCandidates.subtract(candidateVariants(for: hostCandidate))
+        }
+        persistHiddenRemoteHostCandidates(updatedCandidates)
+    }
+
 func resolvedPreferredHostCandidate(
         _ preferredCandidate: String?,
         availableCandidates: [String]
@@ -148,6 +160,37 @@ func resolvedPreferredHostCandidate(
         }
 
         return matchingCandidates.count == 1 ? matchingCandidates[0] : nil
+    }
+
+func resolvedPreferredCatalogCandidate(
+        _ preferredCandidate: String?,
+        discoveredCandidates: [String],
+        availableCandidates: [String]
+    ) -> String? {
+        if let discoveredPreferred = resolvedPreferredHostCandidate(
+            preferredCandidate,
+            availableCandidates: discoveredCandidates
+        ) {
+            return discoveredPreferred
+        }
+
+        let preferredCandidate = resolvedPreferredHostCandidate(
+            preferredCandidate,
+            availableCandidates: availableCandidates
+        )
+
+        guard let preferredCandidate else {
+            return nil
+        }
+
+        guard !discoveredCandidates.isEmpty,
+              !discoveredCandidates.contains(preferredCandidate),
+              discoveredCandidates.count == 1
+        else {
+            return preferredCandidate
+        }
+
+        return discoveredCandidates[0]
     }
 
 func settingsSection<Content: View>(

@@ -63,9 +63,12 @@ extension ShadowClientAppShellView {
            (manualHostFocusedField != nil || !manualHostDraft.isEmpty || !manualHostPortDraft.isEmpty) {
             return
         }
-        let hiddenCandidates = hiddenRemoteHostCandidates
-        let discoveredCandidates = hostDiscoveryRuntime.hosts
+        let liveDiscoveredCandidates = hostDiscoveryRuntime.hosts
             .map(\.probeCandidate)
+        clearHiddenRemoteHostCandidates(matchingAny: liveDiscoveredCandidates)
+
+        let hiddenCandidates = hiddenRemoteHostCandidates
+        let discoveredCandidates = liveDiscoveredCandidates
             .filter { !hiddenCandidates.contains(normalizedStoredConnectionCandidate($0)) }
         let cachedCandidates = ShadowClientHostCatalogKit.cachedCandidateHosts(
             from: remoteDesktopRuntime.hosts
@@ -82,8 +85,9 @@ extension ShadowClientAppShellView {
             cachedHosts: cachedCandidates,
             manualHost: visibleManualHost
         )
-        let preferredHost = resolvedPreferredHostCandidate(
+        let preferredHost = resolvedPreferredCatalogCandidate(
             visibleManualHost,
+            discoveredCandidates: discoveredCandidates,
             availableCandidates: candidates
         )
         let discoveredProbeCandidates = discoveredCandidates.joined(separator: ",")

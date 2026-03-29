@@ -89,3 +89,14 @@ func hostCatalogDropsBareHostAliasWhenSameHostHasExplicitServiceCandidates() {
 
     #expect(candidates == ["lumen-host.local:47984", "lumen-host.local:48984"])
 }
+
+@Test("Host catalog prefers the live discovered route over a stale preferred alias")
+func hostCatalogPrefersLiveDiscoveredRouteOverStalePreferredAlias() {
+    let preferred = resolvedPreferredCatalogCandidate(
+        "mac.local:48984",
+        discoveredCandidates: ["192.168.0.50:48984"],
+        availableCandidates: ["192.168.0.50:48984", "mac.local:48984"]
+    )
+
+    #expect(preferred == "192.168.0.50:48984")
+}
