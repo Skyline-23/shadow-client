@@ -15,8 +15,6 @@ public struct ShadowClientLumenAdminClientProfile: Equatable, Sendable {
     public let name: String
     public let uuid: String
     public let displayModeOverride: String
-    public let permissions: UInt32
-    public let allowClientCommands: Bool
     public let alwaysUseVirtualDisplay: Bool
     public let connected: Bool
     public let doCommands: [Command]
@@ -26,8 +24,6 @@ public struct ShadowClientLumenAdminClientProfile: Equatable, Sendable {
         name: String = "",
         uuid: String,
         displayModeOverride: String,
-        permissions: UInt32 = 0,
-        allowClientCommands: Bool = true,
         alwaysUseVirtualDisplay: Bool,
         connected: Bool,
         doCommands: [Command] = [],
@@ -36,8 +32,6 @@ public struct ShadowClientLumenAdminClientProfile: Equatable, Sendable {
         self.name = name
         self.uuid = uuid
         self.displayModeOverride = displayModeOverride
-        self.permissions = permissions
-        self.allowClientCommands = allowClientCommands
         self.alwaysUseVirtualDisplay = alwaysUseVirtualDisplay
         self.connected = connected
         self.doCommands = doCommands
@@ -242,8 +236,6 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
                     uuid: profile.uuid,
                     name: profile.name,
                     displayMode: profile.displayModeOverride,
-                    permissions: profile.permissions,
-                    allowClientCommands: profile.allowClientCommands,
                     alwaysUseVirtualDisplay: profile.alwaysUseVirtualDisplay,
                     doCommands: profile.doCommands,
                     undoCommands: profile.undoCommands
@@ -402,8 +394,6 @@ private struct LumenNamedCert: Decodable {
     let name: String
     let uuid: String
     let displayMode: String
-    let permissions: UInt32
-    let allowClientCommands: Bool
     let alwaysUseVirtualDisplay: Bool
     let connected: Bool
     let doCommands: [LumenCommand]
@@ -413,8 +403,6 @@ private struct LumenNamedCert: Decodable {
         case name
         case uuid
         case displayMode = "display_mode"
-        case permissions = "perm"
-        case allowClientCommands = "allow_client_commands"
         case alwaysUseVirtualDisplay = "always_use_virtual_display"
         case connected
         case doCommands = "do"
@@ -426,8 +414,6 @@ private struct LumenNamedCert: Decodable {
             name: name,
             uuid: uuid,
             displayModeOverride: displayMode,
-            permissions: permissions,
-            allowClientCommands: allowClientCommands,
             alwaysUseVirtualDisplay: alwaysUseVirtualDisplay,
             connected: connected,
             doCommands: doCommands.map(\.profileCommand),
@@ -449,8 +435,6 @@ private struct LumenUpdateClientPayload: Encodable {
     let uuid: String
     let name: String
     let displayMode: String
-    let permissions: UInt32
-    let allowClientCommands: Bool
     let alwaysUseVirtualDisplay: Bool
     let doCommands: [ShadowClientLumenAdminClientProfile.Command]
     let undoCommands: [ShadowClientLumenAdminClientProfile.Command]
@@ -459,8 +443,6 @@ private struct LumenUpdateClientPayload: Encodable {
         case uuid
         case name
         case displayMode = "display_mode"
-        case permissions = "perm"
-        case allowClientCommands = "allow_client_commands"
         case alwaysUseVirtualDisplay = "always_use_virtual_display"
         case doCommands = "do"
         case undoCommands = "undo"

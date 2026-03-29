@@ -424,14 +424,6 @@ extension ShadowClientAppShellView {
         )
     }
 
-    func hostLumenPermissionDraft(for host: ShadowClientRemoteHostDescriptor) -> UInt32 {
-        ShadowClientLumenAdminPresentationKit.permissionDraft(
-            hostID: host.id,
-            drafts: lumenPermissionDrafts,
-            profile: hostLumenAdminProfile(host)
-        )
-    }
-
     func hostLumenDisplayModeBinding(for host: ShadowClientRemoteHostDescriptor) -> Binding<String> {
         Binding(
             get: { hostLumenDisplayModeDraft(for: host) },
@@ -443,27 +435,6 @@ extension ShadowClientAppShellView {
         Binding(
             get: { hostLumenAlwaysUseVirtualDisplayDraft(for: host) },
             set: { lumenAlwaysUseVirtualDisplayDrafts[host.id] = $0 }
-        )
-    }
-
-    func hostLumenPermissionBinding(
-        for host: ShadowClientRemoteHostDescriptor,
-        permission: ShadowClientLumenPermission
-    ) -> Binding<Bool> {
-        Binding(
-            get: {
-                ShadowClientLumenPermission.contains(
-                    permission,
-                    in: hostLumenPermissionDraft(for: host)
-                )
-            },
-            set: { enabled in
-                lumenPermissionDrafts[host.id] = ShadowClientLumenPermission.updating(
-                    permission,
-                    enabled: enabled,
-                    in: hostLumenPermissionDraft(for: host)
-                )
-            }
         )
     }
 

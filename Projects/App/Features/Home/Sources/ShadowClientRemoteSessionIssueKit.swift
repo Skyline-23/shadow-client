@@ -7,8 +7,8 @@ enum ShadowClientRemoteSessionIssueKit {
     }
 
     enum ClipboardIssueKind {
-        case readPermissionDenied
-        case writePermissionDenied
+        case readUnavailable
+        case writeUnavailable
         case requiresActiveStream
     }
 
@@ -24,7 +24,7 @@ enum ShadowClientRemoteSessionIssueKit {
         case let .responseRejected(code, _):
             switch code {
             case 401:
-                return operation == .read ? .readPermissionDenied : .writePermissionDenied
+                return operation == .read ? .readUnavailable : .writeUnavailable
             case 403:
                 return .requiresActiveStream
             default:
@@ -36,28 +36,28 @@ enum ShadowClientRemoteSessionIssueKit {
     }
 
     static func sessionIssue(
-        clipboardReadPermissionDenied: Bool,
-        clipboardWritePermissionDenied: Bool,
+        clipboardReadUnavailable: Bool,
+        clipboardWriteUnavailable: Bool,
         clipboardActionRequiresActiveStream: Bool
     ) -> ShadowClientRemoteSessionIssue? {
-        if clipboardReadPermissionDenied && clipboardWritePermissionDenied {
+        if clipboardReadUnavailable && clipboardWriteUnavailable {
             return .init(
-                title: "Clipboard Permission Required",
-                message: "Grant Clipboard Read and Clipboard Set permissions for this paired Lumen client."
+                title: "Clipboard Sync Unavailable",
+                message: "Lumen clipboard sync is unavailable for this paired client."
             )
         }
 
-        if clipboardWritePermissionDenied {
+        if clipboardWriteUnavailable {
             return .init(
-                title: "Clipboard Permission Required",
-                message: "Grant Clipboard Set permission for this paired Lumen client."
+                title: "Clipboard Sync Unavailable",
+                message: "Lumen clipboard write is unavailable for this paired client."
             )
         }
 
-        if clipboardReadPermissionDenied {
+        if clipboardReadUnavailable {
             return .init(
-                title: "Clipboard Permission Required",
-                message: "Grant Clipboard Read permission for this paired Lumen client."
+                title: "Clipboard Sync Unavailable",
+                message: "Lumen clipboard read is unavailable for this paired client."
             )
         }
 

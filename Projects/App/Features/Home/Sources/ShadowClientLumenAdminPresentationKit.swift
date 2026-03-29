@@ -26,8 +26,7 @@ enum ShadowClientLumenAdminPresentationKit {
             ? "Always use virtual display: ON"
             : "Always use virtual display: OFF"
         let connectedDescription = profile.connected ? "Connected" : "Not connected"
-        let permissionsDescription = ShadowClientLumenPermission.summary(for: profile.permissions)
-        return [displayDescription, virtualDisplayDescription, permissionsDescription, connectedDescription].joined(separator: "\n")
+        return [displayDescription, virtualDisplayDescription, connectedDescription].joined(separator: "\n")
     }
 
     static func displayModeDraft(
@@ -50,16 +49,5 @@ enum ShadowClientLumenAdminPresentationKit {
             return draft
         }
         return profile?.alwaysUseVirtualDisplay ?? false
-    }
-
-    static func permissionDraft(
-        hostID: String,
-        drafts: [String: UInt32],
-        profile: ShadowClientLumenAdminClientProfile?
-    ) -> UInt32 {
-        if let draft = drafts[hostID] {
-            return draft
-        }
-        return profile?.permissions ?? 0
     }
 }

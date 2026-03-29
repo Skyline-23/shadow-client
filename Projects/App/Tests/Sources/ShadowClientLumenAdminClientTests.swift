@@ -41,8 +41,6 @@ func lumenAdminClientParserReturnsCurrentClientProfile() throws {
             name: "Current Device",
             uuid: "CURRENT-UUID",
             displayModeOverride: "2560x1440x120",
-            permissions: 65535,
-            allowClientCommands: true,
             alwaysUseVirtualDisplay: true,
             connected: true
         )

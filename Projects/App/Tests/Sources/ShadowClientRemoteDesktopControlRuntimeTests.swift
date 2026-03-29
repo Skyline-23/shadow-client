@@ -534,8 +534,6 @@ func remoteDesktopRuntimeLoadsLumenAdminProfileForSelectedHost() async {
             name: "Current Device",
             uuid: "CURRENT-UUID",
             displayModeOverride: "2560x1440x120",
-            permissions: 65535,
-            allowClientCommands: true,
             alwaysUseVirtualDisplay: true,
             connected: true
         )
@@ -559,8 +557,6 @@ func remoteDesktopRuntimeLoadsLumenAdminProfileForSelectedHost() async {
             name: "Current Device",
             uuid: "CURRENT-UUID",
             displayModeOverride: "2560x1440x120",
-            permissions: 65535,
-            allowClientCommands: true,
             alwaysUseVirtualDisplay: true,
             connected: true
         )
@@ -594,8 +590,6 @@ func remoteDesktopRuntimeUpdatesLumenAdminProfileForSelectedHost() async {
         name: "Current Device",
         uuid: "CURRENT-UUID",
         displayModeOverride: "",
-        permissions: 65535,
-        allowClientCommands: true,
         alwaysUseVirtualDisplay: false,
         connected: true
     )
@@ -616,8 +610,7 @@ func remoteDesktopRuntimeUpdatesLumenAdminProfileForSelectedHost() async {
         username: "lumen",
         password: "secret",
         displayModeOverride: "2560x1440x120",
-        alwaysUseVirtualDisplay: true,
-        permissions: 65535
+        alwaysUseVirtualDisplay: true
     )
     await waitForLumenAdminState(runtime)
 
@@ -627,8 +620,6 @@ func remoteDesktopRuntimeUpdatesLumenAdminProfileForSelectedHost() async {
             name: "Current Device",
             uuid: "CURRENT-UUID",
             displayModeOverride: "2560x1440x120",
-            permissions: 65535,
-            allowClientCommands: true,
             alwaysUseVirtualDisplay: true,
             connected: true
         )
@@ -662,8 +653,6 @@ func remoteDesktopRuntimeDisconnectsSelectedLumenClient() async {
         name: "Current Device",
         uuid: "CURRENT-UUID",
         displayModeOverride: "",
-        permissions: 65535,
-        allowClientCommands: true,
         alwaysUseVirtualDisplay: false,
         connected: true
     )
@@ -713,8 +702,6 @@ func remoteDesktopRuntimeUnpairsSelectedLumenClient() async {
         name: "Current Device",
         uuid: "CURRENT-UUID",
         displayModeOverride: "",
-        permissions: 65535,
-        allowClientCommands: true,
         alwaysUseVirtualDisplay: false,
         connected: true
     )
@@ -736,9 +723,9 @@ func remoteDesktopRuntimeUnpairsSelectedLumenClient() async {
     #expect(runtime.selectedHostLumenAdminProfile == nil)
 }
 
-@Test("Remote desktop runtime surfaces Lumen launch permission denial")
+@Test("Remote desktop runtime surfaces rejected Lumen launch requests")
 @MainActor
-func remoteDesktopRuntimeSurfacesLumenLaunchPermissionDenial() async {
+func remoteDesktopRuntimeSurfacesRejectedLumenLaunchRequests() async {
     let metadata = FakeControlTestMetadataClient(
         serverInfoByHost: [
             "192.168.0.20": .init(
@@ -762,7 +749,7 @@ func remoteDesktopRuntimeSurfacesLumenLaunchPermissionDenial() async {
     let control = FakeControlClient(
         simulatedLaunchFailure: ShadowClientGameStreamError.responseRejected(
             code: 403,
-            message: "Permission denied"
+            message: "Forbidden"
         )
     )
     let runtime = ShadowClientRemoteDesktopRuntime(metadataClient: metadata, controlClient: control)
@@ -777,7 +764,7 @@ func remoteDesktopRuntimeSurfacesLumenLaunchPermissionDenial() async {
     await waitForLaunchState(runtime)
 
     if case let .failed(message) = runtime.launchState {
-        #expect(message == "Lumen denied Launch Apps permission for this paired client.")
+        #expect(message == "Host rejected request (403): Forbidden")
     } else {
         Issue.record("Expected failed launch state, got \(runtime.launchState)")
     }
@@ -2672,7 +2659,7 @@ func remoteDesktopRuntimeDoesNotFallbackToTextInputWhenClipboardActionFails() as
     #expect(inputCalls.isEmpty)
 }
 
-@Test("Remote desktop runtime surfaces clipboard write permission denial")
+@Test("Remote desktop runtime surfaces unavailable clipboard writes")
 @MainActor
 func remoteDesktopRuntimeSurfacesClipboardWritePermissionDenial() async {
     let metadata = FakeControlTestMetadataClient(
@@ -2722,8 +2709,8 @@ func remoteDesktopRuntimeSurfacesClipboardWritePermissionDenial() async {
 
     #expect(
         runtime.sessionIssue == .init(
-            title: "Clipboard Permission Required",
-            message: "Grant Clipboard Set permission for this paired Lumen client."
+            title: "Clipboard Sync Unavailable",
+            message: "Lumen clipboard write is unavailable for this paired client."
         )
     )
 }
@@ -2784,7 +2771,7 @@ func remoteDesktopRuntimePullsClipboardIntoLocalClipboard() async {
     #expect(clipboardText == "copied from host")
 }
 
-@Test("Remote desktop runtime surfaces clipboard read permission denial")
+@Test("Remote desktop runtime surfaces unavailable clipboard reads")
 @MainActor
 func remoteDesktopRuntimeSurfacesClipboardReadPermissionDenial() async {
     let metadata = FakeControlTestMetadataClient(
@@ -2836,8 +2823,8 @@ func remoteDesktopRuntimeSurfacesClipboardReadPermissionDenial() async {
 
     #expect(
         runtime.sessionIssue == .init(
-            title: "Clipboard Permission Required",
-            message: "Grant Clipboard Read permission for this paired Lumen client."
+            title: "Clipboard Sync Unavailable",
+            message: "Lumen clipboard read is unavailable for this paired client."
         )
     )
 }
@@ -3433,8 +3420,6 @@ private actor FakeLumenAdminClient: ShadowClientLumenAdminClient {
             name: profile.name,
             uuid: profile.uuid,
             displayModeOverride: profile.displayModeOverride,
-            permissions: profile.permissions,
-            allowClientCommands: profile.allowClientCommands,
             alwaysUseVirtualDisplay: profile.alwaysUseVirtualDisplay,
             connected: false,
             doCommands: profile.doCommands,

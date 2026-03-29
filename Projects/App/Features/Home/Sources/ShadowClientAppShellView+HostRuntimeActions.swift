@@ -154,7 +154,6 @@ extension ShadowClientAppShellView {
         hostCustomizationStore.removeHost(host.id)
         lumenDisplayModeDrafts.removeValue(forKey: host.id)
         lumenAlwaysUseVirtualDisplayDrafts.removeValue(forKey: host.id)
-        lumenPermissionDrafts.removeValue(forKey: host.id)
         remoteDesktopRuntime.deleteHost(host.id)
     }
 

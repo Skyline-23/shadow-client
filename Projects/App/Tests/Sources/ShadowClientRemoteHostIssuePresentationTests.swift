@@ -1,8 +1,8 @@
 import Testing
 @testable import ShadowClientFeatureHome
 
-@Test("Host issue mapper surfaces selected host app permission denial")
-func hostIssueMapperSurfacesSelectedHostAppPermissionDenial() {
+@Test("Host issue mapper ignores generic host app failures")
+func hostIssueMapperIgnoresGenericHostAppFailures() {
     let host = ShadowClientRemoteHostDescriptor(
         host: "192.168.0.40",
         displayName: "Lumen-PC",
@@ -19,17 +19,12 @@ func hostIssueMapperSurfacesSelectedHostAppPermissionDenial() {
     let issue = ShadowClientRemoteHostIssueMapper.issue(
         for: host,
         selectedHostID: host.id,
-        appState: .failed("Lumen denied List Apps permission for this paired client."),
+        appState: .failed("Host rejected request (403): Forbidden"),
         launchState: .idle,
         sessionIssue: nil
     )
 
-    #expect(
-        issue == .init(
-            title: "Lumen Permissions",
-            message: "Lumen denied List Apps permission for this paired client."
-        )
-    )
+    #expect(issue == nil)
 }
 
 @Test("Host issue mapper prefers active session issues over app or launch failures")
@@ -50,24 +45,24 @@ func hostIssueMapperPrefersActiveSessionIssue() {
     let issue = ShadowClientRemoteHostIssueMapper.issue(
         for: host,
         selectedHostID: host.id,
-        appState: .failed("Lumen denied List Apps permission for this paired client."),
-        launchState: .failed("Lumen denied Launch Apps permission for this paired client."),
+        appState: .failed("Host rejected request (403): Forbidden"),
+        launchState: .failed("Host rejected request (403): Forbidden"),
         sessionIssue: .init(
-            title: "Clipboard Permission Required",
-            message: "Grant Clipboard Read permission for this paired Lumen client."
+            title: "Clipboard Sync Unavailable",
+            message: "Lumen clipboard read is unavailable for this paired client."
         )
     )
 
     #expect(
         issue == .init(
-            title: "Clipboard Permission Required",
-            message: "Grant Clipboard Read permission for this paired Lumen client."
+            title: "Clipboard Sync Unavailable",
+            message: "Lumen clipboard read is unavailable for this paired client."
         )
     )
 }
 
-@Test("Host issue mapper ignores permission failures for non-selected hosts")
-func hostIssueMapperIgnoresPermissionFailuresForNonSelectedHost() {
+@Test("Host issue mapper ignores generic failures for non-selected hosts")
+func hostIssueMapperIgnoresGenericFailuresForNonSelectedHost() {
     let host = ShadowClientRemoteHostDescriptor(
         host: "192.168.0.40",
         displayName: "Lumen-PC",
@@ -84,7 +79,7 @@ func hostIssueMapperIgnoresPermissionFailuresForNonSelectedHost() {
     let issue = ShadowClientRemoteHostIssueMapper.issue(
         for: host,
         selectedHostID: "other-host",
-        appState: .failed("Lumen denied List Apps permission for this paired client."),
+        appState: .failed("Host rejected request (403): Forbidden"),
         launchState: .idle,
         sessionIssue: nil
     )

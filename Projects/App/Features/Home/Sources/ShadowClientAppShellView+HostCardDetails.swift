@@ -298,28 +298,12 @@ extension ShadowClientAppShellView {
                             }
                             .tint(.mint)
 
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Lumen Permissions")
-                                    .font(.caption.weight(.bold))
-                                    .foregroundStyle(Color.white.opacity(0.68))
-
-                                ForEach(ShadowClientLumenPermission.allCases, id: \.self) { permission in
-                                    Toggle(isOn: hostLumenPermissionBinding(for: host, permission: permission)) {
-                                        Text(permission.label)
-                                            .font(.callout.weight(.semibold))
-                                            .foregroundStyle(.white)
-                                    }
-                                    .tint(.mint)
-                                }
-                            }
-
                             Button("Save Lumen Overrides") {
                                 remoteDesktopRuntime.updateSelectedHostLumenAdmin(
                                     username: hostLumenAdminUsername(host),
                                     password: hostLumenAdminPassword(host),
                                     displayModeOverride: hostLumenDisplayModeDraft(for: host),
-                                    alwaysUseVirtualDisplay: hostLumenAlwaysUseVirtualDisplayDraft(for: host),
-                                    permissions: hostLumenPermissionDraft(for: host)
+                                    alwaysUseVirtualDisplay: hostLumenAlwaysUseVirtualDisplayDraft(for: host)
                                 )
                             }
                             .buttonStyle(.borderedProminent)

@@ -68,7 +68,6 @@ let settingsTelemetryRuntime: SettingsDiagnosticsTelemetryRuntime
     @State var hostAddressDrafts: [String: String] = [:]
     @State var lumenDisplayModeDrafts: [String: String] = [:]
     @State var lumenAlwaysUseVirtualDisplayDrafts: [String: Bool] = [:]
-    @State var lumenPermissionDrafts: [String: UInt32] = [:]
     @State var remoteDesktopHostFrames: [String: CGRect] = [:]
     @State var hostSpotlightState = ShadowClientHostSpotlightState()
     @State var manualHostEntryState = ShadowClientManualHostEntryState()

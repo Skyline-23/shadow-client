@@ -188,13 +188,13 @@ func gameStreamParserMapsHostAppListWithoutStatusMessage() throws {
     #expect(apps[1] == .init(id: 1093255277, title: "Steam Big Picture", hdrSupported: true, isAppCollectorGame: false))
 }
 
-@Test("GameStream parser rejects Lumen applist permission sentinel")
-func gameStreamParserRejectsLumenAppListPermissionSentinel() {
+@Test("GameStream parser accepts blocked Lumen applist placeholders as normal apps")
+func gameStreamParserAcceptsBlockedLumenAppListPlaceholder() throws {
     let xml = """
     <root status_code="200" status_message="OK">
       <App>
         <IsHdrSupported>0</IsHdrSupported>
-        <AppTitle>Permission Denied</AppTitle>
+        <AppTitle>Blocked</AppTitle>
         <UUID></UUID>
         <IDX>0</IDX>
         <ID>114514</ID>
@@ -202,14 +202,9 @@ func gameStreamParserRejectsLumenAppListPermissionSentinel() {
     </root>
     """
 
-    do {
-        _ = try ShadowClientGameStreamXMLParsers.parseAppList(xml: xml)
-        Issue.record("Expected Lumen permission sentinel to be rejected")
-    } catch let error as ShadowClientGameStreamError {
-        #expect(error == .responseRejected(code: 403, message: "Permission denied"))
-    } catch {
-        Issue.record("Unexpected error: \(error)")
-    }
+    let apps = try ShadowClientGameStreamXMLParsers.parseAppList(xml: xml)
+    #expect(apps.count == 1)
+    #expect(apps.first?.title == "Blocked")
 }
 
 @Test("Metadata client uses HTTP first for unpinned hosts")
@@ -1115,9 +1110,9 @@ func remoteDesktopRuntimeRefreshesHostsAndLoadsApps() async {
     }
 }
 
-@Test("Remote desktop runtime surfaces Lumen app list permission denial")
+@Test("Remote desktop runtime surfaces rejected Lumen app list requests")
 @MainActor
-func remoteDesktopRuntimeSurfacesLumenAppListPermissionDenial() async {
+func remoteDesktopRuntimeSurfacesRejectedLumenAppListRequests() async {
     let client = FakeGameStreamMetadataClient(
         serverInfoByHost: [
             "192.168.0.40": .init(
@@ -1134,7 +1129,7 @@ func remoteDesktopRuntimeSurfacesLumenAppListPermissionDenial() async {
         ],
         appListByHost: [:],
         appListFailureByHost: [
-            "192.168.0.40": .responseRejected(code: 403, message: "Permission denied"),
+            "192.168.0.40": .responseRejected(code: 403, message: "Forbidden"),
         ]
     )
 
@@ -1148,9 +1143,9 @@ func remoteDesktopRuntimeSurfacesLumenAppListPermissionDenial() async {
     await waitForAppCatalogReady(runtime)
 
     if case let .failed(message) = runtime.appState {
-        #expect(message == "Lumen denied List Apps permission for this paired client.")
+        #expect(message == "Host rejected request (403): Forbidden")
     } else {
-        Issue.record("Expected failed app state for Lumen permission denial, got \(runtime.appState)")
+        Issue.record("Expected failed app state for rejected Lumen app list request, got \(runtime.appState)")
     }
 }
 

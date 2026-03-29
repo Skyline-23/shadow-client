@@ -1236,26 +1236,13 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         }
 
         let normalizedAuthorityHost = Self.normalizedAuthorityHost(preferredAuthorityHost) ?? endpoint.host
-        if preferredAuthorityHost != nil || advertisedControlHTTPSPort != nil {
-            if let lumenApps = try await fetchLumenAppList(
-                connectHost: endpoint.host,
-                authorityHost: normalizedAuthorityHost,
-                streamHTTPSPort: resolvedHTTPSPort,
-                controlHTTPSPort: advertisedControlHTTPSPort,
-                pinnedServerCertificateDER: pinnedCertificateDER
-            ) {
-                return lumenApps
-            }
-        }
-
-        let httpsXML = try await requestXML(
-            host: endpoint.host,
-            port: resolvedHTTPSPort,
-            scheme: ShadowClientGameStreamNetworkDefaults.httpsScheme,
-            command: "applist"
-        )
-
-        return try ShadowClientGameStreamXMLParsers.parseAppList(xml: httpsXML)
+        return try await fetchLumenAppList(
+            connectHost: endpoint.host,
+            authorityHost: normalizedAuthorityHost,
+            streamHTTPSPort: resolvedHTTPSPort,
+            controlHTTPSPort: advertisedControlHTTPSPort,
+            pinnedServerCertificateDER: pinnedCertificateDER
+        ) ?? []
     }
 
     private func fetchLumenAppList(
@@ -1811,8 +1798,7 @@ private enum ShadowClientRemoteDesktopCommand: Sendable {
         username: String,
         password: String,
         displayModeOverride: String,
-        alwaysUseVirtualDisplay: Bool,
-        permissions: UInt32
+        alwaysUseVirtualDisplay: Bool
     )
     case disconnectSelectedHostLumenAdmin(username: String, password: String)
     case unpairSelectedHostLumenAdmin(username: String, password: String)
@@ -2024,8 +2010,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private var lastRuntimeStreamReconnectUptime: TimeInterval = 0
     private var renderStateFailureObservation: AnyCancellable?
     private var lastSynchronizedClipboardText: String?
-    private var clipboardReadPermissionDenied = false
-    private var clipboardWritePermissionDenied = false
+    private var clipboardReadUnavailable = false
+    private var clipboardWriteUnavailable = false
     private var clipboardActionRequiresActiveStream = false
     private var hostTerminationIssue: ShadowClientRemoteSessionIssue?
 
@@ -2172,13 +2158,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             performRefreshSelectedHostApps()
         case let .refreshSelectedHostLumenAdmin(username, password):
             performRefreshSelectedHostLumenAdmin(username: username, password: password)
-        case let .updateSelectedHostLumenAdmin(username, password, displayModeOverride, alwaysUseVirtualDisplay, permissions):
+        case let .updateSelectedHostLumenAdmin(username, password, displayModeOverride, alwaysUseVirtualDisplay):
             performUpdateSelectedHostLumenAdmin(
                 username: username,
                 password: password,
                 displayModeOverride: displayModeOverride,
-                alwaysUseVirtualDisplay: alwaysUseVirtualDisplay,
-                permissions: permissions
+                alwaysUseVirtualDisplay: alwaysUseVirtualDisplay
             )
         case let .disconnectSelectedHostLumenAdmin(username, password):
             performDisconnectSelectedHostLumenAdmin(
@@ -2443,7 +2428,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     self.performRefreshHosts(
                         candidates: pendingHostRefreshRequest.candidates,
                         preferredHost: pendingHostRefreshRequest.preferredHost,
-                        preferredAuthorityHost: pendingHostRefreshRequest.preferredAuthorityHost
+                        preferredAuthorityHost: pendingHostRefreshRequest.preferredAuthorityHost,
+                        preferredControlHTTPSPort: pendingHostRefreshRequest.preferredControlHTTPSPort
                     )
                 }
             }
@@ -2724,7 +2710,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     self.refreshHosts(
                         candidates: candidates,
                         preferredHost: pairedRoute ?? Self.activeExactRouteCandidate(for: selectedHost),
-                        preferredAuthorityHost: pairedAuthorityHost
+                        preferredAuthorityHost: pairedAuthorityHost,
+                        preferredControlHTTPSPort: Self.preferredControlHTTPSPortCandidate(for: selectedHost)
                     )
                 }
             } catch {
@@ -3419,7 +3406,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     : latestHostCandidates
                 self.refreshHosts(
                     candidates: candidates,
-                    preferredHost: Self.activeExactRouteCandidate(for: runtimeHost)
+                    preferredHost: Self.activeExactRouteCandidate(for: runtimeHost),
+                    preferredAuthorityHost: Self.preferredAuthorityHostCandidate(
+                        for: runtimeHost,
+                        connectEndpoint: runtimeHost.routes.active
+                    ),
+                    preferredControlHTTPSPort: Self.preferredControlHTTPSPortCandidate(for: runtimeHost)
                 )
             }
         }
@@ -3708,8 +3700,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     @MainActor
     private func clearSessionIssueState() {
-        clipboardReadPermissionDenied = false
-        clipboardWritePermissionDenied = false
+        clipboardReadUnavailable = false
+        clipboardWriteUnavailable = false
         clipboardActionRequiresActiveStream = false
         hostTerminationIssue = nil
         sessionIssue = nil
@@ -3717,14 +3709,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     @MainActor
     private func clearClipboardWriteIssue() {
-        clipboardWritePermissionDenied = false
+        clipboardWriteUnavailable = false
         clipboardActionRequiresActiveStream = false
         refreshSessionIssue()
     }
 
     @MainActor
     private func clearClipboardReadIssue() {
-        clipboardReadPermissionDenied = false
+        clipboardReadUnavailable = false
         clipboardActionRequiresActiveStream = false
         refreshSessionIssue()
     }
@@ -3739,10 +3731,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         switch issue {
-        case .readPermissionDenied:
-            clipboardReadPermissionDenied = true
-        case .writePermissionDenied:
-            clipboardWritePermissionDenied = true
+        case .readUnavailable:
+            clipboardReadUnavailable = true
+        case .writeUnavailable:
+            clipboardWriteUnavailable = true
         case .requiresActiveStream:
             clipboardActionRequiresActiveStream = true
         }
@@ -3752,8 +3744,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @MainActor
     private func refreshSessionIssue() {
         sessionIssue = hostTerminationIssue ?? Self.sessionIssue(
-            clipboardReadPermissionDenied: clipboardReadPermissionDenied,
-            clipboardWritePermissionDenied: clipboardWritePermissionDenied,
+            clipboardReadUnavailable: clipboardReadUnavailable,
+            clipboardWriteUnavailable: clipboardWriteUnavailable,
             clipboardActionRequiresActiveStream: clipboardActionRequiresActiveStream
         )
     }
@@ -3782,13 +3774,13 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     }
 
     private static func sessionIssue(
-        clipboardReadPermissionDenied: Bool,
-        clipboardWritePermissionDenied: Bool,
+        clipboardReadUnavailable: Bool,
+        clipboardWriteUnavailable: Bool,
         clipboardActionRequiresActiveStream: Bool
     ) -> ShadowClientRemoteSessionIssue? {
         ShadowClientRemoteSessionIssueKit.sessionIssue(
-            clipboardReadPermissionDenied: clipboardReadPermissionDenied,
-            clipboardWritePermissionDenied: clipboardWritePermissionDenied,
+            clipboardReadUnavailable: clipboardReadUnavailable,
+            clipboardWriteUnavailable: clipboardWriteUnavailable,
             clipboardActionRequiresActiveStream: clipboardActionRequiresActiveStream
         )
     }
@@ -3800,31 +3792,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return nil
         }
         return trimmed
-    }
-
-    private enum LumenPermissionCapability {
-        case listApps
-        case launchApps
-    }
-
-    private static func lumenPermissionDeniedMessage(
-        _ error: any Error,
-        capability: LumenPermissionCapability
-    ) -> String? {
-        guard case let ShadowClientGameStreamError.responseRejected(code, message) = error,
-              code == 403,
-              message.trimmingCharacters(in: .whitespacesAndNewlines)
-                  .localizedCaseInsensitiveContains("permission denied")
-        else {
-            return nil
-        }
-
-        switch capability {
-        case .listApps:
-            return "Lumen denied List Apps permission for this paired client."
-        case .launchApps:
-            return "Lumen denied Launch Apps permission for this paired client."
-        }
     }
 
     private static func shouldSuppressInputSendError(_ error: Error) -> Bool {
@@ -4416,13 +4383,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         _ error: any Error,
         settings: ShadowClientGameStreamLaunchSettings
     ) -> String {
-        if let permissionMessage = lumenPermissionDeniedMessage(
-            error,
-            capability: .launchApps
-        ) {
-            return permissionMessage
-        }
-
         let base = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = base.lowercased()
         var hints: [String] = []
@@ -4897,16 +4857,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         username: String,
         password: String,
         displayModeOverride: String,
-        alwaysUseVirtualDisplay: Bool,
-        permissions: UInt32
+        alwaysUseVirtualDisplay: Bool
     ) {
         commandContinuation.yield(
             .updateSelectedHostLumenAdmin(
                 username: username,
                 password: password,
                 displayModeOverride: displayModeOverride,
-                alwaysUseVirtualDisplay: alwaysUseVirtualDisplay,
-                permissions: permissions
+                alwaysUseVirtualDisplay: alwaysUseVirtualDisplay
             )
         )
     }
@@ -5058,12 +5016,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     }
                     if fallbackApps.isEmpty {
                         self.apps = []
-                        self.appState = .failed(
-                            Self.lumenPermissionDeniedMessage(
-                                error,
-                                capability: .listApps
-                            ) ?? message
-                        )
+                        self.appState = .failed(message)
                     } else {
                         self.apps = fallbackApps
                         self.appState = .loaded
@@ -5135,8 +5088,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         username: String,
         password: String,
         displayModeOverride: String,
-        alwaysUseVirtualDisplay: Bool,
-        permissions: UInt32
+        alwaysUseVirtualDisplay: Bool
     ) {
         guard let selectedHost,
               let currentProfile = selectedHostLumenAdminProfile
@@ -5167,8 +5119,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             name: currentProfile.name,
             uuid: currentProfile.uuid,
             displayModeOverride: displayModeOverride.trimmingCharacters(in: .whitespacesAndNewlines),
-            permissions: permissions,
-            allowClientCommands: currentProfile.allowClientCommands,
             alwaysUseVirtualDisplay: alwaysUseVirtualDisplay,
             connected: currentProfile.connected,
             doCommands: currentProfile.doCommands,
@@ -5304,8 +5254,6 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                             name: profile.name,
                             uuid: profile.uuid,
                             displayModeOverride: profile.displayModeOverride,
-                            permissions: profile.permissions,
-                            allowClientCommands: profile.allowClientCommands,
                             alwaysUseVirtualDisplay: profile.alwaysUseVirtualDisplay,
                             connected: false,
                             doCommands: profile.doCommands,
@@ -5372,7 +5320,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     self.clearSelectedHostWakeState()
                     self.performRefreshHosts(
                         candidates: self.latestHostCandidates,
-                        preferredHost: Self.activeExactRouteCandidate(for: selectedHost)
+                        preferredHost: Self.activeExactRouteCandidate(for: selectedHost),
+                        preferredAuthorityHost: Self.preferredAuthorityHostCandidate(
+                            for: selectedHost,
+                            connectEndpoint: selectedHost.routes.active
+                        ),
+                        preferredControlHTTPSPort: Self.preferredControlHTTPSPortCandidate(for: selectedHost)
                     )
                 }
             } catch {
@@ -6200,6 +6153,24 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             connectEndpoint: connectEndpoint
         )
         return normalizedAuthorityHost(authorityEndpoint.host)
+    }
+
+    private static func preferredControlHTTPSPortCandidate(
+        for selectedHost: ShadowClientRemoteHostDescriptor
+    ) -> Int? {
+        if let controlHTTPSPort = selectedHost.controlHTTPSPort {
+            return controlHTTPSPort
+        }
+
+        let controlHTTPSPort = selectedHost.routes.active.httpsPort + 6
+        guard
+            (ShadowClientGameStreamNetworkDefaults.minimumPort...ShadowClientGameStreamNetworkDefaults.maximumPort)
+                .contains(controlHTTPSPort)
+        else {
+            return nil
+        }
+
+        return controlHTTPSPort
     }
 
     private static func preferredRefreshEndpoint(
@@ -7584,28 +7555,9 @@ enum ShadowClientGameStreamXMLParsers {
     static func parseAppList(xml: String) throws -> [ShadowClientRemoteAppDescriptor] {
         let document = try ShadowClientXMLAppListParser.parse(xml: xml)
         try validateRoot(document.rootStatus)
-        if isLumenPermissionDeniedSentinel(document.apps) {
-            throw ShadowClientGameStreamError.responseRejected(
-                code: 403,
-                message: "Permission denied"
-            )
-        }
-
         return document.apps.sorted {
             $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
         }
-    }
-
-    private static func isLumenPermissionDeniedSentinel(
-        _ apps: [ShadowClientRemoteAppDescriptor]
-    ) -> Bool {
-        guard apps.count == 1, let app = apps.first else {
-            return false
-        }
-
-        return app.id == 114_514 &&
-            app.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                .caseInsensitiveCompare("Permission Denied") == .orderedSame
     }
 
     private static func parsePairStatus(_ rawValue: String?) -> ShadowClientRemoteHostPairStatus {

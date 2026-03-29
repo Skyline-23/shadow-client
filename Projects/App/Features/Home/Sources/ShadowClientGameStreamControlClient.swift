@@ -1018,6 +1018,7 @@ public actor NativeGameStreamControlClient: ShadowClientGameStreamControlClient 
             "mode": "\(settings.width)x\(settings.height)x\(settings.fps)",
             "additionalStates": "1",
             "sops": "1",
+            "corever": "1",
             "rikey": remoteInputKey.hexString,
             "rikeyid": "\(remoteInputKeyID)",
             "localAudioPlayMode": localAudioPlayMode,

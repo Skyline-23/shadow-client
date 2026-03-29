@@ -203,6 +203,7 @@ func launchParameterBuilderIncludesLumenVirtualDisplayRequest() {
     )
 
     #expect(parameters["virtualDisplay"] == "1")
+    #expect(parameters["corever"] == "1")
 }
 
 @Test("Launch parameter builder omits Lumen virtual display request by default")
@@ -226,6 +227,7 @@ func launchParameterBuilderOmitsLumenVirtualDisplayRequestByDefault() {
     )
 
     #expect(parameters["virtualDisplay"] == nil)
+    #expect(parameters["corever"] == "1")
 }
 
 @Test("Launch parameter builder includes Lumen display scale contract when requested")
@@ -260,6 +262,7 @@ func launchParameterBuilderIncludesLumenDisplayScaleContract() {
     #expect(parameters["clientSinkSupportsFrameGatedHDR"] == "0")
     #expect(parameters["clientSinkSupportsHDRTileOverlay"] == "0")
     #expect(parameters["clientSinkSupportsPerFrameHDRMetadata"] == "0")
+    #expect(parameters["corever"] == "1")
 }
 
 @Test("Launch parameter builder includes Lumen client display profile when provided")
@@ -317,4 +320,5 @@ func launchParameterBuilderIncludesLumenClientDisplayProfile() {
     #expect(parameters["clientSinkSupportsFrameGatedHDR"] == "1")
     #expect(parameters["clientSinkSupportsHDRTileOverlay"] == "0")
     #expect(parameters["clientSinkSupportsPerFrameHDRMetadata"] == "1")
+    #expect(parameters["corever"] == "1")
 }

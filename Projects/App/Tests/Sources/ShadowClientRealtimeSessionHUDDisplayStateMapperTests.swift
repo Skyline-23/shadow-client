@@ -118,15 +118,15 @@ func realtimeSessionHUDMapperSurfacesSessionPermissionIssue() {
         controlRoundTripMs: 8,
         renderState: .rendering,
         sessionIssue: .init(
-            title: "Clipboard Permission Required",
-            message: "Grant Clipboard Read permission for this paired Lumen client."
+            title: "Clipboard Sync Unavailable",
+            message: "Lumen clipboard read is unavailable for this paired client."
         )
     )
 
     #expect(
         model == .connectionIssue(
-            title: "Clipboard Permission Required",
-            message: "Grant Clipboard Read permission for this paired Lumen client."
+            title: "Clipboard Sync Unavailable",
+            message: "Lumen clipboard read is unavailable for this paired client."
         )
     )
 }
