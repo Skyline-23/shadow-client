@@ -77,8 +77,8 @@ func lumenAdminClientParserReturnsNilWhenCurrentClientIsMissing() throws {
     #expect(profile == nil)
 }
 
-@Test("Lumen admin client fetches current profile over pinned HTTPS transport")
-func lumenAdminClientFetchesCurrentProfileOverPinnedHTTPSTransport() async throws {
+@Test("Lumen admin client fetches current profile over pinned Lumen control HTTPS transport")
+func lumenAdminClientFetchesCurrentProfileOverPinnedLumenControlHTTPSTransport() async throws {
     let suiteName = "ShadowClientLumenAdminClientTests.\(UUID().uuidString)"
     let identityStore = ShadowClientPairingIdentityStore(defaultsSuiteName: suiteName)
     let pinnedCertificateStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: suiteName)
@@ -130,7 +130,7 @@ func lumenAdminClientFetchesCurrentProfileOverPinnedHTTPSTransport() async throw
     let requestText = String(decoding: request?.requestData ?? Data(), as: UTF8.self)
 
     #expect(profile?.name == "Current Device")
-    #expect(request?.url.absoluteString == "https://wifi.skyline23.com:48984/api/clients/list")
+    #expect(request?.url.absoluteString == "https://wifi.skyline23.com:48990/api/clients/list")
     #expect(requestText.contains("Authorization: Basic YWRtaW46c2VjcmV0"))
 }
 

@@ -212,71 +212,107 @@ public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClie
         queryItems: [URLQueryItem],
         body: Body?
     ) async throws -> ShadowClientLumenPairingSession {
-        let requestContext = try await authenticationContextBuilder.makePairingContext(
+        let requestContexts = try await authenticationContextBuilder.makePairingContexts(
             host: host,
             httpsPort: httpsPort
         )
         let encodedBody = try body.map { try JSONEncoder().encode($0) }
-        let request = try requestContext.makeRequestData(
-            path: path,
-            method: method,
-            queryItems: queryItems,
-            headers: encodedBody == nil ? [:] : ["Content-Type": "application/json"],
-            body: encodedBody
-        )
+        var lastError: Error?
 
-        let response: ShadowClientGameStreamHTTPTransport.HTTPSResponse
-        do {
-            response = try await transport.request(
-                url: request.url,
-                requestData: request.requestData,
-                pinnedServerCertificateDER: requestContext.pinnedServerCertificateDER,
-                clientCertificates: requestContext.clientCertificates,
-                clientCertificateIdentity: requestContext.clientCertificateIdentity,
-                timeout: ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
+        for requestContext in requestContexts {
+            let request = try requestContext.makeRequestData(
+                path: path,
+                method: method,
+                queryItems: queryItems,
+                headers: encodedBody == nil ? [:] : ["Content-Type": "application/json"],
+                body: encodedBody
             )
-        } catch let error as ShadowClientGameStreamError {
-            throw error
-        } catch {
-            throw ShadowClientGameStreamHTTPTransport.requestFailureError(error)
+
+            do {
+                let response = try await transport.request(
+                    url: request.url,
+                    requestData: request.requestData,
+                    pinnedServerCertificateDER: requestContext.pinnedServerCertificateDER,
+                    clientCertificates: requestContext.clientCertificates,
+                    clientCertificateIdentity: requestContext.clientCertificateIdentity,
+                    timeout: ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
+                )
+
+                let pairingSession = try Self.parsePairingSession(data: response.body)
+                await persistPresentedServerTrust(
+                    requestEndpoint: requestContext.endpoint,
+                    pairingSession: pairingSession,
+                    certificateDER: response.presentedLeafCertificateDER
+                )
+                return pairingSession
+            } catch let error as ShadowClientGameStreamError {
+                lastError = error
+            } catch {
+                lastError = ShadowClientGameStreamHTTPTransport.requestFailureError(error)
+            }
         }
 
-        let pairingSession = try Self.parsePairingSession(data: response.body)
-        await persistPresentedServerTrust(
-            host: requestContext.endpoint.host,
-            httpsPort: requestContext.endpoint.httpsPort,
-            serverUniqueID: pairingSession.serverUniqueID,
-            certificateDER: response.presentedLeafCertificateDER
-        )
-        return pairingSession
+        throw lastError ?? ShadowClientGameStreamError.requestFailed("Lumen pairing request failed.")
     }
 
     private func persistPresentedServerTrust(
-        host: String,
-        httpsPort: Int,
-        serverUniqueID: String?,
+        requestEndpoint: ShadowClientLumenEndpoint,
+        pairingSession: ShadowClientLumenPairingSession,
         certificateDER: Data?
     ) async {
         guard let certificateDER else {
             return
         }
 
-        await pinnedCertificateStore.setCertificateDER(
-            certificateDER,
-            forHost: host,
-            httpsPort: httpsPort
-        )
-        if let normalizedServerUniqueID = Self.normalizedMachineID(serverUniqueID) {
-            await pinnedCertificateStore.bindHost(
-                host,
-                httpsPort: httpsPort,
-                toMachineID: normalizedServerUniqueID
-            )
+        var endpoints: [ShadowClientLumenEndpoint] = [requestEndpoint]
+        if let controlHTTPSPort = pairingSession.controlHTTPSPort {
+            endpoints.append(.init(host: requestEndpoint.host, httpsPort: controlHTTPSPort))
+        }
+
+        let advertisedEndpoints = pairingSession.controlHTTPSURLs.compactMap(Self.endpoint(fromControlURLString:))
+        endpoints.append(contentsOf: advertisedEndpoints)
+        if let preferredControlEndpoint = Self.endpoint(fromControlURLString: pairingSession.preferredControlHTTPSURL) {
+            endpoints.insert(preferredControlEndpoint, at: 0)
+        }
+
+        var seenEndpoints = Set<String>()
+        for endpoint in endpoints {
+            let routeKey = "\(endpoint.host.lowercased()):\(endpoint.httpsPort)"
+            guard seenEndpoints.insert(routeKey).inserted else {
+                continue
+            }
+
             await pinnedCertificateStore.setCertificateDER(
                 certificateDER,
-                forMachineID: normalizedServerUniqueID
+                forHost: endpoint.host,
+                httpsPort: endpoint.httpsPort
             )
+            if let normalizedServerUniqueID = Self.normalizedMachineID(pairingSession.serverUniqueID) {
+                await pinnedCertificateStore.bindHost(
+                    endpoint.host,
+                    httpsPort: endpoint.httpsPort,
+                    toMachineID: normalizedServerUniqueID
+                )
+                await pinnedCertificateStore.setCertificateDER(
+                    certificateDER,
+                    forMachineID: normalizedServerUniqueID
+                )
+            }
         }
+    }
+
+    private static func endpoint(fromControlURLString urlString: String?) -> ShadowClientLumenEndpoint? {
+        guard
+            let urlString,
+            let url = URL(string: urlString),
+            let host = url.host
+        else {
+            return nil
+        }
+        return .init(
+            host: host,
+            httpsPort: url.port ?? ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
+        )
     }
 
     private static func normalizedMachineID(_ value: String?) -> String? {
@@ -287,6 +323,7 @@ public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClie
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return trimmed.isEmpty ? nil : trimmed
     }
+
     private static func resolvedDeviceName(from override: String?) -> String {
         if let trimmedOverride = override?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmedOverride.isEmpty {
             return trimmedOverride

@@ -22,7 +22,7 @@ func lumenPairingClientParserDecodesPairingSessionPayload() throws {
             "status": "approved",
             "serverUniqueId": "HOST-123",
             "serviceType": "_shadow._tcp",
-            "controlHttpsPort": 47984,
+            "controlHttpsPort": 48990,
             "preferredControlHttpsUrl": "https://192.168.0.20:48990",
             "controlHttpsUrls": [
               "https://192.168.0.20:48990",
@@ -51,7 +51,7 @@ func lumenPairingClientParserDecodesPairingSessionPayload() throws {
             status: .approved,
             serverUniqueID: "HOST-123",
             serviceType: "_shadow._tcp",
-            controlHTTPSPort: 47984,
+            controlHTTPSPort: 48990,
             preferredControlHTTPSURL: "https://192.168.0.20:48990",
             controlHTTPSURLs: [
                 "https://192.168.0.20:48990",
@@ -63,8 +63,8 @@ func lumenPairingClientParserDecodesPairingSessionPayload() throws {
     )
 }
 
-@Test("Lumen pairing client starts pairing over pinned HTTPS stream transport")
-func lumenPairingClientStartsPairingOverPinnedHTTPSStreamTransport() async throws {
+@Test("Lumen pairing client starts pairing over pinned Lumen control HTTPS transport")
+func lumenPairingClientStartsPairingOverPinnedLumenControlHTTPSTransport() async throws {
     let suiteName = "ShadowClientLumenPairingClientTests.\(UUID().uuidString)"
     let identityStore = ShadowClientPairingIdentityStore(defaultsSuiteName: suiteName)
     let pinnedCertificateStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: suiteName)
@@ -97,9 +97,9 @@ func lumenPairingClientStartsPairingOverPinnedHTTPSStreamTransport() async throw
     let requestText = String(decoding: request?.requestData ?? Data(), as: UTF8.self)
 
     #expect(session.pairingID == "pairing-123")
-    #expect(request?.url.absoluteString == "https://wifi.skyline23.com:48984/api/pairing/start")
+    #expect(request?.url.absoluteString == "https://wifi.skyline23.com:48990/api/pairing/start")
     #expect(requestText.contains("POST /api/pairing/start HTTP/1.1"))
-    #expect(requestText.contains("Host: wifi.skyline23.com:48984"))
+    #expect(requestText.contains("Host: wifi.skyline23.com:48990"))
     #expect(requestText.contains("Content-Type: application/json"))
     #expect(requestText.contains("\"deviceName\":\"Office iPad\""))
     #expect(requestText.contains("\"platform\":\"ios\""))
@@ -107,8 +107,8 @@ func lumenPairingClientStartsPairingOverPinnedHTTPSStreamTransport() async throw
     #expect(requestText.contains("BEGIN CERTIFICATE"))
 }
 
-@Test("Lumen pairing client requests status over pinned HTTPS stream transport")
-func lumenPairingClientRequestsStatusOverPinnedHTTPSStreamTransport() async throws {
+@Test("Lumen pairing client requests status over pinned Lumen control HTTPS transport")
+func lumenPairingClientRequestsStatusOverPinnedLumenControlHTTPSTransport() async throws {
     let suiteName = "ShadowClientLumenPairingClientTests.\(UUID().uuidString)"
     let identityStore = ShadowClientPairingIdentityStore(defaultsSuiteName: suiteName)
     let pinnedCertificateStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: suiteName)
@@ -141,10 +141,53 @@ func lumenPairingClientRequestsStatusOverPinnedHTTPSStreamTransport() async thro
     #expect(session.status == .approved)
     #expect(
         request?.url.absoluteString ==
-            "https://wifi.skyline23.com:48984/api/pairing/status?pairingId=pairing-123"
+            "https://wifi.skyline23.com:48990/api/pairing/status?pairingId=pairing-123"
     )
     #expect(requestText.contains("GET /api/pairing/status?pairingId=pairing-123 HTTP/1.1"))
     #expect(!requestText.contains("Content-Type: application/json"))
+}
+
+@Test("Lumen pairing client persists server trust for advertised control HTTPS routes")
+func lumenPairingClientPersistsServerTrustForAdvertisedControlHTTPSRoutes() async throws {
+    let suiteName = "ShadowClientLumenPairingClientTests.\(UUID().uuidString)"
+    let identityStore = ShadowClientPairingIdentityStore(defaultsSuiteName: suiteName)
+    let pinnedCertificateStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: suiteName)
+    let certificateDER = Data([0x01, 0x02, 0x03])
+    let transport = RecordingLumenHTTPTransport(
+        response: .init(
+            statusCode: 200,
+            body: pairingSessionPayloadData(),
+            presentedLeafCertificateDER: certificateDER
+        )
+    )
+    let client = NativeShadowClientLumenPairingClient(
+        identityStore: identityStore,
+        pinnedCertificateStore: pinnedCertificateStore,
+        authenticationContextBuilder: ShadowClientLumenAuthenticationContextBuilder(
+            identityStore: identityStore,
+            pinnedCertificateStore: pinnedCertificateStore
+        ),
+        transport: transport
+    )
+
+    _ = try await client.startPairing(
+        host: "wifi.skyline23.com:48984",
+        httpsPort: 48984,
+        deviceName: "Office iPad",
+        platform: "ios"
+    )
+
+    let localControlPin = await pinnedCertificateStore.certificateDER(
+        forHost: "192.168.0.20",
+        httpsPort: 48990
+    )
+    let remoteControlPin = await pinnedCertificateStore.certificateDER(
+        forHost: "wifi.skyline23.com",
+        httpsPort: 48990
+    )
+
+    #expect(localControlPin == certificateDER)
+    #expect(remoteControlPin == certificateDER)
 }
 
 private actor RecordingLumenHTTPTransport: ShadowClientLumenHTTPTransport {
@@ -195,7 +238,7 @@ private func pairingSessionPayloadData() -> Data {
             "status": "approved",
             "serverUniqueId": "HOST-123",
             "serviceType": "_shadow._tcp",
-            "controlHttpsPort": 47984,
+            "controlHttpsPort": 48990,
             "preferredControlHttpsUrl": "https://192.168.0.20:48990",
             "controlHttpsUrls": [
               "https://192.168.0.20:48990",

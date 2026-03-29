@@ -29,6 +29,48 @@ func lumenEndpointResolverCanonicalizesHostAndHTTPSPort() throws {
     )
 }
 
+@Test("Lumen auth context builder prefers control HTTPS endpoint for stream routes")
+func lumenAuthContextBuilderPrefersControlHTTPSEndpointForStreamRoutes() throws {
+    let endpoints = try ShadowClientLumenAuthenticationContextBuilder.resolveControlEndpoints(
+        host: "wifi.skyline23.com:48984",
+        httpsPort: 48984
+    )
+
+    #expect(
+        endpoints == [
+            .init(host: "wifi.skyline23.com", httpsPort: 48990),
+            .init(host: "wifi.skyline23.com", httpsPort: 48984),
+        ]
+    )
+}
+
+@Test("Lumen admin contexts reuse stream pin for derived control endpoint")
+func lumenAdminContextsReuseStreamPinForDerivedControlEndpoint() async throws {
+    let suiteName = "ShadowClientLumenAuthenticationContextTests.\(UUID().uuidString)"
+    let identityStore = ShadowClientPairingIdentityStore(defaultsSuiteName: suiteName)
+    let pinnedCertificateStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: suiteName)
+    let pinnedCertificate = Data([0x01, 0x02, 0x03])
+    await pinnedCertificateStore.setCertificateDER(
+        pinnedCertificate,
+        forHost: "wifi.skyline23.com",
+        httpsPort: 48984
+    )
+    let builder = ShadowClientLumenAuthenticationContextBuilder(
+        identityStore: identityStore,
+        pinnedCertificateStore: pinnedCertificateStore
+    )
+
+    let contexts = try await builder.makeAdminContexts(
+        host: "wifi.skyline23.com:48984",
+        httpsPort: 48984,
+        username: "admin",
+        password: "secret"
+    )
+
+    #expect(contexts.first?.endpoint == .init(host: "wifi.skyline23.com", httpsPort: 48990))
+    #expect(contexts.first?.pinnedServerCertificateDER == pinnedCertificate)
+}
+
 @Test("Lumen request context injects authorization header into HTTPS request data")
 func lumenRequestContextInjectsAuthorizationHeaderIntoHTTPSRequestData() throws {
     let context = ShadowClientLumenHTTPSRequestContext(

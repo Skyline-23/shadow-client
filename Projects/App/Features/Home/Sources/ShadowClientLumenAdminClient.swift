@@ -121,20 +121,13 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
         username: String,
         password: String
     ) async throws -> ShadowClientLumenAdminClientProfile? {
-        let requestContext = try await authenticationContextBuilder.makeAdminContext(
+        let response = try await performAdminRequest(
             host: host,
             httpsPort: httpsPort,
             username: username,
-            password: password
-        )
-        let request = try requestContext.makeRequestData(
+            password: password,
             path: "/api/clients/list",
             method: "GET"
-        )
-
-        let response = try await performRequest(
-            request,
-            requestContext: requestContext
         )
         let currentClientUUID = await identityStore.uniqueID()
         return try Self.parseCurrentClientProfile(
@@ -150,13 +143,11 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
         password: String,
         profile: ShadowClientLumenAdminClientProfile
     ) async throws -> ShadowClientLumenAdminClientProfile {
-        let requestContext = try await authenticationContextBuilder.makeAdminContext(
+        _ = try await performAdminRequest(
             host: host,
             httpsPort: httpsPort,
             username: username,
-            password: password
-        )
-        let request = try requestContext.makeRequestData(
+            password: password,
             path: "/api/clients/update",
             method: "POST",
             headers: ["Content-Type": "application/json"],
@@ -172,11 +163,6 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
                     undoCommands: profile.undoCommands
                 )
             )
-        )
-
-        _ = try await performRequest(
-            request,
-            requestContext: requestContext
         )
         return profile
     }
@@ -255,23 +241,55 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
         path: String,
         body: Body
     ) async throws {
-        let requestContext = try await authenticationContextBuilder.makeAdminContext(
+        _ = try await performAdminRequest(
             host: host,
             httpsPort: httpsPort,
             username: username,
-            password: password
-        )
-        let request = try requestContext.makeRequestData(
+            password: password,
             path: path,
             method: "POST",
             headers: ["Content-Type": "application/json"],
             body: try JSONEncoder().encode(body)
         )
+    }
 
-        _ = try await performRequest(
-            request,
-            requestContext: requestContext
+    private func performAdminRequest(
+        host: String,
+        httpsPort: Int,
+        username: String,
+        password: String,
+        path: String,
+        method: String,
+        headers: [String: String] = [:],
+        body: Data? = nil
+    ) async throws -> ShadowClientGameStreamHTTPTransport.HTTPSResponse {
+        let requestContexts = try await authenticationContextBuilder.makeAdminContexts(
+            host: host,
+            httpsPort: httpsPort,
+            username: username,
+            password: password
         )
+        var lastError: Error?
+
+        for requestContext in requestContexts {
+            let request = try requestContext.makeRequestData(
+                path: path,
+                method: method,
+                headers: headers,
+                body: body
+            )
+
+            do {
+                return try await performRequest(
+                    request,
+                    requestContext: requestContext
+                )
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? ShadowClientGameStreamError.requestFailed("Lumen admin request failed.")
     }
 
     private func performRequest(
