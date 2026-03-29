@@ -500,6 +500,7 @@ func remoteDesktopRuntimeLoadsLumenAdminProfileForSelectedHost() async {
     await waitForLumenAdminState(runtime)
 
     #expect(runtime.selectedHostLumenAdminState == .loaded)
+    #expect(runtime.selectedHostAuthenticationState?.admin == .ready(profileLoaded: true))
     #expect(
         runtime.selectedHostLumenAdminProfile == .init(
             name: "Current Device",

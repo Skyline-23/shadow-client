@@ -9,21 +9,21 @@ enum ShadowClientRemoteHostActionKit {
     }
 
     static func canPair(host: ShadowClientRemoteHostDescriptor) -> Bool {
-        host.pairStatus != .paired
+        host.authenticationState.canPair
     }
 
     static func canRefreshApps(selectedHost: ShadowClientRemoteHostDescriptor?) -> Bool {
         guard let selectedHost else {
             return false
         }
-        return selectedHost.isReachable && selectedHost.pairStatus == .paired
+        return selectedHost.authenticationState.canRefreshApps
     }
 
     static func canConnect(
         host: ShadowClientRemoteHostDescriptor,
         canInitiateSessionConnection: Bool
     ) -> Bool {
-        canInitiateSessionConnection && host.isReachable && host.pairStatus == .paired
+        canInitiateSessionConnection && host.authenticationState.canConnect
     }
 
     static func shouldShowPairAction(host: ShadowClientRemoteHostDescriptor) -> Bool {
@@ -35,22 +35,17 @@ enum ShadowClientRemoteHostActionKit {
         isSelected: Bool,
         accentColor: Color
     ) -> Color {
-        if host.isPendingResolution {
-            return Color.white.opacity(0.72)
-        }
-        if !host.isReachable {
+        switch host.authenticationState.hostIndicatorTone {
+        case .neutral:
+            return isSelected ? accentColor : Color.white.opacity(0.72)
+        case .unavailable:
             return .red.opacity(0.92)
-        }
-        if isSelected {
-            return accentColor
-        }
-        switch host.pairStatus {
-        case .paired:
+        case .ready:
             return .mint
-        case .notPaired:
+        case .pairingRequired:
             return .yellow
-        case .unknown:
-            return Color.white.opacity(0.72)
+        case .streaming:
+            return .orange
         }
     }
 }

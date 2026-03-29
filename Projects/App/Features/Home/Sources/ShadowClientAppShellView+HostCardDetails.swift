@@ -37,7 +37,7 @@ extension ShadowClientAppShellView {
                 remoteDesktopHostActionBar(host)
                     .allowsHitTesting(interactive)
 
-                if host.pairStatus == .paired {
+                if host.authenticationState.canConnect {
                     Button(role: .destructive) {
                         let dismissingHostID = spotlightedHostID
                         dismissHostSpotlight()
@@ -518,7 +518,7 @@ extension ShadowClientAppShellView {
                 .disabled(!canRefreshSelectedHostApps)
             }
 
-            if host.pairStatus != .paired {
+            if !host.authenticationState.canRefreshApps {
                 let callout = ShadowClientHostAppLibraryPresentationKit.lockedCallout()
                 remoteDesktopCalloutRow(
                     title: callout.title,

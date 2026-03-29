@@ -170,47 +170,14 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
     }
 
     public var statusLabel: String {
-        if isPendingResolution {
-            return "Saved"
-        }
-        if let lastError, !lastError.isEmpty {
-            return "Unavailable"
-        }
-
-        if currentGameID > 0 {
-            return "Streaming"
-        }
-
-        switch pairStatus {
-        case .paired:
-            return "Ready"
-        case .notPaired:
-            return "Pairing Required"
-        case .unknown:
-            return "Reachable"
-        }
+        authenticationState.statusLabel
     }
 
     public var detailLabel: String {
-        if isPendingResolution {
-            return "Address saved. Host metadata will update when the server responds."
-        }
-        if let lastError, !lastError.isEmpty {
-            return lastError
-        }
-
         if currentGameID > 0 {
             return "Active game ID: \(currentGameID)"
         }
-
-        switch pairStatus {
-        case .paired:
-            return "Pair status verified"
-        case .notPaired:
-            return "Host reachable. Pair this client in Lumen to continue."
-        case .unknown:
-            return "Host reachable"
-        }
+        return authenticationState.detailLabel
     }
 }
 
@@ -1834,6 +1801,18 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         return hosts.first { $0.id == selectedHostID }
+    }
+
+    @MainActor
+    public var selectedHostAuthenticationState: ShadowClientRemoteHostAuthenticationState? {
+        guard let selectedHost else {
+            return nil
+        }
+
+        return selectedHost.authenticationState(
+            adminState: selectedHostLumenAdminState,
+            adminProfile: selectedHostLumenAdminProfile
+        )
     }
 
     @MainActor
@@ -4432,7 +4411,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return
         }
 
-        guard selectedHost.pairStatus == .paired else {
+        guard selectedHost.authenticationState.canRefreshApps else {
             refreshAppsTask?.cancel()
             apps = []
             appState = .failed("Host requires pairing before app list queries.")
@@ -4552,6 +4531,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return
         }
 
+        guard selectedHost.authenticationState.canConnect else {
+            selectedHostLumenAdminProfile = nil
+            selectedHostLumenAdminState = .failed("Pair this host before syncing Lumen client metadata.")
+            return
+        }
+
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
@@ -4606,6 +4591,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
               let currentProfile = selectedHostLumenAdminProfile
         else {
             selectedHostLumenAdminState = .failed("Sync Lumen client metadata first.")
+            return
+        }
+
+        guard selectedHost.authenticationState.canConnect else {
+            selectedHostLumenAdminProfile = nil
+            selectedHostLumenAdminState = .failed("Pair this host before editing Lumen client metadata.")
             return
         }
 
@@ -4728,6 +4719,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return
         }
 
+        guard selectedHost.authenticationState.canConnect else {
+            selectedHostLumenAdminProfile = nil
+            selectedHostLumenAdminState = .failed("Pair this host before changing Lumen client connection state.")
+            return
+        }
+
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
@@ -4790,6 +4787,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
               let currentProfile = selectedHostLumenAdminProfile
         else {
             selectedHostLumenAdminState = .failed("Sync Lumen client metadata first.")
+            return
+        }
+
+        guard selectedHost.authenticationState.canConnect else {
+            selectedHostLumenAdminProfile = nil
+            selectedHostLumenAdminState = .failed("Pair this host before unpairing the current Lumen client.")
             return
         }
 

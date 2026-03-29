@@ -31,18 +31,17 @@ enum ShadowClientRemoteHostPresentationKit {
         if input.issue != nil {
             return "Permissions"
         }
-        if input.host.isPendingResolution {
+        let authState = input.host.authenticationState
+        switch authState.pairing {
+        case .pendingResolution:
             return "Saved"
-        }
-        if !input.host.isReachable {
+        case .unavailable:
             return "Needs Attention"
-        }
-        switch input.host.pairStatus {
         case .paired:
             return "Ready to Go"
-        case .notPaired:
+        case .pairingRequired:
             return "Pair First"
-        case .unknown:
+        case .reachable:
             return "Inspect"
         }
     }
@@ -51,64 +50,69 @@ enum ShadowClientRemoteHostPresentationKit {
         if input.issue != nil {
             return "Permissions"
         }
-        if input.host.isPendingResolution {
+        let authState = input.host.authenticationState
+        switch authState.pairing {
+        case .pendingResolution:
             return "Saved"
-        }
-        if !input.host.isReachable {
+        case .unavailable:
             return "Connection issue"
-        }
-        if input.host.pairStatus == .paired {
+        case .paired:
             return "Ready"
+        case .pairingRequired, .reachable:
+            return "Pair first"
         }
-        return "Pair first"
     }
 
     static func frontHintSymbol(_ input: ShadowClientRemoteHostPresentationInput) -> String {
         if input.issue != nil {
             return "lock.trianglebadge.exclamationmark"
         }
-        if input.host.isPendingResolution {
+        let authState = input.host.authenticationState
+        switch authState.pairing {
+        case .pendingResolution:
             return "bookmark.circle"
-        }
-        if !input.host.isReachable {
+        case .unavailable:
             return "exclamationmark.shield"
-        }
-        if input.host.pairStatus == .paired {
+        case .paired:
             return "play.circle"
+        case .pairingRequired, .reachable:
+            return "lock.shield"
         }
-        return "lock.shield"
     }
 
     static func frontHintColor(_ input: ShadowClientRemoteHostPresentationInput) -> Color {
         if input.issue != nil {
             return .yellow
         }
-        if input.host.isPendingResolution {
+        switch input.host.authenticationState.hostIndicatorTone {
+        case .neutral:
             return Color.white.opacity(0.84)
-        }
-        if !input.host.isReachable {
+        case .unavailable:
             return .red.opacity(0.9)
-        }
-        if input.host.pairStatus == .paired {
+        case .ready:
             return .mint
+        case .pairingRequired:
+            return .yellow
+        case .streaming:
+            return .orange
         }
-        return .yellow
     }
 
     static func frontMessage(_ input: ShadowClientRemoteHostPresentationInput) -> String {
         if let issue = input.issue {
             return issue.message
         }
-        if input.host.isPendingResolution {
+        let authState = input.host.authenticationState
+        switch authState.pairing {
+        case .pendingResolution:
             return "This address is saved. Host details will attach when the server responds."
-        }
-        if let lastError = input.host.lastError, !lastError.isEmpty {
-            return lastError
-        }
-        if input.host.pairStatus == .paired {
+        case .unavailable:
+            return authState.detailLabel
+        case .paired:
             return "Flip the card for launch controls and a quick app library."
+        case .pairingRequired, .reachable:
+            return "Flip the card to pair this host before browsing or launching apps."
         }
-        return "Flip the card to pair this host before browsing or launching apps."
     }
 
     static func spotlightAccessibilityHint(_ input: ShadowClientRemoteHostPresentationInput) -> String {
@@ -136,31 +140,34 @@ enum ShadowClientRemoteHostPresentationKit {
         if input.issue != nil {
             return "lock.trianglebadge.exclamationmark.fill"
         }
-        if input.host.isPendingResolution {
+        let authState = input.host.authenticationState
+        switch authState.pairing {
+        case .pendingResolution:
             return "bookmark.circle.fill"
-        }
-        if !input.host.isReachable {
+        case .unavailable:
             return "wifi.exclamationmark"
-        }
-        if input.host.pairStatus == .paired {
+        case .paired:
             return "checkmark.circle.fill"
+        case .pairingRequired, .reachable:
+            return "lock.fill"
         }
-        return "lock.fill"
     }
 
     static func glyphColor(_ input: ShadowClientRemoteHostPresentationInput) -> Color {
         if input.issue != nil {
             return .yellow
         }
-        if input.host.isPendingResolution {
+        switch input.host.authenticationState.hostIndicatorTone {
+        case .neutral:
             return Color.white.opacity(0.84)
-        }
-        if !input.host.isReachable {
+        case .unavailable:
             return .red.opacity(0.92)
-        }
-        if input.host.pairStatus == .paired {
+        case .ready:
             return .mint
+        case .pairingRequired:
+            return .yellow
+        case .streaming:
+            return .orange
         }
-        return .yellow
     }
 }

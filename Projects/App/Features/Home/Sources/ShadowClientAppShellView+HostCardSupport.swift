@@ -388,18 +388,20 @@ extension ShadowClientAppShellView {
         return remoteDesktopRuntime.selectedHostLumenAdminProfile
     }
 
+    func hostAuthenticationState(_ host: ShadowClientRemoteHostDescriptor) -> ShadowClientRemoteHostAuthenticationState {
+        guard remoteDesktopRuntime.selectedHostID == host.id,
+              let selectedState = remoteDesktopRuntime.selectedHostAuthenticationState
+        else {
+            return host.authenticationState
+        }
+        return selectedState
+    }
+
     func hostLumenAdminStateLabel(for host: ShadowClientRemoteHostDescriptor) -> String {
         guard remoteDesktopRuntime.selectedHostID == host.id else {
             return "Select this host first"
         }
-
-        switch remoteDesktopRuntime.selectedHostLumenAdminState {
-        case let state:
-            return ShadowClientLumenAdminPresentationKit.stateLabel(
-                state: state,
-                selectedProfile: remoteDesktopRuntime.selectedHostLumenAdminProfile
-            )
-        }
+        return hostAuthenticationState(host).adminStatusLabel
     }
 
     func hostLumenAdminSummary(_ profile: ShadowClientLumenAdminClientProfile) -> String {
@@ -478,21 +480,17 @@ extension ShadowClientAppShellView {
     }
 
     func remoteHostStatusColor(_ host: ShadowClientRemoteHostDescriptor) -> Color {
-        if host.lastError != nil {
-            return .red
-        }
-
-        if host.currentGameID > 0 {
-            return .orange
-        }
-
-        switch host.pairStatus {
-        case .paired:
-            return .green
-        case .notPaired:
-            return .yellow
-        case .unknown:
+        switch hostAuthenticationState(host).hostIndicatorTone {
+        case .neutral:
             return Color.white.opacity(0.78)
+        case .unavailable:
+            return .red
+        case .ready:
+            return .green
+        case .pairingRequired:
+            return .yellow
+        case .streaming:
+            return .orange
         }
     }
 
