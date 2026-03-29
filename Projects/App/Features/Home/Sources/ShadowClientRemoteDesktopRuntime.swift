@@ -1405,7 +1405,7 @@ private actor ShadowClientRemoteInputSendQueue {
 }
 
 private enum ShadowClientRemoteDesktopCommand: Sendable {
-    case refreshHosts(candidates: [String], preferredHost: String?)
+    case refreshHosts(candidates: [String], preferredHost: String?, preferredAuthorityHost: String?)
     case pairSelectedHost(username: String?, password: String?)
     case deleteHost(String)
     case syncClipboardIfNeeded
@@ -1578,6 +1578,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private struct PendingHostRefreshRequest: Equatable {
         let candidates: [String]
         let preferredHost: String?
+        let preferredAuthorityHost: String?
     }
 
     private typealias LumenPairingRoute = ShadowClientLumenRouteCandidate
@@ -1748,8 +1749,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @MainActor
     private func process(command: ShadowClientRemoteDesktopCommand) async {
         switch command {
-        case let .refreshHosts(candidates, preferredHost):
-            performRefreshHosts(candidates: candidates, preferredHost: preferredHost)
+        case let .refreshHosts(candidates, preferredHost, preferredAuthorityHost):
+            performRefreshHosts(
+                candidates: candidates,
+                preferredHost: preferredHost,
+                preferredAuthorityHost: preferredAuthorityHost
+            )
         case let .pairSelectedHost(username, password):
             performPairSelectedHost(username: username, password: password)
         case let .deleteHost(hostID):
@@ -1833,12 +1838,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @MainActor
     public func refreshHosts(
         candidates: [String],
-        preferredHost: String? = nil
+        preferredHost: String? = nil,
+        preferredAuthorityHost: String? = nil
     ) {
         commandContinuation.yield(
             .refreshHosts(
                 candidates: candidates,
-                preferredHost: preferredHost
+                preferredHost: preferredHost,
+                preferredAuthorityHost: preferredAuthorityHost
             )
         )
     }
@@ -1846,7 +1853,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @MainActor
     private func performRefreshHosts(
         candidates: [String],
-        preferredHost: String? = nil
+        preferredHost: String? = nil,
+        preferredAuthorityHost: String? = nil
     ) {
         let existingHosts = latestResolvedHostDescriptors.isEmpty ? hosts : latestResolvedHostDescriptors
         let selectedPublishedHost = selectedHost
@@ -1857,10 +1865,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         )
         let request = PendingHostRefreshRequest(
             candidates: normalizedCandidates,
-            preferredHost: Self.normalizeCandidate(preferredHost)
+            preferredHost: Self.normalizeCandidate(preferredHost),
+            preferredAuthorityHost: Self.normalizedAuthorityHost(preferredAuthorityHost)
         )
         logger.notice(
-            "Host refresh scheduled candidates=\(normalizedCandidates.joined(separator: ","), privacy: .public) preferred=\((request.preferredHost ?? "nil"), privacy: .public)"
+            "Host refresh scheduled candidates=\(normalizedCandidates.joined(separator: ","), privacy: .public) preferred=\((request.preferredHost ?? "nil"), privacy: .public) authority=\((request.preferredAuthorityHost ?? "nil"), privacy: .public)"
         )
         latestHostCandidates = normalizedCandidates
         guard !normalizedCandidates.isEmpty else {
@@ -1905,6 +1914,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let pairingRouteStore = pairingRouteStore
         let pinnedCertificateStore = self.pinnedCertificateStore
         let hostAliasResolver = self.hostAliasResolver
+        let preferredAuthorityHost = request.preferredAuthorityHost
         refreshHostsTask = Task { [weak self] in
             let hostAliasesByHost = await hostAliasResolver(
                 normalizedCandidates + existingHosts.flatMap { descriptor in
@@ -1932,6 +1942,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                             existingHosts: existingHosts,
                             preferredRoutesByKey: existingPreferredRoutes,
                             preferredHost: preferredHost,
+                            preferredAuthorityHost: preferredAuthorityHost,
                             preferredAnchorHost: preferredAnchorHost,
                             hostAliasesByHost: hostAliasesByHost,
                             pinnedCertificateStore: pinnedCertificateStore
@@ -2041,7 +2052,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     self.pendingHostRefreshRequest = nil
                     self.performRefreshHosts(
                         candidates: pendingHostRefreshRequest.candidates,
-                        preferredHost: pendingHostRefreshRequest.preferredHost
+                        preferredHost: pendingHostRefreshRequest.preferredHost,
+                        preferredAuthorityHost: pendingHostRefreshRequest.preferredAuthorityHost
                     )
                 }
             }
@@ -4966,6 +4978,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         existingHosts: [ShadowClientRemoteHostDescriptor],
         preferredRoutesByKey: [String: String],
         preferredHost: String?,
+        preferredAuthorityHost: String?,
         preferredAnchorHost: ShadowClientRemoteHostDescriptor?,
         hostAliasesByHost: [String: Set<String>],
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
@@ -4987,19 +5000,26 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 host: host,
                 pinnedServerCertificateDER: pinnedCertificateDER
             )
+            let relatedHost = relatedDescriptor(
+                forHostCandidate: host,
+                existingHosts: existingHosts,
+                preferredRoutesByKey: preferredRoutesByKey,
+                preferredHost: preferredHost,
+                preferredAnchorHost: preferredAnchorHost,
+                hostAliasesByHost: hostAliasesByHost
+            )
+            let inheritedRoutes = inheritedAuthorityRoutes(
+                forResolvedHost: info.host,
+                resolvedLocalHost: info.localHost,
+                relatedHost: relatedHost,
+                preferredAuthorityHost: preferredAuthorityHost
+            )
             Logger(subsystem: "com.skyline23.shadow-client", category: "RemoteDesktopRuntime").notice(
                 "Host descriptor fetch succeeded candidate=\(host, privacy: .public) resolved-host=\(info.host, privacy: .public) https-port=\(info.httpsPort, privacy: .public)"
             )
             return ShadowClientRemoteHostDescriptor(
                 host: info.host,
-                isSaved: relatedDescriptor(
-                    forHostCandidate: host,
-                    existingHosts: existingHosts,
-                    preferredRoutesByKey: preferredRoutesByKey,
-                    preferredHost: preferredHost,
-                    preferredAnchorHost: preferredAnchorHost,
-                    hostAliasesByHost: hostAliasesByHost
-                )?.isSaved ?? false,
+                isSaved: relatedHost?.isSaved ?? false,
                 displayName: info.displayName,
                 pairStatus: info.pairStatus,
                 currentGameID: max(0, info.currentGameID),
@@ -5012,8 +5032,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 serverCodecModeSupport: info.serverCodecModeSupport,
                 lastError: nil,
                 localHost: info.localHost,
-                remoteHost: info.remoteHost,
-                manualHost: info.manualHost
+                remoteHost: info.remoteHost ?? inheritedRoutes.remoteHost,
+                manualHost: info.manualHost ?? inheritedRoutes.manualHost
             )
         } catch {
             let message = error.localizedDescription.isEmpty
@@ -5052,6 +5072,40 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 lastError: message
             )
         }
+    }
+
+    private static func inheritedAuthorityRoutes(
+        forResolvedHost resolvedHost: String,
+        resolvedLocalHost: String?,
+        relatedHost: ShadowClientRemoteHostDescriptor?,
+        preferredAuthorityHost: String?
+    ) -> (remoteHost: String?, manualHost: String?) {
+        let normalizedResolvedHost = resolvedHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedLocalHost = resolvedLocalHost?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        func normalizedAuthorityCandidate(_ host: String?) -> String? {
+            guard let host = host?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !host.isEmpty else {
+                return nil
+            }
+            guard host != normalizedResolvedHost, host != normalizedLocalHost else {
+                return nil
+            }
+            guard !isLocalPairHost(host), !isLinkLocalRouteHost(host) else {
+                return nil
+            }
+            return host
+        }
+
+        let manualHost = normalizedAuthorityCandidate(relatedHost?.routes.manual?.host)
+        let remoteHost = [
+            relatedHost?.routes.remote?.host,
+            relatedHost?.routes.active.host,
+            preferredAuthorityHost,
+        ]
+        .compactMap(normalizedAuthorityCandidate)
+        .first(where: { $0 != manualHost })
+
+        return (remoteHost, manualHost)
     }
 
     private static func preservedDescriptor(
@@ -5980,6 +6034,27 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         return host.lowercased()
+    }
+
+    private static func normalizedAuthorityHost(_ candidate: String?) -> String? {
+        guard let candidate else {
+            return nil
+        }
+
+        let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        let urlCandidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(trimmed)
+        guard let parsed = URL(string: urlCandidate), let host = parsed.host?.lowercased(), !host.isEmpty else {
+            return trimmed.lowercased()
+        }
+        guard !ShadowClientRemoteHostCandidateFilter.isLoopbackHost(host) else {
+            return nil
+        }
+
+        return host
     }
 
     private static func parsedCandidateRoute(_ candidate: String?) -> (host: String, port: Int?)? {

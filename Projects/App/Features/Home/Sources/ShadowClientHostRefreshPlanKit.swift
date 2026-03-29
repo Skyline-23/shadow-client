@@ -5,9 +5,10 @@ struct ShadowClientHostCatalogRefreshPlan: Equatable {
     let discoveredCandidates: [String]
     let refreshCandidates: [String]
     let preferredRefreshCandidate: String?
+    let preferredAuthorityHost: String?
 
     var signature: String {
-        "\(refreshCandidates.joined(separator: "|"))||\(preferredRefreshCandidate ?? "")"
+        "\(refreshCandidates.joined(separator: "|"))||\(preferredRefreshCandidate ?? "")||\(preferredAuthorityHost ?? "")"
     }
 }
 
@@ -103,11 +104,13 @@ enum ShadowClientHostRefreshPlanKit {
             discoveredCandidates: discoveredCandidates,
             availableCandidates: refreshCandidates
         )
+        let preferredAuthorityHost = authorityHost(from: visiblePreferredHost)
 
         return ShadowClientHostCatalogRefreshPlan(
             discoveredCandidates: discoveredCandidates,
             refreshCandidates: refreshCandidates,
-            preferredRefreshCandidate: preferredRefreshCandidate
+            preferredRefreshCandidate: preferredRefreshCandidate,
+            preferredAuthorityHost: preferredAuthorityHost
         )
     }
 
@@ -219,6 +222,28 @@ enum ShadowClientHostRefreshPlanKit {
         }
 
         return host.lowercased()
+    }
+
+    private static func authorityHost(from candidate: String?) -> String? {
+        guard let candidate else {
+            return nil
+        }
+
+        let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        let urlCandidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(trimmed)
+        guard let parsed = URL(string: urlCandidate), let host = parsed.host?.lowercased(), !host.isEmpty else {
+            return trimmed.lowercased()
+        }
+
+        guard !ShadowClientRemoteHostCandidateFilter.isLoopbackHost(host) else {
+            return nil
+        }
+
+        return host
     }
 
     private static func normalizedStoredConnectionCandidate(_ candidate: String) -> String {

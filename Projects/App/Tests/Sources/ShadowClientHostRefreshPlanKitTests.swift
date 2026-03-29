@@ -22,3 +22,20 @@ func hostRefreshPlanRewritesControlRoutesBackToStreamRoutesBeforeSchedulingFetch
 
     #expect(candidates == ["192.168.0.50:48984"])
 }
+
+@Test("Host refresh plan keeps configured authority host separate from the preferred connect route")
+func hostRefreshPlanKeepsConfiguredAuthorityHostSeparateFromConnectRoute() {
+    let plan = ShadowClientHostRefreshPlanKit.makeCatalogRefreshPlan(
+        autoFindHosts: true,
+        discoveredHosts: [
+            .init(name: "Mac", host: "192.168.0.50", port: 48984, serviceType: "_shadow._tcp"),
+        ],
+        cachedHosts: [],
+        preferredHost: "wifi.skyline23.com:48984",
+        hiddenCandidates: []
+    )
+
+    #expect(plan.refreshCandidates == ["192.168.0.50:48984"])
+    #expect(plan.preferredRefreshCandidate == "192.168.0.50:48984")
+    #expect(plan.preferredAuthorityHost == "wifi.skyline23.com")
+}

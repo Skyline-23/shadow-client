@@ -90,6 +90,47 @@ func remoteDesktopRuntimeRetriesTransientPairingTimeout() async {
     }
 }
 
+@Test("Remote desktop runtime pairs over a local route while preserving the configured authority host")
+@MainActor
+func remoteDesktopRuntimePairsUsingLocalConnectRouteAndConfiguredAuthorityHost() async {
+    let metadata = FakeControlTestMetadataClient(
+        serverInfoByHost: [
+            "192.168.0.30": .init(
+                host: "192.168.0.30",
+                displayName: "Authority-PC",
+                pairStatus: .notPaired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 47984,
+                appVersion: "7.0.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-AUTHORITY"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let pairingClient = FakeLumenPairingClient()
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadata,
+        controlClient: FakeControlClient(),
+        pairingClient: pairingClient
+    )
+
+    runtime.refreshHosts(
+        candidates: ["192.168.0.30"],
+        preferredHost: "192.168.0.30",
+        preferredAuthorityHost: "wifi.skyline23.com"
+    )
+    await waitForControlHostLoaded(runtime)
+
+    runtime.pairSelectedHost()
+    await waitForPairingState(runtime)
+
+    #expect(await pairingClient.startCalls() == [
+        .init(connectHost: "192.168.0.30", authorityHost: "wifi.skyline23.com", httpsPort: 47984),
+    ])
+}
+
 @Test("Remote desktop runtime stops retrying when pairing request is rejected")
 @MainActor
 func remoteDesktopRuntimeDoesNotRetryRejectedChallenge() async {

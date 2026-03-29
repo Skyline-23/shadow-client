@@ -79,31 +79,28 @@ extension ShadowClientAppShellView {
             let normalized = normalizedStoredConnectionCandidate($0)
             return hiddenCandidates.contains(normalized) ? nil : $0
         }
-        let candidates = ShadowClientHostCatalogKit.refreshCandidates(
+        let refreshPlan = ShadowClientHostRefreshPlanKit.makeCatalogRefreshPlan(
             autoFindHosts: autoFindHosts,
-            discoveredHosts: discoveredCandidates,
+            discoveredHosts: hostDiscoveryRuntime.hosts,
             cachedHosts: cachedCandidates,
-            manualHost: visibleManualHost
-        )
-        let preferredHost = resolvedPreferredCatalogCandidate(
-            visibleManualHost,
-            discoveredCandidates: discoveredCandidates,
-            availableCandidates: candidates
+            preferredHost: visibleManualHost,
+            hiddenCandidates: hiddenCandidates
         )
         let discoveredProbeCandidates = discoveredCandidates.joined(separator: ",")
-        let candidateSummary = candidates.joined(separator: ",")
+        let candidateSummary = refreshPlan.refreshCandidates.joined(separator: ",")
         Self.catalogLogger.notice(
-            "Catalog refresh auto-find=\(autoFindHosts, privacy: .public) discovered=\(discoveredProbeCandidates, privacy: .public) candidates=\(candidateSummary, privacy: .public) preferred=\((preferredHost ?? "nil"), privacy: .public)"
+            "Catalog refresh auto-find=\(autoFindHosts, privacy: .public) discovered=\(discoveredProbeCandidates, privacy: .public) candidates=\(candidateSummary, privacy: .public) preferred=\((refreshPlan.preferredRefreshCandidate ?? "nil"), privacy: .public) authority=\((refreshPlan.preferredAuthorityHost ?? "nil"), privacy: .public)"
         )
-        let signature = "\(candidates.joined(separator: "|"))||\(preferredHost ?? "")"
+        let signature = refreshPlan.signature
         if !force, signature == lastRemoteDesktopCatalogSignature {
             return
         }
         lastRemoteDesktopCatalogSignature = signature
 
         remoteDesktopRuntime.refreshHosts(
-            candidates: candidates,
-            preferredHost: preferredHost
+            candidates: refreshPlan.refreshCandidates,
+            preferredHost: refreshPlan.preferredRefreshCandidate,
+            preferredAuthorityHost: refreshPlan.preferredAuthorityHost
         )
     }
 
