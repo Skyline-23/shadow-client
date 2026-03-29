@@ -143,6 +143,22 @@ func httpResponseCompletionAcceptsStreamEndWithoutContentLength() {
     )
 }
 
+@Test("HTTP request write completion only finishes when the full request is sent")
+func httpRequestWriteCompletionOnlyFinishesWhenTheFullRequestIsSent() {
+    #expect(
+        ShadowClientGameStreamHTTPTransport.isHTTPRequestWriteComplete(
+            requestOffset: 128,
+            requestDataCount: 128
+        )
+    )
+    #expect(
+        !ShadowClientGameStreamHTTPTransport.isHTTPRequestWriteComplete(
+            requestOffset: 127,
+            requestDataCount: 128
+        )
+    )
+}
+
 @Test("Launch parameter builder includes Lumen virtual display request when enabled")
 func launchParameterBuilderIncludesLumenVirtualDisplayRequest() {
     let parameters = NativeGameStreamControlClient.makeLaunchParameters(

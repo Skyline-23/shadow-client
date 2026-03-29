@@ -1669,6 +1669,13 @@ enum ShadowClientGameStreamHTTPTransport {
         return reachedStreamEnd
     }
 
+    static func isHTTPRequestWriteComplete(
+        requestOffset: Int,
+        requestDataCount: Int
+    ) -> Bool {
+        requestOffset >= requestDataCount
+    }
+
     private static func waitForReady(
         _ connection: NWConnection,
         timeout: TimeInterval
@@ -2108,6 +2115,13 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
             validatePeerIfPossible()
         case .canAcceptBytes:
             guard validatePeerIfPossible() else { return }
+            guard !ShadowClientGameStreamHTTPTransport.isHTTPRequestWriteComplete(
+                requestOffset: requestOffset,
+                requestDataCount: requestData.count
+            ) else {
+                maybeCompleteResponse()
+                return
+            }
             timeoutStage = "request write"
             Self.logger.notice(
                 "Secure HTTP writable host=\(self.host, privacy: .public) stage=\(self.timeoutStage, privacy: .public)"
@@ -2193,7 +2207,14 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
     }
 
     private func writePendingBytes() {
-        guard let writeStream, requestOffset < requestData.count else { return }
+        guard let writeStream else { return }
+        guard !ShadowClientGameStreamHTTPTransport.isHTTPRequestWriteComplete(
+            requestOffset: requestOffset,
+            requestDataCount: requestData.count
+        ) else {
+            maybeCompleteResponse()
+            return
+        }
 
         let bytesWritten = requestData.withUnsafeBytes { rawBuffer in
             guard let baseAddress = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
@@ -2210,13 +2231,21 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
             finish(.failure(streamError(from: readStream, fallback: writeStream)))
             return
         }
+        if bytesWritten == 0 {
+            maybeCompleteResponse()
+            return
+        }
 
         requestOffset += bytesWritten
-        if requestOffset >= requestData.count {
+        if ShadowClientGameStreamHTTPTransport.isHTTPRequestWriteComplete(
+            requestOffset: requestOffset,
+            requestDataCount: requestData.count
+        ) {
             timeoutStage = "response read"
             Self.logger.notice(
                 "Secure HTTP request write complete host=\(self.host, privacy: .public) next-stage=\(self.timeoutStage, privacy: .public)"
             )
+            maybeCompleteResponse()
         }
     }
 
