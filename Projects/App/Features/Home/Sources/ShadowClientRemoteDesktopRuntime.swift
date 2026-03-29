@@ -67,6 +67,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
     public let uniqueID: String?
     public let macAddress: String?
     public let serverCodecModeSupport: Int
+    public let controlHTTPSPort: Int?
     public let lastError: String?
     public let routes: ShadowClientRemoteHostRoutes
 
@@ -83,6 +84,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         uniqueID: String?,
         macAddress: String? = nil,
         serverCodecModeSupport: Int = 0,
+        controlHTTPSPort: Int? = nil,
         lastError: String?,
         localHost: String? = nil,
         remoteHost: String? = nil,
@@ -99,6 +101,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         self.uniqueID = uniqueID
         self.macAddress = macAddress
         self.serverCodecModeSupport = serverCodecModeSupport
+        self.controlHTTPSPort = controlHTTPSPort
         self.lastError = lastError
         self.routes = ShadowClientRemoteHostRoutes(
             active: .init(host: host, httpsPort: httpsPort),
@@ -120,6 +123,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         uniqueID: String?,
         macAddress: String? = nil,
         serverCodecModeSupport: Int = 0,
+        controlHTTPSPort: Int? = nil,
         lastError: String?,
         routes: ShadowClientRemoteHostRoutes
     ) {
@@ -134,6 +138,7 @@ public struct ShadowClientRemoteHostDescriptor: Identifiable, Equatable, Sendabl
         self.uniqueID = uniqueID
         self.macAddress = macAddress
         self.serverCodecModeSupport = serverCodecModeSupport
+        self.controlHTTPSPort = controlHTTPSPort
         self.lastError = lastError
         self.routes = routes
     }
@@ -345,6 +350,7 @@ public struct ShadowClientGameStreamServerInfo: Equatable, Sendable {
     let uniqueID: String?
     let macAddress: String?
     let serverCodecModeSupport: Int
+    let controlHTTPSPort: Int?
 
     init(
         host: String,
@@ -360,7 +366,8 @@ public struct ShadowClientGameStreamServerInfo: Equatable, Sendable {
         gfeVersion: String?,
         uniqueID: String?,
         macAddress: String? = nil,
-        serverCodecModeSupport: Int = 0
+        serverCodecModeSupport: Int = 0,
+        controlHTTPSPort: Int? = nil
     ) {
         self.host = host
         self.localHost = localHost
@@ -376,6 +383,7 @@ public struct ShadowClientGameStreamServerInfo: Equatable, Sendable {
         self.uniqueID = uniqueID
         self.macAddress = macAddress
         self.serverCodecModeSupport = serverCodecModeSupport
+        self.controlHTTPSPort = controlHTTPSPort
     }
 }
 
@@ -409,6 +417,13 @@ public protocol ShadowClientGameStreamMetadataClient: Sendable {
         pinnedServerCertificateDER: Data?
     ) async throws -> ShadowClientGameStreamServerInfo
     func fetchAppList(host: String, httpsPort: Int?) async throws -> [ShadowClientRemoteAppDescriptor]
+    func fetchAppList(
+        host: String,
+        httpsPort: Int?,
+        preferredAuthorityHost: String?,
+        advertisedControlHTTPSPort: Int?,
+        pinnedServerCertificateDER: Data?
+    ) async throws -> [ShadowClientRemoteAppDescriptor]
 }
 
 public extension ShadowClientGameStreamMetadataClient {
@@ -426,6 +441,16 @@ public extension ShadowClientGameStreamMetadataClient {
         pinnedServerCertificateDER: Data?
     ) async throws -> ShadowClientGameStreamServerInfo {
         try await fetchServerInfo(host: host, pinnedServerCertificateDER: pinnedServerCertificateDER)
+    }
+
+    func fetchAppList(
+        host: String,
+        httpsPort: Int?,
+        preferredAuthorityHost _: String?,
+        advertisedControlHTTPSPort _: Int?,
+        pinnedServerCertificateDER _: Data?
+    ) async throws -> [ShadowClientRemoteAppDescriptor] {
+        try await fetchAppList(host: host, httpsPort: httpsPort)
     }
 }
 
@@ -891,7 +916,8 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                     ) {
                         return Self.makeUnauthorizedServerInfo(
                             host: endpoint.host,
-                            fallbackHTTPSPort: endpoint.port
+                            fallbackHTTPSPort: endpoint.port,
+                            controlHTTPSPort: advertisedControlHTTPSPort
                         )
                     }
                     throw Self.combinedFallbackFailure(
@@ -935,7 +961,8 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                 if Self.shouldSkipPlainHTTPFallback(host: endpoint.host, httpsError: httpsError) {
                     return Self.makeUnauthorizedServerInfo(
                         host: endpoint.host,
-                        fallbackHTTPSPort: endpoint.port
+                        fallbackHTTPSPort: endpoint.port,
+                        controlHTTPSPort: advertisedControlHTTPSPort
                     )
                 }
                 do {
@@ -963,14 +990,16 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                     if Self.isAppTransportSecurityBlockedError(httpError) {
                         return Self.makeUnauthorizedServerInfo(
                             host: endpoint.host,
-                            fallbackHTTPSPort: endpoint.port
+                            fallbackHTTPSPort: endpoint.port,
+                            controlHTTPSPort: advertisedControlHTTPSPort
                         )
                     }
                 } catch {}
 
                 return Self.makeUnauthorizedServerInfo(
                     host: endpoint.host,
-                    fallbackHTTPSPort: endpoint.port
+                    fallbackHTTPSPort: endpoint.port,
+                    controlHTTPSPort: advertisedControlHTTPSPort
                 )
             }
 
@@ -1023,9 +1052,22 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         let currentGameID: Int
         let serverState: String
         let streamHttpsPort: Int?
+        let controlHttpsPort: Int?
         let serverUniqueId: String?
         let authorityHost: String?
         let serverCodecModeSupport: Int?
+    }
+
+    private struct LumenAppListEnvelope: Decodable {
+        let apps: [LumenAppPayload]
+    }
+
+    private struct LumenAppPayload: Decodable {
+        let id: Int?
+        let title: String?
+        let name: String?
+        let hdrSupported: Bool?
+        let isAppCollectorGame: Bool?
     }
 
     private func fetchLumenHostDescriptor(
@@ -1068,7 +1110,8 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                     payload.host,
                     connectHost: connectHost,
                     authorityHost: authorityHost,
-                    fallbackHTTPSPort: streamHTTPSPort
+                    fallbackHTTPSPort: streamHTTPSPort,
+                    fallbackControlHTTPSPort: controlHTTPSPort
                 )
             } catch let error as ShadowClientGameStreamError {
                 lastError = error
@@ -1090,7 +1133,8 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         _ payload: LumenDiscoveryHostPayload,
         connectHost: String,
         authorityHost: String,
-        fallbackHTTPSPort: Int
+        fallbackHTTPSPort: Int,
+        fallbackControlHTTPSPort: Int?
     ) -> ShadowClientGameStreamServerInfo {
         let resolvedAuthorityHost = normalizedDiscoveredRouteHost(payload.authorityHost) ?? normalizedDiscoveredRouteHost(authorityHost)
         let remoteHost = resolvedAuthorityHost != normalizedDiscoveredRouteHost(connectHost) ? resolvedAuthorityHost : nil
@@ -1111,7 +1155,8 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             gfeVersion: nil,
             uniqueID: payload.serverUniqueId,
             macAddress: nil,
-            serverCodecModeSupport: payload.serverCodecModeSupport ?? 0
+            serverCodecModeSupport: payload.serverCodecModeSupport ?? 0,
+            controlHTTPSPort: payload.controlHttpsPort ?? fallbackControlHTTPSPort
         )
     }
 
@@ -1156,17 +1201,51 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
     }
 
     public func fetchAppList(host: String, httpsPort: Int?) async throws -> [ShadowClientRemoteAppDescriptor] {
+        try await fetchAppList(
+            host: host,
+            httpsPort: httpsPort,
+            preferredAuthorityHost: nil,
+            advertisedControlHTTPSPort: nil,
+            pinnedServerCertificateDER: nil
+        )
+    }
+
+    public func fetchAppList(
+        host: String,
+        httpsPort: Int?,
+        preferredAuthorityHost: String?,
+        advertisedControlHTTPSPort: Int?,
+        pinnedServerCertificateDER overridePinnedCertificateDER: Data?
+    ) async throws -> [ShadowClientRemoteAppDescriptor] {
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPSPort)
         let resolvedHTTPSPort = httpsPort ?? endpoint.port
-        let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(
-            forHost: endpoint.host,
-            httpsPort: resolvedHTTPSPort
-        )
+        let pinnedCertificateDER: Data?
+        if let overridePinnedCertificateDER {
+            pinnedCertificateDER = overridePinnedCertificateDER
+        } else {
+            pinnedCertificateDER = await pinnedCertificateStore.certificateDER(
+                forHost: endpoint.host,
+                httpsPort: resolvedHTTPSPort
+            )
+        }
 
         guard pinnedCertificateDER != nil else {
             throw ShadowClientGameStreamError.requestFailed(
                 "Host requires a paired HTTPS certificate before app list queries."
             )
+        }
+
+        let normalizedAuthorityHost = Self.normalizedAuthorityHost(preferredAuthorityHost) ?? endpoint.host
+        if preferredAuthorityHost != nil || advertisedControlHTTPSPort != nil {
+            if let lumenApps = try await fetchLumenAppList(
+                connectHost: endpoint.host,
+                authorityHost: normalizedAuthorityHost,
+                streamHTTPSPort: resolvedHTTPSPort,
+                controlHTTPSPort: advertisedControlHTTPSPort,
+                pinnedServerCertificateDER: pinnedCertificateDER
+            ) {
+                return lumenApps
+            }
         }
 
         let httpsXML = try await requestXML(
@@ -1177,6 +1256,83 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         )
 
         return try ShadowClientGameStreamXMLParsers.parseAppList(xml: httpsXML)
+    }
+
+    private func fetchLumenAppList(
+        connectHost: String,
+        authorityHost: String,
+        streamHTTPSPort: Int,
+        controlHTTPSPort: Int?,
+        pinnedServerCertificateDER: Data?
+    ) async throws -> [ShadowClientRemoteAppDescriptor]? {
+        let route = ShadowClientLumenRequestRoute(
+            connectHost: connectHost,
+            authorityHost: authorityHost,
+            httpsPort: streamHTTPSPort
+        )
+        let requestContexts = try await authenticationContextBuilder.makePairingContexts(
+            route: route,
+            advertisedControlHTTPSPort: controlHTTPSPort
+        )
+        var lastError: Error?
+
+        for requestContext in requestContexts {
+            let request = try requestContext.makeRequestData(
+                path: "/api/apps",
+                method: "GET"
+            )
+
+            do {
+                let response = try await lumenTransport.request(
+                    url: request.url,
+                    connectHost: request.connectHost,
+                    requestData: request.requestData,
+                    pinnedServerCertificateDER: requestContext.pinnedServerCertificateDER ?? pinnedServerCertificateDER,
+                    clientCertificates: requestContext.clientCertificates,
+                    clientCertificateIdentity: requestContext.clientCertificateIdentity,
+                    timeout: ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
+                )
+
+                let payload = try JSONDecoder().decode(LumenAppListEnvelope.self, from: response.body)
+                return Self.parseLumenAppList(payload.apps)
+            } catch let error as ShadowClientGameStreamError {
+                lastError = error
+            } catch {
+                lastError = ShadowClientGameStreamHTTPTransport.requestFailureError(error)
+            }
+        }
+
+        if let lastError {
+            if case let ShadowClientGameStreamError.responseRejected(code, _) = lastError, code == 404 {
+                return nil
+            }
+            throw lastError
+        }
+
+        return nil
+    }
+
+    private static func parseLumenAppList(
+        _ payloads: [LumenAppPayload]
+    ) -> [ShadowClientRemoteAppDescriptor] {
+        payloads.compactMap { payload in
+            guard let id = payload.id, id > 0 else {
+                return nil
+            }
+
+            let title = (payload.title ?? payload.name ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else {
+                return nil
+            }
+
+            return .init(
+                id: id,
+                title: title,
+                hdrSupported: payload.hdrSupported ?? false,
+                isAppCollectorGame: payload.isAppCollectorGame ?? false
+            )
+        }
     }
 
     private static func isUnauthorizedCertificateError(_ error: ShadowClientGameStreamError) -> Bool {
@@ -1291,7 +1447,8 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
 
     private static func makeUnauthorizedServerInfo(
         host: String,
-        fallbackHTTPSPort: Int
+        fallbackHTTPSPort: Int,
+        controlHTTPSPort: Int? = nil
     ) -> ShadowClientGameStreamServerInfo {
         ShadowClientGameStreamServerInfo(
             host: host,
@@ -1305,7 +1462,8 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
             httpsPort: fallbackHTTPSPort,
             appVersion: nil,
             gfeVersion: nil,
-            uniqueID: nil
+            uniqueID: nil,
+            controlHTTPSPort: controlHTTPSPort
         )
     }
 
@@ -4820,9 +4978,16 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     latestResolvedHostDescriptors: latestResolvedHostDescriptors,
                     pairingRouteStore: pairingRouteStore
                 )
+                let preferredAuthorityHost = Self.preferredAuthorityHostCandidate(
+                    for: resolvedHostDescriptor,
+                    connectEndpoint: resolvedHostDescriptor.routes.active
+                )
                 let resolved = try await metadataClient.fetchAppList(
                     host: resolvedHostDescriptor.host,
-                    httpsPort: resolvedHostDescriptor.httpsPort
+                    httpsPort: resolvedHostDescriptor.httpsPort,
+                    preferredAuthorityHost: preferredAuthorityHost,
+                    advertisedControlHTTPSPort: resolvedHostDescriptor.controlHTTPSPort,
+                    pinnedServerCertificateDER: nil
                 )
                 let sorted = resolved.sorted {
                     $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
@@ -5282,6 +5447,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 uniqueID: info.uniqueID,
                 macAddress: info.macAddress,
                 serverCodecModeSupport: info.serverCodecModeSupport,
+                controlHTTPSPort: info.controlHTTPSPort ?? advertisedControlHTTPSPort,
                 lastError: nil,
                 localHost: info.localHost,
                 remoteHost: info.remoteHost ?? inheritedRoutes.remoteHost,
@@ -5321,6 +5487,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 gfeVersion: nil,
                 uniqueID: nil,
                 serverCodecModeSupport: 0,
+                controlHTTPSPort: advertisedControlHTTPSPort,
                 lastError: message
             )
         }
@@ -5397,6 +5564,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 uniqueID: existingDescriptor.uniqueID,
                 macAddress: existingDescriptor.macAddress,
                 serverCodecModeSupport: existingDescriptor.serverCodecModeSupport,
+                controlHTTPSPort: existingDescriptor.controlHTTPSPort,
                 lastError: lastError,
                 routes: routes
             )
@@ -5456,6 +5624,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             uniqueID: preferredDescriptor.uniqueID,
             macAddress: preferredDescriptor.macAddress,
             serverCodecModeSupport: preferredDescriptor.serverCodecModeSupport,
+            controlHTTPSPort: preferredDescriptor.controlHTTPSPort,
             lastError: lastError,
             routes: routes
         )
@@ -5751,6 +5920,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                     uniqueID: boundMachineID,
                     macAddress: host.macAddress,
                     serverCodecModeSupport: host.serverCodecModeSupport,
+                    controlHTTPSPort: host.controlHTTPSPort,
                     lastError: host.lastError,
                     routes: host.routes
                 )
@@ -5778,6 +5948,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             uniqueID: info.uniqueID,
             macAddress: info.macAddress,
             serverCodecModeSupport: info.serverCodecModeSupport,
+            controlHTTPSPort: info.controlHTTPSPort,
             lastError: nil,
             localHost: info.localHost,
             remoteHost: info.remoteHost,
@@ -6519,6 +6690,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             uniqueID: descriptor.uniqueID,
             macAddress: descriptor.macAddress,
             serverCodecModeSupport: descriptor.serverCodecModeSupport,
+            controlHTTPSPort: descriptor.controlHTTPSPort,
             lastError: descriptor.lastError,
             routes: routes
         )
@@ -6555,6 +6727,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         uniqueID: descriptor.uniqueID,
                         macAddress: descriptor.macAddress,
                         serverCodecModeSupport: descriptor.serverCodecModeSupport,
+                        controlHTTPSPort: descriptor.controlHTTPSPort,
                         lastError: descriptor.lastError,
                         routes: routes
                     )
@@ -6631,6 +6804,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 uniqueID: descriptor.uniqueID,
                 macAddress: descriptor.macAddress,
                 serverCodecModeSupport: descriptor.serverCodecModeSupport,
+                controlHTTPSPort: descriptor.controlHTTPSPort,
                 lastError: descriptor.lastError,
                 routes: routes
             )
@@ -6782,6 +6956,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             gfeVersion: primary.gfeVersion,
             uniqueID: primary.uniqueID,
             macAddress: group.compactMap(\.macAddress).first ?? primary.macAddress,
+            serverCodecModeSupport: group.map(\.serverCodecModeSupport).first ?? primary.serverCodecModeSupport,
+            controlHTTPSPort: group.compactMap(\.controlHTTPSPort).first ?? primary.controlHTTPSPort,
             lastError: lastError,
             routes: mergedRoutes
         )
@@ -7209,6 +7385,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 gfeVersion: selectedHost.gfeVersion,
                 uniqueID: selectedHost.uniqueID,
                 macAddress: selectedHost.macAddress,
+                serverCodecModeSupport: selectedHost.serverCodecModeSupport,
+                controlHTTPSPort: selectedHost.controlHTTPSPort,
                 lastError: nil,
                 routes: ShadowClientRemoteHostRoutes(
                     active: localEndpoint,
@@ -7261,6 +7439,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             uniqueID: host.uniqueID,
             macAddress: host.macAddress,
             serverCodecModeSupport: host.serverCodecModeSupport,
+            controlHTTPSPort: host.controlHTTPSPort,
             lastError: host.lastError,
             routes: routes
         )

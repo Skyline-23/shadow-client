@@ -489,6 +489,81 @@ func metadataClientPrefersLumenDiscoveryDescriptorOnControlPort() async throws {
     #expect(request?.url.path == "/api/discovery/host")
 }
 
+@Test("Metadata client prefers Lumen control app listings on the control HTTPS port")
+func metadataClientPrefersLumenControlAppListOnControlPort() async throws {
+    let defaultsSuite = "shadow-client.metadata.lumen-apps.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let transport = ScriptedRequestTransport(script: [])
+    let lumenTransport = RecordingLumenDiscoveryHTTPTransport(
+        response: .init(
+            statusCode: 200,
+            body: Data(
+                """
+                {
+                  "status": true,
+                  "apps": [
+                    {
+                      "id": 881448767,
+                      "uuid": "desktop-uuid",
+                      "name": "Desktop",
+                      "title": "Desktop",
+                      "hdrSupported": false,
+                      "isAppCollectorGame": false
+                    }
+                  ]
+                }
+                """.utf8
+            ),
+            presentedLeafCertificateDER: nil
+        )
+    )
+    let identityStore = ShadowClientPairingIdentityStore(
+        provider: FailingIdentityProvider(),
+        defaultsSuiteName: defaultsSuite
+    )
+    let pinnedCertificateStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+    await pinnedCertificateStore.setCertificateDER(Data([0x01, 0x02, 0x03]), forHost: "192.168.0.50", httpsPort: 48984)
+
+    let client = NativeGameStreamMetadataClient(
+        identityStore: identityStore,
+        pinnedCertificateStore: pinnedCertificateStore,
+        authenticationContextBuilder: ShadowClientLumenAuthenticationContextBuilder(
+            identityStore: identityStore,
+            pinnedCertificateStore: pinnedCertificateStore
+        ),
+        transport: transport,
+        lumenTransport: lumenTransport,
+        defaultHTTPPort: 48989,
+        defaultHTTPSPort: 48984
+    )
+
+    let apps = try await client.fetchAppList(
+        host: "192.168.0.50:48984",
+        httpsPort: 48984,
+        preferredAuthorityHost: "wifi.skyline23.com",
+        advertisedControlHTTPSPort: 48990,
+        pinnedServerCertificateDER: nil as Data?
+    )
+
+    #expect(apps == [
+        .init(id: 881448767, title: "Desktop", hdrSupported: false, isAppCollectorGame: false)
+    ])
+    #expect(await transport.calls().isEmpty)
+
+    let request = await lumenTransport.recordedLastRequest()
+    #expect(request?.connectHost == "192.168.0.50")
+    #expect(request?.url.host == "wifi.skyline23.com")
+    #expect(request?.url.port == 48990)
+    #expect(request?.url.path == "/api/apps")
+}
+
 @Test("Metadata client preserves explicit custom HTTPS ports for pinned hosts")
 func metadataClientUsesExplicitCustomHTTPSPortsForPinnedHosts() async throws {
     let defaultsSuite = "shadow-client.metadata.serverinfo.custom-https-port.\(UUID().uuidString)"
