@@ -2501,7 +2501,7 @@ actor ShadowClientRTSPInterleavedClient {
         try await send(bytes: requestPayload, over: connection)
 
         if rtspEncryptionCodec != nil {
-            let response = try await readResponse()
+            let response = try await readEncryptedResponse()
             logResponse(method: ShadowClientRTSPRequestDefaults.describeMethod, response: response)
 
             guard (200...299).contains(response.statusCode) else {
@@ -2646,6 +2646,10 @@ actor ShadowClientRTSPInterleavedClient {
     }
 
     private func readResponse() async throws -> ShadowClientRTSPResponse {
+        if rtspEncryptionCodec != nil {
+            return try await readEncryptedResponse()
+        }
+
         while true {
             if let response = parseRTSPResponseIfAvailable() {
                 return response
@@ -2667,6 +2671,11 @@ actor ShadowClientRTSPInterleavedClient {
                 throw error
             }
         }
+    }
+
+    private func readEncryptedResponse() async throws -> ShadowClientRTSPResponse {
+        let rawResponse = try await receiveBytes()
+        return try parseRTSPResponseFromRawData(rawResponse)
     }
 
     private func parseRTSPResponseIfAvailable() -> ShadowClientRTSPResponse? {
