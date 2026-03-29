@@ -1219,6 +1219,60 @@ func remoteDesktopRuntimeTriesLocalPairRouteBeforeExternalRoute() async {
     #expect(await pairingClient.startRequests() == ["192.168.0.20"])
 }
 
+@Test("Remote desktop runtime follows server-advertised local control pairing route")
+@MainActor
+func remoteDesktopRuntimeFollowsServerAdvertisedLocalControlPairingRoute() async {
+    let metadataClient = FakeGameStreamMetadataClient(
+        serverInfoByHost: [
+            "wifi.skyline23.com": .init(
+                host: "wifi.skyline23.com",
+                displayName: "Example-PC",
+                pairStatus: .notPaired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
+        ],
+        appListByHost: [:]
+    )
+    let pairingRouteStore = ShadowClientPairingRouteStore(
+        defaultsSuiteName: "shadow-client.pairing.server-advertised-local.\(UUID().uuidString)"
+    )
+    let pairingClient = RoutingLumenPairingClient(
+        startHost: "wifi.skyline23.com",
+        preferredControlURL: "https://192.168.0.20:48990",
+        controlURLs: [
+            "https://192.168.0.20:48990",
+            "https://wifi.skyline23.com:48990",
+        ],
+        approvedStatusHost: "192.168.0.20",
+        controlHTTPSPort: 48990
+    )
+    let runtime = ShadowClientRemoteDesktopRuntime(
+        metadataClient: metadataClient,
+        controlClient: RecordingGameStreamControlClient(),
+        pairingClient: pairingClient,
+        pairingRouteStore: pairingRouteStore
+    )
+
+    runtime.refreshHosts(
+        candidates: ["wifi.skyline23.com"],
+        preferredHost: "wifi.skyline23.com"
+    )
+    await waitForHostCatalogReady(runtime)
+
+    runtime.pairSelectedHost()
+    await waitForPairingState(runtime)
+
+    #expect(runtime.pairingState == .paired("Paired"))
+    #expect(await pairingClient.startRequests() == ["wifi.skyline23.com"])
+    #expect(await pairingClient.statusRequests() == ["192.168.0.20"])
+    #expect(await pairingRouteStore.preferredHost(for: "uniqueid:host-123") == "192.168.0.20:48990")
+}
+
 @Test("Remote desktop runtime merges local and external descriptors for the same unique ID")
 @MainActor
 func remoteDesktopRuntimeMergesDescriptorsSharingUniqueID() async {
@@ -3047,6 +3101,106 @@ private actor RecordingLumenPairingClient: ShadowClientLumenPairingClient {
 
     func startRequests() -> [String] {
         recordedStartHosts
+    }
+}
+
+private actor RoutingLumenPairingClient: ShadowClientLumenPairingClient {
+    private let startHost: String
+    private let preferredControlURL: String
+    private let controlURLs: [String]
+    private let approvedStatusHost: String
+    private let controlHTTPSPort: Int
+    private var recordedStartHosts: [String] = []
+    private var recordedStatusHosts: [String] = []
+
+    init(
+        startHost: String,
+        preferredControlURL: String,
+        controlURLs: [String],
+        approvedStatusHost: String,
+        controlHTTPSPort: Int
+    ) {
+        self.startHost = startHost
+        self.preferredControlURL = preferredControlURL
+        self.controlURLs = controlURLs
+        self.approvedStatusHost = approvedStatusHost
+        self.controlHTTPSPort = controlHTTPSPort
+    }
+
+    func startPairing(
+        host: String,
+        httpsPort: Int,
+        deviceName: String?,
+        platform: String?
+    ) async throws -> ShadowClientLumenPairingSession {
+        _ = httpsPort
+        _ = deviceName
+        _ = platform
+        recordedStartHosts.append(host)
+        guard host == startHost else {
+            throw ShadowClientGameStreamError.requestFailed("Unexpected pairing start host.")
+        }
+
+        return .init(
+            pairingID: "pair-\(host)",
+            userCode: "ABC123",
+            deviceName: "Shadow Client",
+            platform: "macos",
+            clientID: "CLIENT-1",
+            trustedClientUUID: nil,
+            publicKeyPresent: true,
+            clientTrusted: false,
+            clientCertificateRequired: true,
+            status: .pending,
+            serverUniqueID: "HOST-123",
+            serviceType: "_shadow._tcp",
+            controlHTTPSPort: controlHTTPSPort,
+            preferredControlHTTPSURL: preferredControlURL,
+            controlHTTPSURLs: controlURLs,
+            expiresInSeconds: 60,
+            pollIntervalSeconds: 0
+        )
+    }
+
+    func fetchPairingStatus(
+        host: String,
+        httpsPort: Int,
+        pairingID: String
+    ) async throws -> ShadowClientLumenPairingSession {
+        _ = httpsPort
+        _ = pairingID
+        recordedStatusHosts.append(host)
+        guard host == approvedStatusHost else {
+            throw ShadowClientGameStreamError.requestFailed("Unexpected pairing status host.")
+        }
+
+        return .init(
+            pairingID: "pair-\(startHost)",
+            userCode: "ABC123",
+            deviceName: "Shadow Client",
+            platform: "macos",
+            clientID: "CLIENT-1",
+            trustedClientUUID: "CLIENT-1",
+            publicKeyPresent: true,
+            clientTrusted: true,
+            clientCertificateRequired: true,
+            status: .approved,
+            serverUniqueID: "HOST-123",
+            serviceType: "_shadow._tcp",
+            controlHTTPSPort: controlHTTPSPort,
+            preferredControlHTTPSURL: preferredControlURL,
+            controlHTTPSURLs: controlURLs,
+            expiresInSeconds: 55,
+            pollIntervalSeconds: 0
+        )
+    }
+
+    func startRequests() -> [String] {
+        recordedStartHosts
+    }
+
+    func statusRequests() -> [String] {
+        recordedStatusHosts
     }
 }
 
