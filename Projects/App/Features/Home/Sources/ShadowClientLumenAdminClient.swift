@@ -47,11 +47,57 @@ public struct ShadowClientLumenAdminClientProfile: Equatable, Sendable {
 
 public protocol ShadowClientLumenAdminClient: Sendable {
     func fetchCurrentClientProfile(
+        route: ShadowClientLumenRequestRoute,
+        username: String,
+        password: String
+    ) async throws -> ShadowClientLumenAdminClientProfile?
+
+    func updateCurrentClientProfile(
+        route: ShadowClientLumenRequestRoute,
+        username: String,
+        password: String,
+        profile: ShadowClientLumenAdminClientProfile
+    ) async throws -> ShadowClientLumenAdminClientProfile
+
+    func disconnectCurrentClient(
+        route: ShadowClientLumenRequestRoute,
+        username: String,
+        password: String,
+        uuid: String
+    ) async throws
+
+    func unpairCurrentClient(
+        route: ShadowClientLumenRequestRoute,
+        username: String,
+        password: String,
+        uuid: String
+    ) async throws
+
+    func approvePairingRequest(
+        route: ShadowClientLumenRequestRoute,
+        username: String,
+        password: String,
+        pairingID: String
+    ) async throws
+}
+
+public extension ShadowClientLumenAdminClient {
+    func fetchCurrentClientProfile(
         host: String,
         httpsPort: Int,
         username: String,
         password: String
-    ) async throws -> ShadowClientLumenAdminClientProfile?
+    ) async throws -> ShadowClientLumenAdminClientProfile? {
+        try await fetchCurrentClientProfile(
+            route: .init(
+                connectHost: host,
+                authorityHost: host,
+                httpsPort: httpsPort
+            ),
+            username: username,
+            password: password
+        )
+    }
 
     func updateCurrentClientProfile(
         host: String,
@@ -59,7 +105,18 @@ public protocol ShadowClientLumenAdminClient: Sendable {
         username: String,
         password: String,
         profile: ShadowClientLumenAdminClientProfile
-    ) async throws -> ShadowClientLumenAdminClientProfile
+    ) async throws -> ShadowClientLumenAdminClientProfile {
+        try await updateCurrentClientProfile(
+            route: .init(
+                connectHost: host,
+                authorityHost: host,
+                httpsPort: httpsPort
+            ),
+            username: username,
+            password: password,
+            profile: profile
+        )
+    }
 
     func disconnectCurrentClient(
         host: String,
@@ -67,7 +124,18 @@ public protocol ShadowClientLumenAdminClient: Sendable {
         username: String,
         password: String,
         uuid: String
-    ) async throws
+    ) async throws {
+        try await disconnectCurrentClient(
+            route: .init(
+                connectHost: host,
+                authorityHost: host,
+                httpsPort: httpsPort
+            ),
+            username: username,
+            password: password,
+            uuid: uuid
+        )
+    }
 
     func unpairCurrentClient(
         host: String,
@@ -75,7 +143,18 @@ public protocol ShadowClientLumenAdminClient: Sendable {
         username: String,
         password: String,
         uuid: String
-    ) async throws
+    ) async throws {
+        try await unpairCurrentClient(
+            route: .init(
+                connectHost: host,
+                authorityHost: host,
+                httpsPort: httpsPort
+            ),
+            username: username,
+            password: password,
+            uuid: uuid
+        )
+    }
 
     func approvePairingRequest(
         host: String,
@@ -83,7 +162,18 @@ public protocol ShadowClientLumenAdminClient: Sendable {
         username: String,
         password: String,
         pairingID: String
-    ) async throws
+    ) async throws {
+        try await approvePairingRequest(
+            route: .init(
+                connectHost: host,
+                authorityHost: host,
+                httpsPort: httpsPort
+            ),
+            username: username,
+            password: password,
+            pairingID: pairingID
+        )
+    }
 }
 
 public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
@@ -116,14 +206,12 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
     }
 
     public func fetchCurrentClientProfile(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         username: String,
         password: String
     ) async throws -> ShadowClientLumenAdminClientProfile? {
         let response = try await performAdminRequest(
-            host: host,
-            httpsPort: httpsPort,
+            route: route,
             username: username,
             password: password,
             path: "/api/clients/list",
@@ -137,15 +225,13 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
     }
 
     public func updateCurrentClientProfile(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         username: String,
         password: String,
         profile: ShadowClientLumenAdminClientProfile
     ) async throws -> ShadowClientLumenAdminClientProfile {
         _ = try await performAdminRequest(
-            host: host,
-            httpsPort: httpsPort,
+            route: route,
             username: username,
             password: password,
             path: "/api/clients/update",
@@ -168,15 +254,13 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
     }
 
     public func disconnectCurrentClient(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         username: String,
         password: String,
         uuid: String
     ) async throws {
         try await postSimpleClientAction(
-            host: host,
-            httpsPort: httpsPort,
+            route: route,
             username: username,
             password: password,
             path: "/api/clients/disconnect",
@@ -185,15 +269,13 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
     }
 
     public func unpairCurrentClient(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         username: String,
         password: String,
         uuid: String
     ) async throws {
         try await postSimpleClientAction(
-            host: host,
-            httpsPort: httpsPort,
+            route: route,
             username: username,
             password: password,
             path: "/api/clients/unpair",
@@ -202,8 +284,7 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
     }
 
     public func approvePairingRequest(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         username: String,
         password: String,
         pairingID: String
@@ -214,8 +295,7 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
         }
 
         try await postSimpleClientAction(
-            host: host,
-            httpsPort: httpsPort,
+            route: route,
             username: username,
             password: password,
             path: "/api/pairing/approve",
@@ -234,16 +314,14 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
     }
 
     private func postSimpleClientAction<Body: Encodable>(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         username: String,
         password: String,
         path: String,
         body: Body
     ) async throws {
         _ = try await performAdminRequest(
-            host: host,
-            httpsPort: httpsPort,
+            route: route,
             username: username,
             password: password,
             path: path,
@@ -254,8 +332,7 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
     }
 
     private func performAdminRequest(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         username: String,
         password: String,
         path: String,
@@ -264,8 +341,7 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
         body: Data? = nil
     ) async throws -> ShadowClientGameStreamHTTPTransport.HTTPSResponse {
         let requestContexts = try await authenticationContextBuilder.makeAdminContexts(
-            host: host,
-            httpsPort: httpsPort,
+            route: route,
             username: username,
             password: password
         )
@@ -293,12 +369,13 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
     }
 
     private func performRequest(
-        _ request: (url: URL, requestData: Data),
+        _ request: ShadowClientLumenPreparedHTTPSRequest,
         requestContext: ShadowClientLumenHTTPSRequestContext
     ) async throws -> ShadowClientGameStreamHTTPTransport.HTTPSResponse {
         do {
             return try await transport.request(
                 url: request.url,
+                connectHost: request.connectHost,
                 requestData: request.requestData,
                 pinnedServerCertificateDER: requestContext.pinnedServerCertificateDER,
                 clientCertificates: requestContext.clientCertificates,

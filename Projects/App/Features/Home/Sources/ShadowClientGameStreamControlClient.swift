@@ -1526,6 +1526,7 @@ enum ShadowClientGameStreamHTTPTransport {
 
     static func requestPinnedHTTPSData(
         url: URL,
+        connectHost: String? = nil,
         requestData: Data,
         pinnedServerCertificateDER: Data?,
         clientCertificates: [SecCertificate]?,
@@ -1537,7 +1538,7 @@ enum ShadowClientGameStreamHTTPTransport {
         }
         let response = try await ShadowClientSecureHTTPStreamTransport.requestResponse(
             url: url,
-            host: host,
+            connectHost: connectHost ?? host,
             requestData: requestData,
             pinnedServerCertificateDER: pinnedServerCertificateDER,
             clientCertificates: clientCertificates,
@@ -1549,6 +1550,7 @@ enum ShadowClientGameStreamHTTPTransport {
 
     static func requestPinnedHTTPSResponse(
         url: URL,
+        connectHost: String? = nil,
         requestData: Data,
         pinnedServerCertificateDER: Data?,
         clientCertificates: [SecCertificate]?,
@@ -1560,7 +1562,7 @@ enum ShadowClientGameStreamHTTPTransport {
         }
         return try await ShadowClientSecureHTTPStreamTransport.requestResponse(
             url: url,
-            host: host,
+            connectHost: connectHost ?? host,
             requestData: requestData,
             pinnedServerCertificateDER: pinnedServerCertificateDER,
             clientCertificates: clientCertificates,
@@ -1571,6 +1573,7 @@ enum ShadowClientGameStreamHTTPTransport {
 
     private static func requestPinnedHTTPSXML(
         url: URL,
+        connectHost: String? = nil,
         pinnedServerCertificateDER: Data?,
         clientCertificates: [SecCertificate]?,
         clientCertificateIdentity: SecIdentity?,
@@ -1581,7 +1584,7 @@ enum ShadowClientGameStreamHTTPTransport {
         }
         return try await ShadowClientSecureHTTPStreamTransport.requestXML(
             url: url,
-            host: host,
+            connectHost: connectHost ?? host,
             requestData: makeHTTPRequestData(url: url, host: host, method: "GET"),
             pinnedServerCertificateDER: pinnedServerCertificateDER,
             clientCertificates: clientCertificates,
@@ -1863,7 +1866,8 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         subsystem: "com.skyline23.shadow-client",
         category: "GameStreamHTTPS"
     )
-    private let host: String
+    private let connectHost: String
+    private let authorityHost: String
     private let url: URL
     private let pinnedServerCertificateDER: Data?
     private let clientCertificates: [SecCertificate]?
@@ -1892,7 +1896,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
 
     private init(
         url: URL,
-        host: String,
+        connectHost: String,
         requestData: Data,
         pinnedServerCertificateDER: Data?,
         clientCertificates: [SecCertificate]?,
@@ -1900,7 +1904,8 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         timeout: TimeInterval
     ) {
         self.url = url
-        self.host = host
+        self.connectHost = connectHost
+        self.authorityHost = url.host ?? connectHost
         self.pinnedServerCertificateDER = pinnedServerCertificateDER
         self.clientCertificates = clientCertificates
         self.clientCertificateIdentity = clientCertificateIdentity
@@ -1910,7 +1915,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
 
     static func requestData(
         url: URL,
-        host: String,
+        connectHost: String,
         requestData: Data,
         pinnedServerCertificateDER: Data?,
         clientCertificates: [SecCertificate]?,
@@ -1919,7 +1924,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
     ) async throws -> Data {
         let response = try await requestResponse(
             url: url,
-            host: host,
+            connectHost: connectHost,
             requestData: requestData,
             pinnedServerCertificateDER: pinnedServerCertificateDER,
             clientCertificates: clientCertificates,
@@ -1931,7 +1936,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
 
     static func requestResponse(
         url: URL,
-        host: String,
+        connectHost: String,
         requestData: Data,
         pinnedServerCertificateDER: Data?,
         clientCertificates: [SecCertificate]?,
@@ -1940,7 +1945,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
     ) async throws -> ShadowClientGameStreamHTTPTransport.HTTPSResponse {
         let transport = ShadowClientSecureHTTPStreamTransport(
             url: url,
-            host: host,
+            connectHost: connectHost,
             requestData: requestData,
             pinnedServerCertificateDER: pinnedServerCertificateDER,
             clientCertificates: clientCertificates,
@@ -1952,7 +1957,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
 
     static func requestXML(
         url: URL,
-        host: String,
+        connectHost: String,
         requestData: Data,
         pinnedServerCertificateDER: Data?,
         clientCertificates: [SecCertificate]?,
@@ -1961,7 +1966,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
     ) async throws -> String {
         let responseData = try await ShadowClientSecureHTTPStreamTransport.requestData(
             url: url,
-            host: host,
+            connectHost: connectHost,
             requestData: requestData,
             pinnedServerCertificateDER: pinnedServerCertificateDER,
             clientCertificates: clientCertificates,
@@ -1994,7 +1999,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         var writeRef: Unmanaged<CFWriteStream>?
         CFStreamCreatePairWithSocketToHost(
             nil,
-            host as CFString,
+            connectHost as CFString,
             UInt32(url.port ?? 443),
             &readRef,
             &writeRef
@@ -2062,7 +2067,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
             guard let self else { return }
             let diagnostics = self.timeoutDiagnostics()
             Self.logger.error(
-                "Secure HTTP timed out host=\(self.host, privacy: .public) port=\(self.url.port ?? 443, privacy: .public) stage=\(self.timeoutStage, privacy: .public) diagnostics=\(diagnostics, privacy: .public)"
+                "Secure HTTP timed out connect-host=\(self.connectHost, privacy: .public) authority-host=\(self.authorityHost, privacy: .public) port=\(self.url.port ?? 443, privacy: .public) stage=\(self.timeoutStage, privacy: .public) diagnostics=\(diagnostics, privacy: .public)"
             )
             self.finish(.failure(
                 ShadowClientGameStreamError.requestFailed("HTTPS \(self.timeoutStage) timed out")
@@ -2133,7 +2138,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
             }
             timeoutStage = "request write"
             Self.logger.notice(
-                "Secure HTTP writable host=\(self.host, privacy: .public) stage=\(self.timeoutStage, privacy: .public)"
+                "Secure HTTP writable connect-host=\(self.connectHost, privacy: .public) authority-host=\(self.authorityHost, privacy: .public) stage=\(self.timeoutStage, privacy: .public)"
             )
             writePendingBytes()
         case .endEncountered:
@@ -2254,7 +2259,7 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         ) {
             timeoutStage = "response read"
             Self.logger.notice(
-                "Secure HTTP request write complete host=\(self.host, privacy: .public) next-stage=\(self.timeoutStage, privacy: .public)"
+                "Secure HTTP request write complete connect-host=\(self.connectHost, privacy: .public) authority-host=\(self.authorityHost, privacy: .public) next-stage=\(self.timeoutStage, privacy: .public)"
             )
             maybeCompleteResponse()
         }

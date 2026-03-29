@@ -1,6 +1,16 @@
 import Foundation
 import ShadowClientFeatureConnection
 
+struct ShadowClientHostCatalogRefreshPlan: Equatable {
+    let discoveredCandidates: [String]
+    let refreshCandidates: [String]
+    let preferredRefreshCandidate: String?
+
+    var signature: String {
+        "\(refreshCandidates.joined(separator: "|"))||\(preferredRefreshCandidate ?? "")"
+    }
+}
+
 enum ShadowClientHostRefreshPlanKit {
     private enum CandidateSource: Int {
         case preferred = 0
@@ -63,6 +73,73 @@ enum ShadowClientHostRefreshPlanKit {
                 return lhs.normalizedCandidate.localizedCaseInsensitiveCompare(rhs.normalizedCandidate) == .orderedAscending
             }
             .map(\.normalizedCandidate)
+    }
+
+    static func makeCatalogRefreshPlan(
+        autoFindHosts: Bool,
+        discoveredHosts: [ShadowClientDiscoveredHost],
+        cachedHosts: [String],
+        preferredHost: String?,
+        hiddenCandidates: Set<String>
+    ) -> ShadowClientHostCatalogRefreshPlan {
+        let discoveredCandidates = discoveredHosts
+            .map(\.probeCandidate)
+            .filter { !hiddenCandidates.contains(normalizedStoredConnectionCandidate($0)) }
+        let visibleCachedHosts = cachedHosts
+            .filter { !hiddenCandidates.contains(normalizedStoredConnectionCandidate($0)) }
+        let visiblePreferredHost = preferredHost.flatMap {
+            let normalizedPreferredHost = normalizedStoredConnectionCandidate($0)
+            return hiddenCandidates.contains(normalizedPreferredHost) ? nil : $0
+        }
+
+        let refreshCandidates = ShadowClientHostCatalogKit.refreshCandidates(
+            autoFindHosts: autoFindHosts,
+            discoveredHosts: discoveredCandidates,
+            cachedHosts: visibleCachedHosts,
+            manualHost: visiblePreferredHost
+        )
+        let preferredRefreshCandidate = resolvedPreferredConnectCandidate(
+            visiblePreferredHost,
+            discoveredCandidates: discoveredCandidates,
+            availableCandidates: refreshCandidates
+        )
+
+        return ShadowClientHostCatalogRefreshPlan(
+            discoveredCandidates: discoveredCandidates,
+            refreshCandidates: refreshCandidates,
+            preferredRefreshCandidate: preferredRefreshCandidate
+        )
+    }
+
+    static func resolvedPreferredConnectCandidate(
+        _ preferredCandidate: String?,
+        discoveredCandidates: [String],
+        availableCandidates: [String]
+    ) -> String? {
+        if let discoveredPreferred = resolvedPreferredHostCandidate(
+            preferredCandidate,
+            availableCandidates: discoveredCandidates
+        ) {
+            return discoveredPreferred
+        }
+
+        let preferredCandidate = resolvedPreferredHostCandidate(
+            preferredCandidate,
+            availableCandidates: availableCandidates
+        )
+
+        guard let preferredCandidate else {
+            return nil
+        }
+
+        guard !discoveredCandidates.isEmpty,
+              !discoveredCandidates.contains(preferredCandidate),
+              discoveredCandidates.count == 1
+        else {
+            return preferredCandidate
+        }
+
+        return discoveredCandidates[0]
     }
 
     private static func serviceDiscoveryCandidate(_ candidate: String?) -> String? {
@@ -142,5 +219,48 @@ enum ShadowClientHostRefreshPlanKit {
         }
 
         return host.lowercased()
+    }
+
+    private static func normalizedStoredConnectionCandidate(_ candidate: String) -> String {
+        candidate.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func resolvedPreferredHostCandidate(
+        _ preferredCandidate: String?,
+        availableCandidates: [String]
+    ) -> String? {
+        guard let preferredCandidate else {
+            return nil
+        }
+
+        let normalizedPreferred = normalizedStoredConnectionCandidate(preferredCandidate)
+        guard !normalizedPreferred.isEmpty else {
+            return nil
+        }
+
+        if availableCandidates.contains(normalizedPreferred) {
+            return normalizedPreferred
+        }
+
+        let urlCandidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(normalizedPreferred)
+        guard let url = URL(string: urlCandidate),
+              let host = url.host?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !host.isEmpty,
+              url.port == nil
+        else {
+            return nil
+        }
+
+        let matchingCandidates = availableCandidates.filter {
+            let candidateURL = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing($0)
+            guard let parsed = URL(string: candidateURL),
+                  let candidateHost = parsed.host?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            else {
+                return false
+            }
+            return candidateHost == host
+        }
+
+        return matchingCandidates.count == 1 ? matchingCandidates[0] : nil
     }
 }

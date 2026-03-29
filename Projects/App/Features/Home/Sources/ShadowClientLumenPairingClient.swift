@@ -73,22 +73,55 @@ public struct ShadowClientLumenPairingSession: Equatable, Sendable {
 
 public protocol ShadowClientLumenPairingClient: Sendable {
     func startPairing(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         deviceName: String?,
         platform: String?
     ) async throws -> ShadowClientLumenPairingSession
 
     func fetchPairingStatus(
+        route: ShadowClientLumenRequestRoute,
+        pairingID: String
+    ) async throws -> ShadowClientLumenPairingSession
+}
+
+public extension ShadowClientLumenPairingClient {
+    func startPairing(
+        host: String,
+        httpsPort: Int,
+        deviceName: String?,
+        platform: String?
+    ) async throws -> ShadowClientLumenPairingSession {
+        try await startPairing(
+            route: .init(
+                connectHost: host,
+                authorityHost: host,
+                httpsPort: httpsPort
+            ),
+            deviceName: deviceName,
+            platform: platform
+        )
+    }
+
+    func fetchPairingStatus(
         host: String,
         httpsPort: Int,
         pairingID: String
-    ) async throws -> ShadowClientLumenPairingSession
+    ) async throws -> ShadowClientLumenPairingSession {
+        try await fetchPairingStatus(
+            route: .init(
+                connectHost: host,
+                authorityHost: host,
+                httpsPort: httpsPort
+            ),
+            pairingID: pairingID
+        )
+    }
 }
 
 protocol ShadowClientLumenHTTPTransport: Sendable {
     func request(
         url: URL,
+        connectHost: String,
         requestData: Data,
         pinnedServerCertificateDER: Data?,
         clientCertificates: [SecCertificate]?,
@@ -100,6 +133,7 @@ protocol ShadowClientLumenHTTPTransport: Sendable {
 struct NativeShadowClientLumenHTTPTransport: ShadowClientLumenHTTPTransport {
     func request(
         url: URL,
+        connectHost: String,
         requestData: Data,
         pinnedServerCertificateDER: Data?,
         clientCertificates: [SecCertificate]?,
@@ -108,6 +142,7 @@ struct NativeShadowClientLumenHTTPTransport: ShadowClientLumenHTTPTransport {
     ) async throws -> ShadowClientGameStreamHTTPTransport.HTTPSResponse {
         try await ShadowClientGameStreamHTTPTransport.requestPinnedHTTPSResponse(
             url: url,
+            connectHost: connectHost,
             requestData: requestData,
             pinnedServerCertificateDER: pinnedServerCertificateDER,
             clientCertificates: clientCertificates,
@@ -151,8 +186,7 @@ public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClie
     }
 
     public func startPairing(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         deviceName: String? = nil,
         platform: String? = nil
     ) async throws -> ShadowClientLumenPairingSession {
@@ -167,8 +201,7 @@ public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClie
         )
 
         let session = try await requestPairingSession(
-            host: host,
-            httpsPort: httpsPort,
+            route: route,
             path: "/api/pairing/start",
             method: "POST",
             queryItems: [],
@@ -178,8 +211,7 @@ public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClie
     }
 
     public func fetchPairingStatus(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         pairingID: String
     ) async throws -> ShadowClientLumenPairingSession {
         let trimmedPairingID = pairingID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -188,8 +220,7 @@ public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClie
         }
 
         return try await requestPairingSession(
-            host: host,
-            httpsPort: httpsPort,
+            route: route,
             path: "/api/pairing/status",
             method: "GET",
             queryItems: [
@@ -205,17 +236,13 @@ public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClie
     }
 
     private func requestPairingSession<Body: Encodable>(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         path: String,
         method: String,
         queryItems: [URLQueryItem],
         body: Body?
     ) async throws -> ShadowClientLumenPairingSession {
-        let requestContexts = try await authenticationContextBuilder.makePairingContexts(
-            host: host,
-            httpsPort: httpsPort
-        )
+        let requestContexts = try await authenticationContextBuilder.makePairingContexts(route: route)
         let encodedBody = try body.map { try JSONEncoder().encode($0) }
         var lastError: Error?
 
@@ -231,6 +258,7 @@ public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClie
             do {
                 let response = try await transport.request(
                     url: request.url,
+                    connectHost: request.connectHost,
                     requestData: request.requestData,
                     pinnedServerCertificateDER: requestContext.pinnedServerCertificateDER,
                     clientCertificates: requestContext.clientCertificates,
@@ -266,7 +294,13 @@ public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClie
 
         var endpoints: [ShadowClientLumenEndpoint] = [requestEndpoint]
         if let controlHTTPSPort = pairingSession.controlHTTPSPort {
-            endpoints.append(.init(host: requestEndpoint.host, httpsPort: controlHTTPSPort))
+            endpoints.append(
+                .init(
+                    connectHost: requestEndpoint.connectHost,
+                    authorityHost: requestEndpoint.authorityHost,
+                    httpsPort: controlHTTPSPort
+                )
+            )
         }
 
         let advertisedEndpoints = pairingSession.controlHTTPSURLs.compactMap(Self.endpoint(fromControlURLString:))
@@ -277,22 +311,26 @@ public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClie
 
         var seenEndpoints = Set<String>()
         for endpoint in endpoints {
-            let routeKey = "\(endpoint.host.lowercased()):\(endpoint.httpsPort)"
+            let routeKey = "\(endpoint.connectHost.lowercased())|\(endpoint.authorityHost.lowercased()):\(endpoint.httpsPort)"
             guard seenEndpoints.insert(routeKey).inserted else {
                 continue
             }
 
-            await pinnedCertificateStore.setCertificateDER(
-                certificateDER,
-                forHost: endpoint.host,
-                httpsPort: endpoint.httpsPort
-            )
-            if let normalizedServerUniqueID = Self.normalizedMachineID(pairingSession.serverUniqueID) {
-                await pinnedCertificateStore.bindHost(
-                    endpoint.host,
-                    httpsPort: endpoint.httpsPort,
-                    toMachineID: normalizedServerUniqueID
+            for host in Set([endpoint.connectHost, endpoint.authorityHost]) {
+                await pinnedCertificateStore.setCertificateDER(
+                    certificateDER,
+                    forHost: host,
+                    httpsPort: endpoint.httpsPort
                 )
+            }
+            if let normalizedServerUniqueID = Self.normalizedMachineID(pairingSession.serverUniqueID) {
+                for host in Set([endpoint.connectHost, endpoint.authorityHost]) {
+                    await pinnedCertificateStore.bindHost(
+                        host,
+                        httpsPort: endpoint.httpsPort,
+                        toMachineID: normalizedServerUniqueID
+                    )
+                }
                 await pinnedCertificateStore.setCertificateDER(
                     certificateDER,
                     forMachineID: normalizedServerUniqueID

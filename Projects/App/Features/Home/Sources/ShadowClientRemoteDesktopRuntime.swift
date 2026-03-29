@@ -1443,9 +1443,17 @@ private struct ShadowClientLaunchRequestContext: Sendable {
     let settings: ShadowClientGameStreamLaunchSettings
 }
 
-private struct ShadowClientPairHostCandidate: Equatable, Sendable {
-    let host: String
-    let httpsPort: Int
+private struct ShadowClientLumenRouteCandidate: Equatable, Sendable {
+    let connectEndpoint: ShadowClientRemoteHostEndpoint
+    let authorityEndpoint: ShadowClientRemoteHostEndpoint
+
+    var requestRoute: ShadowClientLumenRequestRoute {
+        .init(
+            connectHost: connectEndpoint.host,
+            authorityHost: authorityEndpoint.host,
+            httpsPort: authorityEndpoint.httpsPort
+        )
+    }
 }
 
 private struct ShadowClientPersistedRemoteHostCatalog: Codable {
@@ -1572,10 +1580,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let preferredHost: String?
     }
 
-    private struct LumenPairingRoute: Equatable {
-        let host: String
-        let httpsPort: Int
-    }
+    private typealias LumenPairingRoute = ShadowClientLumenRouteCandidate
 
     @Published public private(set) var hosts: [ShadowClientRemoteHostDescriptor] = []
     @Published public private(set) var apps: [ShadowClientRemoteAppDescriptor] = []
@@ -2193,15 +2198,19 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                         pairAttemptCount += 1
                         do {
                             let startedPairing = try await pairingClient.startPairing(
-                                host: candidate.host,
-                                httpsPort: candidate.httpsPort,
+                                route: candidate.requestRoute,
                                 deviceName: nil,
                                 platform: nil
                             )
                             let controlRoutes = Self.lumenPairingRoutes(
                                 for: startedPairing,
-                                fallbackHost: candidate.host,
-                                fallbackHTTPSPort: startedPairing.controlHTTPSPort ?? candidate.httpsPort
+                                fallbackRoute: .init(
+                                    connectEndpoint: candidate.connectEndpoint,
+                                    authorityEndpoint: .init(
+                                        host: candidate.authorityEndpoint.host,
+                                        httpsPort: startedPairing.controlHTTPSPort ?? candidate.authorityEndpoint.httpsPort
+                                    )
+                                )
                             )
 
                             await MainActor.run { [weak self] in
@@ -2230,9 +2239,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                                 routeCandidates: controlRoutes,
                                 initialSession: startedPairing
                             )
-                            pairedRoute = Self.serializedExactHostCandidate(
-                                for: .init(host: approvedRoute.host, httpsPort: approvedRoute.httpsPort)
-                            )
+                            pairedRoute = Self.serializedExactHostCandidate(for: approvedRoute.connectEndpoint)
                             if let self {
                                 await self.persistPreferredRoute(pairedRoute, for: selectedHost)
                             }
@@ -2341,7 +2348,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             switch currentSession.status {
             case .approved:
                 return currentRoutes.first
-                    ?? .init(host: "", httpsPort: currentSession.controlHTTPSPort ?? 0)
+                    ?? .init(
+                        connectEndpoint: .init(host: "", httpsPort: currentSession.controlHTTPSPort ?? 0),
+                        authorityEndpoint: .init(host: "", httpsPort: currentSession.controlHTTPSPort ?? 0)
+                    )
             case .rejected:
                 throw ShadowClientGameStreamError.requestFailed("Shadow pairing request was rejected.")
             case .expired:
@@ -2358,8 +2368,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 currentSession = updatedSession
                 currentRoutes = Self.lumenPairingRoutes(
                     for: updatedSession,
-                    fallbackHost: successfulRoute.host,
-                    fallbackHTTPSPort: successfulRoute.httpsPort
+                    fallbackRoute: successfulRoute
                 )
             }
         }
@@ -2376,8 +2385,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         for route in routes {
             do {
                 try await lumenAdminClient.approvePairingRequest(
-                    host: route.host,
-                    httpsPort: route.httpsPort,
+                    route: route.requestRoute,
                     username: username,
                     password: password,
                     pairingID: pairingID
@@ -2402,8 +2410,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         for route in routeCandidates {
             do {
                 let session = try await pairingClient.fetchPairingStatus(
-                    host: route.host,
-                    httpsPort: route.httpsPort,
+                    route: route.requestRoute,
                     pairingID: pairingID
                 )
                 return (session, route)
@@ -2417,24 +2424,29 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     private static func lumenPairingRoutes(
         for session: ShadowClientLumenPairingSession,
-        fallbackHost: String,
-        fallbackHTTPSPort: Int
+        fallbackRoute: LumenPairingRoute
     ) -> [LumenPairingRoute] {
         var routes: [LumenPairingRoute] = []
         var seenRoutes = Set<String>()
 
-        func append(host: String, httpsPort: Int) {
-            let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedHost.isEmpty else {
+        func append(connectHost: String, authorityHost: String, httpsPort: Int) {
+            let trimmedConnectHost = connectHost.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedAuthorityHost = authorityHost.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedConnectHost.isEmpty, !trimmedAuthorityHost.isEmpty else {
                 return
             }
 
-            let routeKey = "\(trimmedHost.lowercased()):\(httpsPort)"
+            let routeKey = "\(trimmedConnectHost.lowercased())|\(trimmedAuthorityHost.lowercased()):\(httpsPort)"
             guard seenRoutes.insert(routeKey).inserted else {
                 return
             }
 
-            routes.append(.init(host: trimmedHost, httpsPort: httpsPort))
+            routes.append(
+                .init(
+                    connectEndpoint: .init(host: trimmedConnectHost, httpsPort: httpsPort),
+                    authorityEndpoint: .init(host: trimmedAuthorityHost, httpsPort: httpsPort)
+                )
+            )
         }
 
         func append(urlString: String?) {
@@ -2446,12 +2458,23 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 return
             }
 
-            append(host: host, httpsPort: url.port ?? session.controlHTTPSPort ?? fallbackHTTPSPort)
+            let httpsPort = url.port ?? session.controlHTTPSPort ?? fallbackRoute.authorityEndpoint.httpsPort
+            let connectHost: String
+            if isLocalPairHost(host) || isLinkLocalRouteHost(host) {
+                connectHost = host
+            } else {
+                connectHost = fallbackRoute.connectEndpoint.host
+            }
+            append(connectHost: connectHost, authorityHost: host, httpsPort: httpsPort)
         }
 
         append(urlString: session.preferredControlHTTPSURL)
         session.controlHTTPSURLs.forEach { append(urlString: $0) }
-        append(host: fallbackHost, httpsPort: fallbackHTTPSPort)
+        append(
+            connectHost: fallbackRoute.connectEndpoint.host,
+            authorityHost: fallbackRoute.authorityEndpoint.host,
+            httpsPort: fallbackRoute.authorityEndpoint.httpsPort
+        )
         return routes
     }
 
@@ -4653,14 +4676,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         selectedHostLumenAdminProfile = nil
 
         let lumenAdminClient = lumenAdminClient
-        let host = selectedHost.host
-        let httpsPort = selectedHost.httpsPort
+        let requestRoute = Self.preferredLumenRequestRoute(for: selectedHost)
         let selectedHostID = selectedHost.id
         Task { [weak self] in
             do {
                 let profile = try await lumenAdminClient.fetchCurrentClientProfile(
-                    host: host,
-                    httpsPort: httpsPort,
+                    route: requestRoute,
                     username: trimmedUsername,
                     password: trimmedPassword
                 )
@@ -4714,8 +4735,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         selectedHostLumenAdminState = .saving
 
         let lumenAdminClient = lumenAdminClient
-        let host = selectedHost.host
-        let httpsPort = selectedHost.httpsPort
+        let requestRoute = Self.preferredLumenRequestRoute(for: selectedHost)
         let selectedHostID = selectedHost.id
         let updatedProfile = ShadowClientLumenAdminClientProfile(
             name: currentProfile.name,
@@ -4732,8 +4752,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         Task { [weak self] in
             do {
                 let savedProfile = try await lumenAdminClient.updateCurrentClientProfile(
-                    host: host,
-                    httpsPort: httpsPort,
+                    route: requestRoute,
                     username: trimmedUsername,
                     password: trimmedPassword,
                     profile: updatedProfile
@@ -4838,16 +4857,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         selectedHostLumenAdminState = .saving
         let lumenAdminClient = lumenAdminClient
-        let host = selectedHost.host
-        let httpsPort = selectedHost.httpsPort
+        let requestRoute = Self.preferredLumenRequestRoute(for: selectedHost)
         let selectedHostID = selectedHost.id
         let uuid = currentProfile.uuid
 
         Task { [weak self] in
             do {
                 try await lumenAdminClient.disconnectCurrentClient(
-                    host: host,
-                    httpsPort: httpsPort,
+                    route: requestRoute,
                     username: trimmedUsername,
                     password: trimmedPassword,
                     uuid: uuid
@@ -4909,16 +4926,14 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
         selectedHostLumenAdminState = .saving
         let lumenAdminClient = lumenAdminClient
-        let host = selectedHost.host
-        let httpsPort = selectedHost.httpsPort
+        let requestRoute = Self.preferredLumenRequestRoute(for: selectedHost)
         let selectedHostID = selectedHost.id
         let uuid = currentProfile.uuid
 
         Task { [weak self] in
             do {
                 try await lumenAdminClient.unpairCurrentClient(
-                    host: host,
-                    httpsPort: httpsPort,
+                    route: requestRoute,
                     username: trimmedUsername,
                     password: trimmedPassword,
                     uuid: uuid
@@ -5577,8 +5592,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         hosts: [ShadowClientRemoteHostDescriptor],
         latestHostCandidates: [String],
         preferredPairHost: String?
-    ) -> [ShadowClientPairHostCandidate] {
-        var candidates: [ShadowClientPairHostCandidate] = []
+    ) -> [ShadowClientLumenRouteCandidate] {
+        var candidates: [ShadowClientRemoteHostEndpoint] = []
 
         if let preferredPairHost {
             let parsedRoute = parsedCandidateRoute(preferredPairHost)
@@ -5611,9 +5626,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         var seen: Set<String> = []
         let deduplicated = candidates.filter { candidate in
             let key = normalizeCandidate(
-                serializedExactHostCandidate(
-                    for: .init(host: candidate.host, httpsPort: candidate.httpsPort)
-                )
+                serializedExactHostCandidate(for: candidate)
             ) ?? candidate.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             guard !key.isEmpty, !seen.contains(key) else {
                 return false
@@ -5637,18 +5650,23 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 return $0.host.localizedCaseInsensitiveCompare($1.host) == .orderedAscending
             }
             return lhsRank < rhsRank
+        }.map { connectEndpoint in
+            .init(
+                connectEndpoint: connectEndpoint,
+                authorityEndpoint: preferredAuthorityEndpoint(
+                    for: selectedHost,
+                    connectEndpoint: connectEndpoint
+                )
+            )
         }
     }
 
     private static func pairHostCandidateRank(
-        candidate pairCandidate: ShadowClientPairHostCandidate,
+        candidate pairCandidate: ShadowClientRemoteHostEndpoint,
         selectedEndpoint: ShadowClientRemoteHostEndpoint,
         preferredPairHost: String?
     ) -> Int {
-        let endpoint = ShadowClientRemoteHostEndpoint(
-            host: pairCandidate.host,
-            httpsPort: pairCandidate.httpsPort
-        )
+        let endpoint = pairCandidate
         let isRoutableLocalPairHost = isLocalPairHost(endpoint.host) && !isLinkLocalRouteHost(endpoint.host)
         if isRoutableLocalPairHost {
             if Self.candidate(preferredPairHost, matches: endpoint) {
@@ -5672,6 +5690,50 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             return 6
         }
         return 7
+    }
+
+    private static func preferredAuthorityEndpoint(
+        for selectedHost: ShadowClientRemoteHostDescriptor,
+        connectEndpoint: ShadowClientRemoteHostEndpoint
+    ) -> ShadowClientRemoteHostEndpoint {
+        if !isLocalPairHost(connectEndpoint.host), !isLinkLocalRouteHost(connectEndpoint.host) {
+            return connectEndpoint
+        }
+
+        for endpoint in [
+            selectedHost.routes.manual,
+            selectedHost.routes.remote,
+            selectedHost.routes.active,
+            selectedHost.routes.local,
+        ].compactMap({ $0 }) {
+            if !isLocalPairHost(endpoint.host), !isLinkLocalRouteHost(endpoint.host) {
+                return .init(host: endpoint.host, httpsPort: connectEndpoint.httpsPort)
+            }
+        }
+
+        return connectEndpoint
+    }
+
+    private static func preferredLumenRequestRoute(
+        for selectedHost: ShadowClientRemoteHostDescriptor
+    ) -> ShadowClientLumenRequestRoute {
+        let connectEndpoint: ShadowClientRemoteHostEndpoint
+        if let localEndpoint = selectedHost.routes.local,
+           isLocalPairHost(localEndpoint.host),
+           !isLinkLocalRouteHost(localEndpoint.host) {
+            connectEndpoint = localEndpoint
+        } else {
+            connectEndpoint = selectedHost.routes.active
+        }
+        let authorityEndpoint = preferredAuthorityEndpoint(
+            for: selectedHost,
+            connectEndpoint: connectEndpoint
+        )
+        return .init(
+            connectHost: connectEndpoint.host,
+            authorityHost: authorityEndpoint.host,
+            httpsPort: authorityEndpoint.httpsPort
+        )
     }
 
     private static func pairRouteStoreKey(for selectedHost: ShadowClientRemoteHostDescriptor) -> String {

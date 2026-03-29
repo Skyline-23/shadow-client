@@ -3069,19 +3069,17 @@ private actor RecordingLumenPairingClient: ShadowClientLumenPairingClient {
     }
 
     func startPairing(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         deviceName: String?,
         platform: String?
     ) async throws -> ShadowClientLumenPairingSession {
-        _ = httpsPort
         _ = deviceName
         _ = platform
-        recordedStartHosts.append(host)
+        recordedStartHosts.append(route.connectHost)
 
-        if successfulHosts.isEmpty || successfulHosts.contains(host) {
+        if successfulHosts.isEmpty || successfulHosts.contains(route.connectHost) {
             return .init(
-                pairingID: "pair-\(host)",
+                pairingID: "pair-\(route.connectHost)",
                 userCode: "ABC123",
                 deviceName: "Shadow Client",
                 platform: "macos",
@@ -3103,12 +3101,10 @@ private actor RecordingLumenPairingClient: ShadowClientLumenPairingClient {
     }
 
     func fetchPairingStatus(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         pairingID: String
     ) async throws -> ShadowClientLumenPairingSession {
-        _ = host
-        _ = httpsPort
+        _ = route
         _ = pairingID
         throw ShadowClientGameStreamError.requestFailed("Unexpected pairing status poll.")
     }
@@ -3142,21 +3138,19 @@ private actor RoutingLumenPairingClient: ShadowClientLumenPairingClient {
     }
 
     func startPairing(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         deviceName: String?,
         platform: String?
     ) async throws -> ShadowClientLumenPairingSession {
-        _ = httpsPort
         _ = deviceName
         _ = platform
-        recordedStartHosts.append(host)
-        guard host == startHost else {
+        recordedStartHosts.append(route.connectHost)
+        guard route.connectHost == startHost else {
             throw ShadowClientGameStreamError.requestFailed("Unexpected pairing start host.")
         }
 
         return .init(
-            pairingID: "pair-\(host)",
+            pairingID: "pair-\(route.connectHost)",
             userCode: "ABC123",
             deviceName: "Shadow Client",
             platform: "macos",
@@ -3177,14 +3171,12 @@ private actor RoutingLumenPairingClient: ShadowClientLumenPairingClient {
     }
 
     func fetchPairingStatus(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         pairingID: String
     ) async throws -> ShadowClientLumenPairingSession {
-        _ = httpsPort
         _ = pairingID
-        recordedStatusHosts.append(host)
-        guard host == approvedStatusHost else {
+        recordedStatusHosts.append(route.connectHost)
+        guard route.connectHost == approvedStatusHost else {
             throw ShadowClientGameStreamError.requestFailed("Unexpected pairing status host.")
         }
 

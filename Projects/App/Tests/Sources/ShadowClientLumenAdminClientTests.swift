@@ -131,12 +131,14 @@ func lumenAdminClientFetchesCurrentProfileOverPinnedLumenControlHTTPSTransport()
 
     #expect(profile?.name == "Current Device")
     #expect(request?.url.absoluteString == "https://wifi.skyline23.com:48990/api/clients/list")
+    #expect(request?.connectHost == "wifi.skyline23.com")
     #expect(requestText.contains("Authorization: Basic YWRtaW46c2VjcmV0"))
 }
 
 private actor RecordingLumenAdminHTTPTransport: ShadowClientLumenHTTPTransport {
     struct Request: Sendable {
         let url: URL
+        let connectHost: String
         let requestData: Data
     }
 
@@ -149,6 +151,7 @@ private actor RecordingLumenAdminHTTPTransport: ShadowClientLumenHTTPTransport {
 
     func request(
         url: URL,
+        connectHost: String,
         requestData: Data,
         pinnedServerCertificateDER: Data?,
         clientCertificates: [SecCertificate]?,
@@ -159,7 +162,7 @@ private actor RecordingLumenAdminHTTPTransport: ShadowClientLumenHTTPTransport {
         _ = clientCertificates
         _ = clientCertificateIdentity
         _ = timeout
-        lastRequest = .init(url: url, requestData: requestData)
+        lastRequest = .init(url: url, connectHost: connectHost, requestData: requestData)
         return response
     }
 }

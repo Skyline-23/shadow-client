@@ -2,6 +2,18 @@ import Foundation
 @preconcurrency import Security
 import ShadowClientFeatureConnection
 
+public struct ShadowClientLumenRequestRoute: Equatable, Sendable {
+    public let connectHost: String
+    public let authorityHost: String
+    public let httpsPort: Int
+
+    public init(connectHost: String, authorityHost: String, httpsPort: Int) {
+        self.connectHost = connectHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.authorityHost = authorityHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.httpsPort = httpsPort
+    }
+}
+
 struct ShadowClientLumenAdminCredentials: Equatable, Sendable {
     let username: String
     let password: String
@@ -24,8 +36,23 @@ struct ShadowClientLumenAdminCredentials: Equatable, Sendable {
 }
 
 struct ShadowClientLumenEndpoint: Equatable, Sendable {
-    let host: String
+    let connectHost: String
+    let authorityHost: String
     let httpsPort: Int
+
+    init(host: String, httpsPort: Int) {
+        self.connectHost = host
+        self.authorityHost = host
+        self.httpsPort = httpsPort
+    }
+
+    init(connectHost: String, authorityHost: String, httpsPort: Int) {
+        self.connectHost = connectHost
+        self.authorityHost = authorityHost
+        self.httpsPort = httpsPort
+    }
+
+    var host: String { authorityHost }
 
     func url(
         path: String,
@@ -33,7 +60,7 @@ struct ShadowClientLumenEndpoint: Equatable, Sendable {
     ) throws -> URL {
         var components = URLComponents()
         components.scheme = ShadowClientGameStreamNetworkDefaults.httpsScheme
-        components.host = host
+        components.host = authorityHost
         components.port = httpsPort
         components.path = path
         components.queryItems = queryItems.isEmpty ? nil : queryItems
@@ -42,6 +69,12 @@ struct ShadowClientLumenEndpoint: Equatable, Sendable {
         }
         return url
     }
+}
+
+struct ShadowClientLumenPreparedHTTPSRequest: Sendable {
+    let url: URL
+    let connectHost: String
+    let requestData: Data
 }
 
 struct ShadowClientLumenHTTPSRequestContext: Sendable {
@@ -57,18 +90,19 @@ struct ShadowClientLumenHTTPSRequestContext: Sendable {
         queryItems: [URLQueryItem] = [],
         headers: [String: String] = [:],
         body: Data? = nil
-    ) throws -> (url: URL, requestData: Data) {
+    ) throws -> ShadowClientLumenPreparedHTTPSRequest {
         let url = try endpoint.url(path: path, queryItems: queryItems)
         var resolvedHeaders = headers
         if let authorizationHeaderValue {
             resolvedHeaders["Authorization"] = authorizationHeaderValue
         }
 
-        return (
-            url,
-            ShadowClientGameStreamHTTPTransport.makeHTTPRequestData(
+        return .init(
+            url: url,
+            connectHost: endpoint.connectHost,
+            requestData: ShadowClientGameStreamHTTPTransport.makeHTTPRequestData(
                 url: url,
-                host: endpoint.host,
+                host: endpoint.authorityHost,
                 method: method,
                 headers: resolvedHeaders,
                 body: body
@@ -95,21 +129,51 @@ struct ShadowClientLumenAuthenticationContextBuilder {
         host: String,
         httpsPort: Int
     ) throws -> ShadowClientLumenEndpoint {
-        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else {
+        try resolveEndpoint(
+            connectHost: host,
+            authorityHost: host,
+            httpsPort: httpsPort
+        )
+    }
+
+    static func resolveEndpoint(
+        route: ShadowClientLumenRequestRoute
+    ) throws -> ShadowClientLumenEndpoint {
+        try resolveEndpoint(
+            connectHost: route.connectHost,
+            authorityHost: route.authorityHost,
+            httpsPort: route.httpsPort
+        )
+    }
+
+    static func resolveEndpoint(
+        connectHost: String,
+        authorityHost: String,
+        httpsPort: Int
+    ) throws -> ShadowClientLumenEndpoint {
+        let normalizedConnectHost = connectHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedAuthorityHost = authorityHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedConnectHost.isEmpty, !normalizedAuthorityHost.isEmpty else {
             throw ShadowClientGameStreamError.invalidHost
         }
 
-        let candidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(normalized)
-        guard let url = URL(string: candidate), let parsedHost = url.host else {
+        let connectCandidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(normalizedConnectHost)
+        let authorityCandidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(normalizedAuthorityHost)
+        guard let connectURL = URL(string: connectCandidate), let parsedConnectHost = connectURL.host,
+              let authorityURL = URL(string: authorityCandidate), let parsedAuthorityHost = authorityURL.host
+        else {
             throw ShadowClientGameStreamError.invalidHost
         }
 
-        let candidatePort = url.port ?? httpsPort
+        let candidatePort = authorityURL.port ?? connectURL.port ?? httpsPort
         let resolvedPort = ShadowClientGameStreamNetworkDefaults.canonicalHTTPSPort(
             fromCandidatePort: candidatePort
         )
-        return .init(host: parsedHost, httpsPort: resolvedPort)
+        return .init(
+            connectHost: parsedConnectHost,
+            authorityHost: parsedAuthorityHost,
+            httpsPort: resolvedPort
+        )
     }
 
     static func resolveControlEndpoints(
@@ -117,12 +181,42 @@ struct ShadowClientLumenAuthenticationContextBuilder {
         httpsPort: Int,
         advertisedControlHTTPSPort: Int? = nil
     ) throws -> [ShadowClientLumenEndpoint] {
-        let baseEndpoint = try resolveEndpoint(host: host, httpsPort: httpsPort)
+        try resolveControlEndpoints(
+            connectHost: host,
+            authorityHost: host,
+            httpsPort: httpsPort,
+            advertisedControlHTTPSPort: advertisedControlHTTPSPort
+        )
+    }
+
+    static func resolveControlEndpoints(
+        route: ShadowClientLumenRequestRoute,
+        advertisedControlHTTPSPort: Int? = nil
+    ) throws -> [ShadowClientLumenEndpoint] {
+        try resolveControlEndpoints(
+            connectHost: route.connectHost,
+            authorityHost: route.authorityHost,
+            httpsPort: route.httpsPort,
+            advertisedControlHTTPSPort: advertisedControlHTTPSPort
+        )
+    }
+
+    static func resolveControlEndpoints(
+        connectHost: String,
+        authorityHost: String,
+        httpsPort: Int,
+        advertisedControlHTTPSPort: Int? = nil
+    ) throws -> [ShadowClientLumenEndpoint] {
+        let baseEndpoint = try resolveEndpoint(
+            connectHost: connectHost,
+            authorityHost: authorityHost,
+            httpsPort: httpsPort
+        )
         var endpoints: [ShadowClientLumenEndpoint] = []
         var seen = Set<String>()
 
         func append(_ endpoint: ShadowClientLumenEndpoint) {
-            let key = "\(endpoint.host.lowercased()):\(endpoint.httpsPort)"
+            let key = "\(endpoint.connectHost.lowercased())|\(endpoint.authorityHost.lowercased()):\(endpoint.httpsPort)"
             guard seen.insert(key).inserted else {
                 return
             }
@@ -132,7 +226,8 @@ struct ShadowClientLumenAuthenticationContextBuilder {
         if let advertisedControlHTTPSPort {
             append(
                 .init(
-                    host: baseEndpoint.host,
+                    connectHost: baseEndpoint.connectHost,
+                    authorityHost: baseEndpoint.authorityHost,
                     httpsPort: ShadowClientGameStreamNetworkDefaults.canonicalHTTPSPort(
                         fromCandidatePort: advertisedControlHTTPSPort
                     )
@@ -141,7 +236,13 @@ struct ShadowClientLumenAuthenticationContextBuilder {
         }
 
         if let derivedControlHTTPSPort = derivedControlHTTPSPort(fromStreamHTTPSPort: baseEndpoint.httpsPort) {
-            append(.init(host: baseEndpoint.host, httpsPort: derivedControlHTTPSPort))
+            append(
+                .init(
+                    connectHost: baseEndpoint.connectHost,
+                    authorityHost: baseEndpoint.authorityHost,
+                    httpsPort: derivedControlHTTPSPort
+                )
+            )
         }
 
         append(baseEndpoint)
@@ -152,10 +253,19 @@ struct ShadowClientLumenAuthenticationContextBuilder {
         host: String,
         httpsPort: Int
     ) async throws -> ShadowClientLumenHTTPSRequestContext {
-        guard let context = try await makePairingContexts(
-            host: host,
-            httpsPort: httpsPort
-        ).first else {
+        try await makePairingContext(
+            route: .init(
+                connectHost: host,
+                authorityHost: host,
+                httpsPort: httpsPort
+            )
+        )
+    }
+
+    func makePairingContext(
+        route: ShadowClientLumenRequestRoute
+    ) async throws -> ShadowClientLumenHTTPSRequestContext {
+        guard let context = try await makePairingContexts(route: route).first else {
             throw ShadowClientGameStreamError.invalidHost
         }
         return context
@@ -166,36 +276,32 @@ struct ShadowClientLumenAuthenticationContextBuilder {
         httpsPort: Int,
         advertisedControlHTTPSPort: Int? = nil
     ) async throws -> [ShadowClientLumenHTTPSRequestContext] {
-        let endpoints = try Self.resolveControlEndpoints(
-            host: host,
-            httpsPort: httpsPort,
+        try await makePairingContexts(
+            route: .init(
+                connectHost: host,
+                authorityHost: host,
+                httpsPort: httpsPort
+            ),
             advertisedControlHTTPSPort: advertisedControlHTTPSPort
         )
-        let baseEndpoint = try Self.resolveEndpoint(host: host, httpsPort: httpsPort)
-        let basePinnedCertificateDER = await pinnedCertificateStore.certificateDER(
-            forHost: baseEndpoint.host,
-            httpsPort: baseEndpoint.httpsPort
-        )
-        let clientCertificates = try? await identityStore.tlsClientCertificates()
-        let clientCertificateIdentity = try? await identityStore.tlsClientIdentity()
+    }
 
-        var contexts: [ShadowClientLumenHTTPSRequestContext] = []
-        for endpoint in endpoints {
-            let exactPinnedCertificateDER = await pinnedCertificateStore.certificateDER(
-                forHost: endpoint.host,
-                httpsPort: endpoint.httpsPort
-            )
-            contexts.append(
-                .init(
-                    endpoint: endpoint,
-                    pinnedServerCertificateDER: exactPinnedCertificateDER ?? basePinnedCertificateDER,
-                    clientCertificates: clientCertificates,
-                    clientCertificateIdentity: clientCertificateIdentity,
-                    authorizationHeaderValue: nil
-                )
-            )
-        }
-        return contexts
+    func makePairingContexts(
+        route: ShadowClientLumenRequestRoute,
+        advertisedControlHTTPSPort: Int? = nil
+    ) async throws -> [ShadowClientLumenHTTPSRequestContext] {
+        let endpoints = try Self.resolveControlEndpoints(
+            route: route,
+            advertisedControlHTTPSPort: advertisedControlHTTPSPort
+        )
+        let baseEndpoint = try Self.resolveEndpoint(route: route)
+        return try await makeHTTPSRequestContexts(
+            endpoints: endpoints,
+            baseEndpoint: baseEndpoint,
+            authorizationHeaderValue: nil,
+            includeClientIdentity: true,
+            requirePinnedServerCertificate: false
+        )
     }
 
     func makeAdminContext(
@@ -204,9 +310,24 @@ struct ShadowClientLumenAuthenticationContextBuilder {
         username: String,
         password: String
     ) async throws -> ShadowClientLumenHTTPSRequestContext {
+        try await makeAdminContext(
+            route: .init(
+                connectHost: host,
+                authorityHost: host,
+                httpsPort: httpsPort
+            ),
+            username: username,
+            password: password
+        )
+    }
+
+    func makeAdminContext(
+        route: ShadowClientLumenRequestRoute,
+        username: String,
+        password: String
+    ) async throws -> ShadowClientLumenHTTPSRequestContext {
         guard let context = try await makeAdminContexts(
-            host: host,
-            httpsPort: httpsPort,
+            route: route,
             username: username,
             password: password
         ).first else {
@@ -222,29 +343,58 @@ struct ShadowClientLumenAuthenticationContextBuilder {
         password: String,
         advertisedControlHTTPSPort: Int? = nil
     ) async throws -> [ShadowClientLumenHTTPSRequestContext] {
+        try await makeAdminContexts(
+            route: .init(
+                connectHost: host,
+                authorityHost: host,
+                httpsPort: httpsPort
+            ),
+            username: username,
+            password: password,
+            advertisedControlHTTPSPort: advertisedControlHTTPSPort
+        )
+    }
+
+    func makeAdminContexts(
+        route: ShadowClientLumenRequestRoute,
+        username: String,
+        password: String,
+        advertisedControlHTTPSPort: Int? = nil
+    ) async throws -> [ShadowClientLumenHTTPSRequestContext] {
         let credentials = try ShadowClientLumenAdminCredentials(
             username: username,
             password: password
         )
 
         let endpoints = try Self.resolveControlEndpoints(
-            host: host,
-            httpsPort: httpsPort,
+            route: route,
             advertisedControlHTTPSPort: advertisedControlHTTPSPort
         )
-        let baseEndpoint = try Self.resolveEndpoint(host: host, httpsPort: httpsPort)
-        let basePinnedCertificateDER = await pinnedCertificateStore.certificateDER(
-            forHost: baseEndpoint.host,
-            httpsPort: baseEndpoint.httpsPort
+        let baseEndpoint = try Self.resolveEndpoint(route: route)
+        return try await makeHTTPSRequestContexts(
+            endpoints: endpoints,
+            baseEndpoint: baseEndpoint,
+            authorizationHeaderValue: credentials.authorizationHeaderValue,
+            includeClientIdentity: false,
+            requirePinnedServerCertificate: true
         )
+    }
+
+    private func makeHTTPSRequestContexts(
+        endpoints: [ShadowClientLumenEndpoint],
+        baseEndpoint: ShadowClientLumenEndpoint,
+        authorizationHeaderValue: String?,
+        includeClientIdentity: Bool,
+        requirePinnedServerCertificate: Bool
+    ) async throws -> [ShadowClientLumenHTTPSRequestContext] {
+        let basePinnedCertificateDER = await pinnedCertificateDER(for: baseEndpoint)
+        let clientCertificates = includeClientIdentity ? (try? await identityStore.tlsClientCertificates()) : nil
+        let clientCertificateIdentity = includeClientIdentity ? (try? await identityStore.tlsClientIdentity()) : nil
 
         var contexts: [ShadowClientLumenHTTPSRequestContext] = []
         for endpoint in endpoints {
-            let exactPinnedCertificateDER = await pinnedCertificateStore.certificateDER(
-                forHost: endpoint.host,
-                httpsPort: endpoint.httpsPort
-            )
-            guard let pinnedServerCertificateDER = exactPinnedCertificateDER ?? basePinnedCertificateDER else {
+            let pinnedServerCertificateDER = await pinnedCertificateDER(for: endpoint) ?? basePinnedCertificateDER
+            if requirePinnedServerCertificate, pinnedServerCertificateDER == nil {
                 continue
             }
 
@@ -252,14 +402,31 @@ struct ShadowClientLumenAuthenticationContextBuilder {
                 .init(
                     endpoint: endpoint,
                     pinnedServerCertificateDER: pinnedServerCertificateDER,
-                    clientCertificates: nil,
-                    clientCertificateIdentity: nil,
-                    authorizationHeaderValue: credentials.authorizationHeaderValue
+                    clientCertificates: clientCertificates,
+                    clientCertificateIdentity: clientCertificateIdentity,
+                    authorizationHeaderValue: authorizationHeaderValue
                 )
             )
         }
-
         return contexts
+    }
+
+    private func pinnedCertificateDER(for endpoint: ShadowClientLumenEndpoint) async -> Data? {
+        if let authorityCertificate = await pinnedCertificateStore.certificateDER(
+            forHost: endpoint.authorityHost,
+            httpsPort: endpoint.httpsPort
+        ) {
+            return authorityCertificate
+        }
+
+        if endpoint.connectHost.caseInsensitiveCompare(endpoint.authorityHost) != .orderedSame {
+            return await pinnedCertificateStore.certificateDER(
+                forHost: endpoint.connectHost,
+                httpsPort: endpoint.httpsPort
+            )
+        }
+
+        return nil
     }
 
     private static func derivedControlHTTPSPort(fromStreamHTTPSPort httpsPort: Int) -> Int? {

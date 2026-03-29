@@ -23,7 +23,8 @@ func lumenEndpointResolverCanonicalizesHostAndHTTPSPort() throws {
 
     #expect(
         endpoint == .init(
-            host: "wifi.skyline23.com",
+            connectHost: "wifi.skyline23.com",
+            authorityHost: "wifi.skyline23.com",
             httpsPort: 47984
         )
     )
@@ -38,8 +39,8 @@ func lumenAuthContextBuilderPrefersControlHTTPSEndpointForStreamRoutes() throws 
 
     #expect(
         endpoints == [
-            .init(host: "wifi.skyline23.com", httpsPort: 48990),
-            .init(host: "wifi.skyline23.com", httpsPort: 48984),
+            .init(connectHost: "wifi.skyline23.com", authorityHost: "wifi.skyline23.com", httpsPort: 48990),
+            .init(connectHost: "wifi.skyline23.com", authorityHost: "wifi.skyline23.com", httpsPort: 48984),
         ]
     )
 }
@@ -61,20 +62,33 @@ func lumenAdminContextsReuseStreamPinForDerivedControlEndpoint() async throws {
     )
 
     let contexts = try await builder.makeAdminContexts(
-        host: "wifi.skyline23.com:48984",
-        httpsPort: 48984,
+        route: .init(
+            connectHost: "192.168.0.50",
+            authorityHost: "wifi.skyline23.com",
+            httpsPort: 48984
+        ),
         username: "admin",
         password: "secret"
     )
 
-    #expect(contexts.first?.endpoint == .init(host: "wifi.skyline23.com", httpsPort: 48990))
+    #expect(
+        contexts.first?.endpoint == .init(
+            connectHost: "192.168.0.50",
+            authorityHost: "wifi.skyline23.com",
+            httpsPort: 48990
+        )
+    )
     #expect(contexts.first?.pinnedServerCertificateDER == pinnedCertificate)
 }
 
 @Test("Lumen request context injects authorization header into HTTPS request data")
 func lumenRequestContextInjectsAuthorizationHeaderIntoHTTPSRequestData() throws {
     let context = ShadowClientLumenHTTPSRequestContext(
-        endpoint: .init(host: "wifi.skyline23.com", httpsPort: 48984),
+        endpoint: .init(
+            connectHost: "192.168.0.50",
+            authorityHost: "wifi.skyline23.com",
+            httpsPort: 48984
+        ),
         pinnedServerCertificateDER: nil,
         clientCertificates: nil,
         clientCertificateIdentity: nil,
@@ -88,5 +102,6 @@ func lumenRequestContextInjectsAuthorizationHeaderIntoHTTPSRequestData() throws 
     let requestText = String(decoding: request.requestData, as: UTF8.self)
 
     #expect(request.url.absoluteString == "https://wifi.skyline23.com:48984/api/clients/list")
+    #expect(request.connectHost == "192.168.0.50")
     #expect(requestText.contains("Authorization: Basic YWRtaW46c2VjcmV0"))
 }

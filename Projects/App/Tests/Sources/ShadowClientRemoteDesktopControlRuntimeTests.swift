@@ -36,7 +36,7 @@ func remoteDesktopRuntimePairsSelectedHost() async {
     await waitForPairingState(runtime)
 
     #expect(await pairingClient.startCalls() == [
-        .init(host: "192.168.0.20", httpsPort: 47984),
+        .init(connectHost: "192.168.0.20", authorityHost: "192.168.0.20", httpsPort: 47984),
     ])
 
     if case .paired = runtime.pairingState {
@@ -264,10 +264,22 @@ func remoteDesktopRuntimeAutoApprovesPairingWithLumenAdminCredentials() async {
     await waitForPairingState(runtime, maxAttempts: 200)
 
     #expect(await adminClient.approveCalls() == [
-        .init(host: "192.168.0.24", httpsPort: 47984, username: "admin", password: "secret", pairingID: "pairing-pending"),
+        .init(
+            connectHost: "192.168.0.24",
+            authorityHost: "192.168.0.24",
+            httpsPort: 47984,
+            username: "admin",
+            password: "secret",
+            pairingID: "pairing-pending"
+        ),
     ])
     #expect(await pairingClient.statusCalls() == [
-        .init(host: "192.168.0.24", httpsPort: 47984, pairingID: "pairing-pending"),
+        .init(
+            connectHost: "192.168.0.24",
+            authorityHost: "192.168.0.24",
+            httpsPort: 47984,
+            pairingID: "pairing-pending"
+        ),
     ])
     #expect(runtime.pairingState == .paired("Paired"))
 }
@@ -3228,12 +3240,14 @@ private actor FakeClipboardClient: ShadowClientClipboardClient {
 
 private actor FakeLumenPairingClient: ShadowClientLumenPairingClient {
     struct StartCall: Equatable {
-        let host: String
+        let connectHost: String
+        let authorityHost: String
         let httpsPort: Int
     }
 
     struct StatusCall: Equatable {
-        let host: String
+        let connectHost: String
+        let authorityHost: String
         let httpsPort: Int
         let pairingID: String
     }
@@ -3271,14 +3285,19 @@ private actor FakeLumenPairingClient: ShadowClientLumenPairingClient {
     }
 
     func startPairing(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         deviceName: String?,
         platform: String?
     ) async throws -> ShadowClientLumenPairingSession {
         _ = deviceName
         _ = platform
-        recordedStartCalls.append(.init(host: host, httpsPort: httpsPort))
+        recordedStartCalls.append(
+            .init(
+                connectHost: route.connectHost,
+                authorityHost: route.authorityHost,
+                httpsPort: route.httpsPort
+            )
+        )
 
         if !simulatedStartFailures.isEmpty {
             throw simulatedStartFailures.removeFirst()
@@ -3288,11 +3307,17 @@ private actor FakeLumenPairingClient: ShadowClientLumenPairingClient {
     }
 
     func fetchPairingStatus(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         pairingID: String
     ) async throws -> ShadowClientLumenPairingSession {
-        recordedStatusCalls.append(.init(host: host, httpsPort: httpsPort, pairingID: pairingID))
+        recordedStatusCalls.append(
+            .init(
+                connectHost: route.connectHost,
+                authorityHost: route.authorityHost,
+                httpsPort: route.httpsPort,
+                pairingID: pairingID
+            )
+        )
 
         if !simulatedStatusSessions.isEmpty {
             return simulatedStatusSessions.removeFirst()
@@ -3312,7 +3337,8 @@ private actor FakeLumenPairingClient: ShadowClientLumenPairingClient {
 
 private actor FakeLumenAdminClient: ShadowClientLumenAdminClient {
     struct ApproveCall: Equatable {
-        let host: String
+        let connectHost: String
+        let authorityHost: String
         let httpsPort: Int
         let username: String
         let password: String
@@ -3327,27 +3353,23 @@ private actor FakeLumenAdminClient: ShadowClientLumenAdminClient {
     }
 
     func fetchCurrentClientProfile(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         username: String,
         password: String
     ) async throws -> ShadowClientLumenAdminClientProfile? {
-        _ = host
-        _ = httpsPort
+        _ = route
         _ = username
         _ = password
         return profile
     }
 
     func updateCurrentClientProfile(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         username: String,
         password: String,
         profile: ShadowClientLumenAdminClientProfile
     ) async throws -> ShadowClientLumenAdminClientProfile {
-        _ = host
-        _ = httpsPort
+        _ = route
         _ = username
         _ = password
         self.profile = profile
@@ -3355,14 +3377,12 @@ private actor FakeLumenAdminClient: ShadowClientLumenAdminClient {
     }
 
     func disconnectCurrentClient(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         username: String,
         password: String,
         uuid: String
     ) async throws {
-        _ = host
-        _ = httpsPort
+        _ = route
         _ = username
         _ = password
         guard let profile, profile.uuid == uuid else {
@@ -3382,14 +3402,12 @@ private actor FakeLumenAdminClient: ShadowClientLumenAdminClient {
     }
 
     func unpairCurrentClient(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         username: String,
         password: String,
         uuid: String
     ) async throws {
-        _ = host
-        _ = httpsPort
+        _ = route
         _ = username
         _ = password
         if profile?.uuid == uuid {
@@ -3398,16 +3416,16 @@ private actor FakeLumenAdminClient: ShadowClientLumenAdminClient {
     }
 
     func approvePairingRequest(
-        host: String,
-        httpsPort: Int,
+        route: ShadowClientLumenRequestRoute,
         username: String,
         password: String,
         pairingID: String
     ) async throws {
         recordedApproveCalls.append(
             .init(
-                host: host,
-                httpsPort: httpsPort,
+                connectHost: route.connectHost,
+                authorityHost: route.authorityHost,
+                httpsPort: route.httpsPort,
                 username: username,
                 password: password,
                 pairingID: pairingID
