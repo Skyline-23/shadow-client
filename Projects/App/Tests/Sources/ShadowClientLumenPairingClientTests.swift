@@ -58,7 +58,7 @@ func lumenPairingClientStartsPairingOverPinnedHTTPSStreamTransport() async throw
     let suiteName = "ShadowClientLumenPairingClientTests.\(UUID().uuidString)"
     let identityStore = ShadowClientPairingIdentityStore(defaultsSuiteName: suiteName)
     let pinnedCertificateStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: suiteName)
-    let transport = RecordingLumenPairingHTTPTransport(
+    let transport = RecordingLumenHTTPTransport(
         response: .init(
             statusCode: 200,
             body: pairingSessionPayloadData(),
@@ -68,6 +68,10 @@ func lumenPairingClientStartsPairingOverPinnedHTTPSStreamTransport() async throw
     let client = NativeShadowClientLumenPairingClient(
         identityStore: identityStore,
         pinnedCertificateStore: pinnedCertificateStore,
+        authenticationContextBuilder: ShadowClientLumenAuthenticationContextBuilder(
+            identityStore: identityStore,
+            pinnedCertificateStore: pinnedCertificateStore
+        ),
         transport: transport
     )
 
@@ -96,7 +100,9 @@ func lumenPairingClientStartsPairingOverPinnedHTTPSStreamTransport() async throw
 @Test("Lumen pairing client requests status over pinned HTTPS stream transport")
 func lumenPairingClientRequestsStatusOverPinnedHTTPSStreamTransport() async throws {
     let suiteName = "ShadowClientLumenPairingClientTests.\(UUID().uuidString)"
-    let transport = RecordingLumenPairingHTTPTransport(
+    let identityStore = ShadowClientPairingIdentityStore(defaultsSuiteName: suiteName)
+    let pinnedCertificateStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: suiteName)
+    let transport = RecordingLumenHTTPTransport(
         response: .init(
             statusCode: 200,
             body: pairingSessionPayloadData(),
@@ -104,8 +110,12 @@ func lumenPairingClientRequestsStatusOverPinnedHTTPSStreamTransport() async thro
         )
     )
     let client = NativeShadowClientLumenPairingClient(
-        identityStore: ShadowClientPairingIdentityStore(defaultsSuiteName: suiteName),
-        pinnedCertificateStore: ShadowClientPinnedHostCertificateStore(defaultsSuiteName: suiteName),
+        identityStore: identityStore,
+        pinnedCertificateStore: pinnedCertificateStore,
+        authenticationContextBuilder: ShadowClientLumenAuthenticationContextBuilder(
+            identityStore: identityStore,
+            pinnedCertificateStore: pinnedCertificateStore
+        ),
         transport: transport
     )
 
@@ -127,7 +137,7 @@ func lumenPairingClientRequestsStatusOverPinnedHTTPSStreamTransport() async thro
     #expect(!requestText.contains("Content-Type: application/json"))
 }
 
-private actor RecordingLumenPairingHTTPTransport: ShadowClientLumenPairingHTTPTransport {
+private actor RecordingLumenHTTPTransport: ShadowClientLumenHTTPTransport {
     struct Request: Sendable {
         let url: URL
         let requestData: Data

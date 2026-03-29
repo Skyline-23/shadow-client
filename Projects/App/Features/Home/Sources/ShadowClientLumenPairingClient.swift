@@ -80,7 +80,7 @@ public protocol ShadowClientLumenPairingClient: Sendable {
     ) async throws -> ShadowClientLumenPairingSession
 }
 
-protocol ShadowClientLumenPairingHTTPTransport: Sendable {
+protocol ShadowClientLumenHTTPTransport: Sendable {
     func request(
         url: URL,
         requestData: Data,
@@ -91,7 +91,7 @@ protocol ShadowClientLumenPairingHTTPTransport: Sendable {
     ) async throws -> ShadowClientGameStreamHTTPTransport.HTTPSResponse
 }
 
-private struct NativeShadowClientLumenPairingHTTPTransport: ShadowClientLumenPairingHTTPTransport {
+struct NativeShadowClientLumenHTTPTransport: ShadowClientLumenHTTPTransport {
     func request(
         url: URL,
         requestData: Data,
@@ -114,7 +114,8 @@ private struct NativeShadowClientLumenPairingHTTPTransport: ShadowClientLumenPai
 public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClient {
     private let identityStore: ShadowClientPairingIdentityStore
     private let pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
-    private let transport: any ShadowClientLumenPairingHTTPTransport
+    private let authenticationContextBuilder: ShadowClientLumenAuthenticationContextBuilder
+    private let transport: any ShadowClientLumenHTTPTransport
 
     public init(
         identityStore: ShadowClientPairingIdentityStore = .shared,
@@ -123,17 +124,23 @@ public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClie
         self.init(
             identityStore: identityStore,
             pinnedCertificateStore: pinnedCertificateStore,
-            transport: NativeShadowClientLumenPairingHTTPTransport()
+            authenticationContextBuilder: ShadowClientLumenAuthenticationContextBuilder(
+                identityStore: identityStore,
+                pinnedCertificateStore: pinnedCertificateStore
+            ),
+            transport: NativeShadowClientLumenHTTPTransport()
         )
     }
 
     init(
         identityStore: ShadowClientPairingIdentityStore,
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore,
-        transport: any ShadowClientLumenPairingHTTPTransport
+        authenticationContextBuilder: ShadowClientLumenAuthenticationContextBuilder,
+        transport: any ShadowClientLumenHTTPTransport
     ) {
         self.identityStore = identityStore
         self.pinnedCertificateStore = pinnedCertificateStore
+        self.authenticationContextBuilder = authenticationContextBuilder
         self.transport = transport
     }
 
@@ -199,44 +206,27 @@ public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClie
         queryItems: [URLQueryItem],
         body: Body?
     ) async throws -> ShadowClientLumenPairingSession {
-        let endpoint = try Self.parseHostEndpoint(
+        let requestContext = try await authenticationContextBuilder.makePairingContext(
             host: host,
-            fallbackPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPPort
-        )
-        let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(
-            forHost: endpoint.host,
             httpsPort: httpsPort
         )
-
-        var components = URLComponents()
-        components.scheme = ShadowClientGameStreamNetworkDefaults.httpsScheme
-        components.host = endpoint.host
-        components.port = httpsPort
-        components.path = path
-        components.queryItems = queryItems.isEmpty ? nil : queryItems
-        guard let url = components.url else {
-            throw ShadowClientGameStreamError.invalidURL
-        }
-
         let encodedBody = try body.map { try JSONEncoder().encode($0) }
-        let requestData = ShadowClientGameStreamHTTPTransport.makeHTTPRequestData(
-            url: url,
-            host: endpoint.host,
+        let request = try requestContext.makeRequestData(
+            path: path,
             method: method,
+            queryItems: queryItems,
             headers: encodedBody == nil ? [:] : ["Content-Type": "application/json"],
             body: encodedBody
         )
-        let clientCertificates = try? await identityStore.tlsClientCertificates()
-        let clientCertificateIdentity = try? await identityStore.tlsClientIdentity()
 
         let response: ShadowClientGameStreamHTTPTransport.HTTPSResponse
         do {
             response = try await transport.request(
-                url: url,
-                requestData: requestData,
-                pinnedServerCertificateDER: pinnedCertificateDER,
-                clientCertificates: clientCertificates,
-                clientCertificateIdentity: clientCertificateIdentity,
+                url: request.url,
+                requestData: request.requestData,
+                pinnedServerCertificateDER: requestContext.pinnedServerCertificateDER,
+                clientCertificates: requestContext.clientCertificates,
+                clientCertificateIdentity: requestContext.clientCertificateIdentity,
                 timeout: ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
             )
         } catch let error as ShadowClientGameStreamError {
@@ -247,8 +237,8 @@ public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClie
 
         let pairingSession = try Self.parsePairingSession(data: response.body)
         await persistPresentedServerTrust(
-            host: endpoint.host,
-            httpsPort: httpsPort,
+            host: requestContext.endpoint.host,
+            httpsPort: requestContext.endpoint.httpsPort,
             serverUniqueID: pairingSession.serverUniqueID,
             certificateDER: response.presentedLeafCertificateDER
         )
@@ -291,27 +281,6 @@ public struct NativeShadowClientLumenPairingClient: ShadowClientLumenPairingClie
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return trimmed.isEmpty ? nil : trimmed
     }
-
-    private static func parseHostEndpoint(
-        host: String,
-        fallbackPort: Int
-    ) throws -> (host: String, port: Int) {
-        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else {
-            throw ShadowClientGameStreamError.invalidHost
-        }
-
-        let candidate = ShadowClientRTSPProtocolProfile.withHTTPSchemeIfMissing(normalized)
-        guard let url = URL(string: candidate), let parsedHost = url.host else {
-            throw ShadowClientGameStreamError.invalidHost
-        }
-
-        let resolvedPort = ShadowClientGameStreamNetworkDefaults.canonicalHTTPSPort(
-            fromCandidatePort: url.port ?? fallbackPort
-        )
-        return (parsedHost, resolvedPort)
-    }
-
     private static func resolvedDeviceName(from override: String?) -> String {
         if let trimmedOverride = override?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmedOverride.isEmpty {
             return trimmedOverride

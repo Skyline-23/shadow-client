@@ -1,5 +1,4 @@
 import Foundation
-import Security
 import ShadowClientFeatureConnection
 
 public struct ShadowClientLumenAdminClientProfile: Equatable, Sendable {
@@ -89,14 +88,31 @@ public protocol ShadowClientLumenAdminClient: Sendable {
 
 public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
     private let identityStore: ShadowClientPairingIdentityStore
-    private let pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
+    private let authenticationContextBuilder: ShadowClientLumenAuthenticationContextBuilder
+    private let transport: any ShadowClientLumenHTTPTransport
 
     public init(
         identityStore: ShadowClientPairingIdentityStore = .shared,
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore = .shared
     ) {
+        self.init(
+            identityStore: identityStore,
+            authenticationContextBuilder: ShadowClientLumenAuthenticationContextBuilder(
+                identityStore: identityStore,
+                pinnedCertificateStore: pinnedCertificateStore
+            ),
+            transport: NativeShadowClientLumenHTTPTransport()
+        )
+    }
+
+    init(
+        identityStore: ShadowClientPairingIdentityStore,
+        authenticationContextBuilder: ShadowClientLumenAuthenticationContextBuilder,
+        transport: any ShadowClientLumenHTTPTransport
+    ) {
         self.identityStore = identityStore
-        self.pinnedCertificateStore = pinnedCertificateStore
+        self.authenticationContextBuilder = authenticationContextBuilder
+        self.transport = transport
     }
 
     public func fetchCurrentClientProfile(
@@ -105,69 +121,26 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
         username: String,
         password: String
     ) async throws -> ShadowClientLumenAdminClientProfile? {
-        let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
-            throw ShadowClientGameStreamError.requestFailed("Lumen admin credentials are required.")
-        }
-
-        let endpoint = try parseHostEndpoint(
+        let requestContext = try await authenticationContextBuilder.makeAdminContext(
             host: host,
-            fallbackPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPPort
+            httpsPort: httpsPort,
+            username: username,
+            password: password
         )
-        guard let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(
-            forHost: endpoint.host,
-            httpsPort: httpsPort
-        ) else {
-            throw ShadowClientGameStreamError.requestFailed("Pair the host before using Lumen admin APIs.")
-        }
-
-        let delegate = ShadowClientLumenAdminURLSessionDelegate(
-            pinnedServerCertificateDER: pinnedCertificateDER
+        let request = try requestContext.makeRequestData(
+            path: "/api/clients/list",
+            method: "GET"
         )
-        let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
-        defer {
-            session.invalidateAndCancel()
-        }
 
-        var components = URLComponents()
-        components.scheme = ShadowClientGameStreamNetworkDefaults.httpsScheme
-        components.host = endpoint.host
-        components.port = httpsPort
-        components.path = "/api/clients/list"
-        guard let url = components.url else {
-            throw ShadowClientGameStreamError.invalidURL
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.timeoutInterval = ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
-        let credentialData = Data("\(trimmedUsername):\(trimmedPassword)".utf8).base64EncodedString()
-        request.setValue("Basic \(credentialData)", forHTTPHeaderField: "Authorization")
-
-        do {
-            let (data, response) = try await session.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw ShadowClientGameStreamError.invalidResponse
-            }
-            guard (200 ... 299).contains(httpResponse.statusCode) else {
-                throw ShadowClientGameStreamError.responseRejected(
-                    code: httpResponse.statusCode,
-                    message: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-                )
-            }
-
-            let currentClientUUID = await identityStore.uniqueID()
-            return try Self.parseCurrentClientProfile(
-                data: data,
-                currentClientUUID: currentClientUUID
-            )
-        } catch {
-            throw ShadowClientGameStreamHTTPTransport.requestFailureError(
-                error,
-                tlsFailure: delegate.tlsFailure
-            )
-        }
+        let response = try await performRequest(
+            request,
+            requestContext: requestContext
+        )
+        let currentClientUUID = await identityStore.uniqueID()
+        return try Self.parseCurrentClientProfile(
+            data: response.body,
+            currentClientUUID: currentClientUUID
+        )
     }
 
     public func updateCurrentClientProfile(
@@ -177,77 +150,35 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
         password: String,
         profile: ShadowClientLumenAdminClientProfile
     ) async throws -> ShadowClientLumenAdminClientProfile {
-        let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
-            throw ShadowClientGameStreamError.requestFailed("Lumen admin credentials are required.")
-        }
-
-        let endpoint = try parseHostEndpoint(
+        let requestContext = try await authenticationContextBuilder.makeAdminContext(
             host: host,
-            fallbackPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPPort
+            httpsPort: httpsPort,
+            username: username,
+            password: password
         )
-        guard let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(
-            forHost: endpoint.host,
-            httpsPort: httpsPort
-        ) else {
-            throw ShadowClientGameStreamError.requestFailed("Pair the host before using Lumen admin APIs.")
-        }
-
-        let delegate = ShadowClientLumenAdminURLSessionDelegate(
-            pinnedServerCertificateDER: pinnedCertificateDER
-        )
-        let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
-        defer {
-            session.invalidateAndCancel()
-        }
-
-        var components = URLComponents()
-        components.scheme = ShadowClientGameStreamNetworkDefaults.httpsScheme
-        components.host = endpoint.host
-        components.port = httpsPort
-        components.path = "/api/clients/update"
-        guard let url = components.url else {
-            throw ShadowClientGameStreamError.invalidURL
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let credentialData = Data("\(trimmedUsername):\(trimmedPassword)".utf8).base64EncodedString()
-        request.setValue("Basic \(credentialData)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONEncoder().encode(
-            LumenUpdateClientPayload(
-                uuid: profile.uuid,
-                name: profile.name,
-                displayMode: profile.displayModeOverride,
-                permissions: profile.permissions,
-                allowClientCommands: profile.allowClientCommands,
-                alwaysUseVirtualDisplay: profile.alwaysUseVirtualDisplay,
-                doCommands: profile.doCommands,
-                undoCommands: profile.undoCommands
-            )
-        )
-
-        do {
-            let (_, response) = try await session.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw ShadowClientGameStreamError.invalidResponse
-            }
-            guard (200 ... 299).contains(httpResponse.statusCode) else {
-                throw ShadowClientGameStreamError.responseRejected(
-                    code: httpResponse.statusCode,
-                    message: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+        let request = try requestContext.makeRequestData(
+            path: "/api/clients/update",
+            method: "POST",
+            headers: ["Content-Type": "application/json"],
+            body: try JSONEncoder().encode(
+                LumenUpdateClientPayload(
+                    uuid: profile.uuid,
+                    name: profile.name,
+                    displayMode: profile.displayModeOverride,
+                    permissions: profile.permissions,
+                    allowClientCommands: profile.allowClientCommands,
+                    alwaysUseVirtualDisplay: profile.alwaysUseVirtualDisplay,
+                    doCommands: profile.doCommands,
+                    undoCommands: profile.undoCommands
                 )
-            }
-            return profile
-        } catch {
-            throw ShadowClientGameStreamHTTPTransport.requestFailureError(
-                error,
-                tlsFailure: delegate.tlsFailure
             )
-        }
+        )
+
+        _ = try await performRequest(
+            request,
+            requestContext: requestContext
+        )
+        return profile
     }
 
     public func disconnectCurrentClient(
@@ -316,30 +247,6 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
         }?.profile
     }
 
-    private func parseHostEndpoint(
-        host: String,
-        fallbackPort: Int
-    ) throws -> (host: String, port: Int) {
-        let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw ShadowClientGameStreamError.invalidHost
-        }
-
-        if let url = URL(string: trimmed), let urlHost = url.host {
-            return (urlHost, url.port ?? fallbackPort)
-        }
-
-        if let hostRange = trimmed.range(of: ":"), !trimmed.contains("]") {
-            let hostname = String(trimmed[..<hostRange.lowerBound])
-            let portString = String(trimmed[hostRange.upperBound...])
-            if let port = Int(portString), !hostname.isEmpty {
-                return (hostname, port)
-            }
-        }
-
-        return (trimmed, fallbackPort)
-    }
-
     private func postSimpleClientAction<Body: Encodable>(
         host: String,
         httpsPort: Int,
@@ -348,64 +255,42 @@ public struct NativeShadowClientLumenAdminClient: ShadowClientLumenAdminClient {
         path: String,
         body: Body
     ) async throws {
-        let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else {
-            throw ShadowClientGameStreamError.requestFailed("Lumen admin credentials are required.")
-        }
-
-        let endpoint = try parseHostEndpoint(
+        let requestContext = try await authenticationContextBuilder.makeAdminContext(
             host: host,
-            fallbackPort: ShadowClientGameStreamNetworkDefaults.defaultHTTPPort
+            httpsPort: httpsPort,
+            username: username,
+            password: password
         )
-        guard let pinnedCertificateDER = await pinnedCertificateStore.certificateDER(
-            forHost: endpoint.host,
-            httpsPort: httpsPort
-        ) else {
-            throw ShadowClientGameStreamError.requestFailed("Pair the host before using Lumen admin APIs.")
-        }
-
-        let delegate = ShadowClientLumenAdminURLSessionDelegate(
-            pinnedServerCertificateDER: pinnedCertificateDER
+        let request = try requestContext.makeRequestData(
+            path: path,
+            method: "POST",
+            headers: ["Content-Type": "application/json"],
+            body: try JSONEncoder().encode(body)
         )
-        let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
-        defer {
-            session.invalidateAndCancel()
-        }
 
-        var components = URLComponents()
-        components.scheme = ShadowClientGameStreamNetworkDefaults.httpsScheme
-        components.host = endpoint.host
-        components.port = httpsPort
-        components.path = path
-        guard let url = components.url else {
-            throw ShadowClientGameStreamError.invalidURL
-        }
+        _ = try await performRequest(
+            request,
+            requestContext: requestContext
+        )
+    }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let credentialData = Data("\(trimmedUsername):\(trimmedPassword)".utf8).base64EncodedString()
-        request.setValue("Basic \(credentialData)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONEncoder().encode(body)
-
+    private func performRequest(
+        _ request: (url: URL, requestData: Data),
+        requestContext: ShadowClientLumenHTTPSRequestContext
+    ) async throws -> ShadowClientGameStreamHTTPTransport.HTTPSResponse {
         do {
-            let (_, response) = try await session.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw ShadowClientGameStreamError.invalidResponse
-            }
-            guard (200 ... 299).contains(httpResponse.statusCode) else {
-                throw ShadowClientGameStreamError.responseRejected(
-                    code: httpResponse.statusCode,
-                    message: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-                )
-            }
-        } catch {
-            throw ShadowClientGameStreamHTTPTransport.requestFailureError(
-                error,
-                tlsFailure: delegate.tlsFailure
+            return try await transport.request(
+                url: request.url,
+                requestData: request.requestData,
+                pinnedServerCertificateDER: requestContext.pinnedServerCertificateDER,
+                clientCertificates: requestContext.clientCertificates,
+                clientCertificateIdentity: requestContext.clientCertificateIdentity,
+                timeout: ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
             )
+        } catch let error as ShadowClientGameStreamError {
+            throw error
+        } catch {
+            throw ShadowClientGameStreamHTTPTransport.requestFailureError(error)
         }
     }
 }
@@ -496,68 +381,5 @@ private struct LumenPairingDecisionPayload: Encodable {
 
     enum CodingKeys: String, CodingKey {
         case pairingID = "pairingId"
-    }
-}
-
-private final class ShadowClientLumenAdminURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
-    private let pinnedServerCertificateDER: Data
-    private let lock = NSLock()
-    private var recordedTLSFailure: ShadowClientGameStreamTLSFailure?
-
-    init(pinnedServerCertificateDER: Data) {
-        self.pinnedServerCertificateDER = pinnedServerCertificateDER
-        super.init()
-    }
-
-    var tlsFailure: ShadowClientGameStreamTLSFailure? {
-        lock.lock()
-        defer { lock.unlock() }
-        return recordedTLSFailure
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        handle(challenge: challenge, completionHandler: completionHandler)
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        handle(challenge: challenge, completionHandler: completionHandler)
-    }
-
-    private func handle(
-        challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              let serverTrust = challenge.protectionSpace.serverTrust,
-              let certificateChain = SecTrustCopyCertificateChain(serverTrust) as? [SecCertificate],
-              let leafCertificate = certificateChain.first
-        else {
-            completionHandler(.performDefaultHandling, nil)
-            return
-        }
-
-        let leafDER = SecCertificateCopyData(leafCertificate) as Data
-        guard leafDER == pinnedServerCertificateDER else {
-            recordTLSFailure(.serverCertificateMismatch)
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
-
-        completionHandler(.useCredential, URLCredential(trust: serverTrust))
-    }
-
-    private func recordTLSFailure(_ failure: ShadowClientGameStreamTLSFailure) {
-        lock.lock()
-        recordedTLSFailure = failure
-        lock.unlock()
     }
 }
