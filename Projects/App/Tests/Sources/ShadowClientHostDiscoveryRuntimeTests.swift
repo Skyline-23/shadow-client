@@ -10,7 +10,7 @@ func hostDiscoveryCatalogDeduplicatesHosts() {
             name: "LivingRoom-PC",
             host: "192.168.0.20",
             port: 47984,
-            serviceType: "_nvstream._tcp"
+            serviceType: "_shadow._tcp"
         )
     )
     catalog.upsert(
@@ -19,7 +19,7 @@ func hostDiscoveryCatalogDeduplicatesHosts() {
             name: "LivingRoom-PC (Host)",
             host: "192.168.0.20",
             port: 47984,
-            serviceType: "_sunshine._tcp"
+            serviceType: "_shadow._tcp"
         )
     )
 
@@ -37,7 +37,7 @@ func hostDiscoveryCatalogPreservesDistinctPorts() {
             name: "Test-Route-Host",
             host: "test-route-host.local",
             port: 47989,
-            serviceType: "_moonlight._tcp"
+            serviceType: "_shadow._tcp"
         )
     )
     catalog.upsert(
@@ -46,7 +46,7 @@ func hostDiscoveryCatalogPreservesDistinctPorts() {
             name: "Test-Route-Host",
             host: "test-route-host.local",
             port: 48989,
-            serviceType: "_sunshine._tcp"
+            serviceType: "_shadow._tcp"
         )
     )
 
@@ -65,7 +65,7 @@ func hostDiscoveryCatalogRemovesHostWhenServiceRemoved() {
             name: "Office-PC",
             host: "192.168.0.30",
             port: 47984,
-            serviceType: "_nvstream._tcp"
+            serviceType: "_shadow._tcp"
         )
     )
 
@@ -83,7 +83,7 @@ func hostDiscoveryCatalogSortsHostsByName() {
             name: "Zulu-PC",
             host: "192.168.0.41",
             port: 47984,
-            serviceType: "_nvstream._tcp"
+            serviceType: "_shadow._tcp"
         )
     )
     catalog.upsert(
@@ -92,7 +92,7 @@ func hostDiscoveryCatalogSortsHostsByName() {
             name: "Alpha-PC",
             host: "192.168.0.40",
             port: 47984,
-            serviceType: "_nvstream._tcp"
+            serviceType: "_shadow._tcp"
         )
     )
 

@@ -166,9 +166,7 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
     )
 
     public static let defaultBonjourServiceTypes = [
-        "_nvstream._tcp",
-        "_sunshine._tcp",
-        "_moonlight._tcp",
+        "_shadow._tcp",
     ]
 
     @Published public private(set) var hosts: [ShadowClientDiscoveredHost] = []

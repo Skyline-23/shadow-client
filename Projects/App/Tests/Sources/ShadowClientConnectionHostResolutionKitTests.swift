@@ -61,7 +61,7 @@ func connectionHostResolutionPreservesDiscoveredExplicitCandidate() {
                 name: "Desktop",
                 host: "desktop.local",
                 port: 48_989,
-                serviceType: "_moonlight._tcp"
+                serviceType: "_shadow._tcp"
             )
         ],
         knownHosts: []
