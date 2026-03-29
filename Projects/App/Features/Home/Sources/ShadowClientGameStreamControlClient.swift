@@ -185,6 +185,13 @@ extension ShadowClientGameStreamHTTPTransport {
         let statusCode: Int
         let reasonPhrase: String
     }
+
+    static func shouldFailEndedHTTPResponseBeforeHeaders(
+        responseDataCount: Int,
+        reachedStreamEnd: Bool
+    ) -> Bool {
+        reachedStreamEnd && responseDataCount == 0
+    }
 }
 
 extension ShadowClientGameStreamControlError: LocalizedError {
@@ -2097,6 +2104,8 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
             readAvailableBytes()
             maybeCompleteResponse()
         case .endEncountered:
+            readAvailableBytes()
+            maybeCompleteResponse()
             completeIfPossible()
         case .errorOccurred:
             finish(.failure(streamError(from: readStream, fallback: writeStream)))
@@ -2128,6 +2137,8 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
             )
             writePendingBytes()
         case .endEncountered:
+            readAvailableBytes()
+            maybeCompleteResponse()
             completeIfPossible()
         case .errorOccurred:
             finish(.failure(streamError(from: readStream, fallback: writeStream)))
@@ -2253,7 +2264,9 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         guard let readStream else { return }
 
         var buffer = [UInt8](repeating: 0, count: 16 * 1024)
-        while CFReadStreamHasBytesAvailable(readStream) {
+        var shouldProbeAtStreamEnd = CFReadStreamGetStatus(readStream) == .atEnd
+        while shouldProbeAtStreamEnd || CFReadStreamHasBytesAvailable(readStream) {
+            shouldProbeAtStreamEnd = false
             let count = CFReadStreamRead(readStream, &buffer, buffer.count)
             if count > 0 {
                 responseData.append(buffer, count: count)
@@ -2267,6 +2280,16 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
     }
 
     private func maybeCompleteResponse() {
+        readAvailableBytes()
+
+        if ShadowClientGameStreamHTTPTransport.shouldFailEndedHTTPResponseBeforeHeaders(
+            responseDataCount: responseData.count,
+            reachedStreamEnd: reachedStreamEnd
+        ) {
+            finish(.failure(ShadowClientGameStreamError.invalidResponse))
+            return
+        }
+
         guard !responseData.isEmpty else { return }
 
         if headerTerminatorUpperBound == nil,
@@ -2284,7 +2307,6 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         }
 
         let bodyLength = responseData.count - headerTerminatorUpperBound
-        let reachedStreamEnd = readStream.map { CFReadStreamGetStatus($0) == .atEnd } ?? false
         guard ShadowClientGameStreamHTTPTransport.isHTTPResponseComplete(
             bodyLength: bodyLength,
             expectedResponseBodyLength: expectedResponseBodyLength,
@@ -2297,6 +2319,14 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
     }
 
     private func completeIfPossible() {
+        if ShadowClientGameStreamHTTPTransport.shouldFailEndedHTTPResponseBeforeHeaders(
+            responseDataCount: responseData.count,
+            reachedStreamEnd: reachedStreamEnd
+        ) {
+            finish(.failure(ShadowClientGameStreamError.invalidResponse))
+            return
+        }
+
         guard !responseData.isEmpty else { return }
 
         do {
@@ -2323,6 +2353,10 @@ private final class ShadowClientSecureHTTPStreamTransport: @unchecked Sendable {
         } catch {
             finish(.failure(error))
         }
+    }
+
+    private var reachedStreamEnd: Bool {
+        readStream.map { CFReadStreamGetStatus($0) == .atEnd } ?? false
     }
 
     private static func contentLength(from headerText: String) -> Int? {

@@ -143,6 +143,28 @@ func httpResponseCompletionAcceptsStreamEndWithoutContentLength() {
     )
 }
 
+@Test("HTTP response failure helper rejects ended streams that never produced headers")
+func httpResponseFailureHelperRejectsEndedStreamsWithoutHeaders() {
+    #expect(
+        ShadowClientGameStreamHTTPTransport.shouldFailEndedHTTPResponseBeforeHeaders(
+            responseDataCount: 0,
+            reachedStreamEnd: true
+        )
+    )
+    #expect(
+        !ShadowClientGameStreamHTTPTransport.shouldFailEndedHTTPResponseBeforeHeaders(
+            responseDataCount: 1,
+            reachedStreamEnd: true
+        )
+    )
+    #expect(
+        !ShadowClientGameStreamHTTPTransport.shouldFailEndedHTTPResponseBeforeHeaders(
+            responseDataCount: 0,
+            reachedStreamEnd: false
+        )
+    )
+}
+
 @Test("HTTP request write completion only finishes when the full request is sent")
 func httpRequestWriteCompletionOnlyFinishesWhenTheFullRequestIsSent() {
     #expect(
