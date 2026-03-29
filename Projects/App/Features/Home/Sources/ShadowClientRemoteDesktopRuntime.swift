@@ -402,6 +402,12 @@ public protocol ShadowClientGameStreamMetadataClient: Sendable {
         host: String,
         pinnedServerCertificateDER: Data?
     ) async throws -> ShadowClientGameStreamServerInfo
+    func fetchServerInfo(
+        host: String,
+        preferredAuthorityHost: String?,
+        advertisedControlHTTPSPort: Int?,
+        pinnedServerCertificateDER: Data?
+    ) async throws -> ShadowClientGameStreamServerInfo
     func fetchAppList(host: String, httpsPort: Int?) async throws -> [ShadowClientRemoteAppDescriptor]
 }
 
@@ -411,6 +417,15 @@ public extension ShadowClientGameStreamMetadataClient {
         pinnedServerCertificateDER _: Data?
     ) async throws -> ShadowClientGameStreamServerInfo {
         try await fetchServerInfo(host: host)
+    }
+
+    func fetchServerInfo(
+        host: String,
+        preferredAuthorityHost _: String?,
+        advertisedControlHTTPSPort _: Int?,
+        pinnedServerCertificateDER: Data?
+    ) async throws -> ShadowClientGameStreamServerInfo {
+        try await fetchServerInfo(host: host, pinnedServerCertificateDER: pinnedServerCertificateDER)
     }
 }
 
@@ -726,7 +741,9 @@ public struct NativeShadowClientGameStreamRequestTransport: ShadowClientGameStre
 public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClient {
     private let identityStore: ShadowClientPairingIdentityStore
     private let pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
+    private let authenticationContextBuilder: ShadowClientLumenAuthenticationContextBuilder
     private let transport: any ShadowClientGameStreamRequestTransporting
+    private let lumenTransport: any ShadowClientLumenHTTPTransport
     private let defaultHTTPPort: Int
     private let defaultHTTPSPort: Int
 
@@ -737,19 +754,63 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
         defaultHTTPPort: Int = ShadowClientGameStreamNetworkDefaults.defaultHTTPPort,
         defaultHTTPSPort: Int = ShadowClientGameStreamNetworkDefaults.defaultHTTPSPort
     ) {
+        self.init(
+            identityStore: identityStore,
+            pinnedCertificateStore: pinnedCertificateStore,
+            authenticationContextBuilder: ShadowClientLumenAuthenticationContextBuilder(
+                identityStore: identityStore,
+                pinnedCertificateStore: pinnedCertificateStore
+            ),
+            transport: transport,
+            lumenTransport: NativeShadowClientLumenHTTPTransport(),
+            defaultHTTPPort: defaultHTTPPort,
+            defaultHTTPSPort: defaultHTTPSPort
+        )
+    }
+
+    init(
+        identityStore: ShadowClientPairingIdentityStore,
+        pinnedCertificateStore: ShadowClientPinnedHostCertificateStore,
+        authenticationContextBuilder: ShadowClientLumenAuthenticationContextBuilder,
+        transport: any ShadowClientGameStreamRequestTransporting,
+        lumenTransport: any ShadowClientLumenHTTPTransport,
+        defaultHTTPPort: Int,
+        defaultHTTPSPort: Int
+    ) {
         self.identityStore = identityStore
         self.pinnedCertificateStore = pinnedCertificateStore
+        self.authenticationContextBuilder = authenticationContextBuilder
         self.transport = transport
+        self.lumenTransport = lumenTransport
         self.defaultHTTPPort = defaultHTTPPort
         self.defaultHTTPSPort = defaultHTTPSPort
     }
 
     public func fetchServerInfo(host: String) async throws -> ShadowClientGameStreamServerInfo {
-        try await fetchServerInfo(host: host, pinnedServerCertificateDER: nil)
+        try await fetchServerInfo(
+            host: host,
+            preferredAuthorityHost: nil,
+            advertisedControlHTTPSPort: nil,
+            pinnedServerCertificateDER: nil
+        )
     }
 
     public func fetchServerInfo(
         host: String,
+        pinnedServerCertificateDER overridePinnedCertificateDER: Data?
+    ) async throws -> ShadowClientGameStreamServerInfo {
+        try await fetchServerInfo(
+            host: host,
+            preferredAuthorityHost: nil,
+            advertisedControlHTTPSPort: nil,
+            pinnedServerCertificateDER: overridePinnedCertificateDER
+        )
+    }
+
+    public func fetchServerInfo(
+        host: String,
+        preferredAuthorityHost: String?,
+        advertisedControlHTTPSPort: Int?,
         pinnedServerCertificateDER overridePinnedCertificateDER: Data?
     ) async throws -> ShadowClientGameStreamServerInfo {
         let endpoint = try Self.parseHostEndpoint(host: host, fallbackPort: defaultHTTPSPort)
@@ -761,6 +822,22 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                 forHost: endpoint.host,
                 httpsPort: endpoint.port
             )
+        }
+
+        if let lumenDescriptor = try await fetchLumenHostDescriptor(
+            connectHost: endpoint.host,
+            authorityHost: Self.normalizedAuthorityHost(preferredAuthorityHost) ?? endpoint.host,
+            streamHTTPSPort: endpoint.port,
+            controlHTTPSPort: advertisedControlHTTPSPort,
+            pinnedServerCertificateDER: pinnedCertificateDER
+        ) {
+            await registerServerIdentity(
+                info: lumenDescriptor,
+                requestedHost: endpoint.host,
+                requestedHTTPSPort: endpoint.port,
+                pinnedCertificateDER: pinnedCertificateDER
+            )
+            return lumenDescriptor
         }
 
         if pinnedCertificateDER == nil {
@@ -934,6 +1011,148 @@ public actor NativeGameStreamMetadataClient: ShadowClientGameStreamMetadataClien
                 throw httpError
             }
         }
+    }
+
+    private struct LumenDiscoveryEnvelope: Decodable {
+        let host: LumenDiscoveryHostPayload
+    }
+
+    private struct LumenDiscoveryHostPayload: Decodable {
+        let displayName: String
+        let pairStatus: String
+        let currentGameID: Int
+        let serverState: String
+        let streamHttpsPort: Int?
+        let serverUniqueId: String?
+        let authorityHost: String?
+        let serverCodecModeSupport: Int?
+    }
+
+    private func fetchLumenHostDescriptor(
+        connectHost: String,
+        authorityHost: String,
+        streamHTTPSPort: Int,
+        controlHTTPSPort: Int?,
+        pinnedServerCertificateDER: Data?
+    ) async throws -> ShadowClientGameStreamServerInfo? {
+        let route = ShadowClientLumenRequestRoute(
+            connectHost: connectHost,
+            authorityHost: authorityHost,
+            httpsPort: streamHTTPSPort
+        )
+        let requestContexts = try await authenticationContextBuilder.makePairingContexts(
+            route: route,
+            advertisedControlHTTPSPort: controlHTTPSPort
+        )
+        var lastError: Error?
+
+        for requestContext in requestContexts {
+            let request = try requestContext.makeRequestData(
+                path: "/api/discovery/host",
+                method: "GET"
+            )
+
+            do {
+                let response = try await lumenTransport.request(
+                    url: request.url,
+                    connectHost: request.connectHost,
+                    requestData: request.requestData,
+                    pinnedServerCertificateDER: requestContext.pinnedServerCertificateDER ?? pinnedServerCertificateDER,
+                    clientCertificates: requestContext.clientCertificates,
+                    clientCertificateIdentity: requestContext.clientCertificateIdentity,
+                    timeout: ShadowClientGameStreamNetworkDefaults.defaultRequestTimeout
+                )
+
+                let payload = try JSONDecoder().decode(LumenDiscoveryEnvelope.self, from: response.body)
+                return Self.parseLumenDiscoveryHost(
+                    payload.host,
+                    connectHost: connectHost,
+                    authorityHost: authorityHost,
+                    fallbackHTTPSPort: streamHTTPSPort
+                )
+            } catch let error as ShadowClientGameStreamError {
+                lastError = error
+            } catch {
+                lastError = ShadowClientGameStreamHTTPTransport.requestFailureError(error)
+            }
+        }
+
+        if let lastError {
+            if case let ShadowClientGameStreamError.responseRejected(code, _) = lastError, code == 404 {
+                return nil
+            }
+        }
+
+        return nil
+    }
+
+    private static func parseLumenDiscoveryHost(
+        _ payload: LumenDiscoveryHostPayload,
+        connectHost: String,
+        authorityHost: String,
+        fallbackHTTPSPort: Int
+    ) -> ShadowClientGameStreamServerInfo {
+        let resolvedAuthorityHost = normalizedDiscoveredRouteHost(payload.authorityHost) ?? normalizedDiscoveredRouteHost(authorityHost)
+        let remoteHost = resolvedAuthorityHost != normalizedDiscoveredRouteHost(connectHost) ? resolvedAuthorityHost : nil
+        let displayName = normalizedDiscoveredHostDisplayName(payload.displayName, fallbackHost: connectHost)
+        let pairStatus = ShadowClientRemoteHostPairStatus(rawValue: payload.pairStatus) ?? .unknown
+
+        return ShadowClientGameStreamServerInfo(
+            host: connectHost,
+            localHost: nil,
+            remoteHost: remoteHost,
+            manualHost: nil,
+            displayName: displayName,
+            pairStatus: pairStatus,
+            currentGameID: payload.currentGameID,
+            serverState: payload.serverState,
+            httpsPort: payload.streamHttpsPort ?? fallbackHTTPSPort,
+            appVersion: nil,
+            gfeVersion: nil,
+            uniqueID: payload.serverUniqueId,
+            macAddress: nil,
+            serverCodecModeSupport: payload.serverCodecModeSupport ?? 0
+        )
+    }
+
+    private static func normalizedAuthorityHost(_ value: String?) -> String? {
+        normalizedDiscoveredRouteHost(value)
+    }
+
+    private static func normalizedDiscoveredRouteHost(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        let normalized = trimmed.lowercased()
+        guard !ShadowClientRemoteHostCandidateFilter.isLoopbackHost(normalized) else {
+            return nil
+        }
+
+        return trimmed
+    }
+
+    private static func normalizedDiscoveredHostDisplayName(_ value: String?, fallbackHost: String) -> String {
+        guard let value else {
+            return fallbackHost
+        }
+
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return fallbackHost
+        }
+
+        let normalized = trimmed.lowercased()
+        if normalized == "unknown" || normalized == "unknown name" {
+            return fallbackHost
+        }
+
+        return trimmed
     }
 
     public func fetchAppList(host: String, httpsPort: Int?) async throws -> [ShadowClientRemoteAppDescriptor] {
@@ -1405,7 +1624,12 @@ private actor ShadowClientRemoteInputSendQueue {
 }
 
 private enum ShadowClientRemoteDesktopCommand: Sendable {
-    case refreshHosts(candidates: [String], preferredHost: String?, preferredAuthorityHost: String?)
+    case refreshHosts(
+        candidates: [String],
+        preferredHost: String?,
+        preferredAuthorityHost: String?,
+        preferredControlHTTPSPort: Int?
+    )
     case pairSelectedHost(username: String?, password: String?)
     case deleteHost(String)
     case syncClipboardIfNeeded
@@ -1579,6 +1803,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let candidates: [String]
         let preferredHost: String?
         let preferredAuthorityHost: String?
+        let preferredControlHTTPSPort: Int?
     }
 
     private typealias LumenPairingRoute = ShadowClientLumenRouteCandidate
@@ -1749,11 +1974,12 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     @MainActor
     private func process(command: ShadowClientRemoteDesktopCommand) async {
         switch command {
-        case let .refreshHosts(candidates, preferredHost, preferredAuthorityHost):
+        case let .refreshHosts(candidates, preferredHost, preferredAuthorityHost, preferredControlHTTPSPort):
             performRefreshHosts(
                 candidates: candidates,
                 preferredHost: preferredHost,
-                preferredAuthorityHost: preferredAuthorityHost
+                preferredAuthorityHost: preferredAuthorityHost,
+                preferredControlHTTPSPort: preferredControlHTTPSPort
             )
         case let .pairSelectedHost(username, password):
             performPairSelectedHost(username: username, password: password)
@@ -1839,13 +2065,15 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     public func refreshHosts(
         candidates: [String],
         preferredHost: String? = nil,
-        preferredAuthorityHost: String? = nil
+        preferredAuthorityHost: String? = nil,
+        preferredControlHTTPSPort: Int? = nil
     ) {
         commandContinuation.yield(
             .refreshHosts(
                 candidates: candidates,
                 preferredHost: preferredHost,
-                preferredAuthorityHost: preferredAuthorityHost
+                preferredAuthorityHost: preferredAuthorityHost,
+                preferredControlHTTPSPort: preferredControlHTTPSPort
             )
         )
     }
@@ -1854,7 +2082,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
     private func performRefreshHosts(
         candidates: [String],
         preferredHost: String? = nil,
-        preferredAuthorityHost: String? = nil
+        preferredAuthorityHost: String? = nil,
+        preferredControlHTTPSPort: Int? = nil
     ) {
         let existingHosts = latestResolvedHostDescriptors.isEmpty ? hosts : latestResolvedHostDescriptors
         let selectedPublishedHost = selectedHost
@@ -1866,10 +2095,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let request = PendingHostRefreshRequest(
             candidates: normalizedCandidates,
             preferredHost: Self.normalizeCandidate(preferredHost),
-            preferredAuthorityHost: Self.normalizedAuthorityHost(preferredAuthorityHost)
+            preferredAuthorityHost: Self.normalizedAuthorityHost(preferredAuthorityHost),
+            preferredControlHTTPSPort: preferredControlHTTPSPort
         )
         logger.notice(
-            "Host refresh scheduled candidates=\(normalizedCandidates.joined(separator: ","), privacy: .public) preferred=\((request.preferredHost ?? "nil"), privacy: .public) authority=\((request.preferredAuthorityHost ?? "nil"), privacy: .public)"
+            "Host refresh scheduled candidates=\(normalizedCandidates.joined(separator: ","), privacy: .public) preferred=\((request.preferredHost ?? "nil"), privacy: .public) authority=\((request.preferredAuthorityHost ?? "nil"), privacy: .public) control-port=\((request.preferredControlHTTPSPort.map(String.init) ?? "nil"), privacy: .public)"
         )
         latestHostCandidates = normalizedCandidates
         guard !normalizedCandidates.isEmpty else {
@@ -1915,6 +2145,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let pinnedCertificateStore = self.pinnedCertificateStore
         let hostAliasResolver = self.hostAliasResolver
         let preferredAuthorityHost = request.preferredAuthorityHost
+        let preferredControlHTTPSPort = request.preferredControlHTTPSPort
         refreshHostsTask = Task { [weak self] in
             let hostAliasesByHost = await hostAliasResolver(
                 normalizedCandidates + existingHosts.flatMap { descriptor in
@@ -1943,6 +2174,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                             preferredRoutesByKey: existingPreferredRoutes,
                             preferredHost: preferredHost,
                             preferredAuthorityHost: preferredAuthorityHost,
+                            advertisedControlHTTPSPort: preferredControlHTTPSPort,
                             preferredAnchorHost: preferredAnchorHost,
                             hostAliasesByHost: hostAliasesByHost,
                             pinnedCertificateStore: pinnedCertificateStore
@@ -4996,6 +5228,7 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         preferredRoutesByKey: [String: String],
         preferredHost: String?,
         preferredAuthorityHost: String?,
+        advertisedControlHTTPSPort: Int?,
         preferredAnchorHost: ShadowClientRemoteHostDescriptor?,
         hostAliasesByHost: [String: Set<String>],
         pinnedCertificateStore: ShadowClientPinnedHostCertificateStore
@@ -5015,6 +5248,8 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             )
             let info = try await metadataClient.fetchServerInfo(
                 host: host,
+                preferredAuthorityHost: preferredAuthorityHost,
+                advertisedControlHTTPSPort: advertisedControlHTTPSPort,
                 pinnedServerCertificateDER: pinnedCertificateDER
             )
             let relatedHost = relatedDescriptor(

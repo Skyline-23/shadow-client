@@ -86,7 +86,7 @@ extension ShadowClientAppShellView {
         let discoveredProbeCandidates = discoveredCandidates.joined(separator: ",")
         let candidateSummary = refreshPlan.refreshCandidates.joined(separator: ",")
         Self.catalogLogger.notice(
-            "Catalog refresh auto-find=\(autoFindHosts, privacy: .public) discovered=\(discoveredProbeCandidates, privacy: .public) candidates=\(candidateSummary, privacy: .public) preferred=\((refreshPlan.preferredRefreshCandidate ?? "nil"), privacy: .public) authority=\((refreshPlan.preferredAuthorityHost ?? "nil"), privacy: .public)"
+            "Catalog refresh auto-find=\(autoFindHosts, privacy: .public) discovered=\(discoveredProbeCandidates, privacy: .public) candidates=\(candidateSummary, privacy: .public) preferred=\((refreshPlan.preferredRefreshCandidate ?? "nil"), privacy: .public) authority=\((refreshPlan.preferredAuthorityHost ?? "nil"), privacy: .public) control-port=\((refreshPlan.preferredControlHTTPSPort.map(String.init) ?? "nil"), privacy: .public)"
         )
         let signature = refreshPlan.signature
         if !force, signature == lastRemoteDesktopCatalogSignature {
@@ -97,7 +97,8 @@ extension ShadowClientAppShellView {
         remoteDesktopRuntime.refreshHosts(
             candidates: refreshPlan.refreshCandidates,
             preferredHost: refreshPlan.preferredRefreshCandidate,
-            preferredAuthorityHost: refreshPlan.preferredAuthorityHost
+            preferredAuthorityHost: refreshPlan.preferredAuthorityHost,
+            preferredControlHTTPSPort: refreshPlan.preferredControlHTTPSPort
         )
     }
 

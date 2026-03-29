@@ -6,9 +6,10 @@ struct ShadowClientHostCatalogRefreshPlan: Equatable {
     let refreshCandidates: [String]
     let preferredRefreshCandidate: String?
     let preferredAuthorityHost: String?
+    let preferredControlHTTPSPort: Int?
 
     var signature: String {
-        "\(refreshCandidates.joined(separator: "|"))||\(preferredRefreshCandidate ?? "")||\(preferredAuthorityHost ?? "")"
+        "\(refreshCandidates.joined(separator: "|"))||\(preferredRefreshCandidate ?? "")||\(preferredAuthorityHost ?? "")||\(preferredControlHTTPSPort.map(String.init) ?? "")"
     }
 }
 
@@ -109,12 +110,18 @@ enum ShadowClientHostRefreshPlanKit {
             discoveredHosts: discoveredHosts,
             preferredRefreshCandidate: preferredRefreshCandidate
         )
+        let preferredControlHTTPSPort = preferredControlHTTPSPort(
+            preferredCandidate: visiblePreferredHost,
+            discoveredHosts: discoveredHosts,
+            preferredRefreshCandidate: preferredRefreshCandidate
+        )
 
         return ShadowClientHostCatalogRefreshPlan(
             discoveredCandidates: discoveredCandidates,
             refreshCandidates: refreshCandidates,
             preferredRefreshCandidate: preferredRefreshCandidate,
-            preferredAuthorityHost: preferredAuthorityHost
+            preferredAuthorityHost: preferredAuthorityHost,
+            preferredControlHTTPSPort: preferredControlHTTPSPort
         )
     }
 
@@ -289,6 +296,53 @@ enum ShadowClientHostRefreshPlanKit {
         }
 
         return discoveredAuthorityHosts[0]
+    }
+
+    private static func preferredControlHTTPSPort(
+        preferredCandidate: String?,
+        discoveredHosts: [ShadowClientDiscoveredHost],
+        preferredRefreshCandidate: String?
+    ) -> Int? {
+        if let preferredCandidate = parsedCandidateRoute(preferredCandidate)?.port,
+           let controlHTTPSPort = controlHTTPSPort(from: preferredCandidate) {
+            return controlHTTPSPort
+        }
+
+        if let preferredRefreshCandidate = normalizeCandidate(preferredRefreshCandidate) {
+            return discoveredHosts
+                .first(where: { normalizeCandidate($0.probeCandidate) == preferredRefreshCandidate })?
+                .controlHTTPSPort
+        }
+
+        let discoveredControlHTTPSPorts = discoveredHosts.compactMap { discoveredHost -> Int? in
+            guard discoveredHost.controlHTTPSPort != nil,
+                  normalizeCandidate(discoveredHost.probeCandidate) != nil else {
+                return nil
+            }
+
+            return discoveredHost.controlHTTPSPort
+        }
+
+        guard discoveredControlHTTPSPorts.count == 1 else {
+            return nil
+        }
+
+        return discoveredControlHTTPSPorts[0]
+    }
+
+    private static func controlHTTPSPort(from httpsPort: Int?) -> Int? {
+        guard let httpsPort else {
+            return nil
+        }
+
+        let controlHTTPSPort = httpsPort + 6
+        guard
+            (ShadowClientGameStreamNetworkDefaults.minimumPort...ShadowClientGameStreamNetworkDefaults.maximumPort)
+                .contains(controlHTTPSPort)
+        else {
+            return nil
+        }
+        return controlHTTPSPort
     }
 
     private static func normalizedStoredConnectionCandidate(_ candidate: String) -> String {

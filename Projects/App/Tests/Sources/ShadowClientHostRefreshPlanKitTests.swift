@@ -62,4 +62,5 @@ func hostRefreshPlanUsesDiscoveredAuthorityHostWhenNoManualAuthorityIsSaved() {
     #expect(plan.refreshCandidates == ["169.254.57.109:48984"])
     #expect(plan.preferredRefreshCandidate == "169.254.57.109:48984")
     #expect(plan.preferredAuthorityHost == "wifi.skyline23.com")
+    #expect(plan.preferredControlHTTPSPort == 48990)
 }

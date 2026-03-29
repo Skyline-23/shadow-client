@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 import ShadowClientFeatureSession
 @testable import ShadowClientFeatureHome
@@ -411,6 +412,81 @@ func metadataClientUsesHTTPSFirstForPinnedHosts() async throws {
             .init(scheme: "https", command: "serverinfo"),
         ]
     )
+}
+
+@Test("Metadata client prefers Lumen discovery descriptors on the control HTTPS port")
+func metadataClientPrefersLumenDiscoveryDescriptorOnControlPort() async throws {
+    let defaultsSuite = "shadow-client.metadata.lumen-discovery.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+        Issue.record("Expected isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    let transport = ScriptedRequestTransport(script: [])
+    let lumenTransport = RecordingLumenDiscoveryHTTPTransport(
+        response: .init(
+            statusCode: 200,
+            body: Data(
+                """
+                {
+                  "status": true,
+                  "host": {
+                    "displayName": "Lumen-Mac",
+                    "pairStatus": "notPaired",
+                    "currentGameID": 0,
+                    "serverState": "SUNSHINE_SERVER_FREE",
+                    "streamHttpsPort": 48984,
+                    "controlHttpsPort": 48990,
+                    "serverUniqueId": "HOST-123",
+                    "authorityHost": "wifi.skyline23.com",
+                    "serverCodecModeSupport": 0
+                  }
+                }
+                """.utf8
+            ),
+            presentedLeafCertificateDER: nil
+        )
+    )
+    let identityStore = ShadowClientPairingIdentityStore(
+        provider: FailingIdentityProvider(),
+        defaultsSuiteName: defaultsSuite
+    )
+    let pinnedCertificateStore = ShadowClientPinnedHostCertificateStore(defaultsSuiteName: defaultsSuite)
+
+    let client = NativeGameStreamMetadataClient(
+        identityStore: identityStore,
+        pinnedCertificateStore: pinnedCertificateStore,
+        authenticationContextBuilder: ShadowClientLumenAuthenticationContextBuilder(
+            identityStore: identityStore,
+            pinnedCertificateStore: pinnedCertificateStore
+        ),
+        transport: transport,
+        lumenTransport: lumenTransport,
+        defaultHTTPPort: 48989,
+        defaultHTTPSPort: 48984
+    )
+
+    let info = try await client.fetchServerInfo(
+        host: "192.168.0.50:48984",
+        preferredAuthorityHost: "wifi.skyline23.com",
+        advertisedControlHTTPSPort: 48990,
+        pinnedServerCertificateDER: nil as Data?
+    )
+
+    #expect(info.host == "192.168.0.50")
+    #expect(info.displayName == "Lumen-Mac")
+    #expect(info.remoteHost == "wifi.skyline23.com")
+    #expect(info.httpsPort == 48984)
+    #expect(await transport.calls().isEmpty)
+
+    let request = await lumenTransport.recordedLastRequest()
+    #expect(request?.connectHost == "192.168.0.50")
+    #expect(request?.url.host == "wifi.skyline23.com")
+    #expect(request?.url.port == 48990)
+    #expect(request?.url.path == "/api/discovery/host")
 }
 
 @Test("Metadata client preserves explicit custom HTTPS ports for pinned hosts")
@@ -2955,6 +3031,42 @@ private actor ScriptedRequestTransport: ShadowClientGameStreamRequestTransportin
 
     func callsWithPort() -> [CallWithPort] {
         recordedCallsWithPort
+    }
+}
+
+private actor RecordingLumenDiscoveryHTTPTransport: ShadowClientLumenHTTPTransport {
+    struct Request: Sendable {
+        let url: URL
+        let connectHost: String
+        let requestData: Data
+    }
+
+    private let response: ShadowClientGameStreamHTTPTransport.HTTPSResponse
+    private(set) var lastRequest: Request?
+
+    init(response: ShadowClientGameStreamHTTPTransport.HTTPSResponse) {
+        self.response = response
+    }
+
+    func request(
+        url: URL,
+        connectHost: String,
+        requestData: Data,
+        pinnedServerCertificateDER: Data?,
+        clientCertificates: [SecCertificate]?,
+        clientCertificateIdentity: SecIdentity?,
+        timeout: TimeInterval
+    ) async throws -> ShadowClientGameStreamHTTPTransport.HTTPSResponse {
+        _ = pinnedServerCertificateDER
+        _ = clientCertificates
+        _ = clientCertificateIdentity
+        _ = timeout
+        lastRequest = .init(url: url, connectHost: connectHost, requestData: requestData)
+        return response
+    }
+
+    func recordedLastRequest() -> Request? {
+        lastRequest
     }
 }
 
