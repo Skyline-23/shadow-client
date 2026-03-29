@@ -1235,6 +1235,17 @@ func remoteDesktopRuntimeFollowsServerAdvertisedLocalControlPairingRoute() async
                 gfeVersion: nil,
                 uniqueID: "HOST-123"
             ),
+            "192.168.0.20:48984": .init(
+                host: "192.168.0.20",
+                displayName: "Example-PC",
+                pairStatus: .paired,
+                currentGameID: 0,
+                serverState: "SUNSHINE_SERVER_FREE",
+                httpsPort: 48984,
+                appVersion: "1.0",
+                gfeVersion: nil,
+                uniqueID: "HOST-123"
+            ),
         ],
         appListByHost: [:]
     )
@@ -1266,11 +1277,14 @@ func remoteDesktopRuntimeFollowsServerAdvertisedLocalControlPairingRoute() async
 
     runtime.pairSelectedHost()
     await waitForPairingState(runtime)
+    await waitForHostCatalogReady(runtime)
 
     #expect(runtime.pairingState == .paired("Paired"))
     #expect(await pairingClient.startRequests() == ["wifi.skyline23.com"])
     #expect(await pairingClient.statusRequests() == ["192.168.0.20"])
     #expect(await pairingRouteStore.preferredHost(for: "uniqueid:host-123") == "192.168.0.20:48990")
+    #expect(!(await metadataClient.recordedServerInfoHosts()).contains("192.168.0.20:48990"))
+    #expect((await metadataClient.recordedServerInfoHosts()).contains("192.168.0.20:48984"))
 }
 
 @Test("Remote desktop runtime merges local and external descriptors for the same unique ID")

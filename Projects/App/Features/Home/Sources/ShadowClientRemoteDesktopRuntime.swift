@@ -5887,8 +5887,10 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let routeCandidates = ShadowClientHostCatalogKit.cachedCandidateHosts(
             from: existingHosts
         )
+        let serviceCandidates = (candidates + routeCandidates + [preferredHost].compactMap { $0 })
+            .compactMap(serviceDiscoveryCandidate)
         return normalizedHostCandidates(
-            candidates + routeCandidates + [preferredHost].compactMap { $0 }
+            serviceCandidates
         )
     }
 
@@ -5951,6 +5953,19 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         return host.lowercased()
     }
 
+    private static func serviceDiscoveryCandidate(_ candidate: String?) -> String? {
+        guard let parsed = parsedCandidateRoute(candidate) else {
+            return normalizeCandidate(candidate)
+        }
+
+        if let port = parsed.port,
+           let streamHTTPSPort = streamHTTPSPort(fromControlHTTPSPort: port) {
+            return "\(parsed.host):\(streamHTTPSPort)"
+        }
+
+        return normalizeCandidate(candidate)
+    }
+
     private static func parsedCandidateRoute(_ candidate: String?) -> (host: String, port: Int?)? {
         guard let normalized = normalizeCandidate(candidate) else {
             return nil
@@ -5968,6 +5983,25 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         }
 
         return (host.lowercased(), port)
+    }
+
+    private static func streamHTTPSPort(fromControlHTTPSPort httpsPort: Int) -> Int? {
+        let candidateStreamHTTPSPort = httpsPort - 6
+        guard
+            (ShadowClientGameStreamNetworkDefaults.minimumPort...ShadowClientGameStreamNetworkDefaults.maximumPort)
+                .contains(candidateStreamHTTPSPort)
+        else {
+            return nil
+        }
+
+        let mappedHTTPPort = ShadowClientGameStreamNetworkDefaults.httpPort(
+            forHTTPSPort: candidateStreamHTTPSPort
+        )
+        guard ShadowClientGameStreamNetworkDefaults.isLikelyHTTPPort(mappedHTTPPort) else {
+            return nil
+        }
+
+        return candidateStreamHTTPSPort
     }
 
     private static func candidate(
