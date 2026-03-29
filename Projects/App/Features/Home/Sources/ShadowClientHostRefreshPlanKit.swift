@@ -104,7 +104,11 @@ enum ShadowClientHostRefreshPlanKit {
             discoveredCandidates: discoveredCandidates,
             availableCandidates: refreshCandidates
         )
-        let preferredAuthorityHost = authorityHost(from: visiblePreferredHost)
+        let preferredAuthorityHost = preferredAuthorityHost(
+            preferredCandidate: visiblePreferredHost,
+            discoveredHosts: discoveredHosts,
+            preferredRefreshCandidate: preferredRefreshCandidate
+        )
 
         return ShadowClientHostCatalogRefreshPlan(
             discoveredCandidates: discoveredCandidates,
@@ -119,6 +123,16 @@ enum ShadowClientHostRefreshPlanKit {
         discoveredCandidates: [String],
         availableCandidates: [String]
     ) -> String? {
+        if preferredCandidate == nil {
+            if discoveredCandidates.count == 1 {
+                return discoveredCandidates[0]
+            }
+            if discoveredCandidates.isEmpty, availableCandidates.count == 1 {
+                return availableCandidates[0]
+            }
+            return nil
+        }
+
         if let discoveredPreferred = resolvedPreferredHostCandidate(
             preferredCandidate,
             availableCandidates: discoveredCandidates
@@ -244,6 +258,37 @@ enum ShadowClientHostRefreshPlanKit {
         }
 
         return host
+    }
+
+    private static func preferredAuthorityHost(
+        preferredCandidate: String?,
+        discoveredHosts: [ShadowClientDiscoveredHost],
+        preferredRefreshCandidate: String?
+    ) -> String? {
+        if let preferredAuthorityHost = authorityHost(from: preferredCandidate) {
+            return preferredAuthorityHost
+        }
+
+        if let preferredRefreshCandidate = normalizeCandidate(preferredRefreshCandidate) {
+            return discoveredHosts
+                .first(where: { normalizeCandidate($0.probeCandidate) == preferredRefreshCandidate })?
+                .authorityHost
+        }
+
+        let discoveredAuthorityHosts = discoveredHosts.compactMap { discoveredHost -> String? in
+            guard discoveredHost.authorityHost != nil,
+                  normalizeCandidate(discoveredHost.probeCandidate) != nil else {
+                return nil
+            }
+
+            return discoveredHost.authorityHost
+        }
+
+        guard discoveredAuthorityHosts.count == 1 else {
+            return nil
+        }
+
+        return discoveredAuthorityHosts[0]
     }
 
     private static func normalizedStoredConnectionCandidate(_ candidate: String) -> String {

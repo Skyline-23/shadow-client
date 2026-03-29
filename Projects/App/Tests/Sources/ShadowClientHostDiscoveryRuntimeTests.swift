@@ -34,6 +34,21 @@ func hostDiscoveryRuntimeSynthesizesLocalHostNameWhenResolveDataIsUnavailable() 
     #expect(resolved == "Mac.local")
 }
 
+@Test("Host discovery runtime parses authority host and control port from TXT metadata")
+func hostDiscoveryRuntimeParsesDiscoveryTXTMetadata() {
+    let txtRecord = NetService.data(
+        fromTXTRecord: [
+            "authority-host": Data("wifi.skyline23.com".utf8),
+            "control-port": Data("48990".utf8),
+        ]
+    )
+
+    let metadata = ShadowClientHostDiscoveryRuntime.discoveryTXTMetadata(from: txtRecord)
+
+    #expect(metadata.authorityHost == "wifi.skyline23.com")
+    #expect(metadata.controlHTTPSPort == 48990)
+}
+
 @Test("Host discovery catalog deduplicates same host discovered from multiple services")
 func hostDiscoveryCatalogDeduplicatesHosts() {
     var catalog = ShadowClientDiscoveredHostCatalog()

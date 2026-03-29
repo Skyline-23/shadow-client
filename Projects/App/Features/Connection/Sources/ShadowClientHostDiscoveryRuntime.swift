@@ -9,18 +9,31 @@ public struct ShadowClientDiscoveredHost: Identifiable, Equatable, Sendable {
     public let host: String
     public let port: Int
     public let serviceType: String
+    public let authorityHost: String?
+    public let controlHTTPSPort: Int?
 
     public init(
         name: String,
         host: String,
         port: Int,
-        serviceType: String
+        serviceType: String,
+        authorityHost: String? = nil,
+        controlHTTPSPort: Int? = nil
     ) {
         self.id = Self.probeCandidate(host: host, port: port)
         self.name = Self.sanitizedDisplayName(name, fallbackHost: host)
         self.host = host
         self.port = port
         self.serviceType = serviceType
+        let normalizedAuthorityHost = authorityHost?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        if let normalizedAuthorityHost, !normalizedAuthorityHost.isEmpty {
+            self.authorityHost = normalizedAuthorityHost.lowercased()
+        } else {
+            self.authorityHost = nil
+        }
+        self.controlHTTPSPort = controlHTTPSPort
     }
 
     public var probeCandidate: String {
@@ -181,6 +194,7 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
     private let bonjourServiceTypes: [String]
     private var browsers: [NetServiceBrowser] = []
     private var services: [String: NetService] = [:]
+    private var txtMetadataByServiceKey: [String: DiscoveryTXTMetadata] = [:]
 
     private let reducer = ShadowClientHostDiscoveryEventReducer()
     private let eventContinuation: AsyncStream<ShadowClientHostDiscoveryEvent>.Continuation
@@ -246,10 +260,12 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
         browsers.removeAll()
 
         for service in services.values {
+            service.stopMonitoring()
             service.stop()
             service.delegate = nil
         }
         services.removeAll()
+        txtMetadataByServiceKey.removeAll()
 
         emit(.stopDiscovering)
         Self.logger.notice("Bonjour discovery stopped")
@@ -274,7 +290,8 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
 
     private static func discoveredHost(
         from service: NetService,
-        allowFallbackHostName: Bool
+        allowFallbackHostName: Bool,
+        cachedTXTMetadata: DiscoveryTXTMetadata? = nil
     ) -> ShadowClientDiscoveredHost? {
         let hostName: String?
         if allowFallbackHostName {
@@ -287,14 +304,23 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
             return nil
         }
 
+        let txtMetadata = cachedTXTMetadata ??
+            service.txtRecordData().map(Self.discoveryTXTMetadata(from:))
         let serviceType = service.type
             .trimmingCharacters(in: CharacterSet(charactersIn: "."))
         return ShadowClientDiscoveredHost(
             name: service.name,
             host: hostName,
             port: service.port,
-            serviceType: serviceType
+            serviceType: serviceType,
+            authorityHost: txtMetadata?.authorityHost,
+            controlHTTPSPort: txtMetadata?.controlHTTPSPort
         )
+    }
+
+    struct DiscoveryTXTMetadata: Sendable {
+        let authorityHost: String?
+        let controlHTTPSPort: Int?
     }
 
     static func resolvedHost(from service: NetService) -> String? {
@@ -347,6 +373,32 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
         }
 
         return "\(sanitizedName).local"
+    }
+
+    static func discoveryTXTMetadata(from txtRecordData: Data) -> DiscoveryTXTMetadata {
+        let txtRecord = NetService.dictionary(fromTXTRecord: txtRecordData)
+
+        func stringValue(for key: String) -> String? {
+            guard let valueData = txtRecord[key] else {
+                return nil
+            }
+
+            let decoded = String(data: valueData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            guard let decoded, !decoded.isEmpty else {
+                return nil
+            }
+
+            return decoded
+        }
+
+        let authorityHost = stringValue(for: "authority-host")?.lowercased()
+        let controlHTTPSPort = stringValue(for: "control-port").flatMap(Int.init)
+        return DiscoveryTXTMetadata(
+            authorityHost: authorityHost,
+            controlHTTPSPort: controlHTTPSPort
+        )
     }
 
     private static func parsedNumericHost(fromSockAddrData data: Data) -> String? {
@@ -431,6 +483,7 @@ extension ShadowClientHostDiscoveryRuntime: NetServiceBrowserDelegate {
             "Bonjour service found name=\(service.name, privacy: .public) type=\(service.type, privacy: .public) domain=\(service.domain, privacy: .public)"
         )
         let key = serviceKey(for: service)
+        txtMetadataByServiceKey.removeValue(forKey: key)
         services[key] = service
         service.delegate = self
         service.resolve(withTimeout: Self.resolveTimeout)
@@ -442,33 +495,57 @@ extension ShadowClientHostDiscoveryRuntime: NetServiceBrowserDelegate {
         moreComing: Bool
     ) {
         let key = serviceKey(for: service)
+        services[key]?.stopMonitoring()
         services[key]?.delegate = nil
         services.removeValue(forKey: key)
+        txtMetadataByServiceKey.removeValue(forKey: key)
         emit(.serviceRemoved(serviceKey: key, moreComing: moreComing))
     }
 }
 
 extension ShadowClientHostDiscoveryRuntime: NetServiceDelegate {
     public func netServiceDidResolveAddress(_ sender: NetService) {
+        let key = serviceKey(for: sender)
         guard let discoveredHost = Self.discoveredHost(
             from: sender,
-            allowFallbackHostName: true
+            allowFallbackHostName: true,
+            cachedTXTMetadata: txtMetadataByServiceKey[key]
         ) else {
             Self.logger.error(
                 "Bonjour service resolved without hostname name=\(sender.name, privacy: .public) type=\(sender.type, privacy: .public)"
             )
             return
         }
+        sender.startMonitoring()
         Self.logger.notice(
             "Bonjour service resolved host=\(discoveredHost.host, privacy: .public) port=\(discoveredHost.port, privacy: .public) name=\(discoveredHost.name, privacy: .public) type=\(discoveredHost.serviceType, privacy: .public)"
         )
 
         emit(
             .serviceResolved(
-                serviceKey: serviceKey(for: sender),
+                serviceKey: key,
                 host: discoveredHost
             )
         )
+    }
+
+    public func netService(_ sender: NetService, didUpdateTXTRecord data: Data) {
+        let key = serviceKey(for: sender)
+        let txtMetadata = Self.discoveryTXTMetadata(from: data)
+        txtMetadataByServiceKey[key] = txtMetadata
+
+        guard let discoveredHost = Self.discoveredHost(
+            from: sender,
+            allowFallbackHostName: true,
+            cachedTXTMetadata: txtMetadata
+        ) else {
+            return
+        }
+
+        Self.logger.notice(
+            "Bonjour service updated TXT host=\(discoveredHost.host, privacy: .public) authority=\((discoveredHost.authorityHost ?? "nil"), privacy: .public) control-port=\((discoveredHost.controlHTTPSPort.map(String.init) ?? "nil"), privacy: .public)"
+        )
+        emit(.serviceResolved(serviceKey: key, host: discoveredHost))
     }
 
     public func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
@@ -477,7 +554,8 @@ extension ShadowClientHostDiscoveryRuntime: NetServiceDelegate {
 
         if let fallbackHost = Self.discoveredHost(
             from: sender,
-            allowFallbackHostName: true
+            allowFallbackHostName: true,
+            cachedTXTMetadata: txtMetadataByServiceKey[key]
         ) {
             Self.logger.notice(
                 "Bonjour service using fallback host=\(fallbackHost.host, privacy: .public) port=\(fallbackHost.port, privacy: .public) name=\(fallbackHost.name, privacy: .public) type=\(fallbackHost.serviceType, privacy: .public) resolve-error=\(errorCode, privacy: .public)"
