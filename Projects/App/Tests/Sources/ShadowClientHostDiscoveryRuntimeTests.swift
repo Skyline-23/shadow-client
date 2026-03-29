@@ -24,6 +24,16 @@ func hostDiscoveryRuntimeFallsBackToBonjourHostNameWhenAddressesAreMissing() {
     #expect(resolved == "wifi.skyline23.com")
 }
 
+@Test("Host discovery runtime synthesizes a local host name when resolve data is unavailable")
+func hostDiscoveryRuntimeSynthesizesLocalHostNameWhenResolveDataIsUnavailable() {
+    let resolved = ShadowClientHostDiscoveryRuntime.fallbackHostName(
+        nil,
+        serviceName: "Mac"
+    )
+
+    #expect(resolved == "Mac.local")
+}
+
 @Test("Host discovery catalog deduplicates same host discovered from multiple services")
 func hostDiscoveryCatalogDeduplicatesHosts() {
     var catalog = ShadowClientDiscoveredHostCatalog()

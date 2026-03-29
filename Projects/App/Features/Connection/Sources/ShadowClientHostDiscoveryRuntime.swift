@@ -165,6 +165,7 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
         subsystem: "com.skyline23.shadow-client",
         category: "HostDiscovery"
     )
+    private static let resolveTimeout: TimeInterval = 5.0
     private static let linkLocalPrefixes = [
         "169.254.",
         "fe80:",
@@ -269,6 +270,31 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
 
     private func serviceKey(for service: NetService) -> String {
         "\(service.type)|\(service.domain)|\(service.name)"
+    }
+
+    private static func discoveredHost(
+        from service: NetService,
+        allowFallbackHostName: Bool
+    ) -> ShadowClientDiscoveredHost? {
+        let hostName: String?
+        if allowFallbackHostName {
+            hostName = resolvedHost(from: service)
+        } else {
+            hostName = preferredResolvedAddressHost(from: service.addresses)
+        }
+
+        guard let hostName else {
+            return nil
+        }
+
+        let serviceType = service.type
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        return ShadowClientDiscoveredHost(
+            name: service.name,
+            host: hostName,
+            port: service.port,
+            serviceType: serviceType
+        )
     }
 
     static func resolvedHost(from service: NetService) -> String? {
@@ -407,7 +433,7 @@ extension ShadowClientHostDiscoveryRuntime: NetServiceBrowserDelegate {
         let key = serviceKey(for: service)
         services[key] = service
         service.delegate = self
-        service.resolve(withTimeout: 2.0)
+        service.resolve(withTimeout: Self.resolveTimeout)
     }
 
     public func netServiceBrowser(
@@ -424,21 +450,15 @@ extension ShadowClientHostDiscoveryRuntime: NetServiceBrowserDelegate {
 
 extension ShadowClientHostDiscoveryRuntime: NetServiceDelegate {
     public func netServiceDidResolveAddress(_ sender: NetService) {
-        guard let hostName = Self.resolvedHost(from: sender) else {
+        guard let discoveredHost = Self.discoveredHost(
+            from: sender,
+            allowFallbackHostName: true
+        ) else {
             Self.logger.error(
                 "Bonjour service resolved without hostname name=\(sender.name, privacy: .public) type=\(sender.type, privacy: .public)"
             )
             return
         }
-
-        let serviceType = sender.type
-            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
-        let discoveredHost = ShadowClientDiscoveredHost(
-            name: sender.name,
-            host: hostName,
-            port: sender.port,
-            serviceType: serviceType
-        )
         Self.logger.notice(
             "Bonjour service resolved host=\(discoveredHost.host, privacy: .public) port=\(discoveredHost.port, privacy: .public) name=\(discoveredHost.name, privacy: .public) type=\(discoveredHost.serviceType, privacy: .public)"
         )
@@ -451,11 +471,24 @@ extension ShadowClientHostDiscoveryRuntime: NetServiceDelegate {
         )
     }
 
-    public func netService(_ sender: NetService, didNotResolve _: [String: NSNumber]) {
+    public func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
         let key = serviceKey(for: sender)
+        let errorCode = errorDict[NetService.errorCode]?.intValue ?? -1
+
+        if let fallbackHost = Self.discoveredHost(
+            from: sender,
+            allowFallbackHostName: true
+        ) {
+            Self.logger.notice(
+                "Bonjour service using fallback host=\(fallbackHost.host, privacy: .public) port=\(fallbackHost.port, privacy: .public) name=\(fallbackHost.name, privacy: .public) type=\(fallbackHost.serviceType, privacy: .public) resolve-error=\(errorCode, privacy: .public)"
+            )
+            emit(.serviceResolved(serviceKey: key, host: fallbackHost))
+            return
+        }
+
         services.removeValue(forKey: key)
         Self.logger.error(
-            "Bonjour service failed to resolve name=\(sender.name, privacy: .public) type=\(sender.type, privacy: .public)"
+            "Bonjour service failed to resolve name=\(sender.name, privacy: .public) type=\(sender.type, privacy: .public) error=\(errorCode, privacy: .public)"
         )
         emit(.serviceDidNotResolve(serviceKey: key))
     }
