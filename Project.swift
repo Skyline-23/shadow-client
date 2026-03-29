@@ -119,9 +119,7 @@ let project = Project(
                     ],
                     "NSLocalNetworkUsageDescription": "shadow-client discovers streaming hosts on your local network.",
                     "NSBonjourServices": [
-                        "_nvstream._tcp",
-                        "_sunshine._tcp",
-                        "_moonlight._tcp",
+                        "_shadow._tcp",
                     ],
                     "NSAppTransportSecurity": [
                         "NSAllowsArbitraryLoads": true,
@@ -163,9 +161,7 @@ let project = Project(
                     "CFBundleDisplayName": "Shadow",
                     "NSLocalNetworkUsageDescription": "shadow-client discovers streaming hosts on your local network.",
                     "NSBonjourServices": [
-                        "_nvstream._tcp",
-                        "_sunshine._tcp",
-                        "_moonlight._tcp",
+                        "_shadow._tcp",
                     ],
                     "NSAppTransportSecurity": [
                         "NSAllowsArbitraryLoads": true,
@@ -211,9 +207,7 @@ let project = Project(
                     ],
                     "NSLocalNetworkUsageDescription": "shadow-client discovers streaming hosts on your local network.",
                     "NSBonjourServices": [
-                        "_nvstream._tcp",
-                        "_sunshine._tcp",
-                        "_moonlight._tcp",
+                        "_shadow._tcp",
                     ],
                     "NSAppTransportSecurity": [
                         "NSAllowsArbitraryLoads": true,
