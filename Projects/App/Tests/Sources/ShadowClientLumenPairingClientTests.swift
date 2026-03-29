@@ -23,6 +23,11 @@ func lumenPairingClientParserDecodesPairingSessionPayload() throws {
             "serverUniqueId": "HOST-123",
             "serviceType": "_shadow._tcp",
             "controlHttpsPort": 47984,
+            "preferredControlHttpsUrl": "https://192.168.0.20:48990",
+            "controlHttpsUrls": [
+              "https://192.168.0.20:48990",
+              "https://wifi.skyline23.com:48990"
+            ],
             "expiresInSeconds": 598,
             "pollIntervalSeconds": 2
           }
@@ -47,6 +52,11 @@ func lumenPairingClientParserDecodesPairingSessionPayload() throws {
             serverUniqueID: "HOST-123",
             serviceType: "_shadow._tcp",
             controlHTTPSPort: 47984,
+            preferredControlHTTPSURL: "https://192.168.0.20:48990",
+            controlHTTPSURLs: [
+                "https://192.168.0.20:48990",
+                "https://wifi.skyline23.com:48990",
+            ],
             expiresInSeconds: 598,
             pollIntervalSeconds: 2
         )
@@ -186,6 +196,11 @@ private func pairingSessionPayloadData() -> Data {
             "serverUniqueId": "HOST-123",
             "serviceType": "_shadow._tcp",
             "controlHttpsPort": 47984,
+            "preferredControlHttpsUrl": "https://192.168.0.20:48990",
+            "controlHttpsUrls": [
+              "https://192.168.0.20:48990",
+              "https://wifi.skyline23.com:48990"
+            ],
             "expiresInSeconds": 598,
             "pollIntervalSeconds": 2
           }

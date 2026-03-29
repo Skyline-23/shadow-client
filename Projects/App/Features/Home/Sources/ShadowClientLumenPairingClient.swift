@@ -27,6 +27,8 @@ public struct ShadowClientLumenPairingSession: Equatable, Sendable {
     public let serverUniqueID: String?
     public let serviceType: String?
     public let controlHTTPSPort: Int?
+    public let preferredControlHTTPSURL: String?
+    public let controlHTTPSURLs: [String]
     public let expiresInSeconds: Int
     public let pollIntervalSeconds: Int
 
@@ -44,6 +46,8 @@ public struct ShadowClientLumenPairingSession: Equatable, Sendable {
         serverUniqueID: String?,
         serviceType: String?,
         controlHTTPSPort: Int?,
+        preferredControlHTTPSURL: String? = nil,
+        controlHTTPSURLs: [String] = [],
         expiresInSeconds: Int,
         pollIntervalSeconds: Int
     ) {
@@ -60,6 +64,8 @@ public struct ShadowClientLumenPairingSession: Equatable, Sendable {
         self.serverUniqueID = serverUniqueID
         self.serviceType = serviceType
         self.controlHTTPSPort = controlHTTPSPort
+        self.preferredControlHTTPSURL = preferredControlHTTPSURL
+        self.controlHTTPSURLs = controlHTTPSURLs
         self.expiresInSeconds = expiresInSeconds
         self.pollIntervalSeconds = pollIntervalSeconds
     }
@@ -331,6 +337,8 @@ private struct LumenPairingPayload: Codable {
     let serverUniqueID: String?
     let serviceType: String?
     let controlHTTPSPort: Int?
+    let preferredControlHTTPSURL: String?
+    let controlHTTPSURLs: [String]?
     let expiresInSeconds: Int
     let pollIntervalSeconds: Int
 
@@ -348,6 +356,8 @@ private struct LumenPairingPayload: Codable {
         case serverUniqueID = "serverUniqueId"
         case serviceType
         case controlHTTPSPort = "controlHttpsPort"
+        case preferredControlHTTPSURL = "preferredControlHttpsUrl"
+        case controlHTTPSURLs = "controlHttpsUrls"
         case expiresInSeconds
         case pollIntervalSeconds
     }
@@ -367,6 +377,8 @@ private struct LumenPairingPayload: Codable {
             serverUniqueID: serverUniqueID,
             serviceType: serviceType,
             controlHTTPSPort: controlHTTPSPort,
+            preferredControlHTTPSURL: preferredControlHTTPSURL,
+            controlHTTPSURLs: controlHTTPSURLs ?? [],
             expiresInSeconds: expiresInSeconds,
             pollIntervalSeconds: pollIntervalSeconds
         )

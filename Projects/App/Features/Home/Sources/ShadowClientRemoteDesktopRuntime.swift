@@ -1572,6 +1572,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
         let preferredHost: String?
     }
 
+    private struct LumenPairingRoute: Equatable {
+        let host: String
+        let httpsPort: Int
+    }
+
     @Published public private(set) var hosts: [ShadowClientRemoteHostDescriptor] = []
     @Published public private(set) var apps: [ShadowClientRemoteAppDescriptor] = []
     @Published public private(set) var hostState: ShadowClientRemoteHostCatalogState = .idle
@@ -2193,7 +2198,11 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                                 deviceName: nil,
                                 platform: nil
                             )
-                            let controlHTTPSPort = startedPairing.controlHTTPSPort ?? candidate.httpsPort
+                            let controlRoutes = Self.lumenPairingRoutes(
+                                for: startedPairing,
+                                fallbackHost: candidate.host,
+                                fallbackHTTPSPort: startedPairing.controlHTTPSPort ?? candidate.httpsPort
+                            )
 
                             await MainActor.run { [weak self] in
                                 self?.pairingState = .pairing(
@@ -2207,24 +2216,22 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                                !trimmedUsername.isEmpty,
                                !trimmedPassword.isEmpty,
                                startedPairing.status == .pending {
-                                try await lumenAdminClient.approvePairingRequest(
-                                    host: candidate.host,
-                                    httpsPort: controlHTTPSPort,
+                                try await Self.approveLumenPairingRequest(
+                                    routes: controlRoutes,
+                                    lumenAdminClient: lumenAdminClient,
                                     username: trimmedUsername,
                                     password: trimmedPassword,
                                     pairingID: startedPairing.pairingID
                                 )
                             }
 
-                            _ = try await Self.awaitLumenPairingApproval(
+                            let approvedRoute = try await Self.awaitLumenPairingApproval(
                                 pairingClient: pairingClient,
-                                host: candidate.host,
-                                httpsPort: candidate.httpsPort
-                                    == controlHTTPSPort ? candidate.httpsPort : controlHTTPSPort,
+                                routeCandidates: controlRoutes,
                                 initialSession: startedPairing
                             )
                             pairedRoute = Self.serializedExactHostCandidate(
-                                for: .init(host: candidate.host, httpsPort: candidate.httpsPort)
+                                for: .init(host: approvedRoute.host, httpsPort: approvedRoute.httpsPort)
                             )
                             if let self {
                                 await self.persistPreferredRoute(pairedRoute, for: selectedHost)
@@ -2324,16 +2331,17 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
 
     private static func awaitLumenPairingApproval(
         pairingClient: any ShadowClientLumenPairingClient,
-        host: String,
-        httpsPort: Int,
+        routeCandidates: [LumenPairingRoute],
         initialSession: ShadowClientLumenPairingSession
-    ) async throws -> ShadowClientLumenPairingSession {
+    ) async throws -> LumenPairingRoute {
+        var currentRoutes = routeCandidates
         var currentSession = initialSession
 
         while true {
             switch currentSession.status {
             case .approved:
-                return currentSession
+                return currentRoutes.first
+                    ?? .init(host: "", httpsPort: currentSession.controlHTTPSPort ?? 0)
             case .rejected:
                 throw ShadowClientGameStreamError.requestFailed("Shadow pairing request was rejected.")
             case .expired:
@@ -2342,13 +2350,109 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
                 let pollIntervalSeconds = max(1, currentSession.pollIntervalSeconds)
                 try await Task.sleep(for: .seconds(pollIntervalSeconds))
                 try Task.checkCancellation()
-                currentSession = try await pairingClient.fetchPairingStatus(
-                    host: host,
-                    httpsPort: httpsPort,
+                let (updatedSession, successfulRoute) = try await Self.fetchLumenPairingStatus(
+                    pairingClient: pairingClient,
+                    routeCandidates: currentRoutes,
                     pairingID: currentSession.pairingID
+                )
+                currentSession = updatedSession
+                currentRoutes = Self.lumenPairingRoutes(
+                    for: updatedSession,
+                    fallbackHost: successfulRoute.host,
+                    fallbackHTTPSPort: successfulRoute.httpsPort
                 )
             }
         }
+    }
+
+    private static func approveLumenPairingRequest(
+        routes: [LumenPairingRoute],
+        lumenAdminClient: any ShadowClientLumenAdminClient,
+        username: String,
+        password: String,
+        pairingID: String
+    ) async throws {
+        var lastError: Error?
+        for route in routes {
+            do {
+                try await lumenAdminClient.approvePairingRequest(
+                    host: route.host,
+                    httpsPort: route.httpsPort,
+                    username: username,
+                    password: password,
+                    pairingID: pairingID
+                )
+                return
+            } catch {
+                lastError = error
+            }
+        }
+
+        if let lastError {
+            throw lastError
+        }
+    }
+
+    private static func fetchLumenPairingStatus(
+        pairingClient: any ShadowClientLumenPairingClient,
+        routeCandidates: [LumenPairingRoute],
+        pairingID: String
+    ) async throws -> (ShadowClientLumenPairingSession, LumenPairingRoute) {
+        var lastError: Error?
+        for route in routeCandidates {
+            do {
+                let session = try await pairingClient.fetchPairingStatus(
+                    host: route.host,
+                    httpsPort: route.httpsPort,
+                    pairingID: pairingID
+                )
+                return (session, route)
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? ShadowClientGameStreamError.requestFailed("Shadow pairing status request failed.")
+    }
+
+    private static func lumenPairingRoutes(
+        for session: ShadowClientLumenPairingSession,
+        fallbackHost: String,
+        fallbackHTTPSPort: Int
+    ) -> [LumenPairingRoute] {
+        var routes: [LumenPairingRoute] = []
+        var seenRoutes = Set<String>()
+
+        func append(host: String, httpsPort: Int) {
+            let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedHost.isEmpty else {
+                return
+            }
+
+            let routeKey = "\(trimmedHost.lowercased()):\(httpsPort)"
+            guard seenRoutes.insert(routeKey).inserted else {
+                return
+            }
+
+            routes.append(.init(host: trimmedHost, httpsPort: httpsPort))
+        }
+
+        func append(urlString: String?) {
+            guard
+                let urlString,
+                let url = URL(string: urlString),
+                let host = url.host
+            else {
+                return
+            }
+
+            append(host: host, httpsPort: url.port ?? session.controlHTTPSPort ?? fallbackHTTPSPort)
+        }
+
+        append(urlString: session.preferredControlHTTPSURL)
+        session.controlHTTPSURLs.forEach { append(urlString: $0) }
+        append(host: fallbackHost, httpsPort: fallbackHTTPSPort)
+        return routes
     }
 
     @MainActor
