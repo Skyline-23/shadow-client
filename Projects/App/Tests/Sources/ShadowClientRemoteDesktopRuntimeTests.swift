@@ -1061,9 +1061,9 @@ func remoteDesktopRuntimePairsSavedHostWhenServerInfoIsUnavailable() async {
     #expect(await pairingClient.startRequests() == ["wifi-route.example.invalid"])
 }
 
-@Test("Remote desktop runtime tries selected external host before local fallback when unique ID matches")
+@Test("Remote desktop runtime tries local pairing route before external route when both match the same host")
 @MainActor
-func remoteDesktopRuntimeTriesSelectedExternalHostBeforeLocalFallback() async {
+func remoteDesktopRuntimeTriesLocalPairRouteBeforeExternalRoute() async {
     let metadataClient = FakeGameStreamMetadataClient(
         serverInfoByHost: [
             "external-host.example.invalid": .init(
@@ -1112,7 +1112,7 @@ func remoteDesktopRuntimeTriesSelectedExternalHostBeforeLocalFallback() async {
     await waitForPairingState(runtime)
 
     #expect(runtime.pairingState == .paired("Paired"))
-    #expect(await pairingClient.startRequests() == ["external-host.example.invalid", "192.168.0.20"])
+    #expect(await pairingClient.startRequests() == ["192.168.0.20"])
 }
 
 @Test("Remote desktop runtime merges local and external descriptors for the same unique ID")

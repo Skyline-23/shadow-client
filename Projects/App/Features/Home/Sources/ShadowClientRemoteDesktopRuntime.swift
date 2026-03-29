@@ -5479,19 +5479,29 @@ public final class ShadowClientRemoteDesktopRuntime: ObservableObject {
             host: pairCandidate.host,
             httpsPort: pairCandidate.httpsPort
         )
-        if Self.candidate(preferredPairHost, matches: endpoint) {
-            return 0
-        }
-        if endpoint == selectedEndpoint {
-            return 1
-        }
-        if !isLinkLocalRouteHost(endpoint.host) {
+        let isRoutableLocalPairHost = isLocalPairHost(endpoint.host) && !isLinkLocalRouteHost(endpoint.host)
+        if isRoutableLocalPairHost {
+            if Self.candidate(preferredPairHost, matches: endpoint) {
+                return 0
+            }
+            if endpoint == selectedEndpoint {
+                return 1
+            }
             return 2
         }
-        if isLocalPairHost(endpoint.host) {
+        if Self.candidate(preferredPairHost, matches: endpoint) {
             return 3
         }
-        return 4
+        if endpoint == selectedEndpoint {
+            return 4
+        }
+        if !isLinkLocalRouteHost(endpoint.host) {
+            return 5
+        }
+        if isLocalPairHost(endpoint.host) {
+            return 6
+        }
+        return 7
     }
 
     private static func pairRouteStoreKey(for selectedHost: ShadowClientRemoteHostDescriptor) -> String {
