@@ -1,5 +1,28 @@
 import Testing
 @testable import ShadowClientFeatureConnection
+import Foundation
+
+@Test("Host discovery runtime prefers resolved LAN addresses over Bonjour host names")
+func hostDiscoveryRuntimePrefersResolvedLANAddressesOverBonjourHostNames() {
+    let localAddress = ipv4SockAddrData("192.168.0.50")
+    let publicAddress = ipv4SockAddrData("222.110.28.97")
+
+    let resolved = ShadowClientHostDiscoveryRuntime.preferredResolvedAddressHost(
+        from: [publicAddress, localAddress]
+    )
+
+    #expect(resolved == "192.168.0.50")
+}
+
+@Test("Host discovery runtime falls back to Bonjour host name when addresses are missing")
+func hostDiscoveryRuntimeFallsBackToBonjourHostNameWhenAddressesAreMissing() {
+    let resolved = ShadowClientHostDiscoveryRuntime.fallbackHostName(
+        "wifi.skyline23.com.",
+        serviceName: "Lumen Mac"
+    )
+
+    #expect(resolved == "wifi.skyline23.com")
+}
 
 @Test("Host discovery catalog deduplicates same host discovered from multiple services")
 func hostDiscoveryCatalogDeduplicatesHosts() {
@@ -100,4 +123,18 @@ func hostDiscoveryCatalogSortsHostsByName() {
     #expect(hosts.count == 2)
     #expect(hosts[0].name == "Alpha-PC")
     #expect(hosts[1].name == "Zulu-PC")
+}
+
+private func ipv4SockAddrData(_ host: String) -> Data {
+    var address = in_addr()
+    let conversionResult = host.withCString { inet_pton(AF_INET, $0, &address) }
+    #expect(conversionResult == 1)
+
+    var sockaddr = sockaddr_in()
+    sockaddr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    sockaddr.sin_family = sa_family_t(AF_INET)
+    sockaddr.sin_port = in_port_t(0)
+    sockaddr.sin_addr = address
+
+    return withUnsafeBytes(of: &sockaddr) { Data($0) }
 }

@@ -1,4 +1,5 @@
 import Combine
+import Darwin
 import Foundation
 import OSLog
 
@@ -164,6 +165,10 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
         subsystem: "com.skyline23.shadow-client",
         category: "HostDiscovery"
     )
+    private static let linkLocalPrefixes = [
+        "169.254.",
+        "fe80:",
+    ]
 
     public static let defaultBonjourServiceTypes = [
         "_shadow._tcp",
@@ -266,8 +271,40 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
         "\(service.type)|\(service.domain)|\(service.name)"
     }
 
-    private func resolvedHostName(from service: NetService) -> String? {
-        if let hostName = service.hostName?
+    static func resolvedHost(from service: NetService) -> String? {
+        let resolvedAddressHost = preferredResolvedAddressHost(from: service.addresses)
+        if let resolvedAddressHost {
+            return resolvedAddressHost
+        }
+
+        return fallbackHostName(
+            service.hostName,
+            serviceName: service.name
+        )
+    }
+
+    static func preferredResolvedAddressHost(from addresses: [Data]?) -> String? {
+        guard let addresses else {
+            return nil
+        }
+
+        let candidates = addresses.compactMap(parsedNumericHost(fromSockAddrData:))
+        let prioritized = candidates
+            .filter { candidate in
+                !isLoopbackHost(candidate)
+            }
+            .sorted { lhs, rhs in
+                resolvedAddressPriority(for: lhs) < resolvedAddressPriority(for: rhs)
+            }
+
+        return prioritized.first
+    }
+
+    static func fallbackHostName(
+        _ hostName: String?,
+        serviceName: String
+    ) -> String? {
+        if let hostName = hostName?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "."))
         {
@@ -276,7 +313,7 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
             }
         }
 
-        let sanitizedName = service.name
+        let sanitizedName = serviceName
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: " ", with: "-")
         if sanitizedName.isEmpty {
@@ -284,6 +321,65 @@ public final class ShadowClientHostDiscoveryRuntime: NSObject, ObservableObject 
         }
 
         return "\(sanitizedName).local"
+    }
+
+    private static func parsedNumericHost(fromSockAddrData data: Data) -> String? {
+        data.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else {
+                return nil
+            }
+
+            let sockaddrPointer = baseAddress.assumingMemoryBound(to: sockaddr.self)
+            let family = Int32(sockaddrPointer.pointee.sa_family)
+            let maxHostLength = Int(NI_MAXHOST)
+            var hostBuffer = [CChar](repeating: 0, count: maxHostLength)
+
+            let result = getnameinfo(
+                sockaddrPointer,
+                socklen_t(data.count),
+                &hostBuffer,
+                socklen_t(maxHostLength),
+                nil,
+                0,
+                NI_NUMERICHOST
+            )
+            guard result == 0 else {
+                return nil
+            }
+
+            let host = String(cString: hostBuffer)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard !host.isEmpty else {
+                return nil
+            }
+
+            switch family {
+            case AF_INET, AF_INET6:
+                return host
+            default:
+                return nil
+            }
+        }
+    }
+
+    private static func resolvedAddressPriority(for host: String) -> Int {
+        if !isLinkLocalHost(host) {
+            return host.contains(":") ? 1 : 0
+        }
+        return host.contains(":") ? 3 : 2
+    }
+
+    private static func isLoopbackHost(_ host: String) -> Bool {
+        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized == "localhost" ||
+            normalized == "::1" ||
+            normalized.hasPrefix("127.")
+    }
+
+    private static func isLinkLocalHost(_ host: String) -> Bool {
+        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return linkLocalPrefixes.contains(where: { normalized.hasPrefix($0) })
     }
 }
 
@@ -328,7 +424,7 @@ extension ShadowClientHostDiscoveryRuntime: NetServiceBrowserDelegate {
 
 extension ShadowClientHostDiscoveryRuntime: NetServiceDelegate {
     public func netServiceDidResolveAddress(_ sender: NetService) {
-        guard let hostName = resolvedHostName(from: sender) else {
+        guard let hostName = Self.resolvedHost(from: sender) else {
             Self.logger.error(
                 "Bonjour service resolved without hostname name=\(sender.name, privacy: .public) type=\(sender.type, privacy: .public)"
             )
